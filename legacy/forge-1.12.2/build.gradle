@@ -1,0 +1,51 @@
+buildscript {
+    repositories {
+        maven { url = "https://maven.minecraftforge.net" }
+        mavenCentral()
+    }
+    dependencies {
+        classpath "net.minecraftforge.gradle:ForgeGradle:3.0.197"
+    }
+}
+
+apply plugin: "net.minecraftforge.gradle"
+
+version = "1.0"
+group = "org.universaltranslator"
+archivesBaseName = "mc-auto-translation-tool-forge-1.12.2"
+
+sourceCompatibility = targetCompatibility = "1.8"
+
+if (project.hasProperty("legacyJavac")) {
+    tasks.withType(JavaCompile) {
+        options.fork = true
+        options.forkOptions.executable = project.property("legacyJavac")
+    }
+}
+
+minecraft {
+    mappings channel: "stable", version: "39-1.12"
+}
+
+dependencies {
+    minecraft "net.minecraftforge:forge:1.12.2-14.23.5.2860"
+}
+
+sourceSets.main.java.srcDirs += [
+        "../../translator-core/src/main/java",
+        "../../platform-forge-legacy-common/src/main/java"
+]
+
+jar {
+    from("../../LICENSE")
+    from("../../docs/THIRD_PARTY_OFFLINE.md")
+    manifest {
+        attributes(
+                "FMLCorePlugin": "org.universaltranslator.forge.v1122.LegacyCorePlugin",
+                "FMLCorePluginContainsFMLMod": "true",
+                "ForceLoadAsMod": "true"
+        )
+    }
+}
+
+jar.finalizedBy("reobfJar")

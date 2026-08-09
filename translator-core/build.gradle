@@ -1,0 +1,31 @@
+plugins {
+    id "java-library"
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+    withSourcesJar()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+    options.release = 8
+}
+
+tasks.register("selfTest", JavaExec) {
+    group = "verification"
+    description = "Runs dependency-free core behavior tests."
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "org.universaltranslator.core.CoreSelfTest"
+}
+
+tasks.named("test") {
+    // Verification lives in the dependency-free CoreSelfTest JavaExec task.
+    // Gradle 9 otherwise fails merely because no JUnit engine is configured.
+    failOnNoDiscoveredTests = false
+}
+
+tasks.named("check") {
+    dependsOn("selfTest")
+}

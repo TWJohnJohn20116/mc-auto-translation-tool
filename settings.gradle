@@ -1,0 +1,10 @@
+pluginManagement {
+    repositories {
+        maven { url = "https://maven.fabricmc.net/" }
+        gradlePluginPortal()
+    }
+}
+
+rootProject.name = "mc-auto-translation-tool"
+include("translator-core")
+include("platform-fabric-1.21.11")

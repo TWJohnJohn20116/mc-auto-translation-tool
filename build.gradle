@@ -1,0 +1,6 @@
+plugins {
+    id "base"
+}
+
+group = "org.universaltranslator"
+version = "1.0"

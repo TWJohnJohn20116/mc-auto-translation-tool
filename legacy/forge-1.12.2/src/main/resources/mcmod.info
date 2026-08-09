@@ -1,0 +1,11 @@
+[
+  {
+    "modid": "universal_translator",
+    "name": "MC Auto Translation Tool",
+    "description": "Client-side automatic translation for server-provided text across Minecraft interfaces.",
+    "version": "1.0",
+    "mcversion": "1.12.2",
+    "authorList": ["MC Auto Translation Tool contributors"],
+    "clientSideOnly": true
+  }
+]
