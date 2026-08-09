@@ -31,6 +31,13 @@ test("server-renders the public-benefit project home page", async () => {
   assert.match(html, /1\.8\.9/);
   assert.match(html, /1\.12\.2/);
   assert.match(html, /1\.21\.11/);
+  assert.match(html, /从 GitHub 下载/);
+  assert.match(html, /mc-auto-translation-tool\/raw\/refs\/heads\/main\/downloads\/1\.0/);
+  assert.match(html, /MCAutoTranslationTool-1\.0-mc1\.8\.9-forge\.jar/);
+  assert.match(html, /MCAutoTranslationTool-1\.0-mc1\.12\.2-forge\.jar/);
+  assert.match(html, /MCAutoTranslationTool-1\.0-mc1\.21\.11-fabric\.jar/);
+  assert.match(html, /原作者：B站「我小张7272635」/);
+  assert.match(html, /space\.bilibili\.com\/3546631091783712/);
   assert.match(html, /og-card\.png/);
   assert.match(html, /summary_large_image/);
   assert.doesNotMatch(html, /Your site is taking shape|Building your site/);
@@ -46,7 +53,7 @@ test("keeps privacy and public-benefit claims in source", async () => {
   assert.match(page, /只有需要翻译的自然语言片段会进入/);
   assert.match(page, /玩家名与服务器地址保持原样/);
   assert.match(page, /不会用“理论兼容”冒充已经支持/);
-  assert.match(page, /MIT License · 永久免费/);
+  assert.match(page, /转载或改编请保留原作者署名 · MIT License/);
   assert.match(layout, /lang="zh-CN"/);
   assert.match(layout, /完全公益、免费开源/);
   assert.match(css, /prefers-reduced-motion:\s*reduce/);

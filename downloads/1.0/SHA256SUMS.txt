@@ -1,0 +1,3 @@
+fa0b110dc8105d71fe7a3d2d5ab90df9fbf56327f1bcdef9085c3ba969bce558  MCAutoTranslationTool-1.0-mc1.8.9-forge.jar
+136a8558af18a4c7c37970ceb2de549d2c8d886a009e4ffc5b38cc504404863b  MCAutoTranslationTool-1.0-mc1.12.2-forge.jar
+51d348e513cb7c43e607d7b89d98f81583c361bb2563b96de53290a92ed99a22  MCAutoTranslationTool-1.0-mc1.21.11-fabric.jar

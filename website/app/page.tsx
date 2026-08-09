@@ -36,6 +36,30 @@ const versions = [
   ["更多常见版本", "Forge / Fabric / NeoForge", "分批适配", "next"],
 ];
 
+const githubDownloadBase =
+  "https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/raw/refs/heads/main/downloads/1.0";
+
+const downloads = [
+  {
+    version: "1.8.9",
+    loader: "Forge",
+    java: "Java 8",
+    file: "MCAutoTranslationTool-1.0-mc1.8.9-forge.jar",
+  },
+  {
+    version: "1.12.2",
+    loader: "Forge",
+    java: "Java 8",
+    file: "MCAutoTranslationTool-1.0-mc1.12.2-forge.jar",
+  },
+  {
+    version: "1.21.11",
+    loader: "Fabric",
+    java: "Java 21",
+    file: "MCAutoTranslationTool-1.0-mc1.21.11-fabric.jar",
+  },
+];
+
 export default function Home() {
   return (
     <main>
@@ -186,21 +210,40 @@ export default function Home() {
       </section>
 
       <section className="downloadSection shell" id="download">
-        <div>
+        <div className="downloadIntro">
           <span className="sectionKicker light">1.0 正式版</span>
           <h2>免费使用，也欢迎一起把它做得更好。</h2>
-          <p>当前发布包已经过三版本构建、核心回归测试和实机启动验证，项目源代码在 GitHub 完全公开。</p>
+          <p>选择与你的 Minecraft 版本完全对应的文件。下载由项目 GitHub 仓库直接提供，三个版本不能混用。</p>
         </div>
-        <div className="downloadActions">
-          <a className="lightButton" href="#versions">查看可用版本</a>
-          <span>MIT License · 永久免费</span>
+        <div className="downloadGrid">
+          {downloads.map((item) => (
+            <article className="downloadCard" key={item.version}>
+              <div>
+                <strong>Minecraft {item.version}</strong>
+                <span>{item.loader} · {item.java}</span>
+              </div>
+              <a
+                className="lightButton"
+                href={`${githubDownloadBase}/${item.file}`}
+                aria-label={`从 GitHub 下载 Minecraft ${item.version} ${item.loader} 版本`}
+              >
+                从 GitHub 下载 <span aria-hidden="true">↓</span>
+              </a>
+            </article>
+          ))}
+        </div>
+        <div className="downloadMeta">
+          <a href={`${githubDownloadBase}/SHA256SUMS.txt`}>SHA-256 校验文件</a>
+          <a href="https://github.com/wuxiangdan96-byte/mc-auto-translation-tool">查看 GitHub 源代码</a>
+          <a href="https://space.bilibili.com/3546631091783712">原作者：B站「我小张7272635」</a>
+          <span>转载或改编请保留原作者署名 · MIT License</span>
         </div>
       </section>
 
       <footer className="footer shell">
         <div className="brand footerBrand"><span className="brandIcon">文</span><span><strong>MC 自动翻译工具</strong><small>完全公益的 Minecraft 翻译项目</small></span></div>
         <p>不隶属于 Mojang Studios 或 Microsoft。Minecraft 是 Mojang Studios 的商标。</p>
-        <span>© 2026 MC Auto Translation Tool</span>
+        <a href="https://space.bilibili.com/3546631091783712">© 2026 原作者：我小张7272635</a>
       </footer>
     </main>
   );
