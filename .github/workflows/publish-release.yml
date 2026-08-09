@@ -1,0 +1,76 @@
+name: Publish release downloads
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/publish-release.yml"
+      - "downloads/**"
+      - "gradle.properties"
+      - "CHANGELOG.md"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Read and validate release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^mod_version=//p' gradle.properties | head -n 1)"
+          if [[ -z "$version" || ! "$version" =~ ^[0-9]+([.][0-9]+)*([_-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid or missing mod_version in gradle.properties" >&2
+            exit 1
+          fi
+          release_dir="downloads/$version"
+          if [[ ! -d "$release_dir" ]]; then
+            echo "Missing release directory: $release_dir" >&2
+            exit 1
+          fi
+          mapfile -t jars < <(find "$release_dir" -maxdepth 1 -type f -name '*.jar' -print | sort)
+          if [[ "${#jars[@]}" -eq 0 || ! -f "$release_dir/SHA256SUMS.txt" ]]; then
+            echo "Release must contain JAR files and SHA256SUMS.txt" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "release_dir=$release_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Verify release checksums
+        shell: bash
+        working-directory: ${{ steps.version.outputs.release_dir }}
+        run: sha256sum --check SHA256SUMS.txt
+
+      - name: Create or refresh GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          RELEASE_DIR: ${{ steps.version.outputs.release_dir }}
+        run: |
+          set -euo pipefail
+          mapfile -t assets < <(find "$RELEASE_DIR" -maxdepth 1 -type f \( -name '*.jar' -o -name 'SHA256SUMS.txt' \) -print | sort)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${assets[@]}" --clobber
+          else
+            gh release create "$TAG" "${assets[@]}" \
+              --target "$GITHUB_SHA" \
+              --title "MC 自动翻译工具 $VERSION" \
+              --notes-file CHANGELOG.md \
+              --latest
+          fi

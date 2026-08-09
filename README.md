@@ -2,12 +2,30 @@
 
 一个面向 Minecraft Java 版的公益、开源、纯客户端全界面翻译模组。
 
+[⬇️ 下载最新版](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest) ·
+[🌐 官方下载页](https://mc-auto-translation-tool.wuxiangdan96.chatgpt.site/#download) ·
+[📖 安装与使用说明](docs/USER_GUIDE_zh-CN.md)
+
 原作者：[B站「我小张7272635」](https://space.bilibili.com/3546631091783712)。
 转载、再发布或改编时，请保留原作者署名与 MIT License 版权声明。
 
 目标是翻译服务器发送给玩家的可见文字，包括聊天、记分板、Tab 列表、
 Action Bar、标题、Boss Bar、容器标题、物品名称与 Lore、告示牌、书、
 全息文字和实体自定义名称。玩家名、数字、网址和 Minecraft 样式代码默认保留。
+
+## 下载
+
+推荐从 [GitHub Releases 下载最新版](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest)。
+请务必选择与你的 Minecraft 版本和模组加载器完全对应的文件：
+
+| Minecraft | 加载器 | 下载 |
+| --- | --- | --- |
+| 1.8.9 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.0/MCAutoTranslationTool-1.0-mc1.8.9-forge.jar) |
+| 1.12.2 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.0/MCAutoTranslationTool-1.0-mc1.12.2-forge.jar) |
+| 1.21.11 | Fabric | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.0/MCAutoTranslationTool-1.0-mc1.21.11-fabric.jar) |
+
+[查看全部版本与更新说明](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases) ·
+[SHA-256 校验文件](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.0/SHA256SUMS.txt)
 
 ## 设计原则
 
