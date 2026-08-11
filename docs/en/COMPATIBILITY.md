@@ -10,13 +10,16 @@ This document records only completed validation. “Builds successfully” is no
 | Minecraft | Loader | Java | Build and self-test | Launched to main menu | Full manual in-server regression |
 | --- | --- | --- | --- | --- | --- |
 | 26.1 | Fabric Loader 0.19.3 + Fabric API 0.145.1 | 25 | Passed | Passed | Pending |
+| 26.1.2 | Fabric Loader 0.19.3 + Fabric API 0.155.2 | 25 | Passed | Pending | Pending |
 | 26.2 | Fabric Loader 0.19.3 + Fabric API 0.157.0 | 25 | Passed | Pending | Pending |
 
 Fabric 26.1 completed a clean build, Mixin injection checks, and an actual launch to the main menu.
+Fabric 26.1.2 was fully ported from 26.1 and completed a clean build, remapping, and the shared-core
+self-test.
 Fabric 26.2 has been migrated to the new `Minecraft.gui` and `Hud` APIs, and its Mixin targets for
 chat, scoreboards, the Tab list, titles, the Action Bar, Boss Bars, text drawing, and tooltips were
 checked. For 26.2, only clean build, remapping, and shared-core self-test results are recorded so far.
-Both targets remain unreleased until their manual in-server regressions are complete.
+All three development targets remain unreleased until their manual in-server regressions are complete.
 
 ## Version 1.1 release validation
 
@@ -57,7 +60,7 @@ Planned candidates, in order:
 6. 1.21.1 Fabric/NeoForge;
 7. later releases that retain a substantial player base.
 
-Work on those versions will not begin until the 1.8.9, 1.12.2, 1.21.11, 26.1, and 26.2 in-server regressions
+Work on those versions will not begin until the 1.8.9, 1.12.2, 1.21.11, 26.1, 26.1.2, and 26.2 in-server regressions
 all pass, avoiding the introduction of more unverified rendering differences at the same time.
 
 ## In-server regression checklist

@@ -9,6 +9,7 @@ Each Minecraft version requires its matching JAR. Do not mix them:
 | Minecraft | Mod loader | Java | Also required |
 | --- | --- | --- | --- |
 | 26.2 (no released JAR yet) | Fabric | 25 | Fabric API |
+| 26.1.2 (no released JAR yet) | Fabric | 25 | Fabric API |
 | 26.1 (no released JAR yet) | Fabric | 25 | Fabric API |
 | 1.21.11 | Fabric | 21 | Fabric API |
 | 1.12.2 | Forge 14.23.5.x | 8 | No additional mod |
@@ -205,8 +206,8 @@ chat verification may impose their own restrictions, which is why the feature is
 
 This guide covers the `1.1` release. All three target versions completed clean builds, remapping,
 and the shared-core self-test. Hands-on launch validation completed before 1.0 remains the
-compatibility baseline. Fabric 26.1 passed build and main-menu launch checks. Fabric 26.2 has source
-adaptation and build checks complete, with an actual launch still pending. Neither has a release JAR
-or completed in-server regression. Back up the configuration before updating. When reporting untranslated
+compatibility baseline. Fabric 26.1 passed build and main-menu launch checks. Fabric 26.1.2 and 26.2
+have source adaptation and build checks complete, with actual launches still pending. None of the
+three development targets has a release JAR or completed in-server regression. Back up the configuration before updating. When reporting untranslated
 interface text, include the Minecraft version, loader version, interface location, and `latest.log`,
 but omit API keys and private chat content.

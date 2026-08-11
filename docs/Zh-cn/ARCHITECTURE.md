@@ -36,7 +36,7 @@
 
 ## 捕获策略
 
-- Fabric 1.21.11、26.1 与 26.2 分别在对应版本的 `DrawContext`/`GuiGraphicsExtractor` 和
+- Fabric 1.21.11、26.1、26.1.2 与 26.2 分别在对应版本的 `DrawContext`/`GuiGraphicsExtractor` 和
   `TextRenderer`/`Font` 最终渲染入口替换显示副本，
   并在聊天、记分板、Tab、标题、Action Bar 和 Boss Bar 渲染期间记录内容类型。
 - Forge 1.8.9/1.12.2 使用同一个 LaunchWrapper ASM 核心插件，在

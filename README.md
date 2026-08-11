@@ -26,8 +26,8 @@ Action Bar、标题、Boss Bar、容器标题、物品名称与 Lore、告示牌
 | 1.12.2 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.1/MCAutoTranslationTool-1.1-mc1.12.2-forge.jar) |
 | 1.21.11 | Fabric | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.1/MCAutoTranslationTool-1.1-mc1.21.11-fabric.jar) |
 
-Minecraft 26.1 Fabric 的源码适配已合入并通过构建与主菜单启动检查，但当前尚未发布
-可下载 JAR。请勿把 1.21.11 文件用于 26.1。
+Minecraft 26.1、26.1.2 与 26.2 Fabric 的源码适配已合入；26.1 已通过主菜单启动检查，
+26.1.2 与 26.2 已通过构建检查，但当前均未发布可下载 JAR。请勿混用不同版本的文件。
 
 [查看全部版本与更新说明](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases) ·
 [SHA-256 校验文件](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.1/SHA256SUMS.txt)
@@ -49,6 +49,7 @@ Minecraft 26.1 Fabric 的源码适配已合入并通过构建与主菜单启动�
 | Minecraft | 加载器 | Java |
 | --- | --- | --- |
 | 26.2（开发中） | Fabric | 25 |
+| 26.1.2（开发中） | Fabric | 25 |
 | 26.1 | Fabric | 25 |
 | 1.21.11 | Fabric | 21 |
 | 1.12.2 | Forge | 8 |
@@ -56,8 +57,9 @@ Minecraft 26.1 Fabric 的源码适配已合入并通过构建与主菜单启动�
 
 不同游戏版本会生成不同 JAR，但共享相同的核心逻辑和配置语义。
 
-主分支另包含 Fabric 26.1 与 26.2 开发适配，均使用 Java 25。26.2 已完成干净构建、
-重混淆及共享核心自测；在实机启动和服务器内回归完成前，不列入上方正式版下载。
+主分支另包含 Fabric 26.1、26.1.2 与 26.2 开发适配，均使用 Java 25。26.1.2 与 26.2
+已完成干净构建、重混淆及共享核心自测；在实机启动和服务器内回归完成前，不列入
+上方正式版下载。
 
 ## 当前状态
 
@@ -68,8 +70,9 @@ Minecraft 26.1 Fabric 的源码适配已合入并通过构建与主菜单启动�
 - Forge 1.12.2；
 - Forge 1.8.9。
 
-未发布的 Fabric 26.1 源码适配已额外通过干净构建、Mixin 注入和主菜单启动检查，
-服务器内人工回归与发行文件仍待后续发布流程完成。
+未发布的 Fabric 26.1 源码适配已额外通过干净构建、Mixin 注入和主菜单启动检查；
+26.1.2 与 26.2 已通过干净构建、重混淆及共享核心自测。服务器内人工回归与发行文件
+仍待后续发布流程完成。
 
 进入游戏后按 `U` 打开设置。模组默认关闭；新安装默认选择“离线”，并使用
 “仅译文”替换方式，避免记分板和容器文字因双语拼接溢出。按 `F8` 可随时开启或
