@@ -7,11 +7,14 @@ import org.universaltranslator.core.TextKind;
 import org.universaltranslator.core.TranslationCache;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationProviderStatus;
+import org.universaltranslator.core.TranslationDiagnosticsSnapshot;
 import org.universaltranslator.core.TranslationStore;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.RecentUserText;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -57,6 +60,7 @@ final class FabricTranslationRuntime {
         MinecraftClient client = MinecraftClient.getInstance();
         if (active == null || config == null || !config.allows(kind)
                 || client.currentScreen instanceof UniversalTranslatorConfigScreen
+                || client.currentScreen instanceof UniversalTranslatorDiagnosticsScreen
                 || FabricLocalTextGuard.isLocalChatInput(client, original)
                 || RECENT_USER_TEXT.shouldPreserve(original)
                 || client.world == null || client.getNetworkHandler() == null) {
@@ -125,12 +129,42 @@ final class FabricTranslationRuntime {
                 ? ((TranslationProviderStatus) provider).status() : "";
     }
 
+    static TranslationDiagnosticsSnapshot diagnostics() {
+        FabricConfig config = activeConfig;
+        TranslationProvider provider = activeProvider;
+        if (config == null) {
+            return new TranslationDiagnosticsSnapshot(
+                    false, "", "", "", null, false, false, -1L, -1L, "尚未载入设置");
+        }
+        Path modelFile = config.offlineDirectory.resolve(config.offlineModel.modelFile());
+        return new TranslationDiagnosticsSnapshot(
+                config.enabled,
+                config.provider,
+                provider == null ? "" : provider.id(),
+                config.targetLanguage,
+                config.offlineModel,
+                config.offlineAutoDownload,
+                config.diskCache,
+                fileSize(modelFile),
+                fileSize(config.cacheFile),
+                status());
+    }
+
+    private static long fileSize(Path file) {
+        try {
+            return Files.isRegularFile(file) ? Files.size(file) : -1L;
+        } catch (IOException ignored) {
+            return -1L;
+        }
+    }
+
     static List<String> translateLinesForRender(List<String> originals, TextKind kind) {
         RenderTranslationSession active = session;
         FabricConfig config = activeConfig;
         MinecraftClient client = MinecraftClient.getInstance();
         if (active == null || config == null || !config.allows(kind)
                 || client.currentScreen instanceof UniversalTranslatorConfigScreen
+                || client.currentScreen instanceof UniversalTranslatorDiagnosticsScreen
                 || TranslationRenderContext.isTextInput()
                 || client.world == null || client.getNetworkHandler() == null) {
             return originals;

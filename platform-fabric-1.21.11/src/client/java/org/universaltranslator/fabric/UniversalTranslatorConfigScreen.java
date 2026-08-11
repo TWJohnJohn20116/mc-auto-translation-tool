@@ -6,6 +6,7 @@ import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.text.Text;
 import org.universaltranslator.core.TranslationDisplayMode;
+import org.universaltranslator.core.OfflineModel;
 import org.universaltranslator.core.TranslationTextColor;
 
 /** Minimal dependency-free settings screen, opened with U by default. */
@@ -17,11 +18,14 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private boolean translateOther;
     private boolean diskCache;
     private boolean offlineAutoDownload;
+    private OfflineModel offlineModel;
     private boolean apiFallback;
     private TranslationDisplayMode displayMode;
     private boolean translateEnglishOnly;
     private TranslationTextColor translatedTextColor;
     private String provider;
+    private String targetLanguageValue;
+    private String endpointValue;
     private TextFieldWidget targetLanguage;
     private TextFieldWidget endpoint;
     private ButtonWidget enabledButton;
@@ -31,7 +35,9 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private ButtonWidget providerButton;
     private ButtonWidget displayButton;
     private ButtonWidget downloadButton;
+    private ButtonWidget modelButton;
     private ButtonWidget fallbackButton;
+    private ButtonWidget diagnosticsButton;
     private ButtonWidget mixedTextButton;
     private ButtonWidget colorButton;
     private String status = "";
@@ -45,11 +51,14 @@ final class UniversalTranslatorConfigScreen extends Screen {
         this.translateOther = config.translateOther;
         this.diskCache = config.diskCache;
         this.offlineAutoDownload = config.offlineAutoDownload;
+        this.offlineModel = config.offlineModel;
         this.apiFallback = config.apiFallback;
         this.displayMode = config.displayMode;
         this.translateEnglishOnly = config.translateEnglishOnly;
         this.translatedTextColor = config.translatedTextColor;
         this.provider = config.provider;
+        this.targetLanguageValue = config.targetLanguage;
+        this.endpointValue = config.endpoint;
     }
 
     @Override
@@ -98,16 +107,27 @@ final class UniversalTranslatorConfigScreen extends Screen {
             apiFallback = !apiFallback;
             refreshLabels();
         }).dimensions(layout.right, layout.row(4), layout.buttonWidth, 20).build());
+        this.modelButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+            offlineModel = offlineModel.next();
+            refreshLabels();
+        }).dimensions(left, layout.row(5), layout.buttonWidth, 20).build());
+        this.diagnosticsButton = addDrawableChild(ButtonWidget.builder(Text.literal("翻译诊断"), button -> {
+            if (client != null) {
+                targetLanguageValue = targetLanguage.getText();
+                endpointValue = endpoint.getText();
+                client.setScreen(new UniversalTranslatorDiagnosticsScreen(this));
+            }
+        }).dimensions(layout.right, layout.row(5), layout.buttonWidth, 20).build());
 
         this.targetLanguage = addDrawableChild(new TextFieldWidget(
                 this.textRenderer, left, layout.targetY, layout.buttonWidth, 20, Text.literal("目标语言")));
         this.targetLanguage.setMaxLength(32);
-        this.targetLanguage.setText(original.targetLanguage);
+        this.targetLanguage.setText(targetLanguageValue);
         this.endpoint = addDrawableChild(new TextFieldWidget(
                 this.textRenderer, left, layout.endpointY, layout.totalWidth, 20,
                 Text.literal("LibreTranslate 地址")));
         this.endpoint.setMaxLength(512);
-        this.endpoint.setText(original.endpoint);
+        this.endpoint.setText(endpointValue);
 
         addDrawableChild(ButtonWidget.builder(Text.literal("保存并应用"), button -> saveAndApply())
                 .dimensions(left, layout.saveY, layout.buttonWidth, 20).build());
@@ -127,8 +147,10 @@ final class UniversalTranslatorConfigScreen extends Screen {
         mixedTextButton.setMessage(Text.literal("混合文本仅译英文: " + onOff(translateEnglishOnly)));
         colorButton.setMessage(Text.literal("译文颜色: " + colorLabel(translatedTextColor)));
         downloadButton.setMessage(Text.literal("模型下载: " + onOff(offlineAutoDownload)));
+        modelButton.setMessage(Text.literal("离线模型: " + offlineModel.displayName()));
         fallbackButton.setMessage(Text.literal("API 回退: " + onOff(apiFallback)));
         downloadButton.active = isOffline();
+        modelButton.active = isOffline();
         fallbackButton.active = isOffline();
     }
 
@@ -158,6 +180,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
                     provider,
                     endpoint.getText(),
                     offlineAutoDownload,
+                    offlineModel,
                     apiFallback,
                     diskCache);
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
@@ -272,8 +295,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
         int buttonWidth = (totalWidth - gap) / 2;
         int left = (this.width - totalWidth) / 2;
         int top = Math.max(20, Math.min(44, 20 + Math.max(0, this.height - 220) / 4));
-        int rowStep = this.height >= 300 ? 26 : 22;
-        int targetY = top + rowStep * 5 + 2;
+        int rowStep = this.height >= 300 ? 26 : (this.height >= 260 ? 22 : 20);
+        int targetY = top + rowStep * 6 + 2;
         int endpointY = targetY + (this.height >= 300 ? 32 : 28);
         int saveY = this.height >= 330 ? 270 : Math.max(endpointY + 22, this.height - 24);
         return new Layout(left, left + buttonWidth + gap, totalWidth, buttonWidth,

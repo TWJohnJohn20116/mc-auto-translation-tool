@@ -16,6 +16,10 @@ archivesBaseName = "mc-auto-translation-tool-forge-1.12.2"
 
 sourceCompatibility = targetCompatibility = "1.8"
 
+tasks.withType(JavaCompile) {
+    options.encoding = "UTF-8"
+}
+
 if (project.hasProperty("legacyJavac")) {
     tasks.withType(JavaCompile) {
         options.fork = true
