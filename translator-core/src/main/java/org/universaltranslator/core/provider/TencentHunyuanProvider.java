@@ -2,6 +2,7 @@ package org.universaltranslator.core.provider;
 
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationRequest;
+import org.universaltranslator.core.TargetLanguage;
 import org.universaltranslator.core.net.HttpJsonClient;
 import org.universaltranslator.core.net.JsonStrings;
 import org.universaltranslator.core.net.TencentCloudV3Signer;
@@ -99,14 +100,13 @@ public final class TencentHunyuanProvider implements TranslationProvider {
     }
 
     private static String normalizeLanguage(String language) {
-        String normalized = language.trim().toLowerCase(Locale.ROOT).replace('_', '-');
-        if ("zh-cn".equals(normalized) || "zh-hans".equals(normalized)) {
+        if (TargetLanguage.isSimplifiedChinese(language)) {
             return "zh";
         }
-        if ("zh-tw".equals(normalized) || "zh-hk".equals(normalized)
-                || "zh-tr".equals(normalized) || "zh-hant".equals(normalized)) {
+        if (TargetLanguage.isTraditionalChinese(language)) {
             return "zh-TR";
         }
+        String normalized = language.trim().toLowerCase(Locale.ROOT).replace('_', '-');
         int separator = normalized.indexOf('-');
         return separator < 0 ? normalized : normalized.substring(0, separator);
     }

@@ -7,6 +7,7 @@ import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.text.Text;
 import org.universaltranslator.core.TranslationDisplayMode;
 import org.universaltranslator.core.OfflineModel;
+import org.universaltranslator.core.TargetLanguage;
 import org.universaltranslator.core.TranslationTextColor;
 
 /** Minimal dependency-free settings screen, opened with U by default. */
@@ -40,6 +41,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private ButtonWidget diagnosticsButton;
     private ButtonWidget mixedTextButton;
     private ButtonWidget colorButton;
+    private ButtonWidget targetLanguageButton;
     private String status = "";
 
     UniversalTranslatorConfigScreen(Screen parent, FabricConfig config) {
@@ -123,6 +125,10 @@ final class UniversalTranslatorConfigScreen extends Screen {
                 this.textRenderer, left, layout.targetY, layout.buttonWidth, 20, Text.literal("目标语言")));
         this.targetLanguage.setMaxLength(32);
         this.targetLanguage.setText(targetLanguageValue);
+        this.targetLanguageButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+            targetLanguage.setText(TargetLanguage.nextPreset(targetLanguage.getText()));
+            refreshLabels();
+        }).dimensions(layout.right, layout.targetY, layout.buttonWidth, 20).build());
         this.endpoint = addDrawableChild(new TextFieldWidget(
                 this.textRenderer, left, layout.endpointY, layout.totalWidth, 20,
                 Text.literal("LibreTranslate 地址")));
@@ -149,6 +155,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
         downloadButton.setMessage(Text.literal("模型下载: " + onOff(offlineAutoDownload)));
         modelButton.setMessage(Text.literal("离线模型: " + offlineModel.displayName()));
         fallbackButton.setMessage(Text.literal("API 回退: " + onOff(apiFallback)));
+        targetLanguageButton.setMessage(Text.literal("目标: "
+                + TargetLanguage.displayName(targetLanguage.getText())));
         downloadButton.active = isOffline();
         modelButton.active = isOffline();
         fallbackButton.active = isOffline();
@@ -212,7 +220,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         context.drawCenteredTextWithShadow(this.textRenderer, this.title, this.width / 2, 18, 0xFFFFFF);
         Layout layout = layout();
         int left = layout.left;
-        context.drawTextWithShadow(this.textRenderer, Text.literal("目标语言 (例如 zh-CN)"),
+        context.drawTextWithShadow(this.textRenderer, Text.literal("目标语言代码 / 快捷选择"),
                 left, layout.targetY - 11, 0xA0A0A0);
         context.drawTextWithShadow(this.textRenderer,
                 Text.literal("LibreTranslate /translate 地址（仅 API 模式/回退使用）"),
