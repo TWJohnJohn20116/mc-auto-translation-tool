@@ -9,10 +9,12 @@ This document records only completed validation. “Builds successfully” is no
 
 | Minecraft | Loader | Java | Build and self-test | Launched to main menu | Full manual in-server regression |
 | --- | --- | --- | --- | --- | --- |
+| 1.20.1 | Fabric Loader 0.19.3 + Fabric API 0.92.11 | 17 | Passed | Pending | Pending |
 | 26.1 | Fabric Loader 0.19.3 + Fabric API 0.145.1 | 25 | Passed | Passed | Pending |
 | 26.2 | Fabric Loader 0.19.3 + Fabric API 0.157.0 | 25 | Passed | Pending | Pending |
 
-Fabric 26.1 completed a clean build, Mixin injection checks, and an actual launch to the main menu.
+Fabric 1.20.1 completed its HUD, text-input, and TextRenderer signature migration, a clean build,
+remapping, and the shared-core self-test. Fabric 26.1 completed a clean build, Mixin injection checks, and an actual launch to the main menu.
 Fabric 26.2 has been migrated to the new `Minecraft.gui` and `Hud` APIs, and its Mixin targets for
 chat, scoreboards, the Tab list, titles, the Action Bar, Boss Bars, text drawing, and tooltips were
 checked. For 26.2, only clean build, remapping, and shared-core self-test results are recorded so far.
