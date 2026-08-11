@@ -30,8 +30,8 @@ public final class LegacyRenderedTextBridge {
         if (text.equals(translated)) {
             return text;
         }
-        return TranslationTextStyling.applyLegacyColor(
-                translated, LegacyTranslationRuntime.translatedTextColor());
+        return TranslationTextStyling.applyTranslatedStyle(
+                text, translated, LegacyTranslationRuntime.translatedTextColor());
     }
 
     /** High-level tooltip hook used by both 1.8.9 and 1.12.2. */
@@ -58,8 +58,8 @@ public final class LegacyRenderedTextBridge {
             String original = lines.get(index);
             String translated = translatedLines.get(index);
             if (original != null && !original.equals(translated)) {
-                translated = TranslationTextStyling.applyLegacyColor(
-                        translated, LegacyTranslationRuntime.translatedTextColor());
+                translated = TranslationTextStyling.applyTranslatedStyle(
+                        original, translated, LegacyTranslationRuntime.translatedTextColor());
             }
             if (original == null ? translated != null : !original.equals(translated)) {
                 if (replacement == null) {
