@@ -5,6 +5,7 @@ import org.universaltranslator.core.TranslationDisplayMode;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TextKind;
 import org.universaltranslator.core.LocalConfigSecurity;
+import org.universaltranslator.core.OfflineModel;
 import org.universaltranslator.core.provider.LibreTranslateProvider;
 import org.universaltranslator.core.provider.TencentHunyuanProvider;
 import org.universaltranslator.core.provider.FallbackTranslationProvider;
@@ -38,7 +39,7 @@ final class FabricConfig {
     final String tencentSecretKey;
     final String tencentModel;
     final boolean offlineAutoDownload;
-    final String offlineModel;
+    final OfflineModel offlineModel;
     final boolean apiFallback;
     final String apiFallbackProvider;
     final Path offlineDirectory;
@@ -67,7 +68,7 @@ final class FabricConfig {
                 "tencent-model", "hunyuan-translation-lite").trim();
         this.offlineAutoDownload = Boolean.parseBoolean(
                 properties.getProperty("offline-auto-download", "true"));
-        this.offlineModel = properties.getProperty("offline-model", "lite").trim();
+        this.offlineModel = OfflineModel.fromConfig(properties.getProperty("offline-model", "lite"));
         this.apiFallback = Boolean.parseBoolean(properties.getProperty("api-fallback", "false"));
         this.apiFallbackProvider = properties.getProperty(
                 "api-fallback-provider", "libretranslate").trim();
@@ -121,6 +122,7 @@ final class FabricConfig {
             String provider,
             String endpoint,
             boolean offlineAutoDownload,
+            OfflineModel offlineModel,
             boolean apiFallback,
             boolean diskCache
     ) {
@@ -136,6 +138,8 @@ final class FabricConfig {
         properties.setProperty("provider", provider.trim());
         properties.setProperty("libretranslate-endpoint", endpoint.trim());
         properties.setProperty("offline-auto-download", Boolean.toString(offlineAutoDownload));
+        properties.setProperty("offline-model",
+                (offlineModel == null ? OfflineModel.LITE : offlineModel).configName());
         properties.setProperty("api-fallback", Boolean.toString(apiFallback));
         properties.setProperty("disk-cache", Boolean.toString(diskCache));
         return new FabricConfig(properties, configFile, cacheFile);
@@ -254,7 +258,7 @@ final class FabricConfig {
         properties.setProperty("tencent-secret-key", tencentSecretKey);
         properties.setProperty("tencent-model", tencentModel);
         properties.setProperty("offline-auto-download", Boolean.toString(offlineAutoDownload));
-        properties.setProperty("offline-model", offlineModel);
+        properties.setProperty("offline-model", offlineModel.configName());
         properties.setProperty("api-fallback", Boolean.toString(apiFallback));
         properties.setProperty("api-fallback-provider", apiFallbackProvider);
         properties.setProperty("disk-cache", Boolean.toString(diskCache));

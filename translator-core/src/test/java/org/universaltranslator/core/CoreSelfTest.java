@@ -59,7 +59,51 @@ public final class CoreSelfTest {
         verifiesDownloadedFileHashes();
         reportsVerifiedDownloadProgress();
         extractsOfflineEngineArchivesSafely();
+        normalizesOfflineModelSelections();
+        formatsSecretFreeDiagnostics();
         System.out.println("CoreSelfTest: all checks passed");
+    }
+
+    private static void normalizesOfflineModelSelections() throws Exception {
+        assertEquals(OfflineModel.LITE, OfflineModel.fromConfig(null));
+        assertEquals(OfflineModel.LITE, OfflineModel.fromConfig("unknown-model"));
+        assertEquals(OfflineModel.LITE, OfflineModel.fromConfig(
+                "qwen2.5-0.5b-instruct-q4-k-m"));
+        assertEquals(OfflineModel.QUALITY, OfflineModel.fromConfig(" QUALITY "));
+        assertEquals(OfflineModel.QUALITY, OfflineModel.fromConfig(
+                "qwen2.5-1.5b-instruct-q4-k-m"));
+        assertEquals(OfflineModel.QUALITY, OfflineModel.LITE.next());
+        assertEquals(OfflineModel.LITE, OfflineModel.QUALITY.next());
+
+        Path directory = Files.createTempDirectory("universal-translator-model-selection-");
+        try (LlamaCppOfflineProvider provider = LlamaCppOfflineProvider.forModel(
+                directory, false, "invalid-selection")) {
+            assertEquals("offline-llama:" + OfflineModel.LITE.modelId(), provider.id());
+        }
+    }
+
+    private static void formatsSecretFreeDiagnostics() {
+        TranslationDiagnosticsSnapshot snapshot = new TranslationDiagnosticsSnapshot(
+                true,
+                "offline",
+                "fallback:offline-llama:model:libretranslate:https://secret.example/translate",
+                "zh-CN",
+                OfflineModel.QUALITY,
+                true,
+                true,
+                OfflineModel.QUALITY.expectedBytes(),
+                1_500L,
+                "离线模型失败 https://secret.example/translate api-key=abc123\n重试中");
+        String output = String.join("\n", snapshot.displayLines());
+        assertTrue(output.contains("离线模型：Quality"));
+        assertTrue(output.contains("模型文件：已安装并且大小正确"));
+        assertTrue(output.contains("运行服务：离线模型 + API 回退"));
+        assertFalse(output.contains("secret.example"));
+        assertFalse(output.contains("https://"));
+        assertFalse(output.contains("abc123"));
+        assertFalse(output.contains("\n重试中"));
+        assertTrue(output.contains("[地址已隐藏]"));
+        assertTrue(output.contains("api-key=[已隐藏]"));
     }
 
     private static void keepsOriginalTextInBilingualMode() throws Exception {

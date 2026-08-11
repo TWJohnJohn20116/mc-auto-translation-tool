@@ -7,6 +7,7 @@ import net.minecraft.client.gui.GuiTextField;
 
 import java.io.IOException;
 import org.universaltranslator.core.TranslationDisplayMode;
+import org.universaltranslator.core.OfflineModel;
 import org.universaltranslator.core.TranslationTextColor;
 
 /** Dependency-free settings UI shared by Forge 1.8.9 and 1.12.2. */
@@ -23,6 +24,8 @@ final class LegacyConfigScreen extends GuiScreen {
     private static final int FALLBACK = 10;
     private static final int MIXED_TEXT = 11;
     private static final int COLOR = 12;
+    private static final int MODEL = 13;
+    private static final int DIAGNOSTICS = 14;
 
     private final GuiScreen parent;
     private final LegacyConfig original;
@@ -31,11 +34,14 @@ final class LegacyConfigScreen extends GuiScreen {
     private boolean translateOther;
     private boolean diskCache;
     private boolean offlineAutoDownload;
+    private OfflineModel offlineModel;
     private boolean apiFallback;
     private TranslationDisplayMode displayMode;
     private boolean translateEnglishOnly;
     private TranslationTextColor translatedTextColor;
     private String provider;
+    private String targetLanguageValue;
+    private String endpointValue;
     private GuiTextField targetLanguage;
     private GuiTextField endpoint;
     private FontRenderer renderer;
@@ -49,11 +55,14 @@ final class LegacyConfigScreen extends GuiScreen {
         this.translateOther = config.translateOther;
         this.diskCache = config.diskCache;
         this.offlineAutoDownload = config.offlineAutoDownload;
+        this.offlineModel = config.offlineModel;
         this.apiFallback = config.apiFallback;
         this.displayMode = config.displayMode;
         this.translateEnglishOnly = config.translateEnglishOnly;
         this.translatedTextColor = config.translatedTextColor;
         this.provider = config.provider;
+        this.targetLanguageValue = config.targetLanguage;
+        this.endpointValue = config.endpoint;
     }
 
     @Override
@@ -72,12 +81,15 @@ final class LegacyConfigScreen extends GuiScreen {
         buttonList.add(new GuiButton(COLOR, layout.right, layout.row(3), layout.buttonWidth, 20, ""));
         buttonList.add(new GuiButton(DOWNLOAD, left, layout.row(4), layout.buttonWidth, 20, ""));
         buttonList.add(new GuiButton(FALLBACK, layout.right, layout.row(4), layout.buttonWidth, 20, ""));
+        buttonList.add(new GuiButton(MODEL, left, layout.row(5), layout.buttonWidth, 20, ""));
+        buttonList.add(new GuiButton(DIAGNOSTICS, layout.right, layout.row(5),
+                layout.buttonWidth, 20, "翻译诊断"));
         targetLanguage = new GuiTextField(20, renderer, left, layout.targetY, layout.buttonWidth, 20);
         targetLanguage.setMaxStringLength(32);
-        targetLanguage.setText(original.targetLanguage);
+        targetLanguage.setText(targetLanguageValue);
         endpoint = new GuiTextField(21, renderer, left, layout.endpointY, layout.totalWidth, 20);
         endpoint.setMaxStringLength(512);
-        endpoint.setText(original.endpoint);
+        endpoint.setText(endpointValue);
         buttonList.add(new GuiButton(SAVE, left, layout.saveY, layout.buttonWidth, 20, "保存并应用"));
         buttonList.add(new GuiButton(CANCEL, layout.right, layout.saveY, layout.buttonWidth, 20, "取消"));
         refreshLabels();
@@ -107,6 +119,13 @@ final class LegacyConfigScreen extends GuiScreen {
             offlineAutoDownload = !offlineAutoDownload;
         } else if (button.id == FALLBACK) {
             apiFallback = !apiFallback;
+        } else if (button.id == MODEL) {
+            offlineModel = offlineModel.next();
+        } else if (button.id == DIAGNOSTICS) {
+            targetLanguageValue = targetLanguage.getText();
+            endpointValue = endpoint.getText();
+            mc.displayGuiScreen(new LegacyDiagnosticsScreen(this));
+            return;
         } else if (button.id == SAVE) {
             saveAndApply();
         } else if (button.id == CANCEL) {
@@ -126,8 +145,10 @@ final class LegacyConfigScreen extends GuiScreen {
         button(MIXED_TEXT).displayString = "混合文本仅译英文: " + onOff(translateEnglishOnly);
         button(COLOR).displayString = "译文颜色: " + colorLabel(translatedTextColor);
         button(DOWNLOAD).displayString = "模型下载: " + onOff(offlineAutoDownload);
+        button(MODEL).displayString = "离线模型: " + offlineModel.displayName();
         button(FALLBACK).displayString = "API 回退: " + onOff(apiFallback);
         button(DOWNLOAD).enabled = isOffline();
+        button(MODEL).enabled = isOffline();
         button(FALLBACK).enabled = isOffline();
     }
 
@@ -166,6 +187,7 @@ final class LegacyConfigScreen extends GuiScreen {
                     provider,
                     endpoint.getText(),
                     offlineAutoDownload,
+                    offlineModel,
                     apiFallback,
                     diskCache);
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
@@ -292,8 +314,8 @@ final class LegacyConfigScreen extends GuiScreen {
         int buttonWidth = (totalWidth - gap) / 2;
         int left = (width - totalWidth) / 2;
         int top = Math.max(20, Math.min(44, 20 + Math.max(0, height - 220) / 4));
-        int rowStep = height >= 300 ? 26 : 22;
-        int targetY = top + rowStep * 5 + 2;
+        int rowStep = height >= 300 ? 26 : (height >= 260 ? 22 : 20);
+        int targetY = top + rowStep * 6 + 2;
         int endpointY = targetY + (height >= 300 ? 32 : 28);
         int saveY = height >= 330 ? 270 : Math.max(endpointY + 22, height - 24);
         return new Layout(left, left + buttonWidth + gap, totalWidth, buttonWidth,

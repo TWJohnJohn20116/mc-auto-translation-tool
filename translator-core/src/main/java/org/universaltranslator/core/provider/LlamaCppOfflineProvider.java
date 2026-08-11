@@ -3,6 +3,7 @@ package org.universaltranslator.core.provider;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationRequest;
 import org.universaltranslator.core.TranslationProviderStatus;
+import org.universaltranslator.core.OfflineModel;
 import org.universaltranslator.core.offline.OfflineEngineAsset;
 import org.universaltranslator.core.offline.SafeArchiveExtractor;
 import org.universaltranslator.core.offline.VerifiedDownloader;
@@ -22,26 +23,26 @@ import java.util.concurrent.TimeUnit;
 /** Fully local provider using a loopback-only llama.cpp child process. */
 public final class LlamaCppOfflineProvider
         implements TranslationProvider, TranslationProviderStatus, AutoCloseable {
-    public static final String DEFAULT_MODEL_ID = "qwen2.5-0.5b-instruct-q4-k-m";
-    public static final String DEFAULT_MODEL_FILE = "qwen2.5-0.5b-instruct-q4_k_m.gguf";
+    public static final String DEFAULT_MODEL_ID = OfflineModel.LITE.modelId();
+    public static final String DEFAULT_MODEL_FILE = OfflineModel.LITE.modelFile();
     public static final URI DEFAULT_MODEL_URI = URI.create(
             "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/"
                     + "872f8a96064a1242ac3a3359cad77c3042548405/" + DEFAULT_MODEL_FILE);
     public static final URI DEFAULT_MODEL_CHINA_URI = URI.create(
             "https://modelscope.cn/models/qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/master/"
                     + DEFAULT_MODEL_FILE);
-    public static final long DEFAULT_MODEL_SIZE = 491_400_032L;
+    public static final long DEFAULT_MODEL_SIZE = OfflineModel.LITE.expectedBytes();
     public static final String DEFAULT_MODEL_SHA256 =
             "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db";
-    public static final String QUALITY_MODEL_ID = "qwen2.5-1.5b-instruct-q4-k-m";
-    public static final String QUALITY_MODEL_FILE = "qwen2.5-1.5b-instruct-q4_k_m.gguf";
+    public static final String QUALITY_MODEL_ID = OfflineModel.QUALITY.modelId();
+    public static final String QUALITY_MODEL_FILE = OfflineModel.QUALITY.modelFile();
     public static final URI QUALITY_MODEL_URI = URI.create(
             "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/"
                     + "62a8d092b0a1047016f3edbd0fde387598727aa5/" + QUALITY_MODEL_FILE);
     public static final URI QUALITY_MODEL_CHINA_URI = URI.create(
             "https://modelscope.cn/models/qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/master/"
                     + QUALITY_MODEL_FILE);
-    public static final long QUALITY_MODEL_SIZE = 1_117_320_736L;
+    public static final long QUALITY_MODEL_SIZE = OfflineModel.QUALITY.expectedBytes();
     public static final String QUALITY_MODEL_SHA256 =
             "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e";
 
@@ -66,15 +67,20 @@ public final class LlamaCppOfflineProvider
     }
 
     public static LlamaCppOfflineProvider forModel(Path root, boolean autoDownload, String selection) {
-        String normalized = selection == null ? "lite" : selection.trim().toLowerCase(java.util.Locale.ROOT);
-        if ("lite".equals(normalized) || DEFAULT_MODEL_ID.equals(normalized)) {
+        return forModel(root, autoDownload, OfflineModel.fromConfig(selection));
+    }
+
+    public static LlamaCppOfflineProvider forModel(
+            Path root, boolean autoDownload, OfflineModel selection) {
+        OfflineModel normalized = selection == null ? OfflineModel.LITE : selection;
+        if (normalized == OfflineModel.LITE) {
             return new LlamaCppOfflineProvider(root, autoDownload);
         }
-        if ("quality".equals(normalized) || QUALITY_MODEL_ID.equals(normalized)) {
+        if (normalized == OfflineModel.QUALITY) {
             return new LlamaCppOfflineProvider(root, autoDownload, QUALITY_MODEL_ID, QUALITY_MODEL_FILE,
                     QUALITY_MODEL_CHINA_URI, QUALITY_MODEL_URI, QUALITY_MODEL_SIZE, QUALITY_MODEL_SHA256);
         }
-        throw new IllegalArgumentException("Unsupported offline model: " + selection);
+        throw new IllegalArgumentException("Unsupported offline model: " + normalized);
     }
 
     public LlamaCppOfflineProvider(

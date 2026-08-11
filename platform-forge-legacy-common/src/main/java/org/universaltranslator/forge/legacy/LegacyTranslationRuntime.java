@@ -10,10 +10,13 @@ import org.universaltranslator.core.TranslationCache;
 import org.universaltranslator.core.TranslationStore;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationProviderStatus;
+import org.universaltranslator.core.TranslationDiagnosticsSnapshot;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.RecentUserText;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -58,6 +61,7 @@ final class LegacyTranslationRuntime {
         Minecraft minecraft = Minecraft.getMinecraft();
         if (active == null || config == null || !config.allows(kind)
                 || minecraft.currentScreen instanceof LegacyConfigScreen
+                || minecraft.currentScreen instanceof LegacyDiagnosticsScreen
                 || LegacyLocalTextGuard.isLocalChatInput(minecraft.currentScreen, original)
                 || RECENT_USER_TEXT.shouldPreserve(original)
                 || LegacyVersionAccess.connection(minecraft) == null) {
@@ -126,12 +130,42 @@ final class LegacyTranslationRuntime {
                 ? ((TranslationProviderStatus) provider).status() : "";
     }
 
+    static TranslationDiagnosticsSnapshot diagnostics() {
+        LegacyConfig config = activeConfig;
+        TranslationProvider provider = activeProvider;
+        if (config == null) {
+            return new TranslationDiagnosticsSnapshot(
+                    false, "", "", "", null, false, false, -1L, -1L, "尚未载入设置");
+        }
+        Path modelFile = config.offlineDirectory.toPath().resolve(config.offlineModel.modelFile());
+        return new TranslationDiagnosticsSnapshot(
+                config.enabled,
+                config.provider,
+                provider == null ? "" : provider.id(),
+                config.targetLanguage,
+                config.offlineModel,
+                config.offlineAutoDownload,
+                config.diskCache,
+                fileSize(modelFile),
+                fileSize(config.cacheFile.toPath()),
+                status());
+    }
+
+    private static long fileSize(Path file) {
+        try {
+            return Files.isRegularFile(file) ? Files.size(file) : -1L;
+        } catch (IOException ignored) {
+            return -1L;
+        }
+    }
+
     static List<String> translateLines(List<String> originals, TextKind kind) {
         RenderTranslationSession active = session;
         LegacyConfig config = activeConfig;
         Minecraft minecraft = Minecraft.getMinecraft();
         if (active == null || config == null || !config.allows(kind)
                 || minecraft.currentScreen instanceof LegacyConfigScreen
+                || minecraft.currentScreen instanceof LegacyDiagnosticsScreen
                 || LegacyRenderContext.isTextInput()
                 || LegacyVersionAccess.connection(minecraft) == null) {
             return originals;

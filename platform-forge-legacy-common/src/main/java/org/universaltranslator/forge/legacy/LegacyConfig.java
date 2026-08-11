@@ -5,6 +5,7 @@ import org.universaltranslator.core.TranslationDisplayMode;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TextKind;
 import org.universaltranslator.core.LocalConfigSecurity;
+import org.universaltranslator.core.OfflineModel;
 import org.universaltranslator.core.provider.LibreTranslateProvider;
 import org.universaltranslator.core.provider.TencentHunyuanProvider;
 import org.universaltranslator.core.provider.FallbackTranslationProvider;
@@ -39,7 +40,7 @@ final class LegacyConfig {
     final String tencentSecretKey;
     final String tencentModel;
     final boolean offlineAutoDownload;
-    final String offlineModel;
+    final OfflineModel offlineModel;
     final boolean apiFallback;
     final String apiFallbackProvider;
     final File offlineDirectory;
@@ -68,7 +69,7 @@ final class LegacyConfig {
                 "tencent-model", "hunyuan-translation-lite").trim();
         offlineAutoDownload = Boolean.parseBoolean(
                 properties.getProperty("offline-auto-download", "true"));
-        offlineModel = properties.getProperty("offline-model", "lite").trim();
+        offlineModel = OfflineModel.fromConfig(properties.getProperty("offline-model", "lite"));
         apiFallback = Boolean.parseBoolean(properties.getProperty("api-fallback", "false"));
         apiFallbackProvider = properties.getProperty(
                 "api-fallback-provider", "libretranslate").trim();
@@ -124,6 +125,7 @@ final class LegacyConfig {
             String provider,
             String endpoint,
             boolean offlineAutoDownload,
+            OfflineModel offlineModel,
             boolean apiFallback,
             boolean diskCache
     ) {
@@ -139,6 +141,8 @@ final class LegacyConfig {
         properties.setProperty("provider", provider.trim());
         properties.setProperty("libretranslate-endpoint", endpoint.trim());
         properties.setProperty("offline-auto-download", Boolean.toString(offlineAutoDownload));
+        properties.setProperty("offline-model",
+                (offlineModel == null ? OfflineModel.LITE : offlineModel).configName());
         properties.setProperty("api-fallback", Boolean.toString(apiFallback));
         properties.setProperty("disk-cache", Boolean.toString(diskCache));
         return new LegacyConfig(properties, configFile, cacheFile);
@@ -259,7 +263,7 @@ final class LegacyConfig {
         properties.setProperty("tencent-secret-key", tencentSecretKey);
         properties.setProperty("tencent-model", tencentModel);
         properties.setProperty("offline-auto-download", Boolean.toString(offlineAutoDownload));
-        properties.setProperty("offline-model", offlineModel);
+        properties.setProperty("offline-model", offlineModel.configName());
         properties.setProperty("api-fallback", Boolean.toString(apiFallback));
         properties.setProperty("api-fallback-provider", apiFallbackProvider);
         properties.setProperty("disk-cache", Boolean.toString(diskCache));
