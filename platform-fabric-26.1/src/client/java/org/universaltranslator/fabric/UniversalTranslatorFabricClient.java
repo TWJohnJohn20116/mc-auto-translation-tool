@@ -12,6 +12,7 @@ import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.universaltranslator.core.TranslationStatusLocalizer;
 
 /** Fabric bootstrap. Capture mixins are added incrementally after mapping verification. */
 public final class UniversalTranslatorFabricClient implements ClientModInitializer {
@@ -52,8 +53,8 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
             }
             connectedLastTick = connected;
             if (connected && joinHintTicks > 0 && --joinHintTicks == 0) {
-                client.gui.getChat().addClientSystemMessage(Component.literal(
-                        "\u00a7b[MC 自动翻译工具] \u00a7f按 U 打开控制面板；按 F8 一键开关翻译。"));
+                client.gui.getChat().addClientSystemMessage(
+                        Component.translatable("message.universal_translator.join_hint"));
             }
             while (TOGGLE_TRANSLATION.consumeClick()) {
                 FabricConfig previous = null;
@@ -69,7 +70,10 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
                     lastRuntimeStatus = "";
                     updated.save();
                     client.gui.setOverlayMessage(
-                            Component.literal("MC 自动翻译工具: " + (updated.enabled ? "已开启" : "已关闭")),
+                            Component.translatable("message.universal_translator.toggle",
+                                    Component.translatable(updated.enabled
+                                            ? "value.universal_translator.enabled"
+                                            : "value.universal_translator.disabled")),
                             false);
                 } catch (Exception exception) {
                     if (runtimeChanged && previous != null) {
@@ -81,7 +85,7 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
                     }
                     LOGGER.error("Could not toggle MC Auto Translation Tool", exception);
                     client.gui.setOverlayMessage(
-                            Component.literal("MC 自动翻译工具: 切换失败"), false);
+                            Component.translatable("message.universal_translator.toggle_failed"), false);
                 }
             }
             notifyRuntimeStatus(client, connected);
@@ -113,16 +117,22 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
         if (current.isEmpty()) {
             return;
         }
+        String localized = TranslationStatusLocalizer.localize(current,
+                UniversalTranslatorFabricClient::tr);
         if (isFailureStatus(current)) {
-            client.gui.getChat().addClientSystemMessage(Component.literal(
-                    "\u00a7c[MC 自动翻译工具] " + current));
+            client.gui.getChat().addClientSystemMessage(
+                    Component.translatable("message.universal_translator.runtime_failed", localized));
         } else {
             client.gui.setOverlayMessage(
-                    Component.literal("MC 自动翻译工具: " + current), false);
+                    Component.translatable("message.universal_translator.runtime_status", localized), false);
         }
     }
 
     private static boolean isFailureStatus(String status) {
-        return status.startsWith("翻译失败") || status.startsWith("离线翻译失败");
+        return TranslationStatusLocalizer.isFailure(status);
+    }
+
+    private static String tr(String key, Object... arguments) {
+        return Component.translatable(key, arguments).getString();
     }
 }
