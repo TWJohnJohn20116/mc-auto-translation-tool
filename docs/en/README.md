@@ -49,15 +49,16 @@ Make sure that the file exactly matches your Minecraft version and mod loader:
 | --- | --- | --- |
 | 26.2 (development) | Fabric | 25 |
 | 26.1 (development) | Fabric | 25 |
+| 1.21.4 (development) | Fabric | 21 |
 | 1.21.11 | Fabric | 21 |
 | 1.12.2 | Forge | 8 |
 | 1.8.9 | Forge | 8 |
 
 Each game version produces a separate JAR while sharing the same core logic and configuration semantics.
 
-Fabric 26.1 passed build and main-menu launch checks. Fabric 26.2 has source adaptation and build
-checks complete. Neither has a release download before its manual in-server regression, and the
-1.21.11 JAR must not be used for either version.
+Fabric 26.1 passed build and main-menu launch checks. Fabric 1.21.4 and 26.2 have source adaptation
+and build checks complete. None of these development targets has a release download before its
+manual in-server regression; JARs for different Minecraft versions must not be mixed.
 
 ## Current status
 

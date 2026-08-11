@@ -10,6 +10,7 @@
 | --- | --- | --- | --- |
 | 26.2（尚未发布 JAR） | Fabric | 25 | Fabric API |
 | 26.1（尚未发布 JAR） | Fabric | 25 | Fabric API |
+| 1.21.4（尚未发布 JAR） | Fabric | 21 | Fabric API |
 | 1.21.11 | Fabric | 21 | Fabric API |
 | 1.12.2 | Forge 14.23.5.x | 8 | 无额外模组 |
 | 1.8.9 | Forge 11.15.1.x | 8 | 无额外模组 |
