@@ -2,6 +2,7 @@ package org.universaltranslator.core.provider;
 
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationRequest;
+import org.universaltranslator.core.TargetLanguage;
 import org.universaltranslator.core.net.EndpointPolicy;
 import org.universaltranslator.core.net.HttpJsonClient;
 import org.universaltranslator.core.net.JsonStrings;
@@ -62,8 +63,6 @@ public final class LibreTranslateProvider implements TranslationProvider {
     }
 
     private static String baseLanguage(String language) {
-        String normalized = language.trim().toLowerCase(java.util.Locale.ROOT).replace('_', '-');
-        int separator = normalized.indexOf('-');
-        return separator < 0 ? normalized : normalized.substring(0, separator);
+        return TargetLanguage.libreTranslateCode(language);
     }
 }

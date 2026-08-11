@@ -60,8 +60,23 @@ public final class CoreSelfTest {
         reportsVerifiedDownloadProgress();
         extractsOfflineEngineArchivesSafely();
         normalizesOfflineModelSelections();
+        supportsTraditionalChineseTargets();
         formatsSecretFreeDiagnostics();
         System.out.println("CoreSelfTest: all checks passed");
+    }
+
+    private static void supportsTraditionalChineseTargets() {
+        assertEquals("zh-TW", TargetLanguage.canonicalize("zh_Hant"));
+        assertEquals("zh-TW", TargetLanguage.canonicalize("zh-HK"));
+        assertEquals("zh-TW", TargetLanguage.nextPreset("zh-CN"));
+        assertEquals("en", TargetLanguage.nextPreset("zh-TW"));
+        assertEquals("繁體中文", TargetLanguage.displayName("zh-TW"));
+        assertEquals("zt", TargetLanguage.libreTranslateCode("zh-TW"));
+        assertEquals("zh", TargetLanguage.libreTranslateCode("zh-CN"));
+        assertTrue(TargetLanguage.translationInstruction("zh-TW")
+                .contains("Traditional Chinese characters"));
+        assertFalse(LanguageHeuristics.shouldTranslate("金幣：123", "zh-TW"));
+        assertTrue(LanguageHeuristics.shouldTranslate("Coins: 123", "zh-TW"));
     }
 
     private static void normalizesOfflineModelSelections() throws Exception {

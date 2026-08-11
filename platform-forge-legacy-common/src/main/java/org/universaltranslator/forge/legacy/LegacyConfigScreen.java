@@ -8,6 +8,7 @@ import net.minecraft.client.gui.GuiTextField;
 import java.io.IOException;
 import org.universaltranslator.core.TranslationDisplayMode;
 import org.universaltranslator.core.OfflineModel;
+import org.universaltranslator.core.TargetLanguage;
 import org.universaltranslator.core.TranslationTextColor;
 
 /** Dependency-free settings UI shared by Forge 1.8.9 and 1.12.2. */
@@ -26,6 +27,7 @@ final class LegacyConfigScreen extends GuiScreen {
     private static final int COLOR = 12;
     private static final int MODEL = 13;
     private static final int DIAGNOSTICS = 14;
+    private static final int TARGET_LANGUAGE = 15;
 
     private final GuiScreen parent;
     private final LegacyConfig original;
@@ -87,6 +89,8 @@ final class LegacyConfigScreen extends GuiScreen {
         targetLanguage = new GuiTextField(20, renderer, left, layout.targetY, layout.buttonWidth, 20);
         targetLanguage.setMaxStringLength(32);
         targetLanguage.setText(targetLanguageValue);
+        buttonList.add(new GuiButton(TARGET_LANGUAGE, layout.right, layout.targetY,
+                layout.buttonWidth, 20, ""));
         endpoint = new GuiTextField(21, renderer, left, layout.endpointY, layout.totalWidth, 20);
         endpoint.setMaxStringLength(512);
         endpoint.setText(endpointValue);
@@ -126,6 +130,8 @@ final class LegacyConfigScreen extends GuiScreen {
             endpointValue = endpoint.getText();
             mc.displayGuiScreen(new LegacyDiagnosticsScreen(this));
             return;
+        } else if (button.id == TARGET_LANGUAGE) {
+            targetLanguage.setText(TargetLanguage.nextPreset(targetLanguage.getText()));
         } else if (button.id == SAVE) {
             saveAndApply();
         } else if (button.id == CANCEL) {
@@ -147,6 +153,8 @@ final class LegacyConfigScreen extends GuiScreen {
         button(DOWNLOAD).displayString = "模型下载: " + onOff(offlineAutoDownload);
         button(MODEL).displayString = "离线模型: " + offlineModel.displayName();
         button(FALLBACK).displayString = "API 回退: " + onOff(apiFallback);
+        button(TARGET_LANGUAGE).displayString = "目标: "
+                + TargetLanguage.displayName(targetLanguage.getText());
         button(DOWNLOAD).enabled = isOffline();
         button(MODEL).enabled = isOffline();
         button(FALLBACK).enabled = isOffline();
@@ -241,7 +249,7 @@ final class LegacyConfigScreen extends GuiScreen {
         drawCenteredString(renderer, "MC 自动翻译工具 设置", width / 2, 18, 0xFFFFFF);
         Layout layout = layout();
         int left = layout.left;
-        drawString(renderer, "目标语言 (例如 zh-CN)", left, layout.targetY - 11, 0xA0A0A0);
+        drawString(renderer, "目标语言代码 / 快捷选择", left, layout.targetY - 11, 0xA0A0A0);
         drawString(renderer, "LibreTranslate /translate 地址（仅 API 模式/回退使用）",
                 left, layout.endpointY - 11, 0xA0A0A0);
         targetLanguage.drawTextBox();

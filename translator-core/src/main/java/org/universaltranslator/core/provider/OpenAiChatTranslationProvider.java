@@ -3,6 +3,7 @@ package org.universaltranslator.core.provider;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationRequest;
 import org.universaltranslator.core.TranslationOutputValidator;
+import org.universaltranslator.core.TargetLanguage;
 import org.universaltranslator.core.net.EndpointPolicy;
 import org.universaltranslator.core.net.HttpJsonClient;
 import org.universaltranslator.core.net.JsonStrings;
@@ -42,7 +43,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
 
     @Override
     public String translate(TranslationRequest request) throws Exception {
-        String target = request.getTargetLanguage();
+        String target = TargetLanguage.translationInstruction(request.getTargetLanguage());
         String system = "Translate the user text to " + target
                 + ". Reply with only the translation."
                 + (request.getText().indexOf('\n') >= 0
