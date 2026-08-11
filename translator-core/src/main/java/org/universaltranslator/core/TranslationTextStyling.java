@@ -5,6 +5,21 @@ public final class TranslationTextStyling {
     private TranslationTextStyling() {
     }
 
+    /**
+     * Keeps server-provided colors when the source text is already colorized. The configured
+     * translation color remains a fallback for ordinary uncolored text.
+     */
+    public static String applyTranslatedStyle(
+            String original,
+            String translated,
+            TranslationTextColor color
+    ) {
+        if (hasLegacyColor(original)) {
+            return translated;
+        }
+        return applyLegacyColor(translated, color);
+    }
+
     public static String applyLegacyColor(String text, TranslationTextColor color) {
         if (text == null || color == null || !color.changesColor()) {
             return text;
@@ -45,5 +60,22 @@ public final class TranslationTextStyling {
             }
         }
         return output.toString();
+    }
+
+    public static boolean hasLegacyColor(String text) {
+        if (text == null) {
+            return false;
+        }
+        for (int index = 0; index + 1 < text.length(); index++) {
+            if (text.charAt(index) != '\u00a7') {
+                continue;
+            }
+            char code = Character.toLowerCase(text.charAt(index + 1));
+            if ((code >= '0' && code <= '9') || (code >= 'a' && code <= 'f') || code == 'x') {
+                return true;
+            }
+            index++;
+        }
+        return false;
     }
 }

@@ -501,6 +501,12 @@ public final class CoreSelfTest {
         assertEquals("Coins 42", TranslationTextStyling.stripLegacyFormatting(styled));
         assertEquals("Coins", TranslationTextStyling.applyLegacyColor(
                 "Coins", TranslationTextColor.ORIGINAL));
+        assertEquals("\u00a7d| \u00a7c金币 155", TranslationTextStyling.applyTranslatedStyle(
+                "\u00a7d| \u00a7cCOINS 155", "\u00a7d| \u00a7c金币 155", TranslationTextColor.AQUA));
+        assertEquals("\u00a7b金币 155\u00a7r", TranslationTextStyling.applyTranslatedStyle(
+                "COINS 155", "金币 155", TranslationTextColor.AQUA));
+        assertTrue(TranslationTextStyling.hasLegacyColor("\u00a7dINFORMATION"));
+        assertFalse(TranslationTextStyling.hasLegacyColor("\u00a7lINFORMATION"));
     }
 
     private static void validatesSmallModelOutputs() {
