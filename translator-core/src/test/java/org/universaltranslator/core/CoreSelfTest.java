@@ -6,6 +6,7 @@ import org.universaltranslator.core.net.TencentCloudV3Signer;
 import org.universaltranslator.core.offline.VerifiedDownloader;
 import org.universaltranslator.core.offline.SafeArchiveExtractor;
 import org.universaltranslator.core.offline.OfflineEngineAsset;
+import org.universaltranslator.core.offline.OfflineProcessSupport;
 import org.universaltranslator.core.provider.FallbackTranslationProvider;
 import org.universaltranslator.core.provider.LlamaCppOfflineProvider;
 
@@ -17,6 +18,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.StandardOpenOption;
+import java.io.File;
 import java.util.Arrays;
 import java.util.Map;
 import java.io.OutputStream;
@@ -41,6 +45,7 @@ public final class CoreSelfTest {
         handlesJsonStrings();
         updatesRenderLookupsWithoutBlocking();
         translatesRelatedTooltipLinesTogether();
+        translatesOutgoingChatAsynchronously();
         exposesRenderTranslationFailures();
         protectsLiteralsOffTheRenderThread();
         boundsBusyLobbyTranslationWork();
@@ -53,6 +58,8 @@ public final class CoreSelfTest {
         skipsFullyProtectedText();
         neverSendsProtectedValuesToProvider();
         prefersChinaDownloadSources();
+        configuresWindowsOfflineRuntimePath();
+        reportsOfflineStartupDiagnostics();
         matchesTencentCloudOfficialSignatureVector();
         keepsOriginalTextInBilingualMode();
         fallsBackFromOfflineToApi();
@@ -60,8 +67,71 @@ public final class CoreSelfTest {
         reportsVerifiedDownloadProgress();
         extractsOfflineEngineArchivesSafely();
         normalizesOfflineModelSelections();
+        supportsTraditionalChineseTargets();
         formatsSecretFreeDiagnostics();
+        localizesDiagnosticsAndRuntimeStatus();
         System.out.println("CoreSelfTest: all checks passed");
+    }
+
+    private static void translatesOutgoingChatAsynchronously() throws Exception {
+        TranslationProvider provider = new TranslationProvider() {
+            @Override
+            public String id() {
+                return "outgoing-test";
+            }
+
+            @Override
+            public String translate(TranslationRequest request) {
+                assertEquals("en", request.getTargetLanguage());
+                // Protected player names are restored by the coordinator and must never be
+                // included in the provider request or response.
+                return "Hello";
+            }
+        };
+        try (RenderTranslationSession session = new RenderTranslationSession(
+                provider, "auto", "zh-CN", 100, 1)) {
+            session.setProtectedLiteralsSupplier(() -> Arrays.asList("Steve_42"));
+            TranslationResult result = session.translateInteractive(
+                    "你好 Steve_42", TextKind.CHAT, "en", false)
+                    .get(2, TimeUnit.SECONDS);
+            assertTrue(result.isTranslated());
+            assertEquals("Hello Steve_42", result.getTranslatedText());
+        }
+    }
+
+    private static void supportsTraditionalChineseTargets() {
+        assertEquals("zh-TW", TargetLanguage.canonicalize("zh_Hant"));
+        assertEquals("zh-TW", TargetLanguage.canonicalize("zh-HK"));
+        assertEquals("zh-TW", TargetLanguage.nextPreset("zh-CN"));
+        assertEquals("en", TargetLanguage.nextPreset("zh-TW"));
+        assertEquals("繁體中文", TargetLanguage.displayName("zh-TW"));
+        assertEquals("zt", TargetLanguage.libreTranslateCode("zh-TW"));
+        assertEquals("zh", TargetLanguage.libreTranslateCode("zh-CN"));
+        assertTrue(TargetLanguage.translationInstruction("zh-TW")
+                .contains("Traditional Chinese characters"));
+        assertFalse(LanguageHeuristics.shouldTranslate("金幣：123", "zh-TW"));
+        assertTrue(LanguageHeuristics.shouldTranslate("Coins: 123", "zh-TW"));
+    }
+
+    private static void localizesDiagnosticsAndRuntimeStatus() {
+        UiTranslator translator = new UiTranslator() {
+            @Override
+            public String translate(String key, Object... arguments) {
+                return key + (arguments.length == 0 ? "" : "=" + java.util.Arrays.toString(arguments));
+            }
+        };
+        TranslationDiagnosticsSnapshot snapshot = new TranslationDiagnosticsSnapshot(
+                true, "offline", "offline-llama:model", "zh-TW", OfflineModel.LITE,
+                true, true, OfflineModel.LITE.expectedBytes(), 1000L, "离线模型运行中");
+        String output = String.join("\n", snapshot.localizedLines(translator));
+        assertTrue(output.contains("screen.universal_translator.diagnostics.enabled"));
+        assertTrue(output.contains("status.universal_translator.offline_running"));
+        assertEquals("status.universal_translator.translation_failed=[timeout]",
+                TranslationStatusLocalizer.localize("翻译失败：timeout", translator));
+        assertEquals("status.universal_translator.primary_running",
+                TranslationStatusLocalizer.localize("主翻译服务运行中", translator));
+        assertTrue(TranslationStatusLocalizer.isFailure("离线翻译失败：timeout"));
+        assertFalse(TranslationStatusLocalizer.isFailure("离线模型已就绪"));
     }
 
     private static void normalizesOfflineModelSelections() throws Exception {
@@ -463,6 +533,34 @@ public final class CoreSelfTest {
         assertEquals("github.com", engine.downloadSources().get(1).getHost());
     }
 
+    private static void configuresWindowsOfflineRuntimePath() throws Exception {
+        Path directory = Files.createTempDirectory("offline-process-path");
+        Path server = Files.createDirectories(directory.resolve("engine"));
+        Path javaBin = Files.createDirectories(directory.resolve("java-bin"));
+        ProcessBuilder builder = new ProcessBuilder("offline-test");
+        builder.environment().put("PATH", "existing-path");
+        OfflineProcessSupport.prependWindowsLibraryPath(builder, server, javaBin);
+        String expectedPrefix = server.toAbsolutePath().normalize().toString()
+                + File.pathSeparator + javaBin.toAbsolutePath().normalize().toString()
+                + File.pathSeparator;
+        assertTrue(builder.environment().get("PATH").startsWith(expectedPrefix));
+    }
+
+    private static void reportsOfflineStartupDiagnostics() throws Exception {
+        Path log = Files.createTempFile("offline-process", ".log");
+        Files.write(log, "old output\n".getBytes(StandardCharsets.UTF_8));
+        long offset = Files.size(log);
+        Files.write(log, "missing model file\n".getBytes(StandardCharsets.UTF_8),
+                StandardOpenOption.APPEND);
+        assertEquals("missing model file", OfflineProcessSupport.readNewLogTail(log, offset));
+        String missingDependency = OfflineProcessSupport.describeStartupExit(
+                OfflineProcessSupport.WINDOWS_MISSING_DEPENDENCY_EXIT, "");
+        assertTrue(missingDependency.contains("Visual C++"));
+        assertTrue(missingDependency.contains("0xC0000135"));
+        assertTrue(OfflineProcessSupport.describeStartupExit(2, "bad option")
+                .contains("bad option"));
+    }
+
     private static void protectsDynamicScoreboardValues() {
         ProtectedText text = ProtectedText.parse("\u00a7aCoins: 12,583 | https://example.org | 75%");
         assertEquals("__UT_0__Coins: __UT_1__ | __UT_2__ | __UT_3__", text.getTemplate());
@@ -501,6 +599,12 @@ public final class CoreSelfTest {
         assertEquals("Coins 42", TranslationTextStyling.stripLegacyFormatting(styled));
         assertEquals("Coins", TranslationTextStyling.applyLegacyColor(
                 "Coins", TranslationTextColor.ORIGINAL));
+        assertEquals("\u00a7d| \u00a7c金币 155", TranslationTextStyling.applyTranslatedStyle(
+                "\u00a7d| \u00a7cCOINS 155", "\u00a7d| \u00a7c金币 155", TranslationTextColor.AQUA));
+        assertEquals("\u00a7b金币 155\u00a7r", TranslationTextStyling.applyTranslatedStyle(
+                "COINS 155", "金币 155", TranslationTextColor.AQUA));
+        assertTrue(TranslationTextStyling.hasLegacyColor("\u00a7dINFORMATION"));
+        assertFalse(TranslationTextStyling.hasLegacyColor("\u00a7lINFORMATION"));
     }
 
     private static void validatesSmallModelOutputs() {

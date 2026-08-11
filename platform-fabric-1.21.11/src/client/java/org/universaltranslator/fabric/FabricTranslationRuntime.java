@@ -11,6 +11,7 @@ import org.universaltranslator.core.TranslationDiagnosticsSnapshot;
 import org.universaltranslator.core.TranslationStore;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.RecentUserText;
+import org.universaltranslator.core.TranslationResult;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -18,6 +19,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 final class FabricTranslationRuntime {
     private static final long PLAYER_NAME_SNAPSHOT_MILLIS = 5_000L;
@@ -31,6 +33,7 @@ final class FabricTranslationRuntime {
     private static volatile List<String> protectedPlayerNames = Collections.emptyList();
     private static volatile long protectedPlayerNamesExpireAt;
     private static final RecentUserText RECENT_USER_TEXT = new RecentUserText();
+    private static CompletableFuture<Void> outgoingTail = CompletableFuture.completedFuture(null);
 
     private FabricTranslationRuntime() {
     }
@@ -76,6 +79,7 @@ final class FabricTranslationRuntime {
         protectedPlayerNames = Collections.emptyList();
         protectedPlayerNamesExpireAt = 0L;
         RECENT_USER_TEXT.clear();
+        outgoingTail = CompletableFuture.completedFuture(null);
         if (active != null) {
             active.close();
         }
@@ -121,12 +125,18 @@ final class FabricTranslationRuntime {
 
     static String status() {
         RenderTranslationSession active = session;
+        TranslationProvider provider = activeProvider;
+        String providerStatus = provider instanceof TranslationProviderStatus
+                ? ((TranslationProviderStatus) provider).status() : "";
+        // The offline provider already has the specific startup diagnostic. Prefer it over the
+        // session's generic wrapper so one failure cannot alternate between two chat messages.
+        if (providerStatus.startsWith("离线翻译失败")) {
+            return providerStatus;
+        }
         if (active != null && !active.lastFailureStatus().isEmpty()) {
             return active.lastFailureStatus();
         }
-        TranslationProvider provider = activeProvider;
-        return provider instanceof TranslationProviderStatus
-                ? ((TranslationProviderStatus) provider).status() : "";
+        return providerStatus;
     }
 
     static TranslationDiagnosticsSnapshot diagnostics() {
@@ -179,5 +189,30 @@ final class FabricTranslationRuntime {
 
     static void protectOutgoingMessage(String message) {
         RECENT_USER_TEXT.remember(message);
+    }
+
+    static boolean shouldTranslateOutgoing(String message) {
+        FabricConfig config = activeConfig;
+        return session != null && config != null && config.enabled && config.translateOutgoing
+                && message != null && !message.trim().isEmpty() && !message.startsWith("/");
+    }
+
+    /** Serializes outgoing requests so rapidly sent chat lines keep their original order. */
+    static synchronized CompletableFuture<TranslationResult> translateOutgoing(String message) {
+        final RenderTranslationSession active = session;
+        final FabricConfig config = activeConfig;
+        if (active == null || config == null || !shouldTranslateOutgoing(message)) {
+            return CompletableFuture.completedFuture(TranslationResult.unchanged(message));
+        }
+        RECENT_USER_TEXT.remember(message);
+        // Capture the tab-list/server literals on Minecraft's calling thread. The translation
+        // itself may finish on a worker, but must not inspect client network state there.
+        CompletableFuture<TranslationResult> translated = active.translateInteractive(
+                message, TextKind.CHAT, config.outgoingTargetLanguage, false);
+        CompletableFuture<TranslationResult> next = outgoingTail
+                .handle((ignored, failure) -> null)
+                .thenCompose(ignored -> translated);
+        outgoingTail = next.handle((ignored, failure) -> null);
+        return next;
     }
 }

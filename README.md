@@ -1,10 +1,12 @@
 # MC 自动翻译工具（MC Auto Translation Tool）
 
+[简体中文](README.md) · [繁體中文](docs/Zh-tw/README.md) · [English](docs/en/README.md)
+
 一个面向 Minecraft Java 版的公益、开源、纯客户端全界面翻译模组。
 
 [⬇️ 下载最新版](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest) ·
 [🌐 官方下载页](https://mc-auto-translation-tool.wuxiangdan96.chatgpt.site/#download) ·
-[📖 安装与使用说明](docs/USER_GUIDE_zh-CN.md)
+[📚 文档中心](docs/README.md) · [📖 安装与使用说明](docs/Zh-cn/USER_GUIDE.md)
 
 原作者：[B站「我小张7272635」](https://space.bilibili.com/3546631091783712)。
 转载、再发布或改编时，请保留原作者署名与 MIT License 版权声明。
@@ -24,6 +26,9 @@ Action Bar、标题、Boss Bar、容器标题、物品名称与 Lore、告示牌
 | 1.12.2 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.1/MCAutoTranslationTool-1.1-mc1.12.2-forge.jar) |
 | 1.21.11 | Fabric | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.1/MCAutoTranslationTool-1.1-mc1.21.11-fabric.jar) |
 
+Minecraft 26.1 Fabric 的源码适配已合入并通过构建与主菜单启动检查，但当前尚未发布
+可下载 JAR。请勿把 1.21.11 文件用于 26.1。
+
 [查看全部版本与更新说明](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases) ·
 [SHA-256 校验文件](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.1/SHA256SUMS.txt)
 
@@ -32,30 +37,39 @@ Action Bar、标题、Boss Bar、容器标题、物品名称与 Lore、告示牌
 - 服务器无需安装模组。
 - 默认使用用户电脑上的离线模型，不要求 API 密钥或项目服务器。
 - 离线模式仅绑定 `127.0.0.1`，服务器文字不会离开用户电脑。
-- 可保留 LibreTranslate/腾讯兼容 API 模式，离线失败时的 API 回退默认关闭。
+- 可使用 LibreTranslate、腾讯兼容接口或 OpenAI 兼容 LLM API；离线失败时的 API 回退默认关闭。
+- 可单独开启“发送翻译”，普通聊天后台翻译后再按原顺序发送；命令保持原样。
 - 翻译在后台执行；服务不可用时立即保留原文，不影响游戏。
 - 相同文本和动态文本模板使用本地缓存，减少延迟与费用。
 - 默认不翻译玩家名、坐标、数字、网址和格式代码。
 - 用户可以按服务器关闭私聊或其他敏感内容的外发。
 
-## 首批目标版本
+## 版本模块
 
 | Minecraft | 加载器 | Java |
 | --- | --- | --- |
+| 26.2（开发中） | Fabric | 25 |
+| 26.1 | Fabric | 25 |
 | 1.21.11 | Fabric | 21 |
 | 1.12.2 | Forge | 8 |
 | 1.8.9 | Forge | 8 |
 
 不同游戏版本会生成不同 JAR，但共享相同的核心逻辑和配置语义。
 
+主分支另包含 Fabric 26.1 与 26.2 开发适配，均使用 Java 25。26.2 已完成干净构建、
+重混淆及共享核心自测；在实机启动和服务器内回归完成前，不列入上方正式版下载。
+
 ## 当前状态
 
-1.1 正式版提供三个独立客户端 JAR。三个版本均通过编译、重混淆和共享核心自测；
+1.1 正式版提供三个独立客户端 JAR。三个已发布版本均通过编译、重混淆和共享核心自测；
 1.0 发布前完成的实机启动验证继续作为兼容性基线：
 
 - Fabric 1.21.11；
 - Forge 1.12.2；
 - Forge 1.8.9。
+
+未发布的 Fabric 26.1 源码适配已额外通过干净构建、Mixin 注入和主菜单启动检查，
+服务器内人工回归与发行文件仍待后续发布流程完成。
 
 进入游戏后按 `U` 打开设置。模组默认关闭；新安装默认选择“离线”，并使用
 “仅译文”替换方式，避免记分板和容器文字因双语拼接溢出。按 `F8` 可随时开启或
@@ -79,6 +93,7 @@ Action Bar、标题、Boss Bar、容器标题、物品名称与 Lore、告示牌
 - 后台翻译不会阻塞渲染线程。
 - 设置保存后无需重启游戏即可应用。
 - 聊天与其他界面可分别禁止外发。
+- 玩家发送翻译默认关闭，目标语言与界面翻译目标语言分开设置。
 - 离线 Lite 与 Quality 模型按需安装，不放入模组 JAR。
 
 ## 隐私提示
@@ -88,5 +103,5 @@ Action Bar、标题、Boss Bar、容器标题、物品名称与 Lore、告示牌
 明确的总开关、聊天/其他内容开关和本地缓存。密钥只在用户本机配置，禁止提交
 到代码仓库。远程端点必须使用 HTTPS；只有精确的本机回环地址允许 HTTP。
 
-详细安装和使用方法见 `docs/USER_GUIDE_zh-CN.md`，实际验证范围和后续版本顺序见
-`docs/COMPATIBILITY.md`。官网源码位于 `website/`；公开访问会在发布者确认后开启。
+详细安装和使用方法见 `docs/Zh-cn/USER_GUIDE.md`，实际验证范围和后续版本顺序见
+`docs/Zh-cn/COMPATIBILITY.md`。官网源码位于 `website/`。

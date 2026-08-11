@@ -3,6 +3,7 @@ package org.universaltranslator.forge.legacy;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.GuiScreen;
+import net.minecraft.client.resources.I18n;
 import org.universaltranslator.core.TranslationDiagnosticsSnapshot;
 
 import java.io.IOException;
@@ -24,7 +25,7 @@ final class LegacyDiagnosticsScreen extends GuiScreen {
         renderer = LegacyVersionAccess.fontRenderer();
         int buttonWidth = Math.max(120, Math.min(220, width - 40));
         buttonList.add(new GuiButton(BACK, (width - buttonWidth) / 2, height - 28,
-                buttonWidth, 20, "返回设置"));
+                buttonWidth, 20, tr("screen.universal_translator.diagnostics.back")));
     }
 
     @Override
@@ -37,16 +38,17 @@ final class LegacyDiagnosticsScreen extends GuiScreen {
     @Override
     public void drawScreen(int mouseX, int mouseY, float partialTicks) {
         drawDefaultBackground();
-        drawCenteredString(renderer, "翻译诊断", width / 2, 18, 0xFFFFFF);
+        drawCenteredString(renderer, tr("screen.universal_translator.diagnostics.title"),
+                width / 2, 18, 0xFFFFFF);
         TranslationDiagnosticsSnapshot snapshot = LegacyTranslationRuntime.diagnostics();
-        List<String> lines = snapshot.displayLines();
+        List<String> lines = snapshot.localizedLines(LegacyDiagnosticsScreen::tr);
         int left = Math.max(10, (width - Math.min(360, width - 20)) / 2);
         int y = 43;
         for (String line : lines) {
             drawString(renderer, line, left, y, 0xD0D0D0);
             y += 17;
         }
-        drawCenteredString(renderer, "状态会实时更新；不显示端点或密钥。",
+        drawCenteredString(renderer, tr("screen.universal_translator.diagnostics.note"),
                 width / 2, Math.min(y + 7, height - 43), 0x808080);
         super.drawScreen(mouseX, mouseY, partialTicks);
     }
@@ -54,5 +56,9 @@ final class LegacyDiagnosticsScreen extends GuiScreen {
     @Override
     public boolean doesGuiPauseGame() {
         return false;
+    }
+
+    private static String tr(String key, Object... arguments) {
+        return I18n.format(key, arguments);
     }
 }

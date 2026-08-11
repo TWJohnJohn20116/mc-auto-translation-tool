@@ -1,5 +1,7 @@
 # Offline translation third-party components
 
+[简体中文](../Zh-cn/THIRD_PARTY_OFFLINE.md) · [繁體中文](../Zh-tw/THIRD_PARTY_OFFLINE.md) · [English](THIRD_PARTY_OFFLINE.md) · [Back to English README](README.md)
+
 MC Auto Translation Tool does not bundle the following large files in its mod JAR. When the user
 enables automatic offline downloads, the mod downloads the selected, pinned files over HTTPS and
 verifies their size and SHA-256 before execution.

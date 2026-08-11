@@ -30,4 +30,18 @@ final class LegacyVersionAccess {
     static void showLocalChatMessage(Minecraft minecraft, String message) {
         minecraft.ingameGUI.getChatGUI().printChatMessage(new TextComponentString(message));
     }
+
+    static void sendChatMessage(Minecraft minecraft, String message) {
+        if (minecraft.player != null) {
+            minecraft.player.sendChatMessage(message);
+        }
+    }
+
+    static void rememberSentMessage(Minecraft minecraft, String message) {
+        minecraft.ingameGUI.getChatGUI().addToSentMessages(message);
+    }
+
+    static int maximumChatLength() {
+        return 256;
+    }
 }

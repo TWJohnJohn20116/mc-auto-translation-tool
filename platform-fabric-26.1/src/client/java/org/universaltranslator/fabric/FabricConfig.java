@@ -5,10 +5,12 @@ import org.universaltranslator.core.TranslationDisplayMode;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TextKind;
 import org.universaltranslator.core.LocalConfigSecurity;
+import org.universaltranslator.core.OfflineModel;
 import org.universaltranslator.core.provider.LibreTranslateProvider;
 import org.universaltranslator.core.provider.TencentHunyuanProvider;
 import org.universaltranslator.core.provider.FallbackTranslationProvider;
 import org.universaltranslator.core.provider.LlamaCppOfflineProvider;
+import org.universaltranslator.core.provider.OpenAiChatTranslationProvider;
 
 import java.io.IOException;
 import java.io.Reader;
@@ -27,7 +29,9 @@ final class FabricConfig {
     final boolean enabled;
     final boolean translateChat;
     final boolean translateOther;
+    final boolean translateOutgoing;
     final String targetLanguage;
+    final String outgoingTargetLanguage;
     final TranslationDisplayMode displayMode;
     final boolean translateEnglishOnly;
     final TranslationTextColor translatedTextColor;
@@ -37,8 +41,11 @@ final class FabricConfig {
     final String tencentSecretId;
     final String tencentSecretKey;
     final String tencentModel;
+    final String llmEndpoint;
+    final String llmApiKey;
+    final String llmModel;
     final boolean offlineAutoDownload;
-    final String offlineModel;
+    final OfflineModel offlineModel;
     final boolean apiFallback;
     final String apiFallbackProvider;
     final Path offlineDirectory;
@@ -50,7 +57,11 @@ final class FabricConfig {
         this.enabled = Boolean.parseBoolean(properties.getProperty("enabled", "false"));
         this.translateChat = Boolean.parseBoolean(properties.getProperty("translate-chat", "true"));
         this.translateOther = Boolean.parseBoolean(properties.getProperty("translate-other", "true"));
+        this.translateOutgoing = Boolean.parseBoolean(
+                properties.getProperty("translate-outgoing", "false"));
         this.targetLanguage = properties.getProperty("target-language", "zh-CN").trim();
+        this.outgoingTargetLanguage = properties.getProperty(
+                "outgoing-target-language", "en").trim();
         this.displayMode = TranslationDisplayMode.fromConfig(
                 properties.getProperty("display-mode", "translated-only"));
         this.translateEnglishOnly = Boolean.parseBoolean(
@@ -65,9 +76,13 @@ final class FabricConfig {
         this.tencentSecretKey = properties.getProperty("tencent-secret-key", "").trim();
         this.tencentModel = properties.getProperty(
                 "tencent-model", "hunyuan-translation-lite").trim();
+        this.llmEndpoint = properties.getProperty(
+                "llm-api-endpoint", "http://127.0.0.1:8080/v1/chat/completions").trim();
+        this.llmApiKey = properties.getProperty("llm-api-key", "").trim();
+        this.llmModel = properties.getProperty("llm-api-model", "local-model").trim();
         this.offlineAutoDownload = Boolean.parseBoolean(
                 properties.getProperty("offline-auto-download", "true"));
-        this.offlineModel = properties.getProperty("offline-model", "lite").trim();
+        this.offlineModel = OfflineModel.fromConfig(properties.getProperty("offline-model", "lite"));
         this.apiFallback = Boolean.parseBoolean(properties.getProperty("api-fallback", "false"));
         this.apiFallbackProvider = properties.getProperty(
                 "api-fallback-provider", "libretranslate").trim();
@@ -94,13 +109,14 @@ final class FabricConfig {
         }
         Properties properties = defaults();
         properties.putAll(stored);
-        boolean migrated = !stored.containsKey("config-version");
-        if (migrated) {
+        boolean legacyMigration = !stored.containsKey("config-version");
+        boolean migrated = configVersion(stored) < 3;
+        if (legacyMigration) {
             properties.setProperty("display-mode", "translated-only");
             properties.setProperty("translate-english-only", "true");
             properties.setProperty("translated-text-color", "aqua");
         }
-        properties.setProperty("config-version", "2");
+        properties.setProperty("config-version", "3");
         LocalConfigSecurity.restrictToOwner(file);
         FabricConfig loaded = new FabricConfig(
                 properties, file, configDirectory.resolve("universal-translator-cache.properties"));
@@ -114,13 +130,19 @@ final class FabricConfig {
             boolean enabled,
             boolean translateChat,
             boolean translateOther,
+            boolean translateOutgoing,
             String targetLanguage,
+            String outgoingTargetLanguage,
             TranslationDisplayMode displayMode,
             boolean translateEnglishOnly,
             TranslationTextColor translatedTextColor,
             String provider,
             String endpoint,
+            String llmEndpoint,
+            String llmApiKey,
+            String llmModel,
             boolean offlineAutoDownload,
+            OfflineModel offlineModel,
             boolean apiFallback,
             boolean diskCache
     ) {
@@ -128,14 +150,21 @@ final class FabricConfig {
         properties.setProperty("enabled", Boolean.toString(enabled));
         properties.setProperty("translate-chat", Boolean.toString(translateChat));
         properties.setProperty("translate-other", Boolean.toString(translateOther));
+        properties.setProperty("translate-outgoing", Boolean.toString(translateOutgoing));
         properties.setProperty("target-language", targetLanguage.trim());
+        properties.setProperty("outgoing-target-language", outgoingTargetLanguage.trim());
         properties.setProperty("display-mode", displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED
                 ? "bilingual" : "translated-only");
         properties.setProperty("translate-english-only", Boolean.toString(translateEnglishOnly));
         properties.setProperty("translated-text-color", translatedTextColor.configName());
         properties.setProperty("provider", provider.trim());
         properties.setProperty("libretranslate-endpoint", endpoint.trim());
+        properties.setProperty("llm-api-endpoint", llmEndpoint.trim());
+        properties.setProperty("llm-api-key", llmApiKey.trim());
+        properties.setProperty("llm-api-model", llmModel.trim());
         properties.setProperty("offline-auto-download", Boolean.toString(offlineAutoDownload));
+        properties.setProperty("offline-model",
+                (offlineModel == null ? OfflineModel.LITE : offlineModel).configName());
         properties.setProperty("api-fallback", Boolean.toString(apiFallback));
         properties.setProperty("disk-cache", Boolean.toString(diskCache));
         return new FabricConfig(properties, configFile, cacheFile);
@@ -209,16 +238,22 @@ final class FabricConfig {
         if ("tencent-hunyuan".equalsIgnoreCase(selectedProvider)) {
             return new TencentHunyuanProvider(tencentSecretId, tencentSecretKey, tencentModel);
         }
+        if ("openai-compatible".equalsIgnoreCase(selectedProvider)) {
+            return new OpenAiChatTranslationProvider(
+                    llmEndpoint, llmApiKey, llmModel, "openai-compatible");
+        }
         throw new IllegalArgumentException("Unsupported translation provider: " + selectedProvider);
     }
 
     private static Properties defaults() {
         Properties properties = new Properties();
-        properties.setProperty("config-version", "2");
+        properties.setProperty("config-version", "3");
         properties.setProperty("enabled", "false");
         properties.setProperty("translate-chat", "true");
         properties.setProperty("translate-other", "true");
+        properties.setProperty("translate-outgoing", "false");
         properties.setProperty("target-language", "zh-CN");
+        properties.setProperty("outgoing-target-language", "en");
         properties.setProperty("display-mode", "translated-only");
         properties.setProperty("translate-english-only", "true");
         properties.setProperty("translated-text-color", "aqua");
@@ -228,6 +263,9 @@ final class FabricConfig {
         properties.setProperty("tencent-secret-id", "");
         properties.setProperty("tencent-secret-key", "");
         properties.setProperty("tencent-model", "hunyuan-translation-lite");
+        properties.setProperty("llm-api-endpoint", "http://127.0.0.1:8080/v1/chat/completions");
+        properties.setProperty("llm-api-key", "");
+        properties.setProperty("llm-api-model", "local-model");
         properties.setProperty("offline-auto-download", "true");
         properties.setProperty("offline-model", "lite");
         properties.setProperty("api-fallback", "false");
@@ -238,11 +276,13 @@ final class FabricConfig {
 
     private Properties toProperties() {
         Properties properties = new Properties();
-        properties.setProperty("config-version", "2");
+        properties.setProperty("config-version", "3");
         properties.setProperty("enabled", Boolean.toString(enabled));
         properties.setProperty("translate-chat", Boolean.toString(translateChat));
         properties.setProperty("translate-other", Boolean.toString(translateOther));
+        properties.setProperty("translate-outgoing", Boolean.toString(translateOutgoing));
         properties.setProperty("target-language", targetLanguage);
+        properties.setProperty("outgoing-target-language", outgoingTargetLanguage);
         properties.setProperty("display-mode", displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED
                 ? "bilingual" : "translated-only");
         properties.setProperty("translate-english-only", Boolean.toString(translateEnglishOnly));
@@ -253,11 +293,22 @@ final class FabricConfig {
         properties.setProperty("tencent-secret-id", tencentSecretId);
         properties.setProperty("tencent-secret-key", tencentSecretKey);
         properties.setProperty("tencent-model", tencentModel);
+        properties.setProperty("llm-api-endpoint", llmEndpoint);
+        properties.setProperty("llm-api-key", llmApiKey);
+        properties.setProperty("llm-api-model", llmModel);
         properties.setProperty("offline-auto-download", Boolean.toString(offlineAutoDownload));
-        properties.setProperty("offline-model", offlineModel);
+        properties.setProperty("offline-model", offlineModel.configName());
         properties.setProperty("api-fallback", Boolean.toString(apiFallback));
         properties.setProperty("api-fallback-provider", apiFallbackProvider);
         properties.setProperty("disk-cache", Boolean.toString(diskCache));
         return properties;
+    }
+
+    private static int configVersion(Properties properties) {
+        try {
+            return Integer.parseInt(properties.getProperty("config-version", "1").trim());
+        } catch (NumberFormatException ignored) {
+            return 1;
+        }
     }
 }

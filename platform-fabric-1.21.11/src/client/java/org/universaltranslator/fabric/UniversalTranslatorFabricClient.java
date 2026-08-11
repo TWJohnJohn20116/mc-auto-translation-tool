@@ -6,16 +6,20 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.message.v1.ClientSendMessageEvents;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.text.Text;
 import org.lwjgl.glfw.GLFW;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.universaltranslator.core.TranslationResult;
+import org.universaltranslator.core.TranslationStatusLocalizer;
 
 /** Fabric bootstrap. Capture mixins are added incrementally after mapping verification. */
 public final class UniversalTranslatorFabricClient implements ClientModInitializer {
     public static final String MOD_ID = "universal_translator";
+    private static final long FAILURE_NOTIFICATION_COOLDOWN_MILLIS = 60_000L;
     private static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
     private static final KeyBinding OPEN_SETTINGS = KeyBindingHelper.registerKeyBinding(
             new KeyBinding(
@@ -32,6 +36,8 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
     private static boolean connectedLastTick;
     private static int joinHintTicks = -1;
     private static String lastRuntimeStatus = "";
+    private static long nextFailureNotificationAt;
+    private static boolean resendingTranslatedMessage;
 
     @Override
     public void onInitializeClient() {
@@ -52,8 +58,8 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
             }
             connectedLastTick = connected;
             if (connected && joinHintTicks > 0 && --joinHintTicks == 0) {
-                client.inGameHud.getChatHud().addMessage(Text.literal(
-                        "\u00a7b[MC 自动翻译工具] \u00a7f按 U 打开控制面板；按 F8 一键开关翻译。"));
+                client.inGameHud.getChatHud().addMessage(
+                        Text.translatable("message.universal_translator.join_hint"));
             }
             while (TOGGLE_TRANSLATION.wasPressed()) {
                 FabricConfig previous = null;
@@ -67,9 +73,13 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
                     runtimeChanged = true;
                     FabricTranslationRuntime.initialize(updated);
                     lastRuntimeStatus = "";
+                    nextFailureNotificationAt = 0L;
                     updated.save();
                     client.inGameHud.setOverlayMessage(
-                            Text.literal("MC 自动翻译工具: " + (updated.enabled ? "已开启" : "已关闭")),
+                            Text.translatable("message.universal_translator.toggle",
+                                    Text.translatable(updated.enabled
+                                            ? "value.universal_translator.enabled"
+                                            : "value.universal_translator.disabled")),
                             false);
                 } catch (Exception exception) {
                     if (runtimeChanged && previous != null) {
@@ -81,7 +91,7 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
                     }
                     LOGGER.error("Could not toggle MC Auto Translation Tool", exception);
                     client.inGameHud.setOverlayMessage(
-                            Text.literal("MC 自动翻译工具: 切换失败"), false);
+                            Text.translatable("message.universal_translator.toggle_failed"), false);
                 }
             }
             notifyRuntimeStatus(client, connected);
@@ -98,9 +108,57 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
             }
         });
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> FabricTranslationRuntime.shutdown());
+        ClientSendMessageEvents.ALLOW_CHAT.register(
+                UniversalTranslatorFabricClient::interceptOutgoingMessage);
         ClientSendMessageEvents.CHAT.register(FabricTranslationRuntime::protectOutgoingMessage);
     }
 
+    private static boolean interceptOutgoingMessage(String message) {
+        if (resendingTranslatedMessage || !FabricTranslationRuntime.shouldTranslateOutgoing(message)) {
+            FabricTranslationRuntime.protectOutgoingMessage(message);
+            return true;
+        }
+        MinecraftClient client = MinecraftClient.getInstance();
+        client.inGameHud.setOverlayMessage(
+                Text.translatable("message.universal_translator.outgoing_translating"), false);
+        FabricTranslationRuntime.translateOutgoing(message).whenComplete((result, error) ->
+                client.execute(() -> sendCompletedMessage(client, message, result, error)));
+        return false;
+    }
+
+    private static void sendCompletedMessage(
+            MinecraftClient client,
+            String original,
+            TranslationResult result,
+            Throwable error
+    ) {
+        if (client.getNetworkHandler() == null) {
+            client.inGameHud.getChatHud().addMessage(
+                    Text.translatable("message.universal_translator.outgoing_disconnected"));
+            return;
+        }
+        boolean failed = error != null || result == null || result.isFailure();
+        String outgoing = failed || !result.isTranslated()
+                ? original : result.getTranslatedText();
+        boolean tooLong = outgoing.length() > 256;
+        if (tooLong) {
+            outgoing = original;
+        }
+        FabricTranslationRuntime.protectOutgoingMessage(outgoing);
+        resendingTranslatedMessage = true;
+        try {
+            client.getNetworkHandler().sendChatMessage(outgoing);
+        } finally {
+            resendingTranslatedMessage = false;
+        }
+        if (failed) {
+            client.inGameHud.getChatHud().addMessage(
+                    Text.translatable("message.universal_translator.outgoing_failed"));
+        } else if (tooLong) {
+            client.inGameHud.getChatHud().addMessage(
+                    Text.translatable("message.universal_translator.outgoing_too_long"));
+        }
+    }
     private static void notifyRuntimeStatus(net.minecraft.client.MinecraftClient client, boolean connected) {
         String current = connected ? FabricTranslationRuntime.status() : "";
         if (current == null) {
@@ -111,18 +169,31 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
         }
         lastRuntimeStatus = current;
         if (current.isEmpty()) {
+            nextFailureNotificationAt = 0L;
             return;
         }
+        String localized = TranslationStatusLocalizer.localize(current,
+                UniversalTranslatorFabricClient::tr);
         if (isFailureStatus(current)) {
-            client.inGameHud.getChatHud().addMessage(Text.literal(
-                    "\u00a7c[MC 自动翻译工具] " + current));
+            long now = System.currentTimeMillis();
+            if (now < nextFailureNotificationAt) {
+                return;
+            }
+            nextFailureNotificationAt = now + FAILURE_NOTIFICATION_COOLDOWN_MILLIS;
+            client.inGameHud.getChatHud().addMessage(
+                    Text.translatable("message.universal_translator.runtime_failed", localized));
         } else {
+            nextFailureNotificationAt = 0L;
             client.inGameHud.setOverlayMessage(
-                    Text.literal("MC 自动翻译工具: " + current), false);
+                    Text.translatable("message.universal_translator.runtime_status", localized), false);
         }
     }
 
     private static boolean isFailureStatus(String status) {
-        return status.startsWith("翻译失败") || status.startsWith("离线翻译失败");
+        return TranslationStatusLocalizer.isFailure(status);
+    }
+
+    private static String tr(String key, Object... arguments) {
+        return Text.translatable(key, arguments).getString();
     }
 }

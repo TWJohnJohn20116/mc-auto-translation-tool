@@ -5,6 +5,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.Collections;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
 
 /**
@@ -199,6 +200,38 @@ public final class RenderTranslationSession implements AutoCloseable {
         return replacement;
     }
 
+    /**
+     * Submits an interactive translation and exposes its completion to a platform adapter.
+     * This is used for outgoing chat: the caller can cancel the original send, then send the
+     * completed result on Minecraft's main thread without ever blocking that thread.
+     */
+    public CompletableFuture<TranslationResult> translateInteractive(
+            String original,
+            TextKind kind,
+            String requestedTargetLanguage,
+            boolean preserveHanText
+    ) {
+        if (original == null) {
+            throw new IllegalArgumentException("original cannot be null");
+        }
+        String target = requestedTargetLanguage == null ? "" : requestedTargetLanguage.trim();
+        if (target.isEmpty()) {
+            throw new IllegalArgumentException("targetLanguage is required");
+        }
+        Iterable<String> literals;
+        try {
+            literals = protectedLiterals.get();
+        } catch (RuntimeException ignored) {
+            literals = Collections.emptyList();
+        }
+        return coordinator.translate(
+                original,
+                sourceLanguage,
+                target,
+                kind == null ? TextKind.CHAT : kind,
+                literals,
+                preserveHanText);
+    }
     private synchronized void completeLookup(
             RenderKey key,
             String original,

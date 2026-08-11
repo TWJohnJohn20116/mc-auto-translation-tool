@@ -88,7 +88,7 @@ public final class TranslationCoordinator implements AutoCloseable {
         // The raw request key is deliberately cheap to construct and still de-duplicates
         // the same text while a translation is in progress.
         final String requestKey = CACHE_FORMAT_VERSION + "\n" + provider.id() + "\n" + sourceLanguage + "\n"
-                + targetLanguage + "\n" + kind + "\n" + text;
+                + targetLanguage + "\n" + kind + "\n" + preserveHanText + "\n" + text;
         CompletableFuture<TranslationResult> existing = inFlight.get(requestKey);
         if (existing == null) {
             final CompletableFuture<TranslationResult> created =

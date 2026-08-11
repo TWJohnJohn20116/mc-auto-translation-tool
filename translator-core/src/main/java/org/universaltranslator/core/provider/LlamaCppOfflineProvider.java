@@ -5,6 +5,7 @@ import org.universaltranslator.core.TranslationRequest;
 import org.universaltranslator.core.TranslationProviderStatus;
 import org.universaltranslator.core.OfflineModel;
 import org.universaltranslator.core.offline.OfflineEngineAsset;
+import org.universaltranslator.core.offline.OfflineProcessSupport;
 import org.universaltranslator.core.offline.SafeArchiveExtractor;
 import org.universaltranslator.core.offline.VerifiedDownloader;
 
@@ -23,6 +24,7 @@ import java.util.concurrent.TimeUnit;
 /** Fully local provider using a loopback-only llama.cpp child process. */
 public final class LlamaCppOfflineProvider
         implements TranslationProvider, TranslationProviderStatus, AutoCloseable {
+    private static final long STARTUP_FAILURE_RETRY_MILLIS = 5L * 60L * 1000L;
     public static final String DEFAULT_MODEL_ID = OfflineModel.LITE.modelId();
     public static final String DEFAULT_MODEL_FILE = OfflineModel.LITE.modelFile();
     public static final URI DEFAULT_MODEL_URI = URI.create(
@@ -60,6 +62,9 @@ public final class LlamaCppOfflineProvider
     private volatile Thread shutdownHook;
     private volatile String progressStage = "";
     private volatile int progressPercent = -1;
+    private volatile long nextStartupAttemptAt;
+    private volatile String startupFailureMessage = "";
+    private boolean engineRepairAttempted;
 
     public LlamaCppOfflineProvider(Path root, boolean autoDownload) {
         this(root, autoDownload, DEFAULT_MODEL_ID, DEFAULT_MODEL_FILE,
@@ -148,12 +153,42 @@ public final class LlamaCppOfflineProvider
         if (process != null && process.isAlive() && localApi != null) {
             return;
         }
+        long now = System.currentTimeMillis();
+        if (nextStartupAttemptAt > now && !startupFailureMessage.isEmpty()) {
+            throw new IOException(startupFailureMessage);
+        }
         closeProcess();
         Files.createDirectories(root);
         Path server = ensureEngine();
         Path model = ensureModel();
+        try {
+            startServer(server, model);
+        } catch (OfflineProcessExitedException firstFailure) {
+            closeProcess();
+            if (autoDownload && !engineRepairAttempted) {
+                engineRepairAttempted = true;
+                status = "离线引擎启动失败，正在自动修复";
+                deleteTree(engineInstallDirectory());
+                server = ensureEngine();
+                try {
+                    startServer(server, model);
+                    return;
+                } catch (Exception repairFailure) {
+                    closeProcess();
+                    throw delayStartupRetries(repairFailure);
+                }
+            }
+            throw delayStartupRetries(firstFailure);
+        } catch (Exception startupFailure) {
+            closeProcess();
+            throw delayStartupRetries(startupFailure);
+        }
+    }
+
+    private void startServer(Path server, Path model) throws Exception {
         int port = reserveLoopbackPort();
         Path log = root.resolve("llama-server.log");
+        long logStart = Files.isRegularFile(log) ? Files.size(log) : 0L;
         int processors = Runtime.getRuntime().availableProcessors();
         // The model shares the machine with Minecraft's render thread. Two inference
         // threads are enough for this small model and avoid sustained frame drops on
@@ -171,12 +206,13 @@ public final class LlamaCppOfflineProvider
                 "--threads", Integer.toString(threads),
                 "--threads-batch", Integer.toString(threads));
         builder.directory(server.getParent().toFile());
+        OfflineProcessSupport.configureLibraryPath(builder, server.getParent());
         builder.redirectErrorStream(true);
         builder.redirectOutput(ProcessBuilder.Redirect.appendTo(log.toFile()));
         process = builder.start();
         registerShutdownHook();
         try {
-            waitUntilHealthy(port, process, 90_000L);
+            waitUntilHealthy(port, process, 90_000L, log, logStart);
         } catch (Exception startupFailure) {
             closeProcess();
             throw startupFailure;
@@ -185,12 +221,21 @@ public final class LlamaCppOfflineProvider
                 "http://127.0.0.1:" + port + "/v1/chat/completions",
                 "", "universal-translator-local", "offline-loopback",
                 new org.universaltranslator.core.net.HttpJsonClient(1_000, 15_000));
+        nextStartupAttemptAt = 0L;
+        startupFailureMessage = "";
         status = "离线模型已就绪";
+    }
+
+    private IOException delayStartupRetries(Exception failure) {
+        String message = safeMessage(failure) + "；已暂停自动重试 5 分钟";
+        startupFailureMessage = message;
+        nextStartupAttemptAt = System.currentTimeMillis() + STARTUP_FAILURE_RETRY_MILLIS;
+        return new IOException(message, failure);
     }
 
     private Path ensureEngine() throws IOException {
         OfflineEngineAsset asset = OfflineEngineAsset.current();
-        Path engineRoot = root.resolve("engines").resolve("b9637-" + asset.platformId);
+        Path engineRoot = engineRoot(asset);
         Path installed = engineRoot.resolve("installed");
         if (Files.isDirectory(installed)) {
             try {
@@ -225,6 +270,14 @@ public final class LlamaCppOfflineProvider
             throw exception;
         }
         return SafeArchiveExtractor.findServer(installed);
+    }
+
+    private Path engineInstallDirectory() {
+        return engineRoot(OfflineEngineAsset.current()).resolve("installed");
+    }
+
+    private Path engineRoot(OfflineEngineAsset asset) {
+        return root.resolve("engines").resolve("b9637-" + asset.platformId);
     }
 
     private Path ensureModel() throws IOException {
@@ -271,12 +324,21 @@ public final class LlamaCppOfflineProvider
         };
     }
 
-    private static void waitUntilHealthy(int port, Process child, long timeoutMillis) throws Exception {
+    private static void waitUntilHealthy(
+            int port,
+            Process child,
+            long timeoutMillis,
+            Path log,
+            long logStart
+    ) throws Exception {
         long deadline = System.currentTimeMillis() + timeoutMillis;
         IOException lastFailure = null;
         while (System.currentTimeMillis() < deadline) {
             if (!child.isAlive()) {
-                throw new IOException("Offline translation process exited during startup; see llama-server.log");
+                int exitCode = child.exitValue();
+                String detail = OfflineProcessSupport.readNewLogTail(log, logStart);
+                throw new OfflineProcessExitedException(
+                        OfflineProcessSupport.describeStartupExit(exitCode, detail));
             }
             HttpURLConnection connection = null;
             try {
@@ -332,7 +394,7 @@ public final class LlamaCppOfflineProvider
             return error.getClass().getSimpleName();
         }
         String singleLine = message.replace('\n', ' ').replace('\r', ' ').trim();
-        return singleLine.length() <= 96 ? singleLine : singleLine.substring(0, 93) + "...";
+        return singleLine.length() <= 160 ? singleLine : singleLine.substring(0, 157) + "...";
     }
 
     @Override
@@ -367,6 +429,7 @@ public final class LlamaCppOfflineProvider
     }
 
     private synchronized void closeProcess(boolean unregisterHook) {
+        localApi = null;
         Thread hook = shutdownHook;
         shutdownHook = null;
         if (unregisterHook && hook != null && hook != Thread.currentThread()) {
@@ -390,6 +453,12 @@ public final class LlamaCppOfflineProvider
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             child.destroyForcibly();
+        }
+    }
+
+    private static final class OfflineProcessExitedException extends IOException {
+        private OfflineProcessExitedException(String message) {
+            super(message);
         }
     }
 }

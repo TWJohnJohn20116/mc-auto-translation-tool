@@ -27,8 +27,8 @@ public final class RenderedTextBridge {
         if (text == null || text.equals(translated)) {
             return text;
         }
-        return TranslationTextStyling.applyLegacyColor(
-                translated, FabricTranslationRuntime.translatedTextColor());
+        return TranslationTextStyling.applyTranslatedStyle(
+                text, translated, FabricTranslationRuntime.translatedTextColor());
     }
 
     public static Text translate(Text text) {
@@ -135,7 +135,7 @@ public final class RenderedTextBridge {
 
     private static Style translatedStyle(Style original) {
         TranslationTextColor color = FabricTranslationRuntime.translatedTextColor();
-        if (color == null || !color.changesColor()) {
+        if (original.getColor() != null || color == null || !color.changesColor()) {
             return original;
         }
         switch (color) {
