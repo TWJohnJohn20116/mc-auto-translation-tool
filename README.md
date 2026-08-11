@@ -1,5 +1,7 @@
 # MC 自动翻译工具（MC Auto Translation Tool）
 
+[简体中文](README.md) · [繁體中文](README.zh-TW.md) · [English](README.en.md)
+
 一个面向 Minecraft Java 版的公益、开源、纯客户端全界面翻译模组。
 
 [⬇️ 下载最新版](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest) ·
