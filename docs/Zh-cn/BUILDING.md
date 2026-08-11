@@ -1,7 +1,19 @@
 # 构建说明
 
-项目由一个 Java 8 通用核心、一个现代 Fabric 模块和两个独立旧 Forge 构建组成。
+[简体中文](BUILDING.md) · [繁體中文](../Zh-tw/BUILDING.md) · [English](../en/BUILDING.md) · [返回简中 README](README.md)
+
+项目由一个 Java 8 通用核心、两个现代 Fabric 模块和两个独立旧 Forge 构建组成。
 旧 ForgeGradle 不能在现代 JDK 上直接运行，因此不能用一条根 Gradle 命令构建全部版本。
+
+## 26.1 Fabric
+
+需要 JDK 25 或更高版本：
+
+```bash
+./gradlew :platform-fabric-26.1:build
+```
+
+输出位于 `platform-fabric-26.1/build/libs/`。
 
 ## 1.21.11 Fabric
 

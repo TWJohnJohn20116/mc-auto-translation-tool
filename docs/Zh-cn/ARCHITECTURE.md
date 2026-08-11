@@ -1,5 +1,7 @@
 # 架构说明
 
+[简体中文](ARCHITECTURE.md) · [繁體中文](../Zh-tw/ARCHITECTURE.md) · [English](../en/ARCHITECTURE.md) · [返回简中 README](README.md)
+
 ## 为什么不需要项目服务器
 
 模组只负责在玩家客户端捕获、规范化和显示文字。翻译提供者通过统一接口注入，

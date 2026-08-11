@@ -1,12 +1,12 @@
 # MC 自動翻譯工具（MC Auto Translation Tool）
 
-[简体中文](README.md) · [繁體中文](README.zh-TW.md) · [English](README.en.md)
+[简体中文](../Zh-cn/README.md) · [繁體中文](README.md) · [English](../en/README.md) · [儲存庫首頁](../../README.md)
 
 一個面向 Minecraft Java 版的公益、開源、純用戶端全介面翻譯模組。
 
 [⬇️ 下載最新版](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest) ·
 [🌐 官方下載頁面](https://mc-auto-translation-tool.wuxiangdan96.chatgpt.site/#download) ·
-[📖 安裝與使用說明（簡體中文）](docs/USER_GUIDE_zh-CN.md)
+[📚 語言目錄](../README.md) · [📖 安裝及使用說明](USER_GUIDE.md)
 
 原作者：[Bilibili「我小张7272635」](https://space.bilibili.com/3546631091783712)。
 轉載、再次發佈或改作時，請保留原作者署名及 MIT License 版權聲明。
@@ -91,6 +91,6 @@ LibreTranslate 或舊版騰訊相容模式。
 本機快取。密鑰只儲存在玩家本機，禁止提交至程式碼儲存庫。遠端端點必須使用
 HTTPS；只有精確的本機回環位址可使用 HTTP。
 
-詳細安裝及使用方式請參閱 `docs/USER_GUIDE_zh-CN.md`；實際驗證範圍及後續版本順序
-請參閱 `docs/COMPATIBILITY.md`。官方網站原始碼位於 `website/`；公開存取將在發佈者
+詳細安裝及使用方式請參閱 [使用指南](USER_GUIDE.md)；實際驗證範圍及後續版本順序
+請參閱 [相容性矩陣](COMPATIBILITY.md)。官方網站原始碼位於 `../../website/`；公開存取將在發佈者
 確認後開放。

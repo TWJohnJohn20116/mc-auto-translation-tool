@@ -1,6 +1,14 @@
 # 兼容性矩阵
 
+[简体中文](COMPATIBILITY.md) · [繁體中文](../Zh-tw/COMPATIBILITY.md) · [English](../en/COMPATIBILITY.md) · [返回简中 README](README.md)
+
 本文只记录实际完成的验证，不把“能够编译”写成“已经兼容”。
+
+## 开发中的目标
+
+Minecraft 26.1 Fabric 模块已经加入根项目，使用 Java 25、Fabric Loader 0.19.3 与
+Fabric API 0.145.1+26.1。它目前属于开发目标，完成干净构建、启动及服务器内回归后
+才会移入下方的已验证表。
 
 ## 1.1 发布验证
 

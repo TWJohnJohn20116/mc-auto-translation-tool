@@ -1,5 +1,7 @@
 # MC 自动翻译工具安装与使用指南
 
+[简体中文](USER_GUIDE.md) · [繁體中文](../Zh-tw/USER_GUIDE.md) · [English](../en/USER_GUIDE.md) · [返回简中 README](README.md)
+
 ## 选择正确的文件
 
 每个 Minecraft 版本必须使用对应 JAR，不能混用：

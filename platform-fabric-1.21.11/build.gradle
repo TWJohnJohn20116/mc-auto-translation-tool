@@ -53,7 +53,7 @@ jar {
     from(rootProject.file("LICENSE")) {
         rename { "LICENSE_universal_translator" }
     }
-    from(rootProject.file("docs/THIRD_PARTY_OFFLINE.md")) {
+    from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) {
         rename { "THIRD_PARTY_OFFLINE.md" }
     }
 }
