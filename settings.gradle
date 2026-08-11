@@ -8,3 +8,4 @@ pluginManagement {
 rootProject.name = "mc-auto-translation-tool"
 include("translator-core")
 include("platform-fabric-1.21.11")
+include("platform-fabric-26.1")
