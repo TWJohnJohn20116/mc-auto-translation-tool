@@ -6,6 +6,7 @@ import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import org.universaltranslator.core.TranslationDisplayMode;
+import org.universaltranslator.core.TranslationStatusLocalizer;
 import org.universaltranslator.core.TranslationTextColor;
 
 /** Minimal dependency-free settings screen, opened with U by default. */
@@ -37,7 +38,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private String status = "";
 
     UniversalTranslatorConfigScreen(Screen parent, FabricConfig config) {
-        super(Component.literal("MC 自动翻译工具 设置"));
+        super(Component.translatable("screen.universal_translator.settings.title"));
         this.parent = parent;
         this.original = config;
         this.enabled = config.enabled;
@@ -100,52 +101,54 @@ final class UniversalTranslatorConfigScreen extends Screen {
         }).bounds(layout.right, layout.row(4), layout.buttonWidth, 20).build());
 
         this.targetLanguage = addRenderableWidget(new EditBox(
-                this.font, left, layout.targetY, layout.buttonWidth, 20, Component.literal("目标语言")));
+                this.font, left, layout.targetY, layout.buttonWidth, 20,
+                Component.translatable("screen.universal_translator.target_language")));
         this.targetLanguage.setMaxLength(32);
         this.targetLanguage.setValue(original.targetLanguage);
         this.endpoint = addRenderableWidget(new EditBox(
                 this.font, left, layout.endpointY, layout.totalWidth, 20,
-                Component.literal("LibreTranslate 地址")));
+                Component.translatable("screen.universal_translator.endpoint")));
         this.endpoint.setMaxLength(512);
         this.endpoint.setValue(original.endpoint);
 
-        addRenderableWidget(Button.builder(Component.literal("保存并应用"), button -> saveAndApply())
+        addRenderableWidget(Button.builder(Component.translatable("screen.universal_translator.save"), button -> saveAndApply())
                 .bounds(left, layout.saveY, layout.buttonWidth, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("取消"), button -> onClose())
+        addRenderableWidget(Button.builder(Component.translatable("gui.cancel"), button -> onClose())
                 .bounds(layout.right, layout.saveY, layout.buttonWidth, 20).build());
         refreshLabels();
     }
 
     private void refreshLabels() {
-        enabledButton.setMessage(Component.literal("自动翻译: " + onOff(enabled)));
-        chatButton.setMessage(Component.literal("聊天内容: " + onOff(translateChat)));
-        otherButton.setMessage(Component.literal("其他界面: " + onOff(translateOther)));
-        cacheButton.setMessage(Component.literal("本地缓存: " + onOff(diskCache)));
-        providerButton.setMessage(Component.literal("服务: " + providerLabel()));
-        displayButton.setMessage(Component.literal("显示: "
-                + (displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED ? "原文+译文" : "仅译文")));
-        mixedTextButton.setMessage(Component.literal("混合文本仅译英文: " + onOff(translateEnglishOnly)));
-        colorButton.setMessage(Component.literal("译文颜色: " + colorLabel(translatedTextColor)));
-        downloadButton.setMessage(Component.literal("模型下载: " + onOff(offlineAutoDownload)));
-        fallbackButton.setMessage(Component.literal("API 回退: " + onOff(apiFallback)));
+        enabledButton.setMessage(Component.translatable("screen.universal_translator.option.automatic", onOff(enabled)));
+        chatButton.setMessage(Component.translatable("screen.universal_translator.option.chat", onOff(translateChat)));
+        otherButton.setMessage(Component.translatable("screen.universal_translator.option.other", onOff(translateOther)));
+        cacheButton.setMessage(Component.translatable("screen.universal_translator.option.cache", onOff(diskCache)));
+        providerButton.setMessage(Component.translatable("screen.universal_translator.option.provider", providerLabel()));
+        displayButton.setMessage(Component.translatable("screen.universal_translator.option.display",
+                tr(displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED
+                        ? "value.universal_translator.display_bilingual"
+                        : "value.universal_translator.display_translated")));
+        mixedTextButton.setMessage(Component.translatable("screen.universal_translator.option.mixed", onOff(translateEnglishOnly)));
+        colorButton.setMessage(Component.translatable("screen.universal_translator.option.color", colorLabel(translatedTextColor)));
+        downloadButton.setMessage(Component.translatable("screen.universal_translator.option.download", onOff(offlineAutoDownload)));
+        fallbackButton.setMessage(Component.translatable("screen.universal_translator.option.fallback", onOff(apiFallback)));
         downloadButton.active = isOffline();
         fallbackButton.active = isOffline();
     }
 
     private static String onOff(boolean value) {
-        return value ? "开启" : "关闭";
+        return tr(value ? "value.universal_translator.on" : "value.universal_translator.off");
     }
 
     private static boolean isFailureStatus(String value) {
-        return value.startsWith("翻译失败") || value.startsWith("离线翻译失败")
-                || value.contains("均失败");
+        return TranslationStatusLocalizer.isFailure(value);
     }
 
     private void saveAndApply() {
         boolean runtimeChanged = false;
         try {
             if (targetLanguage.getValue().trim().isEmpty()) {
-                throw new IllegalArgumentException("目标语言不能为空");
+                throw new IllegalArgumentException(tr("error.universal_translator.target_required"));
             }
             FabricConfig updated = original.withSettings(
                     enabled,
@@ -162,7 +165,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
                     diskCache);
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
                     && (updated.tencentSecretId.isEmpty() || updated.tencentSecretKey.isEmpty())) {
-                throw new IllegalArgumentException("请先在本地配置文件填写腾讯 SecretId 和 SecretKey");
+                throw new IllegalArgumentException(tr("error.universal_translator.tencent_credentials"));
             }
             if (updated.enabled) {
                 updated.validateProviderConfiguration();
@@ -170,7 +173,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
             runtimeChanged = true;
             FabricTranslationRuntime.initialize(updated);
             updated.save();
-            status = "设置已保存";
+            status = tr("status.universal_translator.saved");
             onClose();
         } catch (Exception exception) {
             if (runtimeChanged) {
@@ -180,7 +183,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
                     exception.addSuppressed(restoreFailure);
                 }
             }
-            status = "无法保存: " + exception.getMessage();
+            status = tr("status.universal_translator.save_failed", exception.getMessage());
         }
     }
 
@@ -189,12 +192,14 @@ final class UniversalTranslatorConfigScreen extends Screen {
         graphics.centeredText(this.font, this.title, this.width / 2, 18, 0xFFFFFF);
         Layout layout = layout();
         int left = layout.left;
-        graphics.text(this.font, Component.literal("目标语言 (例如 zh-CN)"),
+        graphics.text(this.font, Component.translatable("screen.universal_translator.target_language_hint"),
                 left, layout.targetY - 11, 0xA0A0A0);
         graphics.text(this.font,
-                Component.literal("LibreTranslate /translate 地址（仅 API 模式/回退使用）"),
+                Component.translatable("screen.universal_translator.endpoint_hint"),
                 left, layout.endpointY - 11, 0xA0A0A0);
-        String runtimeStatus = FabricTranslationRuntime.status();
+        String rawRuntimeStatus = FabricTranslationRuntime.status();
+        String runtimeStatus = TranslationStatusLocalizer.localize(rawRuntimeStatus,
+                UniversalTranslatorConfigScreen::tr);
         int belowSave = layout.saveY + 28;
         int messageY = belowSave <= this.height - 10 ? belowSave : layout.saveY - 14;
         if (!status.isEmpty()) {
@@ -203,17 +208,17 @@ final class UniversalTranslatorConfigScreen extends Screen {
         } else if (!runtimeStatus.isEmpty()) {
             graphics.centeredText(this.font, Component.literal(runtimeStatus),
                     this.width / 2, messageY,
-                    isFailureStatus(runtimeStatus) ? 0xFF5555 : 0x55FF55);
+                    isFailureStatus(rawRuntimeStatus) ? 0xFF5555 : 0x55FF55);
         } else if (layout.saveY - layout.endpointY >= 52) {
             int infoY = layout.endpointY + 28;
             graphics.centeredText(
                     this.font,
-                    Component.literal(isOffline()
-                            ? "离线模式只访问本机；首次使用会在后台下载约 502 MB。"
-                            : "API 模式会把选中的服务器文字发送到翻译服务。"),
+                    Component.translatable(isOffline()
+                            ? "screen.universal_translator.info.offline"
+                            : "screen.universal_translator.info.api"),
                     this.width / 2, infoY, 0xFFAA55);
             graphics.centeredText(this.font,
-                    Component.literal("F8 一键开关；可在 设置 → 控制 → 按键绑定 中修改。"),
+                    Component.translatable("screen.universal_translator.info.keybind"),
                     this.width / 2, infoY + 15, 0xA0A0A0);
         }
         super.extractRenderState(graphics, mouseX, mouseY, delta);
@@ -240,7 +245,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
     }
 
     private String providerLabel() {
-        return isOffline() ? "离线" : (isTencent() ? "腾讯" : "Libre");
+        return isOffline() ? tr("value.universal_translator.provider_offline")
+                : (isTencent() ? tr("value.universal_translator.provider_tencent") : "Libre");
     }
 
     private static String nextProvider(String current) {
@@ -255,15 +261,19 @@ final class UniversalTranslatorConfigScreen extends Screen {
 
     private static String colorLabel(TranslationTextColor color) {
         switch (color) {
-            case ORIGINAL: return "保留原色";
-            case GREEN: return "绿色";
-            case GOLD: return "金色";
-            case LIGHT_PURPLE: return "浅紫";
-            case YELLOW: return "黄色";
-            case WHITE: return "白色";
+            case ORIGINAL: return tr("value.universal_translator.color.original");
+            case GREEN: return tr("value.universal_translator.color.green");
+            case GOLD: return tr("value.universal_translator.color.gold");
+            case LIGHT_PURPLE: return tr("value.universal_translator.color.light_purple");
+            case YELLOW: return tr("value.universal_translator.color.yellow");
+            case WHITE: return tr("value.universal_translator.color.white");
             case AQUA:
-            default: return "青色";
+            default: return tr("value.universal_translator.color.aqua");
         }
+    }
+
+    private static String tr(String key, Object... arguments) {
+        return Component.translatable(key, arguments).getString();
     }
 
     private Layout layout() {

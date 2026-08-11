@@ -4,10 +4,12 @@ import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.GuiTextField;
+import net.minecraft.client.resources.I18n;
 
 import java.io.IOException;
 import org.universaltranslator.core.TranslationDisplayMode;
 import org.universaltranslator.core.OfflineModel;
+import org.universaltranslator.core.TranslationStatusLocalizer;
 import org.universaltranslator.core.TranslationTextColor;
 
 /** Dependency-free settings UI shared by Forge 1.8.9 and 1.12.2. */
@@ -83,15 +85,17 @@ final class LegacyConfigScreen extends GuiScreen {
         buttonList.add(new GuiButton(FALLBACK, layout.right, layout.row(4), layout.buttonWidth, 20, ""));
         buttonList.add(new GuiButton(MODEL, left, layout.row(5), layout.buttonWidth, 20, ""));
         buttonList.add(new GuiButton(DIAGNOSTICS, layout.right, layout.row(5),
-                layout.buttonWidth, 20, "翻译诊断"));
+                layout.buttonWidth, 20, tr("screen.universal_translator.diagnostics.title")));
         targetLanguage = new GuiTextField(20, renderer, left, layout.targetY, layout.buttonWidth, 20);
         targetLanguage.setMaxStringLength(32);
         targetLanguage.setText(targetLanguageValue);
         endpoint = new GuiTextField(21, renderer, left, layout.endpointY, layout.totalWidth, 20);
         endpoint.setMaxStringLength(512);
         endpoint.setText(endpointValue);
-        buttonList.add(new GuiButton(SAVE, left, layout.saveY, layout.buttonWidth, 20, "保存并应用"));
-        buttonList.add(new GuiButton(CANCEL, layout.right, layout.saveY, layout.buttonWidth, 20, "取消"));
+        buttonList.add(new GuiButton(SAVE, left, layout.saveY, layout.buttonWidth, 20,
+                tr("screen.universal_translator.save")));
+        buttonList.add(new GuiButton(CANCEL, layout.right, layout.saveY, layout.buttonWidth, 20,
+                tr("gui.cancel")));
         refreshLabels();
     }
 
@@ -135,18 +139,20 @@ final class LegacyConfigScreen extends GuiScreen {
     }
 
     private void refreshLabels() {
-        button(ENABLED).displayString = "自动翻译: " + onOff(enabled);
-        button(CHAT).displayString = "聊天内容: " + onOff(translateChat);
-        button(OTHER).displayString = "其他界面: " + onOff(translateOther);
-        button(CACHE).displayString = "本地缓存: " + onOff(diskCache);
-        button(PROVIDER).displayString = "服务: " + providerLabel();
-        button(DISPLAY).displayString = "显示: "
-                + (displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED ? "原文+译文" : "仅译文");
-        button(MIXED_TEXT).displayString = "混合文本仅译英文: " + onOff(translateEnglishOnly);
-        button(COLOR).displayString = "译文颜色: " + colorLabel(translatedTextColor);
-        button(DOWNLOAD).displayString = "模型下载: " + onOff(offlineAutoDownload);
-        button(MODEL).displayString = "离线模型: " + offlineModel.displayName();
-        button(FALLBACK).displayString = "API 回退: " + onOff(apiFallback);
+        button(ENABLED).displayString = tr("screen.universal_translator.option.automatic", onOff(enabled));
+        button(CHAT).displayString = tr("screen.universal_translator.option.chat", onOff(translateChat));
+        button(OTHER).displayString = tr("screen.universal_translator.option.other", onOff(translateOther));
+        button(CACHE).displayString = tr("screen.universal_translator.option.cache", onOff(diskCache));
+        button(PROVIDER).displayString = tr("screen.universal_translator.option.provider", providerLabel());
+        button(DISPLAY).displayString = tr("screen.universal_translator.option.display",
+                tr(displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED
+                        ? "value.universal_translator.display_bilingual"
+                        : "value.universal_translator.display_translated"));
+        button(MIXED_TEXT).displayString = tr("screen.universal_translator.option.mixed", onOff(translateEnglishOnly));
+        button(COLOR).displayString = tr("screen.universal_translator.option.color", colorLabel(translatedTextColor));
+        button(DOWNLOAD).displayString = tr("screen.universal_translator.option.download", onOff(offlineAutoDownload));
+        button(MODEL).displayString = tr("screen.universal_translator.option.model", offlineModel.displayName());
+        button(FALLBACK).displayString = tr("screen.universal_translator.option.fallback", onOff(apiFallback));
         button(DOWNLOAD).enabled = isOffline();
         button(MODEL).enabled = isOffline();
         button(FALLBACK).enabled = isOffline();
@@ -162,19 +168,18 @@ final class LegacyConfigScreen extends GuiScreen {
     }
 
     private static String onOff(boolean value) {
-        return value ? "开启" : "关闭";
+        return tr(value ? "value.universal_translator.on" : "value.universal_translator.off");
     }
 
     private static boolean isFailureStatus(String value) {
-        return value.startsWith("翻译失败") || value.startsWith("离线翻译失败")
-                || value.contains("均失败");
+        return TranslationStatusLocalizer.isFailure(value);
     }
 
     private void saveAndApply() {
         boolean runtimeChanged = false;
         try {
             if (targetLanguage.getText().trim().isEmpty()) {
-                throw new IllegalArgumentException("目标语言不能为空");
+                throw new IllegalArgumentException(tr("error.universal_translator.target_required"));
             }
             LegacyConfig updated = original.withSettings(
                     enabled,
@@ -192,7 +197,7 @@ final class LegacyConfigScreen extends GuiScreen {
                     diskCache);
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
                     && (updated.tencentSecretId.isEmpty() || updated.tencentSecretKey.isEmpty())) {
-                throw new IllegalArgumentException("请先在本地配置文件填写腾讯 SecretId 和 SecretKey");
+                throw new IllegalArgumentException(tr("error.universal_translator.tencent_credentials"));
             }
             if (updated.enabled) {
                 updated.validateProviderConfiguration();
@@ -209,7 +214,7 @@ final class LegacyConfigScreen extends GuiScreen {
                     exception.addSuppressed(restoreFailure);
                 }
             }
-            status = "无法保存: " + exception.getMessage();
+            status = tr("status.universal_translator.save_failed", exception.getMessage());
         }
     }
 
@@ -238,31 +243,35 @@ final class LegacyConfigScreen extends GuiScreen {
     @Override
     public void drawScreen(int mouseX, int mouseY, float partialTicks) {
         drawDefaultBackground();
-        drawCenteredString(renderer, "MC 自动翻译工具 设置", width / 2, 18, 0xFFFFFF);
+        drawCenteredString(renderer, tr("screen.universal_translator.settings.title"),
+                width / 2, 18, 0xFFFFFF);
         Layout layout = layout();
         int left = layout.left;
-        drawString(renderer, "目标语言 (例如 zh-CN)", left, layout.targetY - 11, 0xA0A0A0);
-        drawString(renderer, "LibreTranslate /translate 地址（仅 API 模式/回退使用）",
+        drawString(renderer, tr("screen.universal_translator.target_language_hint"),
+                left, layout.targetY - 11, 0xA0A0A0);
+        drawString(renderer, tr("screen.universal_translator.endpoint_hint"),
                 left, layout.endpointY - 11, 0xA0A0A0);
         targetLanguage.drawTextBox();
         endpoint.drawTextBox();
-        String runtimeStatus = LegacyTranslationRuntime.status();
+        String rawRuntimeStatus = LegacyTranslationRuntime.status();
+        String runtimeStatus = TranslationStatusLocalizer.localize(rawRuntimeStatus,
+                LegacyConfigScreen::tr);
         int belowSave = layout.saveY + 28;
         int messageY = belowSave <= height - 10 ? belowSave : layout.saveY - 14;
         if (!status.isEmpty()) {
             drawCenteredString(renderer, status, width / 2, messageY, 0xFF5555);
         } else if (!runtimeStatus.isEmpty()) {
             drawCenteredString(renderer, runtimeStatus, width / 2, messageY,
-                    isFailureStatus(runtimeStatus) ? 0xFF5555 : 0x55FF55);
+                    isFailureStatus(rawRuntimeStatus) ? 0xFF5555 : 0x55FF55);
         } else if (layout.saveY - layout.endpointY >= 52) {
             int infoY = layout.endpointY + 28;
             drawCenteredString(
                     renderer,
-                    isOffline()
-                            ? "离线模式只访问本机；首次使用会在后台下载约 502 MB。"
-                            : "API 模式会把选中的服务器文字发送到翻译服务。",
+                    tr(isOffline()
+                            ? "screen.universal_translator.info.offline"
+                            : "screen.universal_translator.info.api"),
                     width / 2, infoY, 0xFFAA55);
-            drawCenteredString(renderer, "F8 一键开关；可在 设置 → 控制 → 按键绑定 中修改。",
+            drawCenteredString(renderer, tr("screen.universal_translator.info.keybind"),
                     width / 2, infoY + 15, 0xA0A0A0);
         }
         super.drawScreen(mouseX, mouseY, partialTicks);
@@ -282,7 +291,8 @@ final class LegacyConfigScreen extends GuiScreen {
     }
 
     private String providerLabel() {
-        return isOffline() ? "离线" : (isTencent() ? "腾讯" : "Libre");
+        return isOffline() ? tr("value.universal_translator.provider_offline")
+                : (isTencent() ? tr("value.universal_translator.provider_tencent") : "Libre");
     }
 
     private static String nextProvider(String current) {
@@ -297,15 +307,19 @@ final class LegacyConfigScreen extends GuiScreen {
 
     private static String colorLabel(TranslationTextColor color) {
         switch (color) {
-            case ORIGINAL: return "保留原色";
-            case GREEN: return "绿色";
-            case GOLD: return "金色";
-            case LIGHT_PURPLE: return "浅紫";
-            case YELLOW: return "黄色";
-            case WHITE: return "白色";
+            case ORIGINAL: return tr("value.universal_translator.color.original");
+            case GREEN: return tr("value.universal_translator.color.green");
+            case GOLD: return tr("value.universal_translator.color.gold");
+            case LIGHT_PURPLE: return tr("value.universal_translator.color.light_purple");
+            case YELLOW: return tr("value.universal_translator.color.yellow");
+            case WHITE: return tr("value.universal_translator.color.white");
             case AQUA:
-            default: return "青色";
+            default: return tr("value.universal_translator.color.aqua");
         }
+    }
+
+    private static String tr(String key, Object... arguments) {
+        return I18n.format(key, arguments);
     }
 
     private Layout layout() {

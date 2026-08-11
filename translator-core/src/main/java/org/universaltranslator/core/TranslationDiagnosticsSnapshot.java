@@ -60,6 +60,88 @@ public final class TranslationDiagnosticsSnapshot {
         return Collections.unmodifiableList(lines);
     }
 
+    public List<String> localizedLines(UiTranslator translator) {
+        List<String> lines = new ArrayList<String>();
+        lines.add(translator.translate("screen.universal_translator.diagnostics.enabled",
+                localizedOnOff(enabled, translator)));
+        lines.add(translator.translate("screen.universal_translator.diagnostics.configured_provider",
+                localizedProvider(configuredProvider, translator)));
+        lines.add(translator.translate("screen.universal_translator.diagnostics.active_provider",
+                localizedActiveProvider(translator)));
+        lines.add(translator.translate("screen.universal_translator.diagnostics.target_language",
+                targetLanguage.isEmpty()
+                        ? translator.translate("value.universal_translator.not_set") : targetLanguage));
+        if ("offline".equalsIgnoreCase(configuredProvider)) {
+            lines.add(translator.translate("screen.universal_translator.diagnostics.offline_model",
+                    offlineModel.displayName(), formatBytes(offlineModel.expectedBytes())));
+            lines.add(translator.translate("screen.universal_translator.diagnostics.model_file",
+                    localizedModelFileStatus(translator)));
+            lines.add(translator.translate("screen.universal_translator.diagnostics.auto_download",
+                    localizedOnOff(offlineAutoDownload, translator)));
+        }
+        lines.add(translator.translate("screen.universal_translator.diagnostics.disk_cache",
+                localizedCacheStatus(translator)));
+        String status = runtimeStatus.isEmpty()
+                ? translator.translate(enabled
+                ? "status.universal_translator.waiting_first_translation"
+                : "status.universal_translator.translation_disabled")
+                : TranslationStatusLocalizer.localize(runtimeStatus, translator);
+        lines.add(translator.translate("screen.universal_translator.diagnostics.runtime_status", status));
+        return Collections.unmodifiableList(lines);
+    }
+
+    private String localizedModelFileStatus(UiTranslator translator) {
+        if (modelFileBytes < 0L) {
+            return translator.translate("value.universal_translator.model_not_installed");
+        }
+        if (modelFileBytes == offlineModel.expectedBytes()) {
+            return translator.translate("value.universal_translator.model_valid");
+        }
+        return translator.translate("value.universal_translator.model_size_invalid",
+                formatBytes(modelFileBytes), formatBytes(offlineModel.expectedBytes()));
+    }
+
+    private String localizedCacheStatus(UiTranslator translator) {
+        if (!diskCache) {
+            return translator.translate("value.universal_translator.cache_memory_only");
+        }
+        return cacheFileBytes < 0L
+                ? translator.translate("value.universal_translator.cache_file_pending")
+                : translator.translate("value.universal_translator.cache_file_size",
+                formatBytes(cacheFileBytes));
+    }
+
+    private String localizedActiveProvider(UiTranslator translator) {
+        if (activeProviderId.isEmpty()) {
+            return translator.translate("value.universal_translator.not_started");
+        }
+        if (activeProviderId.startsWith("fallback:")) {
+            return translator.translate("value.universal_translator.provider_offline_fallback");
+        }
+        if (activeProviderId.startsWith("offline-llama:")) {
+            return translator.translate("value.universal_translator.provider_offline_model");
+        }
+        return localizedProvider(configuredProvider, translator);
+    }
+
+    private static String localizedProvider(String provider, UiTranslator translator) {
+        if ("offline".equalsIgnoreCase(provider)) {
+            return translator.translate("value.universal_translator.provider_offline");
+        }
+        if ("libretranslate".equalsIgnoreCase(provider)) {
+            return "LibreTranslate";
+        }
+        if ("tencent-hunyuan".equalsIgnoreCase(provider)) {
+            return translator.translate("value.universal_translator.provider_tencent");
+        }
+        return provider.isEmpty() ? translator.translate("value.universal_translator.not_set") : provider;
+    }
+
+    private static String localizedOnOff(boolean value, UiTranslator translator) {
+        return translator.translate(value
+                ? "value.universal_translator.on" : "value.universal_translator.off");
+    }
+
     private String modelFileStatus() {
         if (modelFileBytes < 0L) {
             return "未安装";

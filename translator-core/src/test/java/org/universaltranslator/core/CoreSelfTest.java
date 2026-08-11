@@ -61,7 +61,29 @@ public final class CoreSelfTest {
         extractsOfflineEngineArchivesSafely();
         normalizesOfflineModelSelections();
         formatsSecretFreeDiagnostics();
+        localizesDiagnosticsAndRuntimeStatus();
         System.out.println("CoreSelfTest: all checks passed");
+    }
+
+    private static void localizesDiagnosticsAndRuntimeStatus() {
+        UiTranslator translator = new UiTranslator() {
+            @Override
+            public String translate(String key, Object... arguments) {
+                return key + (arguments.length == 0 ? "" : "=" + java.util.Arrays.toString(arguments));
+            }
+        };
+        TranslationDiagnosticsSnapshot snapshot = new TranslationDiagnosticsSnapshot(
+                true, "offline", "offline-llama:model", "zh-TW", OfflineModel.LITE,
+                true, true, OfflineModel.LITE.expectedBytes(), 1000L, "离线模型运行中");
+        String output = String.join("\n", snapshot.localizedLines(translator));
+        assertTrue(output.contains("screen.universal_translator.diagnostics.enabled"));
+        assertTrue(output.contains("status.universal_translator.offline_running"));
+        assertEquals("status.universal_translator.translation_failed=[timeout]",
+                TranslationStatusLocalizer.localize("翻译失败：timeout", translator));
+        assertEquals("status.universal_translator.primary_running",
+                TranslationStatusLocalizer.localize("主翻译服务运行中", translator));
+        assertTrue(TranslationStatusLocalizer.isFailure("离线翻译失败：timeout"));
+        assertFalse(TranslationStatusLocalizer.isFailure("离线模型已就绪"));
     }
 
     private static void normalizesOfflineModelSelections() throws Exception {
