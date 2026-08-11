@@ -1,0 +1,20 @@
+{
+  "required": true,
+  "package": "org.universaltranslator.forge.mixin",
+  "refmap": "main.refmap.json",
+  "compatibilityLevel": "JAVA_17",
+  "client": [
+    "BossBarHudContextMixin",
+    "ChatHudContextMixin",
+    "DrawContextMixin",
+    "InGameHudContextMixin",
+    "PlayerListHudContextMixin",
+    "ScreenMixin",
+    "SignEditScreenMixin",
+    "TextFieldWidgetMixin",
+    "TextRendererMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

@@ -5,7 +5,6 @@
 一个面向 Minecraft Java 版的公益、开源、纯客户端全界面翻译模组。
 
 [⬇️ 下载最新版](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest) ·
-[🌐 官方下载页](https://mc-auto-translation-tool.wuxiangdan96.chatgpt.site/#download) ·
 [📚 文档中心](docs/README.md) · [📖 安装与使用说明](docs/Zh-cn/USER_GUIDE.md)
 
 原作者：[B站「我小张7272635」](https://space.bilibili.com/3546631091783712)。
@@ -22,15 +21,18 @@ Action Bar、标题、Boss Bar、容器标题、物品名称与 Lore、告示牌
 
 | Minecraft | 加载器 | 下载 |
 | --- | --- | --- |
-| 1.8.9 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.1/MCAutoTranslationTool-1.1-mc1.8.9-forge.jar) |
-| 1.12.2 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.1/MCAutoTranslationTool-1.1-mc1.12.2-forge.jar) |
-| 1.21.11 | Fabric | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.1/MCAutoTranslationTool-1.1-mc1.21.11-fabric.jar) |
+| 1.8.9 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/MCAutoTranslationTool-1.2-mc1.8.9-forge.jar) |
+| 1.12.2 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/MCAutoTranslationTool-1.2-mc1.12.2-forge.jar) |
+| 1.20.1 | Fabric | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/MCAutoTranslationTool-1.2-mc1.20.1-fabric.jar) |
+| 1.20.1 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/MCAutoTranslationTool-1.2-mc1.20.1-forge.jar) |
+| 1.21.11 | Fabric | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/MCAutoTranslationTool-1.2-mc1.21.11-fabric.jar) |
+| 1.21.11 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/MCAutoTranslationTool-1.2-mc1.21.11-forge.jar) |
 
-Minecraft 26.1 Fabric 的源码适配已合入并通过构建与主菜单启动检查，但当前尚未发布
-可下载 JAR。请勿把 1.21.11 文件用于 26.1。
+请勿跨 Minecraft 版本或加载器混用 JAR。为了避免 Mixin 注入失败导致游戏无法启动，
+发布文件只声明已完成构建验证的精确版本；相邻版本需要单独验证后才会加入支持范围。
 
 [查看全部版本与更新说明](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases) ·
-[SHA-256 校验文件](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.1/SHA256SUMS.txt)
+[SHA-256 校验文件](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/SHA256SUMS.txt)
 
 ## 设计原则
 
@@ -49,8 +51,11 @@ Minecraft 26.1 Fabric 的源码适配已合入并通过构建与主菜单启动�
 | Minecraft | 加载器 | Java |
 | --- | --- | --- |
 | 26.2（开发中） | Fabric | 25 |
-| 26.1 | Fabric | 25 |
+| 26.1（开发中） | Fabric | 25 |
+| 1.21.11 | Forge | 21 |
 | 1.21.11 | Fabric | 21 |
+| 1.20.1 | Forge | 17 |
+| 1.20.1 | Fabric | 17 |
 | 1.12.2 | Forge | 8 |
 | 1.8.9 | Forge | 8 |
 
@@ -61,17 +66,17 @@ Minecraft 26.1 Fabric 的源码适配已合入并通过构建与主菜单启动�
 
 ## 当前状态
 
-1.1 正式版提供三个独立客户端 JAR。三个已发布版本均通过编译、重混淆和共享核心自测；
-1.0 发布前完成的实机启动验证继续作为兼容性基线：
-
-- Fabric 1.21.11；
-- Forge 1.12.2；
-- Forge 1.8.9。
+1.2 正式版提供六个独立客户端 JAR：新增 1.20.1 Fabric、1.20.1 Forge 和
+1.21.11 Forge，并重新构建原有三个版本。六条构建线均通过干净构建，现代版本还完成
+Fabric 重映射或 Forge 运行时映射检查；共享核心自测通过。1.21.11 Forge 的实际启动
+验证已进入 Forge 图形初始化阶段，但当前自动化环境没有可用显示器，因此不把它写成
+“已到主菜单”。详细证据见兼容性矩阵。
 
 未发布的 Fabric 26.1 源码适配已额外通过干净构建、Mixin 注入和主菜单启动检查，
 服务器内人工回归与发行文件仍待后续发布流程完成。
 
-进入游戏后按 `U` 打开设置。模组默认关闭；新安装默认选择“离线”，并使用
+Fabric 版本进入游戏后按 `U` 打开设置；Forge 1.20.1/1.21.11 当前使用
+`config/universal-translator.properties`，修改后按 `U` 重新载入。模组默认关闭；新安装默认选择“离线”，并使用
 “仅译文”替换方式，避免记分板和容器文字因双语拼接溢出。按 `F8` 可随时开启或
 关闭翻译，两个快捷键都能在 Minecraft 按键绑定界面修改。首次遇到待翻译文字后会在后台下载约 10–17 MB 的平台引擎
 和 491 MB 的 Lite 模型，下载期间继续显示原文；模型默认优先使用 ModelScope

@@ -2,6 +2,19 @@
 
 ## 未发布
 
+## 1.2 - 2026-08-11
+
+- 新增 Minecraft 1.20.1 Fabric 正式支持，使用 Java 17、Fabric Loader 0.18.1 与
+  Fabric API 0.92.11。
+- 新增 Minecraft 1.20.1 Forge 正式支持，使用 Java 17 与 Forge 47.4.10；发布 JAR
+  已按 Forge 1.20.1 运行时命名重新映射，并包含完整 Mixin refmap。
+- 新增 Minecraft 1.21.11 Forge 正式支持，使用 Java 21 与 Forge 61.2.0，并适配
+  新版事件总线、聊天取消语义、键位分类及 Mojmap 运行时。
+- v1.2 同时重新构建原有 Minecraft 1.8.9 Forge、1.12.2 Forge 与 1.21.11 Fabric
+  版本，共提供六个独立客户端 JAR 和统一的 SHA-256 校验文件。
+- 每个 JAR 只声明其完成构建验证的 Minecraft 版本和加载器；相邻版本因渲染 API、
+  Mixin 目标和加载器 ABI 可能变化，不会在未经验证时冒险放宽版本范围。
+
 - 设置画面新增目标语言快捷按钮，可在简体中文、繁體中文和 English 之间切换；
   `zh-TW` 会为离线模型明确要求繁体字，并映射到腾讯与 LibreTranslate 的繁中代码。
 - 新增 Minecraft 26.2 Fabric 开发适配，迁移 GUI/HUD API，并完成干净构建、重混淆和共享核心自测。

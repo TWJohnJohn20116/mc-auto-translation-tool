@@ -32,31 +32,52 @@ const features = [
 const versions = [
   ["1.8.9", "Forge", "已实机验证", "ready"],
   ["1.12.2", "Forge", "已实机验证", "ready"],
+  ["1.20.1", "Fabric", "已构建验证", "ready"],
+  ["1.20.1", "Forge", "已构建验证", "ready"],
   ["1.21.11", "Fabric", "已实机验证", "ready"],
+  ["1.21.11", "Forge", "已构建验证", "ready"],
   ["更多常见版本", "Forge / Fabric / NeoForge", "分批适配", "next"],
 ];
 
 const githubDownloadBase =
-  "https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/raw/refs/heads/main/downloads/1.0";
+  "https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2";
 
 const downloads = [
   {
     version: "1.8.9",
     loader: "Forge",
     java: "Java 8",
-    file: "MCAutoTranslationTool-1.0-mc1.8.9-forge.jar",
+    file: "MCAutoTranslationTool-1.2-mc1.8.9-forge.jar",
   },
   {
     version: "1.12.2",
     loader: "Forge",
     java: "Java 8",
-    file: "MCAutoTranslationTool-1.0-mc1.12.2-forge.jar",
+    file: "MCAutoTranslationTool-1.2-mc1.12.2-forge.jar",
+  },
+  {
+    version: "1.20.1",
+    loader: "Fabric",
+    java: "Java 17",
+    file: "MCAutoTranslationTool-1.2-mc1.20.1-fabric.jar",
+  },
+  {
+    version: "1.20.1",
+    loader: "Forge",
+    java: "Java 17",
+    file: "MCAutoTranslationTool-1.2-mc1.20.1-forge.jar",
   },
   {
     version: "1.21.11",
     loader: "Fabric",
     java: "Java 21",
-    file: "MCAutoTranslationTool-1.0-mc1.21.11-fabric.jar",
+    file: "MCAutoTranslationTool-1.2-mc1.21.11-fabric.jar",
+  },
+  {
+    version: "1.21.11",
+    loader: "Forge",
+    java: "Java 21",
+    file: "MCAutoTranslationTool-1.2-mc1.21.11-forge.jar",
   },
 ];
 
@@ -93,7 +114,7 @@ export default function Home() {
             自动处理聊天、记分板、箱子和服务器菜单里的英文内容。
           </p>
           <div className="heroActions">
-            <a className="primaryButton" href="#download">下载 1.0 正式版 <span>→</span></a>
+            <a className="primaryButton" href="#download">下载 1.2 正式版 <span>→</span></a>
             <a className="textButton" href="#how">查看安装方法</a>
           </div>
           <div className="trustLine">
@@ -188,7 +209,7 @@ export default function Home() {
         <div className="versionTable">
           <div className="versionHeader"><span>Minecraft</span><span>加载器</span><span>状态</span></div>
           {versions.map(([version, loader, state, kind]) => (
-            <div className="versionRow" key={version}>
+            <div className="versionRow" key={`${version}-${loader}`}>
               <strong>{version}</strong><span>{loader}</span>
               <span className={`versionState ${kind}`}><i />{state}</span>
             </div>
@@ -203,7 +224,7 @@ export default function Home() {
           </div>
           <div className="steps">
             <article><b>1</b><h3>选择对应版本</h3><p>下载与你的 Minecraft 版本及 Forge/Fabric 加载器匹配的 JAR。</p></article>
-            <article><b>2</b><h3>放入 mods 文件夹</h3><p>不要改名或解压。首次进入游戏后按 U 打开控制面板。</p></article>
+            <article><b>2</b><h3>放入 mods 文件夹</h3><p>不要改名或解压。Fabric 按 U 打开设置；现代 Forge 按 U 重新载入配置文件。</p></article>
             <article><b>3</b><h3>等待离线模型就绪</h3><p>默认优先国内镜像下载并校验文件；完成后即可在服务器中自动翻译。</p></article>
           </div>
         </div>
@@ -211,13 +232,13 @@ export default function Home() {
 
       <section className="downloadSection shell" id="download">
         <div className="downloadIntro">
-          <span className="sectionKicker light">1.0 正式版</span>
+          <span className="sectionKicker light">1.2 正式版</span>
           <h2>免费使用，也欢迎一起把它做得更好。</h2>
-          <p>选择与你的 Minecraft 版本完全对应的文件。下载由项目 GitHub 仓库直接提供，三个版本不能混用。</p>
+          <p>选择与你的 Minecraft 版本及加载器完全对应的文件。下载由项目 GitHub Release 直接提供，六个 JAR 不能混用。</p>
         </div>
         <div className="downloadGrid">
           {downloads.map((item) => (
-            <article className="downloadCard" key={item.version}>
+            <article className="downloadCard" key={`${item.version}-${item.loader}`}>
               <div>
                 <strong>Minecraft {item.version}</strong>
                 <span>{item.loader} · {item.java}</span>

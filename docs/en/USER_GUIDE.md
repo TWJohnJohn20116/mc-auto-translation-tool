@@ -10,13 +10,23 @@ Each Minecraft version requires its matching JAR. Do not mix them:
 | --- | --- | --- | --- |
 | 26.2 (no released JAR yet) | Fabric | 25 | Fabric API |
 | 26.1 (no released JAR yet) | Fabric | 25 | Fabric API |
+| 1.21.11 | Forge 61.2.0+ | 21 | No additional mod |
 | 1.21.11 | Fabric | 21 | Fabric API |
+| 1.20.1 | Forge 47.4.10+ | 17 | No additional mod |
+| 1.20.1 | Fabric | 17 | Fabric API |
 | 1.12.2 | Forge 14.23.5.x | 8 | No additional mod |
 | 1.8.9 | Forge 11.15.1.x | 8 | No additional mod |
 
 Place the correct JAR in the game instance's `mods` folder. The server does not need this mod.
+The 1.20.1 and 1.21.11 JARs accept only the exact game version in the table. Do not use them on
+adjacent versions or interchange Fabric and Forge files.
 
 ## First-time setup
+
+The graphical steps below apply to Fabric and legacy Forge. Forge 1.20.1/1.21.11 creates
+`config/universal-translator.properties` on first start. Close the game, set `enabled=true` and
+other options in a plain-text editor, then restart or press `U` to reload; `F8` still toggles the
+master switch at any time.
 
 1. Enter any world or server and press `U` to open the settings.
 2. Enter the target language, such as `zh-CN` for Simplified Chinese or `zh-TW` for Traditional
@@ -203,9 +213,9 @@ chat verification may impose their own restrictions, which is why the feature is
 
 ## Current version
 
-This guide covers the `1.1` release. All three target versions completed clean builds, remapping,
-and the shared-core self-test. Hands-on launch validation completed before 1.0 remains the
-compatibility baseline. Fabric 26.1 passed build and main-menu launch checks. Fabric 26.2 has source
+This guide covers the `1.2` release with six JARs. Every target completed a clean build and the
+shared-core self-test; modern targets also completed Fabric remapping or Forge runtime-mapping
+checks. Fabric 26.1 passed build and main-menu launch checks. Fabric 26.2 has source
 adaptation and build checks complete, with an actual launch still pending. Neither has a release JAR
 or completed in-server regression. Back up the configuration before updating. When reporting untranslated
 interface text, include the Minecraft version, loader version, interface location, and `latest.log`,

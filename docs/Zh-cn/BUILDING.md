@@ -2,7 +2,7 @@
 
 [简体中文](BUILDING.md) · [繁體中文](../Zh-tw/BUILDING.md) · [English](../en/BUILDING.md) · [返回简中 README](README.md)
 
-项目由一个 Java 8 通用核心、三个现代 Fabric 模块和两个独立旧 Forge 构建组成。
+项目由一个 Java 8 通用核心、四个现代 Fabric 模块、两个现代 Forge 模块和两个独立旧 Forge 构建组成。
 旧 ForgeGradle 不能在现代 JDK 上直接运行，因此不能用一条根 Gradle 命令构建全部版本。
 
 ## 26.2 Fabric
@@ -34,6 +34,39 @@
 ```
 
 输出位于 `platform-fabric-1.21.11/build/libs/`。
+
+## 1.21.11 Forge
+
+需要 JDK 21 或更高版本：
+
+```bash
+./gradlew :platform-forge-1.21.11:build
+```
+
+Forge 61.2.0 从官方 Maven 解析。该版本使用 Mojmap 运行时，发布文件是
+`platform-forge-1.21.11/build/libs/` 中无分类器的 JAR。
+
+## 1.20.1 Fabric
+
+需要 JDK 17 或更高版本：
+
+```bash
+./gradlew :platform-fabric-1.20.1:build
+```
+
+输出位于 `platform-fabric-1.20.1/build/libs/`。
+
+## 1.20.1 Forge
+
+需要 JDK 17 或更高版本：
+
+```bash
+./gradlew :platform-forge-1.20.1:build
+```
+
+Forge 47.4.10 从官方 Maven 解析。1.20.1 仍需将 Mojmap 开发产物转换为 SRG 运行时
+命名，因此正式发布必须使用 `platform-forge-1.20.1/build/libs/` 中的 `-srg.jar`，
+不能误发同目录下的无分类器开发 JAR。
 
 ## 1.12.2 Forge
 

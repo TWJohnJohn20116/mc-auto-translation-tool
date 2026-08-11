@@ -5,7 +5,6 @@
 A charity-driven, open-source, client-only full-interface translation mod for Minecraft Java Edition.
 
 [⬇️ Download the latest release](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest) ·
-[🌐 Official download page](https://mc-auto-translation-tool.wuxiangdan96.chatgpt.site/#download) ·
 [📚 Language directory](../README.md) · [📖 Installation and usage guide](USER_GUIDE.md)
 
 Original author: [Bilibili creator “我小张7272635”](https://space.bilibili.com/3546631091783712).
@@ -24,12 +23,18 @@ Make sure that the file exactly matches your Minecraft version and mod loader:
 
 | Minecraft | Loader | Download |
 | --- | --- | --- |
-| 1.8.9 | Forge | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.1/MCAutoTranslationTool-1.1-mc1.8.9-forge.jar) |
-| 1.12.2 | Forge | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.1/MCAutoTranslationTool-1.1-mc1.12.2-forge.jar) |
-| 1.21.11 | Fabric | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.1/MCAutoTranslationTool-1.1-mc1.21.11-fabric.jar) |
+| 1.8.9 | Forge | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/MCAutoTranslationTool-1.2-mc1.8.9-forge.jar) |
+| 1.12.2 | Forge | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/MCAutoTranslationTool-1.2-mc1.12.2-forge.jar) |
+| 1.20.1 | Fabric | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/MCAutoTranslationTool-1.2-mc1.20.1-fabric.jar) |
+| 1.20.1 | Forge | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/MCAutoTranslationTool-1.2-mc1.20.1-forge.jar) |
+| 1.21.11 | Fabric | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/MCAutoTranslationTool-1.2-mc1.21.11-fabric.jar) |
+| 1.21.11 | Forge | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/MCAutoTranslationTool-1.2-mc1.21.11-forge.jar) |
+
+Do not mix JARs across game versions or loaders. Release metadata accepts only the exact Minecraft
+versions that passed the build checks; adjacent versions are added only after separate validation.
 
 [View all releases and release notes](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases) ·
-[SHA-256 checksum file](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.1/SHA256SUMS.txt)
+[SHA-256 checksum file](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/SHA256SUMS.txt)
 
 ## Design principles
 
@@ -49,7 +54,10 @@ Make sure that the file exactly matches your Minecraft version and mod loader:
 | --- | --- | --- |
 | 26.2 (development) | Fabric | 25 |
 | 26.1 (development) | Fabric | 25 |
+| 1.21.11 | Forge | 21 |
 | 1.21.11 | Fabric | 21 |
+| 1.20.1 | Forge | 17 |
+| 1.20.1 | Fabric | 17 |
 | 1.12.2 | Forge | 8 |
 | 1.8.9 | Forge | 8 |
 
@@ -61,15 +69,13 @@ checks complete. Neither has a release download before its manual in-server regr
 
 ## Current status
 
-Release 1.1 provides three separate client JARs. All three versions passed compilation,
-reobfuscation, and the shared core self-tests. The real-game startup checks completed before
-release 1.0 remain the compatibility baseline:
+Release 1.2 provides six separate client JARs, adding Fabric and Forge for 1.20.1 and Forge for
+1.21.11. All six build lines passed clean builds; modern targets also passed Fabric remapping or
+Forge runtime-mapping checks, and the shared core self-tests passed. See the compatibility matrix
+for the exact validation level of each target.
 
-- Fabric 1.21.11;
-- Forge 1.12.2;
-- Forge 1.8.9.
-
-Press `U` in game to open the settings screen. The mod is disabled by default. New installations
+On Fabric, press `U` in game to open the settings screen. On Forge 1.20.1/1.21.11, edit
+`config/universal-translator.properties` and press `U` to reload it. The mod is disabled by default. New installations
 default to the offline provider and translated-only replacement mode, which avoids overflowing
 scoreboards and container titles with bilingual text. Press `F8` to toggle translation at any time.
 Both shortcuts can be changed in Minecraft's key-binding screen. After the first translatable text

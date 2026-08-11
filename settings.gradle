@@ -1,12 +1,16 @@
 pluginManagement {
     repositories {
         maven { url = "https://maven.fabricmc.net/" }
+        maven { url = "https://maven.minecraftforge.net/" }
         gradlePluginPortal()
     }
 }
 
 rootProject.name = "mc-auto-translation-tool"
 include("translator-core")
+include("platform-fabric-1.20.1")
 include("platform-fabric-1.21.11")
 include("platform-fabric-26.1")
 include("platform-fabric-26.2")
+include("platform-forge-1.20.1")
+include("platform-forge-1.21.11")

@@ -41,11 +41,27 @@ jobs:
             echo "Missing release directory: $release_dir" >&2
             exit 1
           fi
+          expected=(
+            "MCAutoTranslationTool-$version-mc1.8.9-forge.jar"
+            "MCAutoTranslationTool-$version-mc1.12.2-forge.jar"
+            "MCAutoTranslationTool-$version-mc1.20.1-fabric.jar"
+            "MCAutoTranslationTool-$version-mc1.20.1-forge.jar"
+            "MCAutoTranslationTool-$version-mc1.21.11-fabric.jar"
+            "MCAutoTranslationTool-$version-mc1.21.11-forge.jar"
+          )
           mapfile -t jars < <(find "$release_dir" -maxdepth 1 -type f -name '*.jar' -print | sort)
-          if [[ "${#jars[@]}" -eq 0 || ! -f "$release_dir/SHA256SUMS.txt" ]]; then
-            echo "Release must contain JAR files and SHA256SUMS.txt" >&2
+          if [[ "${#jars[@]}" -ne "${#expected[@]}" || ! -f "$release_dir/SHA256SUMS.txt" ]]; then
+            echo "Release must contain exactly six target JARs and SHA256SUMS.txt" >&2
             exit 1
           fi
+          for file in "${expected[@]}"; do
+            if [[ ! -f "$release_dir/$file" ]]; then
+              echo "Missing release target: $release_dir/$file" >&2
+              exit 1
+            fi
+            unzip -tqq "$release_dir/$file"
+          done
+          unzip -l "$release_dir/MCAutoTranslationTool-$version-mc1.20.1-forge.jar" | grep -q 'main.refmap.json'
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
           echo "release_dir=$release_dir" >> "$GITHUB_OUTPUT"

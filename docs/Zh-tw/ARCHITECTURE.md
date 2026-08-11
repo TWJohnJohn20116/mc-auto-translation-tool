@@ -36,10 +36,11 @@
 
 ## 擷取策略
 
-- Fabric 1.21.11、26.1 與 26.2 分別在對應版本的 `DrawContext`／`GuiGraphicsExtractor`
+- Fabric 1.20.1、1.21.11、26.1 與 26.2 分別在對應版本的 `DrawContext`／`GuiGraphicsExtractor`
   及 `TextRenderer`／`Font` 最終彩現入口替換顯示副本，
   並於聊天、計分板、Tab、標題、Action Bar 及 Boss Bar 彩現期間記錄內容類型。
-- Forge 1.8.9/1.12.2 使用同一個 LaunchWrapper ASM 核心外掛程式，在
+- Forge 1.20.1／1.21.11 使用版本專屬 Mixin 捕捉相同的最終文字入口；Forge
+  1.8.9／1.12.2 使用同一個 LaunchWrapper ASM 核心外掛程式，在
   `FontRenderer` 的繪製及寬度計算入口替換字串；聊天 HUD 另有輕量情境，
   用於執行聊天隱私權開關。
 

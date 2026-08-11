@@ -5,6 +5,24 @@
 This document records only completed validation. “Builds successfully” is not reported as
 “compatible.”
 
+## Version 1.2 release validation
+
+| Minecraft | Loader | Java | Build and self-test | Launched to main menu | Full manual in-server regression |
+| --- | --- | --- | --- | --- | --- |
+| 1.8.9 | Forge 11.15.1.2318 | 8 | Passed | Historical baseline passed | Pending confirmation |
+| 1.12.2 | Forge 14.23.5.2860 | 8 | Passed | Historical baseline passed | Pending confirmation |
+| 1.20.1 | Fabric Loader 0.18.1 + Fabric API 0.92.11 | 17 | Passed | Pending | Pending |
+| 1.20.1 | Forge 47.4.10 | 17 | Passed; SRG and refmap checked | Pending | Pending |
+| 1.21.11 | Fabric Loader 0.18.1 + Fabric API 0.141.4 | 21 | Passed | Historical baseline passed | Pending confirmation |
+| 1.21.11 | Forge 61.2.0 | 21 | Passed; Mojmap Mixins checked | Blocked by headless display | Pending |
+
+All six release JARs share the same translation core. Fabric 1.20.1 completed Loom remapping.
+The Forge 1.20.1 artifact was renamed into the SRG runtime namespace and contains a refmap for all
+nine Mixin classes. Forge 1.21.11 was adapted to the Forge 7 event bus and Mojmap runtime. Its
+startup passed ForgeBootstrap and reached GLFW graphics initialization, then stopped because the
+automation environment exposes no primary monitor. That is not a mod failure, but it is not
+reported as a successful main-menu launch either.
+
 ## Development targets
 
 | Minecraft | Loader | Java | Build and self-test | Launched to main menu | Full manual in-server regression |
@@ -12,33 +30,7 @@ This document records only completed validation. “Builds successfully” is no
 | 26.1 | Fabric Loader 0.19.3 + Fabric API 0.145.1 | 25 | Passed | Passed | Pending |
 | 26.2 | Fabric Loader 0.19.3 + Fabric API 0.157.0 | 25 | Passed | Pending | Pending |
 
-Fabric 26.1 completed a clean build, Mixin injection checks, and an actual launch to the main menu.
-Fabric 26.2 has been migrated to the new `Minecraft.gui` and `Hud` APIs, and its Mixin targets for
-chat, scoreboards, the Tab list, titles, the Action Bar, Boss Bars, text drawing, and tooltips were
-checked. For 26.2, only clean build, remapping, and shared-core self-test results are recorded so far.
-Both targets remain unreleased until their manual in-server regressions are complete.
-
-## Version 1.1 release validation
-
-Version 1.1 received clean builds, remapping, and shared-core self-tests for its three target
-versions. This update focused on grouped item-name and Lore translation, download progress,
-failure messages, and API fallback status. Manual in-server compatibility still uses the 1.0
-launch results as its baseline; the automated builds are not presented as new hands-on validation.
-
-## Version 1.0 verified targets
-
-| Minecraft | Loader | Java | Build and self-test | Launched to main menu | Full manual in-server regression |
-| --- | --- | --- | --- | --- | --- |
-| 1.8.9 | Forge 11.15.1.2318 | 8 | Passed | Passed | Awaiting the next hands-on confirmation round |
-| 1.12.2 | Forge 14.23.5.2864 | 8 | Passed | Passed | Awaiting the next hands-on confirmation round |
-| 1.21.11 | Fabric Loader 0.19.3 + Fabric API 0.141.6 | 21 | Passed | Passed | Awaiting the next hands-on confirmation round |
-
-All three builds share the same translation core. A real Qwen2.5 0.5B offline-model probe verified
-English translation, mixed Chinese/English segmentation, and local protection and reconstruction
-of player names, server addresses, and numbers. Version 1.0 also confirmed that both Forge versions
-installed the general tooltip and item-generation tooltip hooks, while the standard item tooltip
-Mixin for Fabric 1.21.11 produced no injection errors with translation enabled. The final visual
-appearance of item names and Lore remains part of the manual in-server regression.
+Fabric 26.1 and 26.2 remain development targets and are not included in the v1.2 Release.
 
 ## The principle behind “support every version”
 
@@ -53,12 +45,14 @@ Planned candidates, in order:
 2. 1.7.10 Forge;
 3. 1.16.5 Forge/Fabric;
 4. 1.18.2 Forge/Fabric;
-5. 1.20.1 Forge/Fabric;
-6. 1.21.1 Fabric/NeoForge;
-7. later releases that retain a substantial player base.
+5. 1.21.1 Fabric/NeoForge;
+6. later releases that retain a substantial player base.
 
-Work on those versions will not begin until the 1.8.9, 1.12.2, 1.21.11, 26.1, and 26.2 in-server regressions
-all pass, avoiding the introduction of more unverified rendering differences at the same time.
+“Nearby version” support is never guessed by widening the version range in `fabric.mod.json` or
+`mods.toml`. For example, the 1.20.1 JAR intentionally rejects 1.20.2, and Fabric and Forge JARs
+are never interchangeable. Small descriptor or event-ABI changes can otherwise turn into startup
+Mixin failures. Adjacent versions may reuse the shared core, but each needs a platform adapter and
+the same build, mapping, launch, and in-server checks before being listed as supported.
 
 ## In-server regression checklist
 
