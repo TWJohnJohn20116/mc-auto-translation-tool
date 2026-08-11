@@ -11,6 +11,7 @@ Each Minecraft version requires its matching JAR. Do not mix them:
 | 26.2 (no released JAR yet) | Fabric | 25 | Fabric API |
 | 26.1 (no released JAR yet) | Fabric | 25 | Fabric API |
 | 1.21.11 | Fabric | 21 | Fabric API |
+| 1.16.5 (no released JAR yet) | Fabric | 8 | Fabric API |
 | 1.12.2 | Forge 14.23.5.x | 8 | No additional mod |
 | 1.8.9 | Forge 11.15.1.x | 8 | No additional mod |
 

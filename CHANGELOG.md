@@ -2,6 +2,7 @@
 
 ## 未发布
 
+- 新增 Minecraft 1.16.5 Fabric 适配，使用 Java 8 与旧版文字、界面和聊天 API。
 - 设置画面新增目标语言快捷按钮，可在简体中文、繁體中文和 English 之间切换；
   `zh-TW` 会为离线模型明确要求繁体字，并映射到腾讯与 LibreTranslate 的繁中代码。
 - 新增 Minecraft 26.2 Fabric 开发适配，迁移 GUI/HUD API，并完成干净构建、重混淆和共享核心自测。

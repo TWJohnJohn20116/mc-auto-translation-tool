@@ -2,7 +2,7 @@
 
 [简体中文](../Zh-cn/BUILDING.md) · [繁體中文](../Zh-tw/BUILDING.md) · [English](BUILDING.md) · [Back to English README](README.md)
 
-The project consists of one shared Java 8 core, three modern Fabric modules, and two independent
+The project consists of one shared Java 8 core, four Fabric modules, and two independent
 legacy Forge builds. Legacy ForgeGradle cannot run directly on modern JDKs, so one root Gradle
 command cannot build every version.
 
@@ -35,6 +35,16 @@ JDK 21 or later is required:
 ```
 
 Output is written to `platform-fabric-1.21.11/build/libs/`.
+
+## Fabric 1.16.5
+
+The output targets Java 8; JDK 21 is recommended for running Gradle itself:
+
+```bash
+./gradlew :platform-fabric-1.16.5:build
+```
+
+Output is written to `platform-fabric-1.16.5/build/libs/` with Java 8 bytecode.
 
 ## Forge 1.12.2
 
