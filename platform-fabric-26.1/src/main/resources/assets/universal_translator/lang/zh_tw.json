@@ -87,8 +87,8 @@
   "message.universal_translator.runtime_failed": "§c[MC 自動翻譯工具] %s",
   "message.universal_translator.runtime_status": "MC 自動翻譯工具：%s",
   "message.universal_translator.memory_warning": "§c[MC 自動翻譯工具] 目前只配置 %s MiB 遊戲記憶體，可能停在載入頁面；請在啟動器中設定至少 2048 MiB。",
-  "screen.universal_translator.option.target": "?????%s",
-  "value.universal_translator.target_simplified": "????",
-  "value.universal_translator.target_traditional": "????",
-  "value.universal_translator.target_english": "??"
+  "screen.universal_translator.option.target": "翻譯目標：%s",
+  "value.universal_translator.target_simplified": "簡體中文",
+  "value.universal_translator.target_traditional": "繁體中文",
+  "value.universal_translator.target_english": "英文"
 }

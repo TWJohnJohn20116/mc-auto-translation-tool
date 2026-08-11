@@ -87,8 +87,8 @@
   "message.universal_translator.runtime_failed": "§c[MC 自动翻译工具] %s",
   "message.universal_translator.runtime_status": "MC 自动翻译工具：%s",
   "message.universal_translator.memory_warning": "§c[MC 自动翻译工具] 当前仅分配 %s MiB 游戏内存，可能卡在加载页；请在启动器中固定为至少 2048 MiB。",
-  "screen.universal_translator.option.target": "?????%s",
-  "value.universal_translator.target_simplified": "????",
-  "value.universal_translator.target_traditional": "????",
-  "value.universal_translator.target_english": "??"
+  "screen.universal_translator.option.target": "翻译目标：%s",
+  "value.universal_translator.target_simplified": "简体中文",
+  "value.universal_translator.target_traditional": "繁体中文",
+  "value.universal_translator.target_english": "英文"
 }
