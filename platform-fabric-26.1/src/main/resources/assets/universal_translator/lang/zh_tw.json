@@ -86,5 +86,9 @@
   "message.universal_translator.toggle_failed": "MC 自動翻譯工具：切換失敗",
   "message.universal_translator.runtime_failed": "§c[MC 自動翻譯工具] %s",
   "message.universal_translator.runtime_status": "MC 自動翻譯工具：%s",
-  "message.universal_translator.memory_warning": "§c[MC 自動翻譯工具] 目前只配置 %s MiB 遊戲記憶體，可能停在載入頁面；請在啟動器中設定至少 2048 MiB。"
+  "message.universal_translator.memory_warning": "§c[MC 自動翻譯工具] 目前只配置 %s MiB 遊戲記憶體，可能停在載入頁面；請在啟動器中設定至少 2048 MiB。",
+  "screen.universal_translator.option.target": "?????%s",
+  "value.universal_translator.target_simplified": "????",
+  "value.universal_translator.target_traditional": "????",
+  "value.universal_translator.target_english": "??"
 }

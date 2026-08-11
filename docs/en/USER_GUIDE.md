@@ -17,7 +17,8 @@ Place the correct JAR in the game instance's `mods` folder. The server does not 
 ## First-time setup
 
 1. Enter any world or server and press `U` to open the settings.
-2. Enter the target language, such as `en` for English.
+2. Enter the target language, such as `en` for English, or use the shortcut button to cycle
+   through Simplified Chinese, Traditional Chinese, and English.
 3. Prefer “Offline.” You may also continue using “Libre” or “Tencent.”
 4. Choose whether chat content and other interface text may be sent, and whether to use the local cache.
 5. The default display option is “Translated only.” Replacing the source directly prevents bilingual text from overflowing scoreboards and chest interfaces; switch to “Original + translation” when needed.

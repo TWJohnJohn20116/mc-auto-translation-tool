@@ -161,7 +161,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         modelButton.setMessage(Text.translatable("screen.universal_translator.option.model", offlineModel.displayName()));
         fallbackButton.setMessage(Text.translatable("screen.universal_translator.option.fallback", onOff(apiFallback)));
         targetLanguageButton.setMessage(Text.translatable("screen.universal_translator.option.target",
-                TargetLanguage.displayName(targetLanguage.getText())));
+                targetLanguageLabel(targetLanguage.getText())));
         downloadButton.active = isOffline();
         modelButton.active = isOffline();
         fallbackButton.active = isOffline();
@@ -169,6 +169,20 @@ final class UniversalTranslatorConfigScreen extends Screen {
 
     private static String onOff(boolean value) {
         return tr(value ? "value.universal_translator.on" : "value.universal_translator.off");
+    }
+
+    private static String targetLanguageLabel(String language) {
+        String canonical = TargetLanguage.canonicalize(language);
+        if (TargetLanguage.SIMPLIFIED_CHINESE.equals(canonical)) {
+            return tr("value.universal_translator.target_simplified");
+        }
+        if (TargetLanguage.TRADITIONAL_CHINESE.equals(canonical)) {
+            return tr("value.universal_translator.target_traditional");
+        }
+        if (TargetLanguage.ENGLISH.equals(canonical)) {
+            return tr("value.universal_translator.target_english");
+        }
+        return canonical.isEmpty() ? tr("value.universal_translator.not_set") : canonical;
     }
 
     private static boolean isFailureStatus(String value) {

@@ -86,3 +86,7 @@ message.universal_translator.toggle_failed=MC Auto Translation Tool: Toggle fail
 message.universal_translator.runtime_failed=§c[MC Auto Translation Tool] %s
 message.universal_translator.runtime_status=MC Auto Translation Tool: %s
 message.universal_translator.memory_warning=§c[MC Auto Translation Tool] Only %s MiB is allocated. Loading may stall; allocate at least 2048 MiB in the launcher.
+screen.universal_translator.option.target=Translation target: %s
+value.universal_translator.target_simplified=Simplified Chinese
+value.universal_translator.target_traditional=Traditional Chinese
+value.universal_translator.target_english=English

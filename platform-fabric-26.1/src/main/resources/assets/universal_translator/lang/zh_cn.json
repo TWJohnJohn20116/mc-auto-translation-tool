@@ -86,5 +86,9 @@
   "message.universal_translator.toggle_failed": "MC 自动翻译工具：切换失败",
   "message.universal_translator.runtime_failed": "§c[MC 自动翻译工具] %s",
   "message.universal_translator.runtime_status": "MC 自动翻译工具：%s",
-  "message.universal_translator.memory_warning": "§c[MC 自动翻译工具] 当前仅分配 %s MiB 游戏内存，可能卡在加载页；请在启动器中固定为至少 2048 MiB。"
+  "message.universal_translator.memory_warning": "§c[MC 自动翻译工具] 当前仅分配 %s MiB 游戏内存，可能卡在加载页；请在启动器中固定为至少 2048 MiB。",
+  "screen.universal_translator.option.target": "?????%s",
+  "value.universal_translator.target_simplified": "????",
+  "value.universal_translator.target_traditional": "????",
+  "value.universal_translator.target_english": "??"
 }

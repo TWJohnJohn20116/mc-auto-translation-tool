@@ -5,11 +5,17 @@
 This document records only completed validation. “Builds successfully” is not reported as
 “compatible.”
 
-## Development target
+## Development targets
 
-The Minecraft 26.1 Fabric module has been added to the root project. It uses Java 25, Fabric Loader
-0.19.3, and Fabric API 0.145.1+26.1. It remains a development target and will move into the verified
-table only after a clean build, launch test, and in-server regression are complete.
+| Minecraft | Loader | Java | Build and self-test | Launched to main menu | Full manual in-server regression |
+| --- | --- | --- | --- | --- | --- |
+| 26.1 | Fabric Loader 0.19.3 + Fabric API 0.145.1 | 25 | Module added | Pending | Pending |
+| 26.2 | Fabric Loader 0.19.3 + Fabric API 0.157.0 | 25 | Passed | Pending | Pending |
+
+Fabric 26.2 has been migrated to the new `Minecraft.gui` and `Hud` APIs. Its Mixin targets for
+chat, scoreboards, the Tab list, titles, Action Bar, Boss Bar, text drawing, and tooltips were
+checked. This records only a clean build, remapping, and shared-core self-test; launch and
+in-server regression remain pending.
 
 ## Version 1.1 release validation
 
