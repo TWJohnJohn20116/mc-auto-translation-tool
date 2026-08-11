@@ -3,7 +3,7 @@
     "modid": "universal_translator",
     "name": "MC Auto Translation Tool",
     "description": "Client-side automatic translation for server-provided text across Minecraft interfaces.",
-    "version": "1.0",
+    "version": "1.1",
     "mcversion": "1.12.2",
     "authorList": ["我小张7272635"],
     "url": "https://space.bilibili.com/3546631091783712",

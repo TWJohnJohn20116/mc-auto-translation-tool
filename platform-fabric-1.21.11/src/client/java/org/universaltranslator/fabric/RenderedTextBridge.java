@@ -96,15 +96,20 @@ public final class RenderedTextBridge {
         if (lines == null || lines.isEmpty()) {
             return lines;
         }
+        List<String> originals = new ArrayList<String>(lines.size());
+        for (Text line : lines) {
+            originals.add(line == null ? "" : line.getString());
+        }
+        List<String> translatedLines = FabricTranslationRuntime.translateLinesForRender(
+                originals, TextKind.TOOLTIP);
         List<Text> replacement = null;
         for (int index = 0; index < lines.size(); index++) {
             Text line = lines.get(index);
             if (line == null) {
                 continue;
             }
-            String original = line.getString();
-            String translated = FabricTranslationRuntime.translateForRender(
-                    original, TextKind.TOOLTIP);
+            String original = originals.get(index);
+            String translated = translatedLines.get(index);
             if (!original.equals(translated)) {
                 if (replacement == null) {
                     replacement = new ArrayList<Text>(lines);

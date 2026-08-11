@@ -57,6 +57,8 @@ public final class LlamaCppOfflineProvider
     private volatile Process process;
     private volatile OpenAiChatTranslationProvider localApi;
     private volatile Thread shutdownHook;
+    private volatile String progressStage = "";
+    private volatile int progressPercent = -1;
 
     public LlamaCppOfflineProvider(Path root, boolean autoDownload) {
         this(root, autoDownload, DEFAULT_MODEL_ID, DEFAULT_MODEL_FILE,
@@ -196,7 +198,9 @@ public final class LlamaCppOfflineProvider
         }
         status = "正在下载离线引擎（约 " + Math.max(1L, asset.size / 1_000_000L) + " MB）";
         Path archive = engineRoot.resolve(asset.archiveName);
-        VerifiedDownloader.download(asset.downloadSources(), archive, asset.size, asset.sha256);
+        VerifiedDownloader.download(asset.downloadSources(), archive, asset.size, asset.sha256,
+                progressListener("正在下载离线引擎"));
+        status = "离线引擎下载并校验完成";
         Path staging = engineRoot.resolve("installing");
         deleteTree(staging);
         Files.createDirectories(staging);
@@ -232,7 +236,33 @@ public final class LlamaCppOfflineProvider
         List<URI> sources = modelChinaUri == null
                 ? java.util.Collections.singletonList(modelUri)
                 : Arrays.asList(modelChinaUri, modelUri);
-        return VerifiedDownloader.download(sources, model, modelSize, modelSha256);
+        Path downloaded = VerifiedDownloader.download(
+                sources, model, modelSize, modelSha256, progressListener("正在下载离线模型"));
+        status = "离线模型下载并校验完成";
+        return downloaded;
+    }
+
+    private VerifiedDownloader.ProgressListener progressListener(final String stage) {
+        progressStage = stage;
+        progressPercent = -1;
+        return new VerifiedDownloader.ProgressListener() {
+            @Override
+            public void onProgress(long downloadedBytes, long totalBytes) {
+                if (totalBytes <= 0L) {
+                    return;
+                }
+                int percent = (int) Math.min(100L, downloadedBytes * 100L / totalBytes);
+                int previous = progressPercent;
+                if (!stage.equals(progressStage) || previous < 0
+                        || percent < previous || percent >= 100 || percent >= previous + 5) {
+                    progressStage = stage;
+                    progressPercent = percent;
+                    status = stage + "：" + percent + "%（"
+                            + downloadedBytes / 1_000_000L + "/"
+                            + totalBytes / 1_000_000L + " MB）";
+                }
+            }
+        };
     }
 
     private static void waitUntilHealthy(int port, Process child, long timeoutMillis) throws Exception {

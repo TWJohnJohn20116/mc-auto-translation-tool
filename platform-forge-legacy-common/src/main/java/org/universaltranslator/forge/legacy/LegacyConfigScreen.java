@@ -144,6 +144,11 @@ final class LegacyConfigScreen extends GuiScreen {
         return value ? "开启" : "关闭";
     }
 
+    private static boolean isFailureStatus(String value) {
+        return value.startsWith("翻译失败") || value.startsWith("离线翻译失败")
+                || value.contains("均失败");
+    }
+
     private void saveAndApply() {
         boolean runtimeChanged = false;
         try {
@@ -225,7 +230,8 @@ final class LegacyConfigScreen extends GuiScreen {
         if (!status.isEmpty()) {
             drawCenteredString(renderer, status, width / 2, messageY, 0xFF5555);
         } else if (!runtimeStatus.isEmpty()) {
-            drawCenteredString(renderer, runtimeStatus, width / 2, messageY, 0x55FF55);
+            drawCenteredString(renderer, runtimeStatus, width / 2, messageY,
+                    isFailureStatus(runtimeStatus) ? 0xFF5555 : 0x55FF55);
         } else if (layout.saveY - layout.endpointY >= 52) {
             int infoY = layout.endpointY + 28;
             drawCenteredString(

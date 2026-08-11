@@ -41,7 +41,7 @@ public final class HttpJsonClient {
             connection.setInstanceFollowRedirects(false);
             connection.setRequestProperty("Accept", "application/json");
             connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-            connection.setRequestProperty("User-Agent", "MCAutoTranslationTool/1.0");
+            connection.setRequestProperty("User-Agent", "MCAutoTranslationTool/1.1");
             if (headers != null) {
                 for (Map.Entry<String, String> header : headers.entrySet()) {
                     if (header.getKey() != null && header.getValue() != null) {

@@ -44,7 +44,9 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
     public String translate(TranslationRequest request) throws Exception {
         String target = request.getTargetLanguage();
         String system = "Translate the user text to " + target
-                + ". Reply with only the translation.";
+                + ". Reply with only the translation."
+                + (request.getText().indexOf('\n') >= 0
+                ? " Keep exactly the same number and order of lines." : "");
         int maximumTokens = Math.max(24, Math.min(128, request.getText().length() * 2 + 16));
         boolean offline = providerId.startsWith("offline-loopback");
         String body = new StringBuilder(request.getText().length() + 320)

@@ -117,9 +117,26 @@ final class LegacyTranslationRuntime {
     }
 
     static String status() {
+        RenderTranslationSession active = session;
+        if (active != null && !active.lastFailureStatus().isEmpty()) {
+            return active.lastFailureStatus();
+        }
         TranslationProvider provider = activeProvider;
         return provider instanceof TranslationProviderStatus
                 ? ((TranslationProviderStatus) provider).status() : "";
+    }
+
+    static List<String> translateLines(List<String> originals, TextKind kind) {
+        RenderTranslationSession active = session;
+        LegacyConfig config = activeConfig;
+        Minecraft minecraft = Minecraft.getMinecraft();
+        if (active == null || config == null || !config.allows(kind)
+                || minecraft.currentScreen instanceof LegacyConfigScreen
+                || LegacyRenderContext.isTextInput()
+                || LegacyVersionAccess.connection(minecraft) == null) {
+            return originals;
+        }
+        return active.lookupLines(originals, kind);
     }
 
     static TranslationTextColor translatedTextColor() {

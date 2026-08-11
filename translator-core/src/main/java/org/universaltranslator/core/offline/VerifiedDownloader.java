@@ -17,6 +17,18 @@ import java.util.Collections;
 public final class VerifiedDownloader {
     private static final int MAX_REDIRECTS = 8;
 
+    /** Receives verified byte progress without owning any UI or platform code. */
+    public interface ProgressListener {
+        void onProgress(long downloadedBytes, long totalBytes);
+    }
+
+    private static final ProgressListener NO_PROGRESS = new ProgressListener() {
+        @Override
+        public void onProgress(long downloadedBytes, long totalBytes) {
+            // Compatibility overloads deliberately remain silent.
+        }
+    };
+
     private VerifiedDownloader() {
     }
 
@@ -26,7 +38,7 @@ public final class VerifiedDownloader {
             long expectedSize,
             String expectedSha256
     ) throws IOException {
-        return download(Collections.singletonList(source), destination, expectedSize, expectedSha256);
+        return download(Collections.singletonList(source), destination, expectedSize, expectedSha256, NO_PROGRESS);
     }
 
     /** Tries geographically suitable mirrors in order while sharing one resumable partial file. */
@@ -36,16 +48,31 @@ public final class VerifiedDownloader {
             long expectedSize,
             String expectedSha256
     ) throws IOException {
+        return download(sources, destination, expectedSize, expectedSha256, NO_PROGRESS);
+    }
+
+    /** Same verified download with resumable progress for in-game status displays. */
+    public static Path download(
+            Iterable<URI> sources,
+            Path destination,
+            long expectedSize,
+            String expectedSha256,
+            ProgressListener progress
+    ) throws IOException {
         if (expectedSize < 1L || expectedSha256 == null || expectedSha256.length() != 64) {
             throw new IllegalArgumentException("A pinned size and SHA-256 are required");
         }
         if (sources == null) {
             throw new IllegalArgumentException("At least one download source is required");
         }
+        if (progress == null) {
+            throw new IllegalArgumentException("Progress listener is required");
+        }
         Files.createDirectories(destination.toAbsolutePath().getParent());
         if (Files.isRegularFile(destination)
                 && Files.size(destination) == expectedSize
                 && expectedSha256.equalsIgnoreCase(sha256(destination))) {
+            progress.onProgress(expectedSize, expectedSize);
             return destination;
         }
 
@@ -55,7 +82,8 @@ public final class VerifiedDownloader {
             attempted++;
             try {
                 requireSafeDownloadUri(source);
-                return downloadFromSource(source, destination, expectedSize, expectedSha256);
+                return downloadFromSource(
+                        source, destination, expectedSize, expectedSha256, progress);
             } catch (IOException error) {
                 failure = appendFailure(failure, source, error);
             }
@@ -70,7 +98,8 @@ public final class VerifiedDownloader {
             URI source,
             Path destination,
             long expectedSize,
-            String expectedSha256
+            String expectedSha256,
+            ProgressListener progress
     ) throws IOException {
         Path partial = destination.resolveSibling(destination.getFileName().toString() + ".part");
         long offset = Files.isRegularFile(partial) ? Files.size(partial) : 0L;
@@ -90,6 +119,7 @@ public final class VerifiedDownloader {
             offset = 0L;
         }
         validateResponse(connection, status, offset, expectedSize, append);
+        progress.onProgress(offset, expectedSize);
 
         StandardOpenOption[] options = append
                 ? new StandardOpenOption[]{StandardOpenOption.CREATE, StandardOpenOption.APPEND}
@@ -108,6 +138,7 @@ public final class VerifiedDownloader {
                     throw new IOException("Download exceeded its pinned size");
                 }
                 output.write(buffer, 0, count);
+                progress.onProgress(total, expectedSize);
             }
         } finally {
             connection.disconnect();
@@ -123,6 +154,7 @@ public final class VerifiedDownloader {
             Files.deleteIfExists(partial);
             throw new IOException("Downloaded file failed SHA-256 verification");
         }
+        progress.onProgress(expectedSize, expectedSize);
         try {
             Files.move(partial, destination,
                     StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
@@ -205,7 +237,7 @@ public final class VerifiedDownloader {
         connection.setConnectTimeout(15_000);
         connection.setReadTimeout(30_000);
         connection.setInstanceFollowRedirects(false);
-        connection.setRequestProperty("User-Agent", "MCAutoTranslationTool/1.0");
+        connection.setRequestProperty("User-Agent", "MCAutoTranslationTool/1.1");
         if (offset > 0L) {
             connection.setRequestProperty("Range", "bytes=" + offset + "-");
         }

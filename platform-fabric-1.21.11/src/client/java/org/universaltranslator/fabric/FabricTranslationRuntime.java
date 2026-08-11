@@ -116,9 +116,26 @@ final class FabricTranslationRuntime {
     }
 
     static String status() {
+        RenderTranslationSession active = session;
+        if (active != null && !active.lastFailureStatus().isEmpty()) {
+            return active.lastFailureStatus();
+        }
         TranslationProvider provider = activeProvider;
         return provider instanceof TranslationProviderStatus
                 ? ((TranslationProviderStatus) provider).status() : "";
+    }
+
+    static List<String> translateLinesForRender(List<String> originals, TextKind kind) {
+        RenderTranslationSession active = session;
+        FabricConfig config = activeConfig;
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (active == null || config == null || !config.allows(kind)
+                || client.currentScreen instanceof UniversalTranslatorConfigScreen
+                || TranslationRenderContext.isTextInput()
+                || client.world == null || client.getNetworkHandler() == null) {
+            return originals;
+        }
+        return active.lookupLines(originals, kind);
     }
 
     static TranslationTextColor translatedTextColor() {

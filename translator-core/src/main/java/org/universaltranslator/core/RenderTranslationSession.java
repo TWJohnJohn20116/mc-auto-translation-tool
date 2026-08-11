@@ -3,6 +3,8 @@ package org.universaltranslator.core;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.Collections;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.Supplier;
 
 /**
@@ -32,6 +34,7 @@ public final class RenderTranslationSession implements AutoCloseable {
     private final SubmissionWindow prioritySubmissions =
             new SubmissionWindow(MAX_PRIORITY_SUBMISSIONS_PER_SECOND);
     private volatile boolean closed;
+    private volatile String lastFailureStatus = "";
     private volatile Supplier<? extends Iterable<String>> protectedLiterals =
             new Supplier<Iterable<String>>() {
                 @Override
@@ -151,6 +154,51 @@ public final class RenderTranslationSession implements AutoCloseable {
         return original;
     }
 
+    /**
+     * Translates related lines as one request so item names and lore retain context.
+     * The original list is returned until the background translation is ready.
+     */
+    public List<String> lookupLines(List<String> originals, TextKind kind) {
+        if (originals == null || originals.isEmpty()) {
+            return originals;
+        }
+        // Bilingual formatting inserts the original and translated text together.
+        // Preserve the established one-output-line-per-input-line behavior in that mode.
+        if (displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED) {
+            List<String> replacement = new ArrayList<String>(originals.size());
+            boolean changed = false;
+            for (String original : originals) {
+                String translated = lookup(original, kind);
+                replacement.add(translated);
+                changed |= original == null ? translated != null : !original.equals(translated);
+            }
+            return changed ? replacement : originals;
+        }
+        StringBuilder joined = new StringBuilder();
+        for (int index = 0; index < originals.size(); index++) {
+            String line = originals.get(index);
+            if (line == null || line.indexOf('\n') >= 0 || line.indexOf('\r') >= 0) {
+                return originals;
+            }
+            if (index > 0) {
+                joined.append('\n');
+            }
+            joined.append(line);
+        }
+        String originalText = joined.toString();
+        String translatedText = lookup(originalText, kind);
+        if (originalText.equals(translatedText)) {
+            return originals;
+        }
+        String[] translatedLines = translatedText.split("\\n", -1);
+        if (translatedLines.length != originals.size()) {
+            return originals;
+        }
+        List<String> replacement = new ArrayList<String>(translatedLines.length);
+        Collections.addAll(replacement, translatedLines);
+        return replacement;
+    }
+
     private synchronized void completeLookup(
             RenderKey key,
             String original,
@@ -166,8 +214,10 @@ public final class RenderTranslationSession implements AutoCloseable {
                 retryAfter.clear();
             }
             retryAfter.put(key, System.currentTimeMillis() + FAILURE_RETRY_MILLIS);
+            lastFailureStatus = safeFailureStatus(error, result);
             return;
         }
+        lastFailureStatus = "";
         retryAfter.remove(key);
         if (result.isTranslated()) {
             if (translated.size() >= MAX_RENDERED_TRANSLATIONS) {
@@ -205,11 +255,32 @@ public final class RenderTranslationSession implements AutoCloseable {
         this.protectedLiterals = supplier;
     }
 
+    /** Latest render-time failure, cleared after the next successful request. */
+    public String lastFailureStatus() {
+        return lastFailureStatus;
+    }
+
+    private static String safeFailureStatus(Throwable error, TranslationResult result) {
+        String message = result == null ? null : result.getErrorMessage();
+        if ((message == null || message.trim().isEmpty()) && error != null) {
+            message = error.getMessage();
+        }
+        if (message == null || message.trim().isEmpty()) {
+            message = "未知错误";
+        }
+        String singleLine = message.replace('\n', ' ').replace('\r', ' ').trim();
+        if (singleLine.length() > 120) {
+            singleLine = singleLine.substring(0, 117) + "...";
+        }
+        return "翻译失败：" + singleLine;
+    }
+
     public synchronized void clearRenderedTranslations() {
         translated.clear();
         translatedOutputs.clear();
         pending.clear();
         retryAfter.clear();
+        lastFailureStatus = "";
         backgroundSubmissions.reset();
         prioritySubmissions.reset();
     }

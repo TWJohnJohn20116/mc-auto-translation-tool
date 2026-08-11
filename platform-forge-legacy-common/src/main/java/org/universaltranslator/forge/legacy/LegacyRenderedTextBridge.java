@@ -51,10 +51,16 @@ public final class LegacyRenderedTextBridge {
         if (lines == null || lines.isEmpty()) {
             return lines;
         }
+        List<String> translatedLines = LegacyTranslationRuntime.translateLines(
+                lines, TextKind.TOOLTIP);
         List<String> replacement = null;
         for (int index = 0; index < lines.size(); index++) {
             String original = lines.get(index);
-            String translated = translate(original, TextKind.TOOLTIP);
+            String translated = translatedLines.get(index);
+            if (original != null && !original.equals(translated)) {
+                translated = TranslationTextStyling.applyLegacyColor(
+                        translated, LegacyTranslationRuntime.translatedTextColor());
+            }
             if (original == null ? translated != null : !original.equals(translated)) {
                 if (replacement == null) {
                     replacement = new ArrayList<String>(lines);

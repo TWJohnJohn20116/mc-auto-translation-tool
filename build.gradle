@@ -3,4 +3,4 @@ plugins {
 }
 
 group = "org.universaltranslator"
-version = "1.0"
+version = "1.1"

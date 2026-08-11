@@ -22,6 +22,7 @@ public final class LegacyClientEvents {
     private static boolean registered;
     private boolean connectedLastTick;
     private int joinHintTicks = -1;
+    private String lastRuntimeStatus = "";
 
     private LegacyClientEvents() {
     }
@@ -83,6 +84,7 @@ public final class LegacyClientEvents {
                 }
                 runtimeChanged = true;
                 LegacyTranslationRuntime.initialize(updated);
+                lastRuntimeStatus = "";
                 updated.save();
                 minecraft.ingameGUI.setRecordPlayingMessage(
                         "MC 自动翻译工具: " + (updated.enabled ? "已开启" : "已关闭"));
@@ -97,6 +99,7 @@ public final class LegacyClientEvents {
                 System.err.println("[MC Auto Translation Tool] Could not toggle translation: " + exception);
             }
         }
+        notifyRuntimeStatus(minecraft, connected);
         if (!OPEN_SETTINGS.isPressed()) {
             return;
         }
@@ -109,5 +112,29 @@ public final class LegacyClientEvents {
         } catch (Exception exception) {
             System.err.println("[MC Auto Translation Tool] Could not open settings: " + exception);
         }
+    }
+
+    private void notifyRuntimeStatus(Minecraft minecraft, boolean connected) {
+        String current = connected ? LegacyTranslationRuntime.status() : "";
+        if (current == null) {
+            current = "";
+        }
+        if (current.equals(lastRuntimeStatus)) {
+            return;
+        }
+        lastRuntimeStatus = current;
+        if (current.isEmpty()) {
+            return;
+        }
+        if (isFailureStatus(current)) {
+            LegacyVersionAccess.showLocalChatMessage(minecraft,
+                    "\u00a7c[MC 自动翻译工具] " + current);
+        } else {
+            minecraft.ingameGUI.setRecordPlayingMessage("MC 自动翻译工具: " + current);
+        }
+    }
+
+    private static boolean isFailureStatus(String status) {
+        return status.startsWith("翻译失败") || status.startsWith("离线翻译失败");
     }
 }

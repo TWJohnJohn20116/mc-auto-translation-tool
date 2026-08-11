@@ -9,6 +9,7 @@ public final class FallbackTranslationProvider
         implements TranslationProvider, TranslationProviderStatus, AutoCloseable {
     private final TranslationProvider primary;
     private final TranslationProvider fallback;
+    private volatile String lastStatus = "";
 
     public FallbackTranslationProvider(TranslationProvider primary, TranslationProvider fallback) {
         if (primary == null || fallback == null) {
@@ -25,6 +26,9 @@ public final class FallbackTranslationProvider
 
     @Override
     public String status() {
+        if (!lastStatus.isEmpty()) {
+            return lastStatus;
+        }
         return primary instanceof TranslationProviderStatus
                 ? ((TranslationProviderStatus) primary).status()
                 : "主翻译服务运行中";
@@ -33,11 +37,18 @@ public final class FallbackTranslationProvider
     @Override
     public String translate(TranslationRequest request) throws Exception {
         try {
-            return primary.translate(request);
+            String translated = primary.translate(request);
+            lastStatus = primary instanceof TranslationProviderStatus
+                    ? ((TranslationProviderStatus) primary).status()
+                    : "主翻译服务运行中";
+            return translated;
         } catch (Exception primaryFailure) {
             try {
-                return fallback.translate(request);
+                String translated = fallback.translate(request);
+                lastStatus = "主翻译服务失败，已使用 API 回退";
+                return translated;
             } catch (Exception fallbackFailure) {
+                lastStatus = "主翻译服务和 API 回退均失败";
                 fallbackFailure.addSuppressed(primaryFailure);
                 throw fallbackFailure;
             }

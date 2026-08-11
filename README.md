@@ -20,12 +20,12 @@ Action Bar、标题、Boss Bar、容器标题、物品名称与 Lore、告示牌
 
 | Minecraft | 加载器 | 下载 |
 | --- | --- | --- |
-| 1.8.9 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.0/MCAutoTranslationTool-1.0-mc1.8.9-forge.jar) |
-| 1.12.2 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.0/MCAutoTranslationTool-1.0-mc1.12.2-forge.jar) |
-| 1.21.11 | Fabric | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.0/MCAutoTranslationTool-1.0-mc1.21.11-fabric.jar) |
+| 1.8.9 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.1/MCAutoTranslationTool-1.1-mc1.8.9-forge.jar) |
+| 1.12.2 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.1/MCAutoTranslationTool-1.1-mc1.12.2-forge.jar) |
+| 1.21.11 | Fabric | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.1/MCAutoTranslationTool-1.1-mc1.21.11-fabric.jar) |
 
 [查看全部版本与更新说明](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases) ·
-[SHA-256 校验文件](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.0/SHA256SUMS.txt)
+[SHA-256 校验文件](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.1/SHA256SUMS.txt)
 
 ## 设计原则
 
@@ -50,7 +50,8 @@ Action Bar、标题、Boss Bar、容器标题、物品名称与 Lore、告示牌
 
 ## 当前状态
 
-1.0 正式版提供三个独立客户端 JAR，并通过编译、重混淆、核心自测和实机启动验证：
+1.1 正式版提供三个独立客户端 JAR。三个版本均通过编译、重混淆和共享核心自测；
+1.0 发布前完成的实机启动验证继续作为兼容性基线：
 
 - Fabric 1.21.11；
 - Forge 1.12.2；

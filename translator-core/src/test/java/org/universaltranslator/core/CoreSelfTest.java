@@ -12,7 +12,9 @@ import org.universaltranslator.core.provider.LlamaCppOfflineProvider;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -38,6 +40,8 @@ public final class CoreSelfTest {
         enforcesSafeEndpoints();
         handlesJsonStrings();
         updatesRenderLookupsWithoutBlocking();
+        translatesRelatedTooltipLinesTogether();
+        exposesRenderTranslationFailures();
         protectsLiteralsOffTheRenderThread();
         boundsBusyLobbyTranslationWork();
         rateLimitsBusyLobbyWithoutStarvingTooltips();
@@ -53,6 +57,7 @@ public final class CoreSelfTest {
         keepsOriginalTextInBilingualMode();
         fallsBackFromOfflineToApi();
         verifiesDownloadedFileHashes();
+        reportsVerifiedDownloadProgress();
         extractsOfflineEngineArchivesSafely();
         System.out.println("CoreSelfTest: all checks passed");
     }
@@ -82,6 +87,8 @@ public final class CoreSelfTest {
         assertEquals("\u91d1\u5e01: 8", translated);
         assertEquals(1, primary.calls.get());
         assertEquals(1, fallback.calls.get());
+        assertEquals("主翻译服务失败，已使用 API 回退",
+                ((TranslationProviderStatus) provider).status());
     }
 
     private static void verifiesDownloadedFileHashes() throws Exception {
@@ -89,6 +96,25 @@ public final class CoreSelfTest {
         Files.write(file, "offline".getBytes(java.nio.charset.StandardCharsets.UTF_8));
         assertEquals("8e2c7ac508139a02af859de64a4743c1f3946837279332c35ec8f5ddf20654ae",
                 VerifiedDownloader.sha256(file));
+    }
+
+    private static void reportsVerifiedDownloadProgress() throws Exception {
+        Path file = Files.createTempFile("universal-translator-progress-", ".txt");
+        byte[] bytes = "offline".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        Files.write(file, bytes);
+        AtomicLong downloaded = new AtomicLong();
+        AtomicLong total = new AtomicLong();
+        VerifiedDownloader.download(
+                Arrays.asList(URI.create("https://example.invalid/model")),
+                file,
+                bytes.length,
+                VerifiedDownloader.sha256(file),
+                (current, expected) -> {
+                    downloaded.set(current);
+                    total.set(expected);
+                });
+        assertEquals((long) bytes.length, downloaded.get());
+        assertEquals((long) bytes.length, total.get());
     }
 
     private static void extractsOfflineEngineArchivesSafely() throws Exception {
@@ -226,6 +252,37 @@ public final class CoreSelfTest {
                 translated = session.lookup("Coins: 42", TextKind.SCOREBOARD_LINE);
             } while ("Coins: 42".equals(translated) && System.currentTimeMillis() < deadline);
             assertEquals("\u91d1\u5e01: 42", translated);
+        }
+    }
+
+    private static void translatesRelatedTooltipLinesTogether() throws Exception {
+        CountingProvider provider = new CountingProvider(false);
+        try (RenderTranslationSession session = new RenderTranslationSession(
+                provider, "auto", "zh-CN", 100, 1)) {
+            java.util.List<String> original = Arrays.asList("Players online", "Coins");
+            assertEquals(original, session.lookupLines(original, TextKind.TOOLTIP));
+            long deadline = System.currentTimeMillis() + 2000L;
+            java.util.List<String> translated;
+            do {
+                Thread.sleep(10L);
+                translated = session.lookupLines(original, TextKind.TOOLTIP);
+            } while (original.equals(translated) && System.currentTimeMillis() < deadline);
+            assertEquals(Arrays.asList("在线玩家", "金币"), translated);
+            assertEquals(1, provider.calls.get());
+        }
+    }
+
+    private static void exposesRenderTranslationFailures() throws Exception {
+        CountingProvider provider = new CountingProvider(true);
+        try (RenderTranslationSession session = new RenderTranslationSession(
+                provider, "auto", "zh-CN", 100, 1)) {
+            session.lookup("Server restarting", TextKind.TITLE);
+            long deadline = System.currentTimeMillis() + 2000L;
+            while (session.lastFailureStatus().isEmpty()
+                    && System.currentTimeMillis() < deadline) {
+                Thread.sleep(10L);
+            }
+            assertTrue(session.lastFailureStatus().startsWith("翻译失败：simulated outage"));
         }
     }
 

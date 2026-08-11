@@ -31,6 +31,7 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
                     KeyBinding.Category.MISC));
     private static boolean connectedLastTick;
     private static int joinHintTicks = -1;
+    private static String lastRuntimeStatus = "";
 
     @Override
     public void onInitializeClient() {
@@ -65,6 +66,7 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
                     }
                     runtimeChanged = true;
                     FabricTranslationRuntime.initialize(updated);
+                    lastRuntimeStatus = "";
                     updated.save();
                     client.inGameHud.setOverlayMessage(
                             Text.literal("MC 自动翻译工具: " + (updated.enabled ? "已开启" : "已关闭")),
@@ -82,6 +84,7 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
                             Text.literal("MC 自动翻译工具: 切换失败"), false);
                 }
             }
+            notifyRuntimeStatus(client, connected);
             while (OPEN_SETTINGS.wasPressed()) {
                 if (client.currentScreen instanceof UniversalTranslatorConfigScreen) {
                     continue;
@@ -96,5 +99,30 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
         });
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> FabricTranslationRuntime.shutdown());
         ClientSendMessageEvents.CHAT.register(FabricTranslationRuntime::protectOutgoingMessage);
+    }
+
+    private static void notifyRuntimeStatus(net.minecraft.client.MinecraftClient client, boolean connected) {
+        String current = connected ? FabricTranslationRuntime.status() : "";
+        if (current == null) {
+            current = "";
+        }
+        if (current.equals(lastRuntimeStatus)) {
+            return;
+        }
+        lastRuntimeStatus = current;
+        if (current.isEmpty()) {
+            return;
+        }
+        if (isFailureStatus(current)) {
+            client.inGameHud.getChatHud().addMessage(Text.literal(
+                    "\u00a7c[MC 自动翻译工具] " + current));
+        } else {
+            client.inGameHud.setOverlayMessage(
+                    Text.literal("MC 自动翻译工具: " + current), false);
+        }
+    }
+
+    private static boolean isFailureStatus(String status) {
+        return status.startsWith("翻译失败") || status.startsWith("离线翻译失败");
     }
 }
