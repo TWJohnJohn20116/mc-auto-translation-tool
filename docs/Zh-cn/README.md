@@ -1,12 +1,12 @@
 # MC 自动翻译工具（MC Auto Translation Tool）
 
-[简体中文](README.md) · [繁體中文](docs/Zh-tw/README.md) · [English](docs/en/README.md)
+[简体中文](README.md) · [繁體中文](../Zh-tw/README.md) · [English](../en/README.md) · [仓库首页](../../README.md)
 
 一个面向 Minecraft Java 版的公益、开源、纯客户端全界面翻译模组。
 
 [⬇️ 下载最新版](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest) ·
 [🌐 官方下载页](https://mc-auto-translation-tool.wuxiangdan96.chatgpt.site/#download) ·
-[📚 文档中心](docs/README.md) · [📖 安装与使用说明](docs/Zh-cn/USER_GUIDE.md)
+[📚 语言目录](../README.md) · [📖 安装与使用说明](USER_GUIDE.md)
 
 原作者：[B站「我小张7272635」](https://space.bilibili.com/3546631091783712)。
 转载、再发布或改编时，请保留原作者署名与 MIT License 版权声明。
@@ -50,9 +50,6 @@ Action Bar、标题、Boss Bar、容器标题、物品名称与 Lore、告示牌
 
 不同游戏版本会生成不同 JAR，但共享相同的核心逻辑和配置语义。
 
-主分支另包含 Fabric 26.1 与 26.2 开发适配，均使用 Java 25。26.2 已完成干净构建、
-重混淆及共享核心自测；在实机启动和服务器内回归完成前，不列入上方正式版下载。
-
 ## 当前状态
 
 1.1 正式版提供三个独立客户端 JAR。三个版本均通过编译、重混淆和共享核心自测；
@@ -93,5 +90,5 @@ Action Bar、标题、Boss Bar、容器标题、物品名称与 Lore、告示牌
 明确的总开关、聊天/其他内容开关和本地缓存。密钥只在用户本机配置，禁止提交
 到代码仓库。远程端点必须使用 HTTPS；只有精确的本机回环地址允许 HTTP。
 
-详细安装和使用方法见 `docs/Zh-cn/USER_GUIDE.md`，实际验证范围和后续版本顺序见
-`docs/Zh-cn/COMPATIBILITY.md`。官网源码位于 `website/`；公开访问会在发布者确认后开启。
+详细安装和使用方法见 [使用指南](USER_GUIDE.md)，实际验证范围和后续版本顺序见
+[兼容性矩阵](COMPATIBILITY.md)。官网源码位于 `../../website/`；公开访问会在发布者确认后开启。

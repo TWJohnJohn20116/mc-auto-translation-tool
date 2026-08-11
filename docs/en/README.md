@@ -1,12 +1,12 @@
 # MC Auto Translation Tool
 
-[简体中文](README.md) · [繁體中文](README.zh-TW.md) · [English](README.en.md)
+[简体中文](../Zh-cn/README.md) · [繁體中文](../Zh-tw/README.md) · [English](README.md) · [Repository home](../../README.md)
 
 A charity-driven, open-source, client-only full-interface translation mod for Minecraft Java Edition.
 
 [⬇️ Download the latest release](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest) ·
 [🌐 Official download page](https://mc-auto-translation-tool.wuxiangdan96.chatgpt.site/#download) ·
-[📖 Installation and usage guide (Simplified Chinese)](docs/USER_GUIDE_zh-CN.md)
+[📚 Language directory](../README.md) · [📖 Installation and usage guide](USER_GUIDE.md)
 
 Original author: [Bilibili creator “我小张7272635”](https://space.bilibili.com/3546631091783712).
 Please retain the original author attribution and MIT License copyright notice when redistributing,
@@ -97,6 +97,6 @@ provides a clear master switch, separate switches for chat and other content, an
 API keys remain in the user's local configuration and must never be committed to the repository.
 Remote endpoints must use HTTPS; HTTP is allowed only for exact local loopback addresses.
 
-See `docs/USER_GUIDE_zh-CN.md` for detailed installation and usage instructions, and
-`docs/COMPATIBILITY.md` for the verified scope and planned version order. The website source is in
-`website/`; public access will be enabled after confirmation by the publisher.
+See the [user guide](USER_GUIDE.md) for detailed installation and usage instructions, and the
+[compatibility matrix](COMPATIBILITY.md) for the verified scope and planned version order. The
+website source is in `../../website/`; public access will be enabled after confirmation by the publisher.

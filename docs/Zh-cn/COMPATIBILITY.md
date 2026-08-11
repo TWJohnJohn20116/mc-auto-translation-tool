@@ -1,5 +1,7 @@
 # 兼容性矩阵
 
+[简体中文](COMPATIBILITY.md) · [繁體中文](../Zh-tw/COMPATIBILITY.md) · [English](../en/COMPATIBILITY.md) · [返回简中 README](README.md)
+
 本文只记录实际完成的验证，不把“能够编译”写成“已经兼容”。
 
 ## 开发中目标

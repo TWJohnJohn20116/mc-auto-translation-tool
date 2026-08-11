@@ -40,7 +40,7 @@ sourceSets.main.java.srcDirs += [
 
 jar {
     from("../../LICENSE")
-    from("../../docs/THIRD_PARTY_OFFLINE.md")
+    from("../../docs/en/THIRD_PARTY_OFFLINE.md")
     manifest {
         attributes(
                 "FMLCorePlugin": "org.universaltranslator.forge.v189.LegacyCorePlugin",
