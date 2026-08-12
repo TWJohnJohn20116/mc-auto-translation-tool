@@ -1,0 +1,118 @@
+import java.security.MessageDigest
+import java.util.zip.ZipFile
+
+plugins {
+    id "java"
+}
+
+repositories {
+    maven { url = "https://maven.fabricmc.net/" }
+    mavenCentral()
+}
+
+version = project.mod_version
+group = project.maven_group
+
+dependencies {
+    testImplementation "net.fabricmc:fabric-loader:0.19.3"
+    testRuntimeOnly "org.ow2.asm:asm:9.10.1"
+    testRuntimeOnly "org.ow2.asm:asm-analysis:9.10.1"
+    testRuntimeOnly "org.ow2.asm:asm-commons:9.10.1"
+    testRuntimeOnly "org.ow2.asm:asm-tree:9.10.1"
+    testRuntimeOnly "org.ow2.asm:asm-util:9.10.1"
+    testRuntimeOnly "net.fabricmc:sponge-mixin:0.17.3+mixin.0.8.7"
+}
+
+base {
+    archivesName = "mc-auto-translation-tool-fabric-1.21.x"
+}
+
+evaluationDependsOn(":platform-fabric-1.21.4-1.21.5")
+evaluationDependsOn(":platform-fabric-1.21.4")
+evaluationDependsOn(":platform-fabric-1.21.5")
+evaluationDependsOn(":platform-fabric-1.21.11")
+
+def legacyRemapJar = project(":platform-fabric-1.21.4-1.21.5").tasks.named("remapJar")
+def exact1214RemapJar = project(":platform-fabric-1.21.4").tasks.named("remapJar")
+def exact1215RemapJar = project(":platform-fabric-1.21.5").tasks.named("remapJar")
+def modernRemapJar = project(":platform-fabric-1.21.11").tasks.named("remapJar")
+
+processResources {
+    inputs.property "version", project.version
+    filesMatching("fabric.mod.json") {
+        expand "version": project.version
+    }
+}
+
+jar {
+    dependsOn legacyRemapJar, modernRemapJar
+
+    from(legacyRemapJar.flatMap { it.archiveFile }) {
+        into "META-INF/jars"
+        rename { "universal-translator-1.21.4-1.21.5.jar" }
+    }
+    from(modernRemapJar.flatMap { it.archiveFile }) {
+        into "META-INF/jars"
+        rename { "universal-translator-1.21.11.jar" }
+    }
+    from(rootProject.file("LICENSE")) {
+        rename { "LICENSE_universal_translator_bundle" }
+    }
+}
+
+tasks.register("verifyBundle") {
+    dependsOn jar
+    doLast {
+        def archive = jar.archiveFile.get().asFile
+        def required = [
+            "fabric.mod.json",
+            "META-INF/jars/universal-translator-1.21.4-1.21.5.jar",
+            "META-INF/jars/universal-translator-1.21.11.jar"
+        ]
+        required.each { path ->
+            if (!zipTree(archive).matching { include path }.files) {
+                throw new GradleException("Missing bundle entry: ${path}")
+            }
+        }
+        println "Verified ${archive.name}: ${required.size()} required entries present"
+    }
+}
+
+tasks.register("verifySharedCompatibility") {
+    dependsOn legacyRemapJar, exact1214RemapJar, exact1215RemapJar
+    doLast {
+        def classHashes = { File archive ->
+            def hashes = [:]
+            new ZipFile(archive).withCloseable { zip ->
+                zip.entries().findAll { !it.directory && it.name.endsWith(".class") }.each { entry ->
+                    hashes[entry.name] = MessageDigest.getInstance("SHA-256")
+                            .digest(zip.getInputStream(entry).bytes)
+                            .encodeHex()
+                            .toString()
+                }
+            }
+            hashes
+        }
+
+        def shared = classHashes(legacyRemapJar.get().archiveFile.get().asFile)
+        def exact1214 = classHashes(exact1214RemapJar.get().archiveFile.get().asFile)
+        def exact1215 = classHashes(exact1215RemapJar.get().archiveFile.get().asFile)
+        if (shared != exact1214 || shared != exact1215) {
+            throw new GradleException("The shared implementation no longer matches both exact 1.21.4 and 1.21.5 class sets")
+        }
+        println "Verified ${shared.size()} shared classes against exact 1.21.4 and 1.21.5 remapped JARs"
+    }
+}
+
+tasks.register("verifyLoaderSelection", JavaExec) {
+    dependsOn jar, testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "org.universaltranslator.bundle.BundleResolutionVerifier"
+    args jar.archiveFile.get().asFile.absolutePath, "1.21.4", "1.21.5", "1.21.11"
+}
+
+test {
+    enabled = false
+}
+
+build.dependsOn verifyBundle, verifySharedCompatibility, verifyLoaderSelection

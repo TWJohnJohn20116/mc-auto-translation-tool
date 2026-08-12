@@ -29,9 +29,15 @@ ForgeBootstrap 并到达 GLFW 图形初始化，随后因自动化环境没有�
 | 1.19.2 | Fabric Loader 0.19.3 + Fabric API 0.77.0 | 17 | 通过 | 待验证 | 待验证 |
 | 1.21.4 | Fabric Loader 0.19.3 + Fabric API 0.119.4 | 21 | 通过 | 待验证 | 待验证 |
 | 1.21.5 | Fabric Loader 0.19.3 + Fabric API 0.128.2 | 21 | 通过 | 待验证 | 待验证 |
+| 1.21.4 / 1.21.5 / 1.21.11 单一 JAR | Fabric Loader 0.19.3 | 21 | 通过；三个版本的 Loader 选择测试通过 | 待验证 | 待验证 |
 | 26.1 | Fabric Loader 0.19.3 + Fabric API 0.145.1 | 25 | 通过 | 通过 | 待验证 |
 | 26.1.2 | Fabric Loader 0.19.3 + Fabric API 0.155.2 | 25 | 通过 | 待验证 | 待验证 |
 | 26.2 | Fabric Loader 0.19.3 + Fabric API 0.157.0 | 25 | 通过 | 待验证 | 待验证 |
+
+
+1.21.x 单一 JAR 不是把同一套 Mixin 盲目放宽到所有 1.21 版本。它内嵌 1.21.4–1.21.5
+共用实现与 1.21.11 专用实现；每个实现仍声明精确版本，由 Fabric Loader 的嵌套 JAR
+解析器选择。其他 1.21.x 版本仍不在支持范围。
 
 这些目标仍在开发中，不包含在 v1.2 Release 中。每个 `fabric.mod.json` 都固定到精确
 Minecraft 版本，只有完成启动和服务器内回归后才会进入正式发布表。
