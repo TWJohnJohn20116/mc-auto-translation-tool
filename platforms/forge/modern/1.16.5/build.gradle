@@ -17,6 +17,9 @@ minecraft {
         configureEach {
             workingDir.convention layout.projectDirectory.dir("run")
             args "--mixin.config=universal-translator.forge.mixins.json"
+            if (System.getProperty("os.name").startsWith("Mac")) {
+                jvmArgs "-XstartOnFirstThread"
+            }
         }
         register("client")
     }

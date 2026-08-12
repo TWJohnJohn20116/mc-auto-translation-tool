@@ -3,4 +3,58 @@ plugins {
 }
 
 group = "org.universaltranslator"
-version = "1.2.1"
+version = "1.3.0-test.2"
+
+tasks.register("validateMixinConfigs") {
+    group = "verification"
+    description = "Validates every source Mixin config and rejects unsupported Java compatibility levels."
+
+    doLast {
+        def compatibilityLevels = [
+                "JAVA_6", "JAVA_7", "JAVA_8", "JAVA_9", "JAVA_10", "JAVA_11",
+                "JAVA_12", "JAVA_13", "JAVA_14", "JAVA_15", "JAVA_16", "JAVA_17",
+                "JAVA_18", "JAVA_19", "JAVA_20", "JAVA_21"
+        ]
+        def configs = fileTree("platforms") {
+            include "**/src/**/*.mixins.json"
+        }
+
+        configs.each { config ->
+            def parsed
+            try {
+                parsed = new groovy.json.JsonSlurper().parse(config)
+            } catch (Exception error) {
+                throw new GradleException("Invalid Mixin JSON: ${relativePath(config)}", error)
+            }
+
+            def level = parsed.compatibilityLevel
+            if (level != null && !compatibilityLevels.contains(level)) {
+                throw new GradleException(
+                        "Unsupported Mixin compatibilityLevel '${level}' in ${relativePath(config)}; " +
+                                "the bundled Mixin 0.8.7 runtime supports at most JAVA_21"
+                )
+            }
+
+            def relativeConfigPath = relativePath(config).replace('\\', '/')
+            def maximumLevel = relativeConfigPath.contains("/1.16.5/") ? "JAVA_8" :
+                    (relativeConfigPath.contains("/1.19.2/") || relativeConfigPath.contains("/1.20.1/")) ?
+                            "JAVA_17" : "JAVA_21"
+            if (level != null && compatibilityLevels.indexOf(level) > compatibilityLevels.indexOf(maximumLevel)) {
+                throw new GradleException(
+                        "Mixin compatibilityLevel '${level}' exceeds ${maximumLevel} for ${relativeConfigPath}"
+                )
+            }
+            if ((relativeConfigPath.contains("/forge/modern/1.16.5/") ||
+                    relativeConfigPath.contains("/forge/modern/1.19.2/")) &&
+                    parsed.injectors?.defaultRequire != 0) {
+                throw new GradleException(
+                        "Legacy Forge Mixin hooks must remain tolerant (defaultRequire 0): ${relativeConfigPath}"
+                )
+            }
+        }
+    }
+}
+
+tasks.named("check") {
+    dependsOn("validateMixinConfigs")
+}

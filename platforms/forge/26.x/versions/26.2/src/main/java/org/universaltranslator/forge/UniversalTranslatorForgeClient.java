@@ -33,6 +33,15 @@ public final class UniversalTranslatorForgeClient {
     private UniversalTranslatorForgeClient() {
     }
 
+    static void registerDirectEvents() {
+        RegisterKeyMappingsEvent.BUS.addListener(UniversalTranslatorForgeClient::registerKeys);
+    }
+
+    private static void registerKeys(RegisterKeyMappingsEvent event) {
+        event.register(RELOAD_SETTINGS);
+        event.register(TOGGLE_TRANSLATION);
+    }
+
     private static void loadConfig() {
         try {
             ForgeConfig config = ForgeConfig.load(FMLPaths.CONFIGDIR.get());
@@ -53,12 +62,6 @@ public final class UniversalTranslatorForgeClient {
             bus = Mod.EventBusSubscriber.Bus.MOD)
     public static final class ModEvents {
         private ModEvents() {
-        }
-
-        @SubscribeEvent
-        public static void registerKeys(RegisterKeyMappingsEvent event) {
-            event.register(RELOAD_SETTINGS);
-            event.register(TOGGLE_TRANSLATION);
         }
 
         @SubscribeEvent
