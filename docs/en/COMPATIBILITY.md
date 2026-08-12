@@ -5,7 +5,7 @@
 This document records only completed validation. “Builds successfully” is not reported as
 “compatible.”
 
-## Version 1.2 release validation
+## Version 1.2.1 release validation
 
 | Minecraft | Loader | Java | Build and self-test | Launched to main menu | Full manual in-server regression |
 | --- | --- | --- | --- | --- | --- |
@@ -14,9 +14,11 @@ This document records only completed validation. “Builds successfully” is no
 | 1.20.1 | Fabric Loader 0.18.1 + Fabric API 0.92.11 | 17 | Passed | Pending | Pending |
 | 1.20.1 | Forge 47.4.10 | 17 | Passed; SRG and refmap checked | Pending | Pending |
 | 1.21.11 | Fabric Loader 0.18.1 + Fabric API 0.141.4 | 21 | Passed | Historical baseline passed | Pending confirmation |
+| All 1.21 releases (1.21–1.21.11), single JAR | Fabric Loader 0.19.3 | 21 | Passed; Loader selection passed for all twelve versions | Pending | Pending |
 | 1.21.11 | Forge 61.2.0 | 21 | Passed; Mojmap Mixins checked | Blocked by headless display | Pending |
+| 26.1, 26.1.1, 26.1.2, 26.2, single JAR | Fabric Loader 0.19.3 | 25 | Passed; Loader selection passed for all four versions | 26.1 baseline passed | Pending |
 
-All six release JARs share the same translation core. Fabric 1.20.1 completed Loom remapping.
+All eight release JARs share the same translation core. Fabric 1.20.1 completed Loom remapping.
 The Forge 1.20.1 artifact was renamed into the SRG runtime namespace and contains a refmap for all
 nine Mixin classes. Forge 1.21.11 was adapted to the Forge 7 event bus and Mojmap runtime. Its
 startup passed ForgeBootstrap and reached GLFW graphics initialization, then stopped because the
@@ -29,12 +31,6 @@ reported as a successful main-menu launch either.
 | --- | --- | --- | --- | --- | --- |
 | 1.16.5 | Fabric Loader 0.19.3 + Fabric API 0.42.0 | 8 | Passed | Pending | Pending |
 | 1.19.2 | Fabric Loader 0.19.3 + Fabric API 0.77.0 | 17 | Passed | Pending | Pending |
-| 1.21.4 | Fabric Loader 0.19.3 + Fabric API 0.119.4 | 21 | Passed | Pending | Pending |
-| 1.21.5 | Fabric Loader 0.19.3 + Fabric API 0.128.2 | 21 | Passed | Pending | Pending |
-| All 1.21 releases (1.21–1.21.11), single JAR | Fabric Loader 0.19.3 | 21 | Passed; Loader selection passed for all twelve versions | Pending | Pending |
-| 26.1 | Fabric Loader 0.19.3 + Fabric API 0.145.1 | 25 | Passed | Passed | Pending |
-| 26.1.2 | Fabric Loader 0.19.3 + Fabric API 0.155.2 | 25 | Passed | Pending | Pending |
-| 26.2 | Fabric Loader 0.19.3 + Fabric API 0.157.0 | 25 | Passed | Pending | Pending |
 
 
 The single 1.21.x JAR embeds twelve exact-version implementations rather than widening one Mixin
@@ -42,8 +38,8 @@ build across incompatible game APIs. Each nested implementation declares one Min
 and Fabric Loader selects the exact match for 1.21, 1.21.1, 1.21.2, 1.21.3, 1.21.4, 1.21.5,
 1.21.6, 1.21.7, 1.21.8, 1.21.9, 1.21.10, or 1.21.11.
 
-These remain development targets and are not included in the v1.2 Release. Every metadata file
-pins an exact Minecraft version until launch and in-server regression are complete.
+The 1.16.5 and 1.19.2 adapters remain development targets and are not included in the v1.2.1 Release.
+Every metadata file pins an exact Minecraft version until launch and in-server regression are complete.
 
 ## The principle behind “support every version”
 

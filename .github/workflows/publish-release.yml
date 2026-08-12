@@ -47,11 +47,13 @@ jobs:
             "MCAutoTranslationTool-$version-mc1.20.1-fabric.jar"
             "MCAutoTranslationTool-$version-mc1.20.1-forge.jar"
             "MCAutoTranslationTool-$version-mc1.21.11-fabric.jar"
+            "MCAutoTranslationTool-$version-mc1.21.x-fabric.jar"
             "MCAutoTranslationTool-$version-mc1.21.11-forge.jar"
+            "MCAutoTranslationTool-$version-mc26.x-fabric.jar"
           )
           mapfile -t jars < <(find "$release_dir" -maxdepth 1 -type f -name '*.jar' -print | sort)
           if [[ "${#jars[@]}" -ne "${#expected[@]}" || ! -f "$release_dir/SHA256SUMS.txt" ]]; then
-            echo "Release must contain exactly six target JARs and SHA256SUMS.txt" >&2
+            echo "Release must contain exactly eight target JARs and SHA256SUMS.txt" >&2
             exit 1
           fi
           for file in "${expected[@]}"; do

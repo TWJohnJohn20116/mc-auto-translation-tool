@@ -23,18 +23,20 @@ Make sure that the file exactly matches your Minecraft version and mod loader:
 
 | Minecraft | Loader | Download |
 | --- | --- | --- |
-| 1.8.9 | Forge | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/MCAutoTranslationTool-1.2-mc1.8.9-forge.jar) |
-| 1.12.2 | Forge | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/MCAutoTranslationTool-1.2-mc1.12.2-forge.jar) |
-| 1.20.1 | Fabric | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/MCAutoTranslationTool-1.2-mc1.20.1-fabric.jar) |
-| 1.20.1 | Forge | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/MCAutoTranslationTool-1.2-mc1.20.1-forge.jar) |
-| 1.21.11 | Fabric | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/MCAutoTranslationTool-1.2-mc1.21.11-fabric.jar) |
-| 1.21.11 | Forge | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/MCAutoTranslationTool-1.2-mc1.21.11-forge.jar) |
+| 1.8.9 | Forge | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.8.9-forge.jar) |
+| 1.12.2 | Forge | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.12.2-forge.jar) |
+| 1.20.1 | Fabric | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.20.1-fabric.jar) |
+| 1.20.1 | Forge | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.20.1-forge.jar) |
+| 1.21–1.21.11 | Fabric | [Download single JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.21.x-fabric.jar) |
+| 1.21.11 | Fabric | [Download exact-version JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.21.11-fabric.jar) |
+| 1.21.11 | Forge | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.21.11-forge.jar) |
+| 26.1–26.2 | Fabric | [Download single JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc26.x-fabric.jar) |
 
 Do not mix JARs across game versions or loaders. Release metadata accepts only the exact Minecraft
 versions that passed the build checks; adjacent versions are added only after separate validation.
 
 [View all releases and release notes](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases) ·
-[SHA-256 checksum file](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/SHA256SUMS.txt)
+[SHA-256 checksum file](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/SHA256SUMS.txt)
 
 ## Design principles
 
@@ -53,8 +55,8 @@ versions that passed the build checks; adjacent versions are added only after se
 
 | Minecraft | Loader | Java |
 | --- | --- | --- |
-| Supported 26.x releases (26.1, 26.1.1, 26.1.2, and 26.2; single JAR, development) | Fabric | 25 |
-| All 1.21 releases (1.21 through 1.21.11; single JAR, development) | Fabric | 21 |
+| Supported 26.x releases (26.1, 26.1.1, 26.1.2, and 26.2; single JAR) | Fabric | 25 |
+| All 1.21 releases (1.21 through 1.21.11; single JAR) | Fabric | 21 |
 | 1.21.11 | Forge | 21 |
 | 1.20.1 | Forge | 17 |
 | 1.20.1 | Fabric | 17 |
@@ -66,16 +68,15 @@ versions that passed the build checks; adjacent versions are added only after se
 Fabric 1.21.x and 26.x each provide one bundle JAR. Exact-version implementations remain embedded
 inside each bundle and share the same core logic and configuration semantics.
 
-The main branch also contains separate development adapters for Fabric 1.16.5, 1.19.2, 1.21.4,
-1.21.5, 26.1, 26.1.1, 26.1.2, and 26.2. They are not release downloads until launch and in-server
-regression checks are complete.
+The main branch also contains separate development adapters for Fabric 1.16.5 and 1.19.2. They are
+not release downloads until launch and in-server regression checks are complete.
 
 ## Current status
 
-Release 1.2 provides six separate client JARs, adding Fabric and Forge for 1.20.1 and Forge for
-1.21.11. All six build lines passed clean builds; modern targets also passed Fabric remapping or
-Forge runtime-mapping checks, and the shared core self-tests passed. See the compatibility matrix
-for the exact validation level of each target.
+Release 1.2.1 provides eight client JARs: the six exact-version downloads from 1.2 plus two single
+Fabric JARs covering 1.21–1.21.11 and 26.1/26.1.1/26.1.2/26.2. Every build line passed a clean
+build, both bundles passed real Fabric Loader selection tests, and the shared-core self-test passed.
+See the compatibility matrix for the exact validation level of each target.
 
 On Fabric, press `U` in game to open the settings screen. On Forge 1.20.1/1.21.11, edit
 `config/universal-translator.properties` and press `U` to reload it. The mod is disabled by default. New installations

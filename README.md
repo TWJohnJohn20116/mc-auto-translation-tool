@@ -22,18 +22,20 @@ Minecraft 样式代码默认保留。
 
 | Minecraft | 加载器 | 下载 |
 | --- | --- | --- |
-| 1.8.9 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/MCAutoTranslationTool-1.2-mc1.8.9-forge.jar) |
-| 1.12.2 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/MCAutoTranslationTool-1.2-mc1.12.2-forge.jar) |
-| 1.20.1 | Fabric | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/MCAutoTranslationTool-1.2-mc1.20.1-fabric.jar) |
-| 1.20.1 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/MCAutoTranslationTool-1.2-mc1.20.1-forge.jar) |
-| 1.21.11 | Fabric | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/MCAutoTranslationTool-1.2-mc1.21.11-fabric.jar) |
-| 1.21.11 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/MCAutoTranslationTool-1.2-mc1.21.11-forge.jar) |
+| 1.8.9 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.8.9-forge.jar) |
+| 1.12.2 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.12.2-forge.jar) |
+| 1.20.1 | Fabric | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.20.1-fabric.jar) |
+| 1.20.1 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.20.1-forge.jar) |
+| 1.21–1.21.11 | Fabric | [下载单一 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.21.x-fabric.jar) |
+| 1.21.11 | Fabric | [下载精确版本 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.21.11-fabric.jar) |
+| 1.21.11 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.21.11-forge.jar) |
+| 26.1–26.2 | Fabric | [下载单一 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc26.x-fabric.jar) |
 
 请勿跨 Minecraft 版本或加载器混用 JAR。为了避免 Mixin 注入失败导致游戏无法启动，
 发布文件只声明已完成构建验证的精确版本；相邻版本需要单独验证后才会加入支持范围。
 
 [查看全部版本与更新说明](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases) ·
-[SHA-256 校验文件](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2/SHA256SUMS.txt)
+[SHA-256 校验文件](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/SHA256SUMS.txt)
 
 ## 设计原则
 
@@ -52,8 +54,8 @@ Minecraft 样式代码默认保留。
 
 | Minecraft | 加载器 | Java |
 | --- | --- | --- |
-| 26.1、26.1.1、26.1.2、26.2（单一 JAR，开发中） | Fabric | 25 |
-| 1.21–1.21.11（单一 JAR，开发中） | Fabric | 21 |
+| 26.1、26.1.1、26.1.2、26.2（单一 JAR） | Fabric | 25 |
+| 1.21–1.21.11（单一 JAR） | Fabric | 21 |
 | 1.21.11 | Forge | 21 |
 | 1.20.1 | Forge | 17 |
 | 1.20.1 | Fabric | 17 |
@@ -64,19 +66,15 @@ Minecraft 样式代码默认保留。
 
 Fabric 1.21.x 与 26.x 各提供一个整合 JAR；整合包内仍保留精确版本实现，并共享相同的核心逻辑和配置语义。
 
-主分支另包含 Fabric 1.16.5、1.19.2、1.21.4、1.21.5、26.1、26.1.1、26.1.2 与 26.2
-开发适配。在实机启动和服务器内回归完成前，这些源码目标不列入上方正式版下载。
+主分支另包含 Fabric 1.16.5 与 1.19.2 开发适配。在实机启动和服务器内回归完成前，
+这些源码目标不列入上方正式版下载。
 
 ## 当前状态
 
-1.2 正式版提供六个独立客户端 JAR：新增 1.20.1 Fabric、1.20.1 Forge 和
-1.21.11 Forge，并重新构建原有三个版本。六条构建线均通过干净构建，现代版本还完成
-Fabric 重映射或 Forge 运行时映射检查；共享核心自测通过。1.21.11 Forge 的实际启动
-验证已进入 Forge 图形初始化阶段，但当前自动化环境没有可用显示器，因此不把它写成
-“已到主菜单”。详细证据见兼容性矩阵。
-
-未发布的八个 Fabric 开发目标已通过本次联合干净构建；其中 26.1 保留此前主菜单
-启动基线，其余目标仍需实机启动与服务器内人工回归后才能生成正式发行文件。
+1.2.1 正式版提供八个客户端 JAR：保留 1.2 的六个精确版本下载，并新增覆盖
+1.21–1.21.11 与 26.1／26.1.1／26.1.2／26.2 的两个 Fabric 单一 JAR。
+全部构建线均通过干净构建；两个整合包还通过真实 Fabric Loader 自动选版测试，
+共享核心自测通过。详细证据见兼容性矩阵。
 
 Fabric 版本进入游戏后按 `U` 打开设置；Forge 1.20.1/1.21.11 当前使用
 `config/universal-translator.properties`，修改后按 `U` 重新载入。模组默认关闭；新安装默认选择“离线”，并使用
