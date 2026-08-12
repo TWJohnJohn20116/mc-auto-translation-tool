@@ -2,7 +2,7 @@
 
 [简体中文](../Zh-cn/BUILDING.md) · [繁體中文](../Zh-tw/BUILDING.md) · [English](BUILDING.md) · [Back to English README](README.md)
 
-The project consists of one shared Java 8 core, nine Fabric modules, two modern Forge modules,
+The project consists of one shared Java 8 core, eleven Fabric modules (including the shared 1.21.4–1.21.5 target and the 1.21.x bundle), two modern Forge modules,
 and two independent legacy Forge builds. Legacy ForgeGradle cannot run directly on modern JDKs, so one root Gradle
 command cannot build every version.
 
@@ -35,6 +35,19 @@ JDK 25 or later is required:
 ```
 
 Output is written to `platform-fabric-26.1/build/libs/`.
+
+## Single Fabric 1.21.x JAR
+
+JDK 21 or later is required:
+
+```bash
+./gradlew :platform-fabric-1.21.x:build
+```
+
+Output is written to `platform-fabric-1.21.x/build/libs/`. This single JAR supports only the
+validated Minecraft versions 1.21.4, 1.21.5, and 1.21.11. It embeds two exact compatibility
+implementations and lets Fabric Loader select the correct one. The build automatically verifies
+the nested JAR contents and runs Loader resolution checks for all three versions.
 
 ## Fabric 1.21.11
 

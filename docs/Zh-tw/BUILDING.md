@@ -2,7 +2,7 @@
 
 [简体中文](../Zh-cn/BUILDING.md) · [繁體中文](BUILDING.md) · [English](../en/BUILDING.md) · [返回繁中 README](README.md)
 
-專案由一個 Java 8 通用核心、九個 Fabric 模組、兩個現代 Forge 模組及兩個獨立舊版 Forge 建置組成。
+專案由一個 Java 8 通用核心、十一個 Fabric 模組（包含 1.21.4–1.21.5 共用目標與 1.21.x 整合包）、兩個現代 Forge 模組及兩個獨立舊版 Forge 建置組成。
 舊版 ForgeGradle 無法直接在現代 JDK 上執行，因此無法用一條根 Gradle 指令建置所有版本。
 
 ## 26.2 Fabric
@@ -34,6 +34,18 @@
 ```
 
 輸出位於 `platform-fabric-26.1/build/libs/`。
+
+## Fabric 1.21.x 單一 JAR
+
+需要 JDK 21 或更新版本：
+
+```bash
+./gradlew :platform-fabric-1.21.x:build
+```
+
+輸出位於 `platform-fabric-1.21.x/build/libs/`。這個單一 JAR 僅支援已驗證的
+Minecraft 1.21.4、1.21.5 與 1.21.11；它內嵌兩個精確相容實作，並由 Fabric Loader
+依遊戲版本選擇。建置會自動執行巢狀 JAR 內容檢查及三個版本的 Loader 解析測試。
 
 ## 1.21.11 Fabric
 
