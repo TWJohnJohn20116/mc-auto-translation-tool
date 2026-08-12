@@ -2,38 +2,20 @@
 
 [简体中文](../Zh-cn/BUILDING.md) · [繁體中文](BUILDING.md) · [English](../en/BUILDING.md) · [返回繁中 README](README.md)
 
-專案由一個 Java 8 通用核心、二十個 Fabric 模組（包含 1.21.4–1.21.5 共用目標與 1.21.x 整合包）、兩個現代 Forge 模組及兩個獨立舊版 Forge 建置組成。
+專案由一個 Java 8 通用核心、二十一個 Fabric 模組（包含 1.21.4–1.21.5 共用目標以及 1.21.x、26.x 整合包）、兩個現代 Forge 模組及兩個獨立舊版 Forge 建置組成。
 舊版 ForgeGradle 無法直接在現代 JDK 上執行，因此無法用一條根 Gradle 指令建置所有版本。
 
-## 26.2 Fabric
+## Fabric 26.x 單一 JAR
 
 需要 JDK 25 或更新版本：
 
 ```bash
-./gradlew :platform-fabric-26.2:build
+./gradlew :platform-fabric-26.x:build
 ```
 
-輸出位於 `platforms/fabric/26.x/26.2/build/libs/`。
-
-## 26.1.2 Fabric
-
-需要 JDK 25 或更新版本：
-
-```bash
-./gradlew :platform-fabric-26.1.2:build
-```
-
-輸出位於 `platforms/fabric/26.x/26.1.2/build/libs/`。
-
-## 26.1 Fabric
-
-需要 JDK 25 或更新版本：
-
-```bash
-./gradlew :platform-fabric-26.1:build
-```
-
-輸出位於 `platforms/fabric/26.x/26.1/build/libs/`。
+輸出位於 `platforms/fabric/26.x/bundle/build/libs/`。這個單一 JAR 支援目前已有轉接的
+Minecraft 26.x 版本：26.1、26.1.2 及 26.2。它內嵌三個精確版本實作，再由 Fabric Loader
+選擇相符實作；建置會檢查每個內嵌 JAR，並對全部三個版本執行真實 Loader 解析測試。
 
 ## Fabric 1.21.x 單一 JAR
 
