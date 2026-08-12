@@ -1,8 +1,9 @@
 {
+  "minVersion": "0.8.4",
   "required": true,
   "package": "org.universaltranslator.forge.mixin",
   "refmap": "main.refmap.json",
-  "compatibilityLevel": "JAVA_17",
+  "compatibilityLevel": "JAVA_8",
   "client": [
     "BossBarHudContextMixin",
     "ChatHudContextMixin",
@@ -14,6 +15,6 @@
     "TextRendererMixin"
   ],
   "injectors": {
-    "defaultRequire": 1
+    "defaultRequire": 0
   }
 }

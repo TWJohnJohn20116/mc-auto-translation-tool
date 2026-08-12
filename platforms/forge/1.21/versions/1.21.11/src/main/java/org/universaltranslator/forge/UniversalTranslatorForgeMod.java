@@ -10,6 +10,7 @@ public final class UniversalTranslatorForgeMod {
     public static final Logger LOGGER = LogUtils.getLogger();
 
     public UniversalTranslatorForgeMod() {
+        UniversalTranslatorForgeClient.registerDirectEvents();
         LOGGER.info("MC Auto Translation Tool Forge bootstrap loaded");
     }
 }

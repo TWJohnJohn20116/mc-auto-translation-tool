@@ -17,7 +17,8 @@ abstract class ScreenMixin {
     @Inject(
             method = "getTooltipFromItem(Lnet/minecraft/world/item/ItemStack;)Ljava/util/List;",
             at = @At("RETURN"),
-            cancellable = true)
+            cancellable = true,
+            require = 0)
     private void universalTranslator$translateItemTooltip(
             ItemStack stack,
             CallbackInfoReturnable<List<Component>> callback) {

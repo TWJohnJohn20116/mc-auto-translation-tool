@@ -10,6 +10,6 @@ import org.universaltranslator.core.TextKind;
 import org.universaltranslator.forge.TranslationRenderContext;
 @Mixin(IngameGui.class)
 abstract class InGameHudContextMixin {
- @Inject(method="displayScoreboardSidebar(Lcom/mojang/blaze3d/matrix/MatrixStack;Lnet/minecraft/scoreboard/ScoreObjective;)V",at=@At("HEAD")) private void enter(MatrixStack m,ScoreObjective o,CallbackInfo c){TranslationRenderContext.push(TextKind.SCOREBOARD_LINE);}
- @Inject(method="displayScoreboardSidebar(Lcom/mojang/blaze3d/matrix/MatrixStack;Lnet/minecraft/scoreboard/ScoreObjective;)V",at=@At("RETURN")) private void leave(MatrixStack m,ScoreObjective o,CallbackInfo c){TranslationRenderContext.pop();}
+ @Inject(method="displayScoreboardSidebar(Lcom/mojang/blaze3d/matrix/MatrixStack;Lnet/minecraft/scoreboard/ScoreObjective;)V",at=@At("HEAD"),require=0) private void enter(MatrixStack m,ScoreObjective o,CallbackInfo c){TranslationRenderContext.push(TextKind.SCOREBOARD_LINE);}
+ @Inject(method="displayScoreboardSidebar(Lcom/mojang/blaze3d/matrix/MatrixStack;Lnet/minecraft/scoreboard/ScoreObjective;)V",at=@At("RETURN"),require=0) private void leave(MatrixStack m,ScoreObjective o,CallbackInfo c){TranslationRenderContext.pop();}
 }
