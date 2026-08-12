@@ -13,7 +13,7 @@
 ./gradlew :platform-fabric-26.2:build
 ```
 
-输出位于 `platform-fabric-26.2/build/libs/`。
+输出位于 `platforms/fabric/26.x/26.2/build/libs/`。
 
 ## 26.1.2 Fabric
 
@@ -23,7 +23,7 @@
 ./gradlew :platform-fabric-26.1.2:build
 ```
 
-输出位于 `platform-fabric-26.1.2/build/libs/`。
+输出位于 `platforms/fabric/26.x/26.1.2/build/libs/`。
 
 ## 26.1 Fabric
 
@@ -33,7 +33,7 @@
 ./gradlew :platform-fabric-26.1:build
 ```
 
-输出位于 `platform-fabric-26.1/build/libs/`。
+输出位于 `platforms/fabric/26.x/26.1/build/libs/`。
 
 ## Fabric 1.21.x 单一 JAR
 
@@ -43,7 +43,7 @@
 ./gradlew :platform-fabric-1.21.x:build
 ```
 
-输出位于 `platform-fabric-1.21.x/build/libs/`。这个单一 JAR 支持从 1.21 到 1.21.11 的全部
+输出位于 `platforms/fabric/1.21/bundle/build/libs/`。这个单一 JAR 支持从 1.21 到 1.21.11 的全部
 十二个正式 1.21 版本；它内嵌十二个精确版本实现，再由 Fabric Loader 选择匹配实现。
 构建会检查每个内嵌 JAR，并为全部十二个版本执行真实 Loader 解析测试。
 
@@ -55,7 +55,7 @@
 ./gradlew :platform-fabric-1.21.11:build
 ```
 
-输出位于 `platform-fabric-1.21.11/build/libs/`。
+输出位于 `platforms/fabric/1.21/versions/1.21.11/build/libs/`。
 
 ## 1.21.5 与 1.21.4 Fabric
 
@@ -76,7 +76,7 @@
 ```
 
 Forge 61.2.0 从官方 Maven 解析。该版本使用 Mojmap 运行时，发布文件是
-`platform-forge-1.21.11/build/libs/` 中无分类器的 JAR。
+`platforms/forge/modern/1.21.11/build/libs/` 中无分类器的 JAR。
 
 ## 1.20.1 Fabric
 
@@ -86,7 +86,7 @@ Forge 61.2.0 从官方 Maven 解析。该版本使用 Mojmap 运行时，发布�
 ./gradlew :platform-fabric-1.20.1:build
 ```
 
-输出位于 `platform-fabric-1.20.1/build/libs/`。
+输出位于 `platforms/fabric/legacy/1.20.1/build/libs/`。
 
 ## 1.20.1 Forge
 
@@ -97,7 +97,7 @@ Forge 61.2.0 从官方 Maven 解析。该版本使用 Mojmap 运行时，发布�
 ```
 
 Forge 47.4.10 从官方 Maven 解析。1.20.1 仍需将 Mojmap 开发产物转换为 SRG 运行时
-命名，因此正式发布必须使用 `platform-forge-1.20.1/build/libs/` 中的 `-srg.jar`，
+命名，因此正式发布必须使用 `platforms/forge/modern/1.20.1/build/libs/` 中的 `-srg.jar`，
 不能误发同目录下的无分类器开发 JAR。
 
 ## 1.19.2 Fabric
