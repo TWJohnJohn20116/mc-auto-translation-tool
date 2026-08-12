@@ -24,7 +24,7 @@ base {
     archivesName = "mc-auto-translation-tool-fabric-26.x"
 }
 
-def supportedVersions = ["26.1", "26.1.2", "26.2"]
+def supportedVersions = ["26.1", "26.1.1", "26.1.2", "26.2"]
 supportedVersions.each { gameVersion ->
     evaluationDependsOn(":platform-fabric-${gameVersion}")
 }

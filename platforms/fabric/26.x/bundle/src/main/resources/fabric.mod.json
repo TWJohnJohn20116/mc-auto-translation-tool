@@ -18,6 +18,9 @@
       "file": "META-INF/jars/universal-translator-26.1.jar"
     },
     {
+      "file": "META-INF/jars/universal-translator-26.1.1.jar"
+    },
+    {
       "file": "META-INF/jars/universal-translator-26.1.2.jar"
     },
     {
@@ -28,6 +31,7 @@
     "fabricloader": ">=0.19.3",
     "minecraft": [
       "26.1",
+      "26.1.1",
       "26.1.2",
       "26.2"
     ],

@@ -11,7 +11,7 @@ platforms/
 │  │  ├─ bundle/           # The single downloadable 1.21.x JAR
 │  │  └─ shared-1.21.4-1.21.5/
 │  └─ 26.x/
-│     ├─ 26.1, 26.1.2, 26.2  # Exact implementations
+│     ├─ 26.1, 26.1.1, 26.1.2, 26.2  # Exact implementations
 │     └─ bundle/              # The single downloadable 26.x JAR
 └─ forge/
    ├─ modern/              # 1.20.1 and 1.21.11
