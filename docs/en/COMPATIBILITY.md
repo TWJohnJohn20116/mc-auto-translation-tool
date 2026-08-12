@@ -31,6 +31,7 @@ reported as a successful main-menu launch either.
 | --- | --- | --- | --- | --- | --- |
 | 1.16.5 | Fabric Loader 0.19.3 + Fabric API 0.42.0 | 8 | Passed | Pending | Pending |
 | 1.19.2 | Fabric Loader 0.19.3 + Fabric API 0.77.0 | 17 | Passed | Pending | Pending |
+| 1.19.2 | Forge 43.5.2 | 17 | Passed; SRG and refmap checked | Pending | Pending |
 
 
 The single 1.21.x JAR embeds twelve exact-version implementations rather than widening one Mixin
@@ -38,8 +39,9 @@ build across incompatible game APIs. Each nested implementation declares one Min
 and Fabric Loader selects the exact match for 1.21, 1.21.1, 1.21.2, 1.21.3, 1.21.4, 1.21.5,
 1.21.6, 1.21.7, 1.21.8, 1.21.9, 1.21.10, or 1.21.11.
 
-The 1.16.5 and 1.19.2 adapters remain development targets and are not included in the v1.2.1 Release.
-Every metadata file pins an exact Minecraft version until launch and in-server regression are complete.
+The Fabric 1.16.5, Fabric 1.19.2, and Forge 1.19.2 adapters remain development targets and are not
+included in the v1.2.1 Release. Every metadata file pins an exact Minecraft version until launch
+and in-server regression are complete.
 
 ## The principle behind “support every version”
 
