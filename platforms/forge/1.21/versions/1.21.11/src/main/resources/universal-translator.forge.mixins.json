@@ -1,0 +1,19 @@
+{
+  "required": true,
+  "package": "org.universaltranslator.forge.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "BossBarHudContextMixin",
+    "ChatHudContextMixin",
+    "DrawContextMixin",
+    "InGameHudContextMixin",
+    "PlayerListHudContextMixin",
+    "ScreenMixin",
+    "SignEditScreenMixin",
+    "TextFieldWidgetMixin",
+    "TextRendererMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
