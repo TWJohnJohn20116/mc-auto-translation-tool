@@ -1,0 +1,15 @@
+{
+  "required": true,
+  "package": "org.universaltranslator.forge.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "DrawContextMixin",
+    "ScreenMixin",
+    "SignEditScreenMixin",
+    "TextFieldWidgetMixin",
+    "TextRendererMixin",
+    "InGameHudContextMixin",
+    "BossBarHudContextMixin"
+  ],
+  "injectors": { "defaultRequire": 1 }
+}

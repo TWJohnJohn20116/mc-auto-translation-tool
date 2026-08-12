@@ -56,6 +56,7 @@ versions that passed the build checks; adjacent versions are added only after se
 | Minecraft | Loader | Java |
 | --- | --- | --- |
 | Supported 26.x releases (26.1, 26.1.1, 26.1.2, and 26.2; single JAR) | Fabric | 25 |
+| 26.1, 26.1.1, 26.1.2, and 26.2 (exact-version JARs) | Forge | 25 |
 | All 1.21 releases (1.21 through 1.21.11; single JAR) | Fabric | 21 |
 | 1.21.11 | Forge | 21 |
 | 1.20.1 | Forge | 17 |
