@@ -70,9 +70,7 @@ public final class BundleResolutionVerifier {
                     .orElseThrow(() -> new AssertionError("No implementation selected for " + minecraftVersion));
 
             String localPath = implementation.getLocalPath();
-            String expected = minecraftVersion.equals("1.21.11")
-                    ? "universal-translator-1.21.11.jar"
-                    : "universal-translator-1.21.4-1.21.5.jar";
+            String expected = "universal-translator-" + minecraftVersion + ".jar";
             if (localPath == null || !localPath.endsWith(expected)) {
                 throw new AssertionError("Selected " + localPath + " for " + minecraftVersion
                         + "; expected " + expected);

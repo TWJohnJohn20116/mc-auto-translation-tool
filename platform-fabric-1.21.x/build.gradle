@@ -1,6 +1,3 @@
-import java.security.MessageDigest
-import java.util.zip.ZipFile
-
 plugins {
     id "java"
 }
@@ -27,15 +24,13 @@ base {
     archivesName = "mc-auto-translation-tool-fabric-1.21.x"
 }
 
-evaluationDependsOn(":platform-fabric-1.21.4-1.21.5")
-evaluationDependsOn(":platform-fabric-1.21.4")
-evaluationDependsOn(":platform-fabric-1.21.5")
-evaluationDependsOn(":platform-fabric-1.21.11")
-
-def legacyRemapJar = project(":platform-fabric-1.21.4-1.21.5").tasks.named("remapJar")
-def exact1214RemapJar = project(":platform-fabric-1.21.4").tasks.named("remapJar")
-def exact1215RemapJar = project(":platform-fabric-1.21.5").tasks.named("remapJar")
-def modernRemapJar = project(":platform-fabric-1.21.11").tasks.named("remapJar")
+def supportedVersions = ["1.21", "1.21.1", "1.21.2", "1.21.3", "1.21.4", "1.21.5", "1.21.6", "1.21.7", "1.21.8", "1.21.9", "1.21.10", "1.21.11"]
+supportedVersions.each { gameVersion ->
+    evaluationDependsOn(":platform-fabric-${gameVersion}")
+}
+def implementationJars = supportedVersions.collectEntries { gameVersion ->
+    [(gameVersion): project(":platform-fabric-${gameVersion}").tasks.named("remapJar")]
+}
 
 processResources {
     inputs.property "version", project.version
@@ -45,15 +40,12 @@ processResources {
 }
 
 jar {
-    dependsOn legacyRemapJar, modernRemapJar
-
-    from(legacyRemapJar.flatMap { it.archiveFile }) {
-        into "META-INF/jars"
-        rename { "universal-translator-1.21.4-1.21.5.jar" }
-    }
-    from(modernRemapJar.flatMap { it.archiveFile }) {
-        into "META-INF/jars"
-        rename { "universal-translator-1.21.11.jar" }
+    dependsOn implementationJars.values()
+    supportedVersions.each { gameVersion ->
+        from(implementationJars[gameVersion].flatMap { it.archiveFile }) {
+            into "META-INF/jars"
+            rename { "universal-translator-${gameVersion}.jar" }
+        }
     }
     from(rootProject.file("LICENSE")) {
         rename { "LICENSE_universal_translator_bundle" }
@@ -64,43 +56,15 @@ tasks.register("verifyBundle") {
     dependsOn jar
     doLast {
         def archive = jar.archiveFile.get().asFile
-        def required = [
-            "fabric.mod.json",
-            "META-INF/jars/universal-translator-1.21.4-1.21.5.jar",
-            "META-INF/jars/universal-translator-1.21.11.jar"
-        ]
+        def required = ["fabric.mod.json"] + supportedVersions.collect {
+            "META-INF/jars/universal-translator-${it}.jar"
+        }
         required.each { path ->
             if (!zipTree(archive).matching { include path }.files) {
                 throw new GradleException("Missing bundle entry: ${path}")
             }
         }
-        println "Verified ${archive.name}: ${required.size()} required entries present"
-    }
-}
-
-tasks.register("verifySharedCompatibility") {
-    dependsOn legacyRemapJar, exact1214RemapJar, exact1215RemapJar
-    doLast {
-        def classHashes = { File archive ->
-            def hashes = [:]
-            new ZipFile(archive).withCloseable { zip ->
-                zip.entries().findAll { !it.directory && it.name.endsWith(".class") }.each { entry ->
-                    hashes[entry.name] = MessageDigest.getInstance("SHA-256")
-                            .digest(zip.getInputStream(entry).bytes)
-                            .encodeHex()
-                            .toString()
-                }
-            }
-            hashes
-        }
-
-        def shared = classHashes(legacyRemapJar.get().archiveFile.get().asFile)
-        def exact1214 = classHashes(exact1214RemapJar.get().archiveFile.get().asFile)
-        def exact1215 = classHashes(exact1215RemapJar.get().archiveFile.get().asFile)
-        if (shared != exact1214 || shared != exact1215) {
-            throw new GradleException("The shared implementation no longer matches both exact 1.21.4 and 1.21.5 class sets")
-        }
-        println "Verified ${shared.size()} shared classes against exact 1.21.4 and 1.21.5 remapped JARs"
+        println "Verified ${archive.name}: all ${supportedVersions.size()} Minecraft 1.21 implementations present"
     }
 }
 
@@ -108,11 +72,11 @@ tasks.register("verifyLoaderSelection", JavaExec) {
     dependsOn jar, testClasses
     classpath = sourceSets.test.runtimeClasspath
     mainClass = "org.universaltranslator.bundle.BundleResolutionVerifier"
-    args jar.archiveFile.get().asFile.absolutePath, "1.21.4", "1.21.5", "1.21.11"
+    args([jar.archiveFile.get().asFile.absolutePath] + supportedVersions)
 }
 
 test {
     enabled = false
 }
 
-build.dependsOn verifyBundle, verifySharedCompatibility, verifyLoaderSelection
+build.dependsOn verifyBundle, verifyLoaderSelection

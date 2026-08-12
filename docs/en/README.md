@@ -57,7 +57,7 @@ versions that passed the build checks; adjacent versions are added only after se
 | 26.1.2 (development) | Fabric | 25 |
 | 26.1 (development) | Fabric | 25 |
 | 1.21.5 (development) | Fabric | 21 |
-| 1.21.4 / 1.21.5 / 1.21.11 (single JAR, development) | Fabric | 21 |
+| All 1.21 releases (1.21 through 1.21.11; single JAR, development) | Fabric | 21 |
 | 1.21.4 (development) | Fabric | 21 |
 | 1.21.11 | Forge | 21 |
 | 1.21.11 | Fabric | 21 |
