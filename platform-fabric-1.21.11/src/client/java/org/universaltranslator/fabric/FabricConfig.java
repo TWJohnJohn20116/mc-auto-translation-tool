@@ -99,7 +99,7 @@ final class FabricConfig {
             Properties defaults = defaults();
             try (Writer writer = Files.newBufferedWriter(file, StandardCharsets.UTF_8)) {
                 defaults.store(writer,
-                        "MC Auto Translation Tool - online translation may send selected server text to this endpoint");
+                        "MC Auto Translation Tool - online translation may send selected game, mod, and modpack text to this endpoint");
             }
         }
 
@@ -186,7 +186,7 @@ final class FabricConfig {
                     temporary, StandardCharsets.UTF_8,
                     StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
                 toProperties().store(writer,
-                        "MC Auto Translation Tool - online translation may send selected server text to this endpoint");
+                        "MC Auto Translation Tool - online translation may send selected game, mod, and modpack text to this endpoint");
             }
             try {
                 Files.move(temporary, configFile,

@@ -63,8 +63,7 @@ final class ForgeTranslationRuntime {
         Minecraft client = Minecraft.getInstance();
         if (active == null || config == null || !config.allows(kind)
                 || ForgeLocalTextGuard.isLocalChatInput(client, original)
-                || RECENT_USER_TEXT.shouldPreserve(original)
-                || client.level == null || client.getConnection() == null) {
+                || RECENT_USER_TEXT.shouldPreserve(original)) {
             return original;
         }
         return active.lookup(original, kind);
@@ -171,8 +170,7 @@ final class ForgeTranslationRuntime {
         ForgeConfig config = activeConfig;
         Minecraft client = Minecraft.getInstance();
         if (active == null || config == null || !config.allows(kind)
-                || TranslationRenderContext.isTextInput()
-                || client.level == null || client.getConnection() == null) {
+                || TranslationRenderContext.isTextInput()) {
             return originals;
         }
         return active.lookupLines(originals, kind);

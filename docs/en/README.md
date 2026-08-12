@@ -11,10 +11,10 @@ Original author: [Bilibili creator “我小张7272635”](https://space.bilibil
 Please retain the original author attribution and MIT License copyright notice when redistributing,
 republishing, or adapting this project.
 
-The project aims to translate visible text sent to players by servers, including chat, scoreboards,
-the Tab player list, Action Bar messages, titles, Boss Bars, container titles, item names and lore,
-signs, books, holograms, and custom entity names. Player names, numbers, URLs, and Minecraft style
-codes are preserved by default.
+The project translates visible text shown by servers, mods, and modpacks, including chat, quest
+books, mod settings and menus, scoreboards, the Tab player list, Action Bar messages, titles,
+Boss Bars, container titles, item names and lore, signs, books, holograms, and custom entity names.
+Player names, numbers, URLs, and Minecraft style codes are preserved by default.
 
 ## Downloads
 
@@ -45,6 +45,7 @@ versions that passed the build checks; adjacent versions are added only after se
 - Optional outgoing translation translates normal chat in the background and preserves send order; commands remain unchanged.
 - Translation runs in the background. If the service is unavailable, the original text is retained immediately without affecting gameplay.
 - Identical text and dynamic text templates use a local cache to reduce latency and cost.
+- Mod menus and custom modpack title screens that use Minecraft's font renderer are captured before a world is joined.
 - Player names, coordinates, numbers, URLs, and formatting codes are not translated by default.
 - Users can prevent private chat or other sensitive content from being sent externally on a per-server basis.
 
@@ -53,19 +54,24 @@ versions that passed the build checks; adjacent versions are added only after se
 | Minecraft | Loader | Java |
 | --- | --- | --- |
 | 26.2 (development) | Fabric | 25 |
+| 26.1.2 (development) | Fabric | 25 |
 | 26.1 (development) | Fabric | 25 |
+| 1.21.5 (development) | Fabric | 21 |
+| 1.21.4 (development) | Fabric | 21 |
 | 1.21.11 | Forge | 21 |
 | 1.21.11 | Fabric | 21 |
 | 1.20.1 | Forge | 17 |
 | 1.20.1 | Fabric | 17 |
+| 1.19.2 (development) | Fabric | 17 |
+| 1.16.5 (development) | Fabric | 8 |
 | 1.12.2 | Forge | 8 |
 | 1.8.9 | Forge | 8 |
 
 Each game version produces a separate JAR while sharing the same core logic and configuration semantics.
 
-Fabric 26.1 passed build and main-menu launch checks. Fabric 26.2 has source adaptation and build
-checks complete. Neither has a release download before its manual in-server regression, and the
-1.21.11 JAR must not be used for either version.
+The main branch also contains separate development adapters for Fabric 1.16.5, 1.19.2, 1.21.4,
+1.21.5, 26.1, 26.1.2, and 26.2. They are not release downloads until launch and in-server
+regression checks are complete.
 
 ## Current status
 
@@ -101,12 +107,14 @@ Verified behavior includes:
 - Applying saved settings without restarting the game.
 - Allowing external transmission to be disabled independently for chat and other interfaces.
 - Keeping outgoing translation disabled by default, with a target language separate from interface translation.
+- Translating mod menus, quest/recipe interfaces, and custom modpack title screens without requiring a server connection.
 - Installing the offline Lite and Quality models on demand instead of bundling them in the mod JAR.
 
 ## Privacy notice
 
-Offline mode does not send server text anywhere. Online API mode or “API fallback” means that
-selected server text may be sent to the translation service configured by the user. The project
+Offline mode does not send server, mod, or modpack text anywhere. Online API mode or “API fallback”
+means that selected server text and visible local mod/modpack text may be sent to the translation
+service configured by the user. The project
 provides a clear master switch, separate switches for chat and other content, and a local cache.
 API keys remain in the user's local configuration and must never be committed to the repository.
 Remote endpoints must use HTTPS; HTTP is allowed only for exact local loopback addresses.

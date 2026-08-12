@@ -66,8 +66,7 @@ final class FabricTranslationRuntime {
                 || client.gui.screen() instanceof UniversalTranslatorDiagnosticsScreen
                 || client.gui.screen() instanceof UniversalTranslatorLlmConfigScreen
                 || FabricLocalTextGuard.isLocalChatInput(client, original)
-                || RECENT_USER_TEXT.shouldPreserve(original)
-                || client.level == null || client.getConnection() == null) {
+                || RECENT_USER_TEXT.shouldPreserve(original)) {
             return original;
         }
         return active.lookup(original, kind);
@@ -175,8 +174,7 @@ final class FabricTranslationRuntime {
                 || client.gui.screen() instanceof UniversalTranslatorConfigScreen
                 || client.gui.screen() instanceof UniversalTranslatorDiagnosticsScreen
                 || client.gui.screen() instanceof UniversalTranslatorLlmConfigScreen
-                || TranslationRenderContext.isTextInput()
-                || client.level == null || client.getConnection() == null) {
+                || TranslationRenderContext.isTextInput()) {
             return originals;
         }
         return active.lookupLines(originals, kind);

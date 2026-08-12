@@ -2,7 +2,7 @@
 
 [简体中文](../Zh-cn/BUILDING.md) · [繁體中文](../Zh-tw/BUILDING.md) · [English](BUILDING.md) · [Back to English README](README.md)
 
-The project consists of one shared Java 8 core, four modern Fabric modules, two modern Forge modules,
+The project consists of one shared Java 8 core, nine Fabric modules, two modern Forge modules,
 and two independent legacy Forge builds. Legacy ForgeGradle cannot run directly on modern JDKs, so one root Gradle
 command cannot build every version.
 
@@ -15,6 +15,16 @@ JDK 25 or later is required:
 ```
 
 Output is written to `platform-fabric-26.2/build/libs/`.
+
+## Fabric 26.1.2
+
+JDK 25 or later is required:
+
+```bash
+./gradlew :platform-fabric-26.1.2:build
+```
+
+Output is written to `platform-fabric-26.1.2/build/libs/`.
 
 ## Fabric 26.1
 
@@ -35,6 +45,14 @@ JDK 21 or later is required:
 ```
 
 Output is written to `platform-fabric-1.21.11/build/libs/`.
+
+## Fabric 1.21.5 and 1.21.4
+
+JDK 21 or later is required:
+
+```bash
+./gradlew :platform-fabric-1.21.5:build :platform-fabric-1.21.4:build
+```
 
 ## Forge 1.21.11
 
@@ -68,6 +86,22 @@ JDK 17 or later is required:
 Forge 47.4.10 is resolved from the official Maven. Minecraft 1.20.1 still requires the Mojmap
 development output to be renamed to the SRG runtime namespace. Release the `-srg.jar` from
 `platform-forge-1.20.1/build/libs/`, not the unclassified development JAR beside it.
+
+## Fabric 1.19.2
+
+JDK 17 or later is required:
+
+```bash
+./gradlew :platform-fabric-1.19.2:build
+```
+
+## Fabric 1.16.5
+
+The current Gradle/Loom build requires JDK 17 or later, while the output targets Java 8:
+
+```bash
+./gradlew :platform-fabric-1.16.5:build
+```
 
 ## Forge 1.12.2
 

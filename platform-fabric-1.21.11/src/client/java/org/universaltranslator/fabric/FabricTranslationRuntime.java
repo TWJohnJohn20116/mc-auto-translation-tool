@@ -64,9 +64,9 @@ final class FabricTranslationRuntime {
         if (active == null || config == null || !config.allows(kind)
                 || client.currentScreen instanceof UniversalTranslatorConfigScreen
                 || client.currentScreen instanceof UniversalTranslatorDiagnosticsScreen
+                || client.currentScreen instanceof UniversalTranslatorLlmConfigScreen
                 || FabricLocalTextGuard.isLocalChatInput(client, original)
-                || RECENT_USER_TEXT.shouldPreserve(original)
-                || client.world == null || client.getNetworkHandler() == null) {
+                || RECENT_USER_TEXT.shouldPreserve(original)) {
             return original;
         }
         return active.lookup(original, kind);
@@ -175,8 +175,8 @@ final class FabricTranslationRuntime {
         if (active == null || config == null || !config.allows(kind)
                 || client.currentScreen instanceof UniversalTranslatorConfigScreen
                 || client.currentScreen instanceof UniversalTranslatorDiagnosticsScreen
-                || TranslationRenderContext.isTextInput()
-                || client.world == null || client.getNetworkHandler() == null) {
+                || client.currentScreen instanceof UniversalTranslatorLlmConfigScreen
+                || TranslationRenderContext.isTextInput()) {
             return originals;
         }
         return active.lookupLines(originals, kind);

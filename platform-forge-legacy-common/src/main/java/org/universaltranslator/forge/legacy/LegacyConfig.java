@@ -102,7 +102,7 @@ final class LegacyConfig {
             try (OutputStreamWriter writer = new OutputStreamWriter(
                     new FileOutputStream(file), StandardCharsets.UTF_8)) {
                 defaults().store(writer,
-                        "MC Auto Translation Tool - online translation may send selected server text to this endpoint");
+                        "MC Auto Translation Tool - online translation may send selected game, mod, and modpack text to this endpoint");
             }
         }
         Properties stored = new Properties();
@@ -191,7 +191,7 @@ final class LegacyConfig {
                             StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING),
                     StandardCharsets.UTF_8)) {
                 toProperties().store(writer,
-                        "MC Auto Translation Tool - online translation may send selected server text to this endpoint");
+                        "MC Auto Translation Tool - online translation may send selected game, mod, and modpack text to this endpoint");
             }
             try {
                 Files.move(temporary, file,

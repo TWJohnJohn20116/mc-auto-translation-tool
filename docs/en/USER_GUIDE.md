@@ -9,11 +9,16 @@ Each Minecraft version requires its matching JAR. Do not mix them:
 | Minecraft | Mod loader | Java | Also required |
 | --- | --- | --- | --- |
 | 26.2 (no released JAR yet) | Fabric | 25 | Fabric API |
+| 26.1.2 (no released JAR yet) | Fabric | 25 | Fabric API |
 | 26.1 (no released JAR yet) | Fabric | 25 | Fabric API |
+| 1.21.5 (no released JAR yet) | Fabric | 21 | Fabric API |
+| 1.21.4 (no released JAR yet) | Fabric | 21 | Fabric API |
 | 1.21.11 | Forge 61.2.0+ | 21 | No additional mod |
 | 1.21.11 | Fabric | 21 | Fabric API |
 | 1.20.1 | Forge 47.4.10+ | 17 | No additional mod |
 | 1.20.1 | Fabric | 17 | Fabric API |
+| 1.19.2 (no released JAR yet) | Fabric | 17 | Fabric API |
+| 1.16.5 (no released JAR yet) | Fabric | 8 | Fabric API |
 | 1.12.2 | Forge 14.23.5.x | 8 | No additional mod |
 | 1.8.9 | Forge 11.15.1.x | 8 | No additional mod |
 
@@ -161,9 +166,11 @@ The endpoint, model name, and key are stored only in the current game instance's
 
 ## What can be translated
 
-The mod works at the final text-rendering layer, so it normally covers chat, scoreboards, the Tab
-list, Action Bar, titles, Boss Bar, menu/container titles, item names and Lore, tooltips, books,
-signs, holographic text, and entity names. Player names, the current server IP/domain and port,
+The mod works at the final text-rendering layer. Even before a world is joined it covers mod settings,
+quest books, recipe/item interfaces, and custom modpack title screens that use Minecraft's font
+renderer. In a world it also covers chat, scoreboards, the Tab list, Action Bar, titles, Boss Bar,
+menu/container titles, item names and Lore, tooltips, books, signs, holographic text, and entity
+names. Player names, the current server IP/domain and port,
 URLs, numbers, percentages, time values, and Minecraft `§` formatting codes are separated locally
 and preserved exactly. They are not sent to the translation model or API.
 
@@ -172,7 +179,7 @@ default. The existing Chinese text is reassembled locally without changes. This 
 disabled in the settings. Translations are aqua by default; green, gold, light purple, yellow,
 white, and original-color options are also available.
 
-Text cannot be captured automatically when a server embeds it in an image or a third-party mod
+Text cannot be captured automatically when a server or modpack embeds it in an image or a third-party mod
 bypasses the vanilla font renderer. Complex multicolored Text components may currently preserve
 only the first style segment in the translation, but original click and hover data is never written
 back or sent to the server.
@@ -183,7 +190,7 @@ back or sent to the server.
 - Player names, server addresses, numbers, and existing Chinese do not enter model requests and are reassembled locally.
 - Translations are stored locally to reduce repeated requests and scoreboard refresh latency.
 - The disk cache can be disabled in settings; a runtime-only memory cache still exists until restart.
-- Disabling “Chat content” prevents chat HUD text from reaching the service; disabling “Other interfaces” blocks the remaining content.
+- Disabling “Chat content” prevents chat HUD text from reaching the service; disabling “Other interfaces” blocks server interfaces, mod menus, and modpack content.
 - “Outgoing translation” independently controls normal chat sent by the player; it is disabled by default and commands are never translated.
 - No new translation request is created after the master switch is turned off.
 
@@ -215,8 +222,8 @@ chat verification may impose their own restrictions, which is why the feature is
 
 This guide covers the `1.2` release with six JARs. Every target completed a clean build and the
 shared-core self-test; modern targets also completed Fabric remapping or Forge runtime-mapping
-checks. Fabric 26.1 passed build and main-menu launch checks. Fabric 26.2 has source
-adaptation and build checks complete, with an actual launch still pending. Neither has a release JAR
-or completed in-server regression. Back up the configuration before updating. When reporting untranslated
+checks. The main branch also has Fabric adapters for 1.16.5, 1.19.2, 1.21.4, 1.21.5, 26.1,
+26.1.2, and 26.2; all passed this integrated clean build, but none of the development targets has a
+release JAR or complete hands-on regression. Back up the configuration before updating. When reporting untranslated
 interface text, include the Minecraft version, loader version, interface location, and `latest.log`,
 but omit API keys and private chat content.

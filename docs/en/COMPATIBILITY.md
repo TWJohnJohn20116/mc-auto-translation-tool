@@ -27,10 +27,16 @@ reported as a successful main-menu launch either.
 
 | Minecraft | Loader | Java | Build and self-test | Launched to main menu | Full manual in-server regression |
 | --- | --- | --- | --- | --- | --- |
+| 1.16.5 | Fabric Loader 0.19.3 + Fabric API 0.42.0 | 8 | Passed | Pending | Pending |
+| 1.19.2 | Fabric Loader 0.19.3 + Fabric API 0.77.0 | 17 | Passed | Pending | Pending |
+| 1.21.4 | Fabric Loader 0.19.3 + Fabric API 0.119.4 | 21 | Passed | Pending | Pending |
+| 1.21.5 | Fabric Loader 0.19.3 + Fabric API 0.128.2 | 21 | Passed | Pending | Pending |
 | 26.1 | Fabric Loader 0.19.3 + Fabric API 0.145.1 | 25 | Passed | Passed | Pending |
+| 26.1.2 | Fabric Loader 0.19.3 + Fabric API 0.155.2 | 25 | Passed | Pending | Pending |
 | 26.2 | Fabric Loader 0.19.3 + Fabric API 0.157.0 | 25 | Passed | Pending | Pending |
 
-Fabric 26.1 and 26.2 remain development targets and are not included in the v1.2 Release.
+These remain development targets and are not included in the v1.2 Release. Every metadata file
+pins an exact Minecraft version until launch and in-server regression are complete.
 
 ## The principle behind “support every version”
 
@@ -43,7 +49,7 @@ Planned candidates, in order:
 
 1. 1.12.2 Cleanroom;
 2. 1.7.10 Forge;
-3. 1.16.5 Forge/Fabric;
+3. 1.16.5 Forge;
 4. 1.18.2 Forge/Fabric;
 5. 1.21.1 Fabric/NeoForge;
 6. later releases that retain a substantial player base.
@@ -58,6 +64,8 @@ the same build, mapping, launch, and in-server checks before being listed as sup
 
 - chat, scoreboard, Tab list, Action Bar, titles, and Boss Bar;
 - chest/menu titles, item names and Lore, signs, books, entity names, and holographic text;
+- mod settings, quest books, recipe screens, and custom modpack title screens before joining a world;
+- mod/modpack text rendered through Minecraft's font is captured, while image text and custom renderers remain explicit limitations;
 - text entered and sent by the player remains unchanged;
 - online player names, the local player name, and server IP/domain/port remain unchanged;
 - existing Chinese is not translated again, while English fragments can be translated;

@@ -13,7 +13,9 @@ import org.universaltranslator.fabric.TranslationRenderContext;
 
 @Mixin(PlayerListHud.class)
 abstract class PlayerListHudContextMixin {
-    @Inject(method = "render", at = @At("HEAD"))
+    @Inject(
+            method = "render(Lnet/minecraft/client/gui/DrawContext;ILnet/minecraft/scoreboard/Scoreboard;Lnet/minecraft/scoreboard/ScoreboardObjective;)V",
+            at = @At("HEAD"))
     private void universalTranslator$enterPlayerList(
             DrawContext context,
             int scaledWindowWidth,
@@ -23,7 +25,9 @@ abstract class PlayerListHudContextMixin {
         TranslationRenderContext.push(TextKind.PLAYER_LIST_HEADER);
     }
 
-    @Inject(method = "render", at = @At("RETURN"))
+    @Inject(
+            method = "render(Lnet/minecraft/client/gui/DrawContext;ILnet/minecraft/scoreboard/Scoreboard;Lnet/minecraft/scoreboard/ScoreboardObjective;)V",
+            at = @At("RETURN"))
     private void universalTranslator$leavePlayerList(
             DrawContext context,
             int scaledWindowWidth,

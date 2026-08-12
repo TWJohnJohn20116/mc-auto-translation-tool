@@ -11,7 +11,7 @@ player data, or incur the cost of a central server.
 
 ## Data flow
 
-1. A version adapter extracts visible text when a text component is received or rendered.
+1. A version adapter extracts visible text at Minecraft's font-rendering entry point, in the main menu, mod menus, and the game world.
 2. Privacy rules decide whether that content may be sent to a translator.
 3. `ProtectedText` locally separates player names, server addresses, numbers, existing Chinese text, and formatting codes.
 4. `LanguageHeuristics` skips empty content, numeric-only content, and content already in the target language.
@@ -41,8 +41,9 @@ separate compatible JARs.
 
 ## Capture strategy
 
-- Fabric 1.20.1, 1.21.11, 26.1, and 26.2 replace display copies at the corresponding final
-  `DrawContext`/`GuiGraphicsExtractor` and `TextRenderer`/`Font` render entry points, while recording
+- Fabric 1.16.5, 1.19.2, 1.20.1, 1.21.4, 1.21.5, 1.21.11, 26.1, 26.1.2, and 26.2 replace display
+  copies at the corresponding final `MatrixStack`/`DrawContext`/`GuiGraphicsExtractor` and
+  `TextRenderer`/`Font` render entry points, while recording
   the content type during chat, scoreboard, Tab list, title, Action Bar, and Boss Bar rendering.
 - Forge 1.20.1/1.21.11 use version-specific Mixins at the same final text entry points. Forge
   1.8.9/1.12.2 use one LaunchWrapper ASM core plugin to replace strings at the
@@ -54,6 +55,10 @@ server state. Only when the user explicitly enables outgoing translation is ordi
 replaced with a translation and re-signed through the vanilla send path. Text is outside the current
 capture scope if a server prerenders it into an image or a third-party mod bypasses Minecraft's font
 renderer entirely.
+
+Display translation does not require a server connection, so mod menus, quest books, and custom
+modpack title screens work from the main menu. The project's own settings/diagnostics screens and
+all active text-entry widgets are explicitly excluded.
 
 ## Security boundary
 

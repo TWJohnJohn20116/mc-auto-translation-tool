@@ -66,8 +66,7 @@ final class LegacyTranslationRuntime {
                 || minecraft.currentScreen instanceof LegacyConfigScreen
                 || minecraft.currentScreen instanceof LegacyDiagnosticsScreen
                 || LegacyLocalTextGuard.isLocalChatInput(minecraft.currentScreen, original)
-                || RECENT_USER_TEXT.shouldPreserve(original)
-                || LegacyVersionAccess.connection(minecraft) == null) {
+                || RECENT_USER_TEXT.shouldPreserve(original)) {
             return original;
         }
         return active.lookup(original, kind);
@@ -176,8 +175,7 @@ final class LegacyTranslationRuntime {
         if (active == null || config == null || !config.allows(kind)
                 || minecraft.currentScreen instanceof LegacyConfigScreen
                 || minecraft.currentScreen instanceof LegacyDiagnosticsScreen
-                || LegacyRenderContext.isTextInput()
-                || LegacyVersionAccess.connection(minecraft) == null) {
+                || LegacyRenderContext.isTextInput()) {
             return originals;
         }
         return active.lookupLines(originals, kind);
