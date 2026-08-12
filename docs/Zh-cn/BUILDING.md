@@ -82,6 +82,17 @@ Forge 47.4.10 从官方 Maven 解析。1.20.1 仍需将 Mojmap 开发产物转�
 命名，因此正式发布必须使用 `platforms/forge/modern/1.20.1/build/libs/` 中的 `-srg.jar`，
 不能误发同目录下的无分类器开发 JAR。
 
+## 1.19.2 Forge
+
+需要 JDK 17 或更高版本：
+
+```bash
+./gradlew :platform-forge-1.19.2:build
+```
+
+Forge 43.5.2 从 Forge 官方 Maven 解析。发布时应使用
+`platforms/forge/modern/1.19.2/build/libs/` 中包含运行时映射与 Mixin refmap 的 `-srg.jar`。
+
 ## 1.19.2 Fabric
 
 需要 JDK 17 或更高版本：

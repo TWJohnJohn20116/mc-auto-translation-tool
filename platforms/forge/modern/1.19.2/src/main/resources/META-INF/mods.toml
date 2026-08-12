@@ -1,0 +1,27 @@
+modLoader="javafml"
+loaderVersion="[43,)"
+license="MIT"
+clientSideOnly=true
+
+[[mods]]
+modId="universal_translator"
+version="${version}"
+displayName="MC Auto Translation Tool"
+displayURL="https://github.com/wuxiangdan96-byte/mc-auto-translation-tool"
+authors="??撘?272635"
+description='''Client-side automatic translation for server-provided text across Minecraft interfaces.'''
+
+[[dependencies.universal_translator]]
+modId="forge"
+mandatory=true
+versionRange="[43.5.2,)"
+ordering="NONE"
+side="CLIENT"
+
+[[dependencies.universal_translator]]
+modId="minecraft"
+mandatory=true
+versionRange="[1.19.2,1.19.3)"
+ordering="NONE"
+side="CLIENT"
+

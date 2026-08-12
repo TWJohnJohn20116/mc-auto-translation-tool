@@ -83,6 +83,17 @@ Forge 47.4.10 is resolved from the official Maven. Minecraft 1.20.1 still requir
 development output to be renamed to the SRG runtime namespace. Release the `-srg.jar` from
 `platforms/forge/modern/1.20.1/build/libs/`, not the unclassified development JAR beside it.
 
+## Forge 1.19.2
+
+JDK 17 or later is required:
+
+```bash
+./gradlew :platform-forge-1.19.2:build
+```
+
+Forge 43.5.2 is resolved from the official Forge Maven. Publish the `-srg.jar` from
+`platforms/forge/modern/1.19.2/build/libs/`; it contains the runtime mappings and Mixin refmap.
+
 ## Fabric 1.19.2
 
 JDK 17 or later is required:

@@ -45,7 +45,7 @@ separate compatible JARs.
   copies at the corresponding final `MatrixStack`/`DrawContext`/`GuiGraphicsExtractor` and
   `TextRenderer`/`Font` render entry points, while recording
   the content type during chat, scoreboard, Tab list, title, Action Bar, and Boss Bar rendering.
-- Forge 1.20.1/1.21.11 use version-specific Mixins at the same final text entry points. Forge
+- Forge 1.19.2/1.20.1/1.21.11 use version-specific Mixins at the same final text entry points. Forge
   1.8.9/1.12.2 use one LaunchWrapper ASM core plugin to replace strings at the
   `FontRenderer` draw and width-calculation entry points. The chat HUD adds a lightweight context
   used to enforce the chat privacy toggle.
