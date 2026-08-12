@@ -63,6 +63,7 @@ versions that passed the build checks; adjacent versions are added only after se
 | 1.20.1 | Fabric | 17 |
 | 1.19.2 (development) | Forge | 17 |
 | 1.19.2 (development) | Fabric | 17 |
+| 1.16.5 (development) | Forge | 8 |
 | 1.16.5 (development) | Fabric | 8 |
 | 1.12.2 | Forge | 8 |
 | 1.8.9 | Forge | 8 |
@@ -70,7 +71,7 @@ versions that passed the build checks; adjacent versions are added only after se
 Fabric 1.21.x and 26.x each provide one bundle JAR. Exact-version implementations remain embedded
 inside each bundle and share the same core logic and configuration semantics.
 
-The main branch also contains development adapters for Fabric 1.16.5 and 1.19.2, plus Forge 1.19.2. They are
+The main branch also contains development adapters for Fabric 1.16.5 and 1.19.2, plus Forge 1.16.5 and 1.19.2. They are
 not release downloads until launch and in-server regression checks are complete.
 
 ## Current status
@@ -80,7 +81,7 @@ Fabric JARs covering 1.21–1.21.11 and 26.1/26.1.1/26.1.2/26.2. Every build lin
 build, both bundles passed real Fabric Loader selection tests, and the shared-core self-test passed.
 See the compatibility matrix for the exact validation level of each target.
 
-On Fabric, press `U` in game to open the settings screen. On Forge 1.19.2/1.20.1/1.21.11, edit
+On Fabric, press `U` in game to open the settings screen. On Forge 1.16.5/1.19.2/1.20.1/1.21.11/26.x, edit
 `config/universal-translator.properties` and press `U` to reload it. The mod is disabled by default. New installations
 default to the offline provider and translated-only replacement mode, which avoids overflowing
 scoreboards and container titles with bilingual text. Press `F8` to toggle translation at any time.

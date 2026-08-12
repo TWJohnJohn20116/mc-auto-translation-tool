@@ -113,6 +113,16 @@ JDK 17 or later is required:
 ./gradlew :platform-fabric-1.19.2:build
 ```
 
+## Forge 1.16.5
+
+The adapter targets Java 8 bytecode and Forge 36.2.42:
+
+```bash
+./gradlew :platform-forge-1.16.5:build
+```
+
+Publish the `-srg.jar` from `platforms/forge/modern/1.16.5/build/libs/`.
+
 ## Fabric 1.16.5
 
 The current Gradle/Loom build requires JDK 17 or later, while the output targets Java 8:

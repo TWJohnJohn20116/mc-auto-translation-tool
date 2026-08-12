@@ -49,14 +49,14 @@ Minecraft 26.x 版本：26.1、26.1.1、26.1.2 及 26.2。它內嵌四個精確�
 
 ## 26.x Forge
 
-?? JDK 25?????????????
+使用 JDK 25，並在一次建置中選擇一個精確目標：
 
 ```powershell
 $env:FORGE_TARGET = "26.2"
 ./gradlew.bat :platform-forge-26.2:build
 ```
 
-?? `26.2` ?? `26.1`?`26.1.1` ? `26.1.2`????? `platforms/forge/26.x/versions/<??>/build/libs/`?26.1.2 ? 26.2 ??? Forge API ???????????? JAR ????? Minecraft ???
+可將 `26.2` 替換為 `26.1`、`26.1.1` 或 `26.1.2`。輸出位於 `platforms/forge/26.x/versions/<版本>/build/libs/`。26.1.2 與 26.2 之間的 Forge API 差異由獨立轉接器處理，每個 JAR 都宣告精確的 Minecraft 版本範圍。
 
 ## 1.21.11 Forge
 
@@ -109,6 +109,16 @@ Forge 43.5.2 從 Forge 官方 Maven 解析。發佈時應使用
 ```bash
 ./gradlew :platform-fabric-1.19.2:build
 ```
+
+## 1.16.5 Forge
+
+此轉接輸出 Java 8 位元碼，並使用 Forge 36.2.42：
+
+```bash
+./gradlew :platform-forge-1.16.5:build
+```
+
+發佈時使用 `platforms/forge/modern/1.16.5/build/libs/` 中的 `-srg.jar`。
 
 ## 1.16.5 Fabric
 
