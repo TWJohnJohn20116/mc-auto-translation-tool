@@ -1,6 +1,8 @@
 .gradle/
 build/
 **/build/
+!website/build/
+!website/build/sites-vite-plugin.ts
 run/
 **/run/
 .idea/
