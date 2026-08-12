@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "id": "universal_translator_26_x_bundle",
+  "version": "${version}",
+  "name": "MC Auto Translation Tool - Fabric 26.x Bundle",
+  "description": "Selects the exact compatible Universal Translator implementation for supported Minecraft 26.x releases.",
+  "authors": [
+    "我小张7272635"
+  ],
+  "contact": {
+    "homepage": "https://space.bilibili.com/3546631091783712",
+    "sources": "https://github.com/wuxiangdan96-byte/mc-auto-translation-tool"
+  },
+  "license": "MIT",
+  "environment": "client",
+  "jars": [
+    {
+      "file": "META-INF/jars/universal-translator-26.1.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-26.1.2.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-26.2.jar"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=0.19.3",
+    "minecraft": [
+      "26.1",
+      "26.1.2",
+      "26.2"
+    ],
+    "java": ">=25",
+    "fabric-api": "*",
+    "universal_translator": "*"
+  }
+}

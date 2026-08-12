@@ -2,39 +2,22 @@
 
 [简体中文](../Zh-cn/BUILDING.md) · [繁體中文](../Zh-tw/BUILDING.md) · [English](BUILDING.md) · [Back to English README](README.md)
 
-The project consists of one shared Java 8 core, twenty Fabric modules (including the shared 1.21.4–1.21.5 target and the 1.21.x bundle), two modern Forge modules,
+The project consists of one shared Java 8 core, twenty-one Fabric modules (including the shared 1.21.4–1.21.5 target plus the 1.21.x and 26.x bundles), two modern Forge modules,
 and two independent legacy Forge builds. Legacy ForgeGradle cannot run directly on modern JDKs, so one root Gradle
 command cannot build every version.
 
-## Fabric 26.2
+## Single Fabric 26.x JAR
 
 JDK 25 or later is required:
 
 ```bash
-./gradlew :platform-fabric-26.2:build
+./gradlew :platform-fabric-26.x:build
 ```
 
-Output is written to `platforms/fabric/26.x/26.2/build/libs/`.
-
-## Fabric 26.1.2
-
-JDK 25 or later is required:
-
-```bash
-./gradlew :platform-fabric-26.1.2:build
-```
-
-Output is written to `platforms/fabric/26.x/26.1.2/build/libs/`.
-
-## Fabric 26.1
-
-JDK 25 or later is required:
-
-```bash
-./gradlew :platform-fabric-26.1:build
-```
-
-Output is written to `platforms/fabric/26.x/26.1/build/libs/`.
+Output is written to `platforms/fabric/26.x/bundle/build/libs/`. This single JAR supports the
+currently supported Minecraft 26.x releases: 26.1, 26.1.2, and 26.2. It embeds three exact-version
+implementations, and Fabric Loader selects the matching one. The build verifies every nested JAR
+and exercises real Loader resolution for all three versions.
 
 ## Single Fabric 1.21.x JAR
 
