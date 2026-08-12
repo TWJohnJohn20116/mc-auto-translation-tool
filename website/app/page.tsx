@@ -34,50 +34,64 @@ const versions = [
   ["1.12.2", "Forge", "已实机验证", "ready"],
   ["1.20.1", "Fabric", "已构建验证", "ready"],
   ["1.20.1", "Forge", "已构建验证", "ready"],
+  ["1.21–1.21.11", "Fabric 单一 JAR", "已构建验证", "ready"],
   ["1.21.11", "Fabric", "已实机验证", "ready"],
   ["1.21.11", "Forge", "已构建验证", "ready"],
+  ["26.1–26.2", "Fabric 单一 JAR", "已构建验证", "ready"],
   ["更多常见版本", "Forge / Fabric / NeoForge", "分批适配", "next"],
 ];
 
 const githubDownloadBase =
-  "https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2";
+  "https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1";
 
 const downloads = [
   {
     version: "1.8.9",
     loader: "Forge",
     java: "Java 8",
-    file: "MCAutoTranslationTool-1.2-mc1.8.9-forge.jar",
+    file: "MCAutoTranslationTool-1.2.1-mc1.8.9-forge.jar",
   },
   {
     version: "1.12.2",
     loader: "Forge",
     java: "Java 8",
-    file: "MCAutoTranslationTool-1.2-mc1.12.2-forge.jar",
+    file: "MCAutoTranslationTool-1.2.1-mc1.12.2-forge.jar",
   },
   {
     version: "1.20.1",
     loader: "Fabric",
     java: "Java 17",
-    file: "MCAutoTranslationTool-1.2-mc1.20.1-fabric.jar",
+    file: "MCAutoTranslationTool-1.2.1-mc1.20.1-fabric.jar",
   },
   {
     version: "1.20.1",
     loader: "Forge",
     java: "Java 17",
-    file: "MCAutoTranslationTool-1.2-mc1.20.1-forge.jar",
+    file: "MCAutoTranslationTool-1.2.1-mc1.20.1-forge.jar",
+  },
+  {
+    version: "1.21–1.21.11",
+    loader: "Fabric 单一 JAR",
+    java: "Java 21",
+    file: "MCAutoTranslationTool-1.2.1-mc1.21.x-fabric.jar",
   },
   {
     version: "1.21.11",
     loader: "Fabric",
     java: "Java 21",
-    file: "MCAutoTranslationTool-1.2-mc1.21.11-fabric.jar",
+    file: "MCAutoTranslationTool-1.2.1-mc1.21.11-fabric.jar",
   },
   {
     version: "1.21.11",
     loader: "Forge",
     java: "Java 21",
-    file: "MCAutoTranslationTool-1.2-mc1.21.11-forge.jar",
+    file: "MCAutoTranslationTool-1.2.1-mc1.21.11-forge.jar",
+  },
+  {
+    version: "26.1–26.2",
+    loader: "Fabric 单一 JAR",
+    java: "Java 25",
+    file: "MCAutoTranslationTool-1.2.1-mc26.x-fabric.jar",
   },
 ];
 
@@ -114,7 +128,7 @@ export default function Home() {
             自动处理聊天、记分板、箱子和服务器菜单里的英文内容。
           </p>
           <div className="heroActions">
-            <a className="primaryButton" href="#download">下载 1.2 正式版 <span>→</span></a>
+            <a className="primaryButton" href="#download">下载 1.2.1 正式版 <span>→</span></a>
             <a className="textButton" href="#how">查看安装方法</a>
           </div>
           <div className="trustLine">
@@ -232,9 +246,9 @@ export default function Home() {
 
       <section className="downloadSection shell" id="download">
         <div className="downloadIntro">
-          <span className="sectionKicker light">1.2 正式版</span>
+          <span className="sectionKicker light">1.2.1 正式版</span>
           <h2>免费使用，也欢迎一起把它做得更好。</h2>
-          <p>选择与你的 Minecraft 版本及加载器完全对应的文件。下载由项目 GitHub Release 直接提供，六个 JAR 不能混用。</p>
+          <p>选择与你的 Minecraft 版本及加载器完全对应的文件。下载由项目 GitHub Release 直接提供，八个 JAR 不能跨加载器混用。</p>
         </div>
         <div className="downloadGrid">
           {downloads.map((item) => (

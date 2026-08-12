@@ -1,0 +1,8 @@
+88dae5ca0fbb6f6c87e5a1ad4817d1f1d4f6287fbf97548a6c0c98a02b002318  MCAutoTranslationTool-1.2.1-mc1.12.2-forge.jar
+2977e79118759bab60bff7b0b39ad11ef232189e80878776c9a096cf2c8ce6d9  MCAutoTranslationTool-1.2.1-mc1.20.1-fabric.jar
+ac3af42022103e7ec2bb285540f81bd9cd827f81385372b463f58b268f280748  MCAutoTranslationTool-1.2.1-mc1.20.1-forge.jar
+f48e5065e71fa53fb8b8ac576db4598da2c5ce950d1a9b16bab5d476044fd947  MCAutoTranslationTool-1.2.1-mc1.21.11-fabric.jar
+85eef29991940479eb0d51ff63de3b9ab0cad8658fe8cfe0601ba0e95eef9ad7  MCAutoTranslationTool-1.2.1-mc1.21.11-forge.jar
+3c04d20c0e44c4cc65aaf05a75a8371473faf0ec002b8a6cda1ae85acdb94b49  MCAutoTranslationTool-1.2.1-mc1.21.x-fabric.jar
+d4cfd5c15be51cc699cf19c2c9915b7b9603e3e8a0224381547728e5a9ab8fc7  MCAutoTranslationTool-1.2.1-mc1.8.9-forge.jar
+a7017b360879d19d82d548908f99e3320ebe24f3f85a3e030800ddee1af60e57  MCAutoTranslationTool-1.2.1-mc26.x-fabric.jar

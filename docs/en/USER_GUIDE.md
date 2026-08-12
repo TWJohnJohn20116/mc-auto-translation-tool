@@ -8,11 +8,8 @@ Each Minecraft version requires its matching JAR. Do not mix them:
 
 | Minecraft | Mod loader | Java | Also required |
 | --- | --- | --- | --- |
-| 26.2 (no released JAR yet) | Fabric | 25 | Fabric API |
-| 26.1.2 (no released JAR yet) | Fabric | 25 | Fabric API |
-| 26.1 (no released JAR yet) | Fabric | 25 | Fabric API |
-| 1.21.5 (no released JAR yet) | Fabric | 21 | Fabric API |
-| 1.21.4 (no released JAR yet) | Fabric | 21 | Fabric API |
+| 26.1, 26.1.1, 26.1.2, 26.2 (single JAR) | Fabric | 25 | Matching Fabric API |
+| 1.21–1.21.11 (single JAR) | Fabric | 21 | Matching Fabric API |
 | 1.21.11 | Forge 61.2.0+ | 21 | No additional mod |
 | 1.21.11 | Fabric | 21 | Fabric API |
 | 1.20.1 | Forge 47.4.10+ | 17 | No additional mod |
@@ -220,10 +217,9 @@ chat verification may impose their own restrictions, which is why the feature is
 
 ## Current version
 
-This guide covers the `1.2` release with six JARs. Every target completed a clean build and the
-shared-core self-test; modern targets also completed Fabric remapping or Forge runtime-mapping
-checks. The main branch also has Fabric adapters for 1.16.5, 1.19.2, 1.21.4, 1.21.5, 26.1,
-26.1.2, and 26.2; all passed this integrated clean build, but none of the development targets has a
-release JAR or complete hands-on regression. Back up the configuration before updating. When reporting untranslated
+This guide covers the `1.2.1` release with eight JARs. Every target completed a clean build and the
+shared-core self-test; the 1.21.x and 26.x bundles also passed real Fabric Loader selection checks.
+The main branch still has unreleased Fabric adapters for 1.16.5 and 1.19.2. Back up the configuration
+before updating. When reporting untranslated
 interface text, include the Minecraft version, loader version, interface location, and `latest.log`,
 but omit API keys and private chat content.
