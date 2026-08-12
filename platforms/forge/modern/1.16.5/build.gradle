@@ -1,0 +1,75 @@
+plugins {
+    id "java"
+    id "net.minecraftforge.gradle" version "[7.0.29,8.0)"
+    id "net.minecraftforge.renamer" version "1.0.14"
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = "mc-auto-translation-tool-forge-1.16.5"
+}
+
+minecraft {
+    mappings channel: "official", version: "1.16.5"
+    runs {
+        configureEach {
+            workingDir.convention layout.projectDirectory.dir("run")
+            args "--mixin.config=universal-translator.forge.mixins.json"
+        }
+        register("client")
+    }
+}
+
+repositories {
+    minecraft.mavenizer(it)
+    maven fg.forgeMaven
+    maven fg.minecraftLibsMaven
+    mavenCentral()
+}
+
+dependencies {
+    implementation minecraft.dependency("net.minecraftforge:forge:1.16.5-36.2.42")
+    annotationProcessor "org.spongepowered:mixin:0.8.7:processor"
+}
+
+sourceSets {
+    main {
+        java.srcDir project(":translator-core").file("src/main/java")
+    }
+}
+
+renamer.enableMixinRefmaps {
+    config "universal-translator.forge.mixins.json"
+}
+
+renamer.classes(tasks.named("jar", Jar)) {
+    archiveClassifier = "srg"
+    mappings renamer.mixin.generatedMappings
+}
+renamer.mappings(minecraft.dependency.toSrg)
+
+tasks.named("processResources", ProcessResources).configure {
+    inputs.property "version", project.version
+    filesMatching("META-INF/mods.toml") {
+        expand "version": project.version
+    }
+}
+
+tasks.named("jar", Jar).configure {
+    manifest {
+        attributes "MixinConfigs": "universal-translator.forge.mixins.json"
+    }
+    from(rootProject.file("LICENSE")) {
+        rename { "LICENSE_universal_translator" }
+    }
+    from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) {
+        rename { "THIRD_PARTY_OFFLINE.md" }
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+    sourceCompatibility = targetCompatibility = JavaVersion.VERSION_1_8
+}
