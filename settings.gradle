@@ -39,12 +39,15 @@ includePlatform("platform-fabric-26.x", "platforms/fabric/26.x/bundle")
 includePlatform("platform-forge-1.16.5", "platforms/forge/modern/1.16.5")
 includePlatform("platform-forge-1.20.1", "platforms/forge/modern/1.20.1")
 includePlatform("platform-forge-1.19.2", "platforms/forge/modern/1.19.2")
-includePlatform("platform-forge-1.21.11", "platforms/forge/modern/1.21.11")
-
-// Set FORGE_TARGET to configure one Forge 26.x mapping workspace at a time.
-def forge26Target = System.getenv("FORGE_TARGET")
+// Set FORGE_TARGET to configure one exact Forge mapping workspace at a time.
+def requestedForgeVersion = System.getenv("FORGE_TARGET")
+["1.21", "1.21.1", "1.21.3", "1.21.4", "1.21.5", "1.21.6", "1.21.7", "1.21.8", "1.21.9", "1.21.10", "1.21.11"].each { gameVersion ->
+    if (requestedForgeVersion == null || requestedForgeVersion == gameVersion) {
+        includePlatform("platform-forge-${gameVersion}", "platforms/forge/1.21/versions/${gameVersion}")
+    }
+}
 ["26.1", "26.1.1", "26.1.2", "26.2"].each { gameVersion ->
-    if (forge26Target == null || forge26Target == gameVersion) {
+    if (requestedForgeVersion == null || requestedForgeVersion == gameVersion) {
         includePlatform("platform-forge-${gameVersion}", "platforms/forge/26.x/versions/${gameVersion}")
     }
 }

@@ -60,16 +60,16 @@ $env:FORGE_TARGET = "26.2"
 
 可将 `26.2` 替换为 `26.1`、`26.1.1` 或 `26.1.2`。输出位于 `platforms/forge/26.x/versions/<版本>/build/libs/`。26.1.2 与 26.2 之间的 Forge API 差异由独立适配器处理，每个 JAR 都声明精确的 Minecraft 版本范围。
 
-## 1.21.11 Forge
+## 1.21.x Forge
 
-需要 JDK 21 或更高版本：
+使用 JDK 21。Forge 发布了 Minecraft 1.21、1.21.1 以及 1.21.3 至 1.21.11；Minecraft 1.21.2 没有 Forge 构建。请选择精确目标，避免一次配置所有 ForgeGradle 映射工作区：
 
-```bash
-./gradlew :platform-forge-1.21.11:build
+```powershell
+$env:FORGE_TARGET = "1.21.10"
+./gradlew.bat :platform-forge-1.21.10:build
 ```
 
-Forge 61.2.0 从官方 Maven 解析。该版本使用 Mojmap 运行时，发布文件是
-`platforms/forge/modern/1.21.11/build/libs/` 中无分类器的 JAR。
+可将 `1.21.10` 替换为 `1.21`、`1.21.1` 或 `1.21.3` 至 `1.21.11` 中的版本。输出位于 `platforms/forge/1.21/versions/<版本>/build/libs/`，每个 JAR 都声明精确的 Minecraft 版本范围。
 
 ## 1.20.1 Fabric
 

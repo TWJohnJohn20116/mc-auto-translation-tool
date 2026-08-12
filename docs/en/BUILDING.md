@@ -61,16 +61,22 @@ $env:FORGE_TARGET = "26.2"
 
 Replace `26.2` with `26.1`, `26.1.1`, or `26.1.2`. Outputs are written under `platforms/forge/26.x/versions/<version>/build/libs/`. Forge API changes between 26.1.2 and 26.2 are handled by separate adapters and every JAR declares an exact Minecraft range.
 
-## Forge 1.21.11
+## Forge 1.21.x
 
-JDK 21 or later is required:
+Use JDK 21. Forge publishes Minecraft 1.21, 1.21.1, and 1.21.3 through 1.21.11; there is no Forge build for Minecraft 1.21.2. Select the exact target to avoid configuring every ForgeGradle mapping workspace at once:
 
 ```bash
-./gradlew :platform-forge-1.21.11:build
+FORGE_TARGET=1.21.10 ./gradlew :platform-forge-1.21.10:build
 ```
 
-Forge 61.2.0 is resolved from the official Maven. This target uses the Mojmap runtime; publish the
-unclassified JAR from `platforms/forge/modern/1.21.11/build/libs/`.
+On PowerShell:
+
+```powershell
+$env:FORGE_TARGET = "1.21.10"
+./gradlew.bat :platform-forge-1.21.10:build
+```
+
+Replace `1.21.10` with `1.21`, `1.21.1`, or any version from `1.21.3` through `1.21.11`. Outputs are written under `platforms/forge/1.21/versions/<version>/build/libs/`. Each JAR deliberately accepts only its exact Minecraft version.
 
 ## Fabric 1.20.1
 
