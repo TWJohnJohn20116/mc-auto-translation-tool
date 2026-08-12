@@ -1,0 +1,70 @@
+plugins {
+    id "net.fabricmc.fabric-loom-remap" version "${loom_1_21_10_version}"
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = "mc-auto-translation-tool-fabric-${minecraft_1_21_10_version}"
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${minecraft_1_21_10_version}"
+    mappings "net.fabricmc:yarn:${yarn_1_21_10_mappings}:v2"
+    modImplementation "net.fabricmc:fabric-loader:${loader_1_21_10_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${fabric_api_1_21_10_version}"
+}
+
+def platformTemplate = rootProject.file("platform-fabric-1.21.9")
+
+sourceSets {
+    main {
+        java.srcDir project(":translator-core").file("src/main/java")
+    }
+}
+
+loom {
+    splitEnvironmentSourceSets()
+
+    mods {
+        "universal_translator" {
+            sourceSet sourceSets.main
+            sourceSet sourceSets.client
+        }
+    }
+}
+
+sourceSets {
+    client {
+        java.srcDir new File(platformTemplate, "src/client/java")
+    }
+}
+
+processResources {
+    from(new File(platformTemplate, "src/main/resources")) {
+        exclude "fabric.mod.json"
+    }
+    inputs.property "version", project.version
+    filesMatching("fabric.mod.json") {
+        expand "version": project.version
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+    options.release = 21
+}
+
+java {
+    withSourcesJar()
+}
+
+jar {
+    from(rootProject.file("LICENSE")) {
+        rename { "LICENSE_universal_translator" }
+    }
+    from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) {
+        rename { "THIRD_PARTY_OFFLINE.md" }
+    }
+}
