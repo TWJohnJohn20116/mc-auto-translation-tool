@@ -35,7 +35,7 @@ minecraft {
 
 sourceSets.main.java.srcDirs += [
         "../../translator-core/src/main/java",
-        "../../platform-forge-legacy-common/src/main/java"
+        "../../platforms/forge/shared/legacy-common/src/main/java"
 ]
 
 jar {

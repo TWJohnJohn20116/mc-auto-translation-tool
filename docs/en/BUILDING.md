@@ -14,7 +14,7 @@ JDK 25 or later is required:
 ./gradlew :platform-fabric-26.2:build
 ```
 
-Output is written to `platform-fabric-26.2/build/libs/`.
+Output is written to `platforms/fabric/26.x/26.2/build/libs/`.
 
 ## Fabric 26.1.2
 
@@ -24,7 +24,7 @@ JDK 25 or later is required:
 ./gradlew :platform-fabric-26.1.2:build
 ```
 
-Output is written to `platform-fabric-26.1.2/build/libs/`.
+Output is written to `platforms/fabric/26.x/26.1.2/build/libs/`.
 
 ## Fabric 26.1
 
@@ -34,7 +34,7 @@ JDK 25 or later is required:
 ./gradlew :platform-fabric-26.1:build
 ```
 
-Output is written to `platform-fabric-26.1/build/libs/`.
+Output is written to `platforms/fabric/26.x/26.1/build/libs/`.
 
 ## Single Fabric 1.21.x JAR
 
@@ -44,7 +44,7 @@ JDK 21 or later is required:
 ./gradlew :platform-fabric-1.21.x:build
 ```
 
-Output is written to `platform-fabric-1.21.x/build/libs/`. This single JAR supports every published
+Output is written to `platforms/fabric/1.21/bundle/build/libs/`. This single JAR supports every published
 Minecraft 1.21 release from 1.21 through 1.21.11. It embeds twelve exact-version implementations,
 and Fabric Loader selects the matching one. The build verifies every nested JAR and exercises real
 Loader resolution for all twelve versions.
@@ -57,7 +57,7 @@ JDK 21 or later is required:
 ./gradlew :platform-fabric-1.21.11:build
 ```
 
-Output is written to `platform-fabric-1.21.11/build/libs/`.
+Output is written to `platforms/fabric/1.21/versions/1.21.11/build/libs/`.
 
 ## Fabric 1.21.5 and 1.21.4
 
@@ -76,7 +76,7 @@ JDK 21 or later is required:
 ```
 
 Forge 61.2.0 is resolved from the official Maven. This target uses the Mojmap runtime; publish the
-unclassified JAR from `platform-forge-1.21.11/build/libs/`.
+unclassified JAR from `platforms/forge/modern/1.21.11/build/libs/`.
 
 ## Fabric 1.20.1
 
@@ -86,7 +86,7 @@ JDK 17 or later is required:
 ./gradlew :platform-fabric-1.20.1:build
 ```
 
-Output is written to `platform-fabric-1.20.1/build/libs/`.
+Output is written to `platforms/fabric/legacy/1.20.1/build/libs/`.
 
 ## Forge 1.20.1
 
@@ -98,7 +98,7 @@ JDK 17 or later is required:
 
 Forge 47.4.10 is resolved from the official Maven. Minecraft 1.20.1 still requires the Mojmap
 development output to be renamed to the SRG runtime namespace. Release the `-srg.jar` from
-`platform-forge-1.20.1/build/libs/`, not the unclassified development JAR beside it.
+`platforms/forge/modern/1.20.1/build/libs/`, not the unclassified development JAR beside it.
 
 ## Fabric 1.19.2
 
