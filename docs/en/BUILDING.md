@@ -50,6 +50,17 @@ JDK 21 or later is required:
 ./gradlew :platform-fabric-1.21.5:build :platform-fabric-1.21.4:build
 ```
 
+## Forge 26.x
+
+Use JDK 25 and select one exact target at a time:
+
+```powershell
+$env:FORGE_TARGET = "26.2"
+./gradlew.bat :platform-forge-26.2:build
+```
+
+Replace `26.2` with `26.1`, `26.1.1`, or `26.1.2`. Outputs are written under `platforms/forge/26.x/versions/<version>/build/libs/`. Forge API changes between 26.1.2 and 26.2 are handled by separate adapters and every JAR declares an exact Minecraft range.
+
 ## Forge 1.21.11
 
 JDK 21 or later is required:

@@ -15,6 +15,7 @@ This document records only completed validation. “Builds successfully” is no
 | 1.20.1 | Forge 47.4.10 | 17 | Passed; SRG and refmap checked | Pending | Pending |
 | 1.21.11 | Fabric Loader 0.18.1 + Fabric API 0.141.4 | 21 | Passed | Historical baseline passed | Pending confirmation |
 | All 1.21 releases (1.21–1.21.11), single JAR | Fabric Loader 0.19.3 | 21 | Passed; Loader selection passed for all twelve versions | Pending | Pending |
+| 26.1, 26.1.1, 26.1.2, 26.2 | Forge 62.0.9?65.1.1 | 25 | Compile passed for all four exact targets | Pending | Pending |
 | 1.21.11 | Forge 61.2.0 | 21 | Passed; Mojmap Mixins checked | Blocked by headless display | Pending |
 | 26.1, 26.1.1, 26.1.2, 26.2, single JAR | Fabric Loader 0.19.3 | 25 | Passed; Loader selection passed for all four versions | 26.1 baseline passed | Pending |
 
