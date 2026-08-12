@@ -11,6 +11,13 @@ Original author: [Bilibili creator “我小张7272635”](https://space.bilibil
 Please retain the original author attribution and MIT License copyright notice when redistributing,
 republishing, or adapting this project.
 
+## Community and support
+
+- QQ community group: `1054795488`
+- Afdian sponsorship: [Support “我小张7272635”](https://afdian.com/a/XiaoZhangGG)
+
+Sponsorship is entirely optional. The project will remain charity-driven, open source, and free to download.
+
 The project translates visible text shown by servers, mods, and modpacks, including chat, quest
 books, mod settings and menus, scoreboards, the Tab player list, Action Bar messages, titles,
 Boss Bars, container titles, item names and lore, signs, books, holograms, and custom entity names.
