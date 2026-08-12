@@ -32,6 +32,7 @@ includePlatform("platform-fabric-1.21.11", "platforms/fabric/1.21/versions/1.21.
 includePlatform("platform-fabric-1.21.4-1.21.5", "platforms/fabric/1.21/shared-1.21.4-1.21.5")
 includePlatform("platform-fabric-1.21.x", "platforms/fabric/1.21/bundle")
 includePlatform("platform-fabric-26.1", "platforms/fabric/26.x/26.1")
+includePlatform("platform-fabric-26.1.1", "platforms/fabric/26.x/26.1.1")
 includePlatform("platform-fabric-26.1.2", "platforms/fabric/26.x/26.1.2")
 includePlatform("platform-fabric-26.2", "platforms/fabric/26.x/26.2")
 includePlatform("platform-fabric-26.x", "platforms/fabric/26.x/bundle")

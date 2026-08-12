@@ -53,7 +53,7 @@ versions that passed the build checks; adjacent versions are added only after se
 
 | Minecraft | Loader | Java |
 | --- | --- | --- |
-| Supported 26.x releases (26.1, 26.1.2, and 26.2; single JAR, development) | Fabric | 25 |
+| Supported 26.x releases (26.1, 26.1.1, 26.1.2, and 26.2; single JAR, development) | Fabric | 25 |
 | All 1.21 releases (1.21 through 1.21.11; single JAR, development) | Fabric | 21 |
 | 1.21.11 | Forge | 21 |
 | 1.20.1 | Forge | 17 |
@@ -67,7 +67,7 @@ Fabric 1.21.x and 26.x each provide one bundle JAR. Exact-version implementation
 inside each bundle and share the same core logic and configuration semantics.
 
 The main branch also contains separate development adapters for Fabric 1.16.5, 1.19.2, 1.21.4,
-1.21.5, 26.1, 26.1.2, and 26.2. They are not release downloads until launch and in-server
+1.21.5, 26.1, 26.1.1, 26.1.2, and 26.2. They are not release downloads until launch and in-server
 regression checks are complete.
 
 ## Current status
