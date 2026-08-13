@@ -1,0 +1,82 @@
+plugins {
+    id "java"
+    id "net.neoforged.moddev.legacyforge" version "2.0.91"
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = "mc-auto-translation-tool-neoforge-1.20.1"
+}
+
+legacyForge {
+    enable {
+        neoForgeVersion = "1.20.1-47.1.106"
+    }
+
+    runs {
+        client {
+            client()
+            programArgument "--mixin.config=universal-translator.neoforge.mixins.json"
+            if (System.getProperty("os.name").startsWith("Mac")) {
+                jvmArgument "-XstartOnFirstThread"
+            }
+        }
+    }
+
+    mods {
+        universal_translator {
+            sourceSet(sourceSets.main)
+        }
+    }
+}
+
+sourceSets {
+    main {
+        java.srcDirs = [
+                project(":platform-forge-1.20.1").file("src/main/java"),
+                project(":translator-core").file("src/main/java")
+        ]
+        resources.setSrcDirs([])
+    }
+}
+
+dependencies {
+    annotationProcessor "org.spongepowered:mixin:0.8.7:processor"
+}
+
+mixin {
+    add sourceSets.main, "main.refmap.json"
+    config "universal-translator.neoforge.mixins.json"
+}
+
+tasks.named("processResources", ProcessResources).configure {
+    inputs.property "version", project.version
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from(project(":platform-forge-1.20.1").file("src/main/resources")) {
+        exclude "META-INF/mods.toml", "universal-translator.forge.mixins.json"
+    }
+    from("src/main/resources") {
+        filesMatching("META-INF/mods.toml") {
+            expand "version": project.version
+        }
+    }
+}
+
+tasks.named("jar", Jar).configure {
+    manifest {
+        attributes "MixinConfigs": "universal-translator.neoforge.mixins.json"
+    }
+    from(rootProject.file("LICENSE")) {
+        rename { "LICENSE_universal_translator" }
+    }
+    from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) {
+        rename { "THIRD_PARTY_OFFLINE.md" }
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+    options.release = 17
+}

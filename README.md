@@ -33,6 +33,8 @@ Minecraft 样式代码默认保留。
 | 1.12.2 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.12.2-forge.jar) |
 | 1.20.1 | Fabric | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.20.1-fabric.jar) |
 | 1.20.1 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.20.1-forge.jar) |
+| 1.20.1 | NeoForge | beta.3 测试构建 |
+| 1.21.1 | NeoForge | beta.3 测试构建 |
 | 1.21–1.21.11 | Fabric | [下载单一 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.21.x-fabric.jar) |
 | 1.21.11 | Fabric | [下载精确版本 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.21.11-fabric.jar) |
 | 1.21.11 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.21.11-forge.jar) |
@@ -66,6 +68,8 @@ Minecraft 样式代码默认保留。
 | 1.21–1.21.11（单一 JAR） | Fabric | 21 |
 | 1.21、1.21.1、1.21.3–1.21.11（精确版本 JAR） | Forge | 21 |
 | 1.20.1 | Forge | 17 |
+| 1.20.1 | NeoForge 47.1.106–47.1.x | 17 |
+| 1.21.1 | NeoForge 21.1.248 | 21 |
 | 1.20.1 | Fabric | 17 |
 | 1.19.2（开发中） | Forge | 17 |
 | 1.19.2（开发中） | Fabric | 17 |

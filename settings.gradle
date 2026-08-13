@@ -2,6 +2,7 @@ pluginManagement {
     repositories {
         maven { url = "https://maven.fabricmc.net/" }
         maven { url = "https://maven.minecraftforge.net/" }
+        maven { url = "https://maven.neoforged.net/releases/" }
         gradlePluginPortal()
     }
 }
@@ -32,6 +33,7 @@ def platformProjects = [
         "platform-fabric-26.1.2"        : "platforms/fabric/26.x/26.1.2",
         "platform-fabric-26.2"          : "platforms/fabric/26.x/26.2",
         "platform-fabric-26.x"          : "platforms/fabric/26.x/bundle",
+        "platform-neoforge-1.20.1"      : "platforms/neoforge/1.20.1",
         "platform-neoforge-1.21.1"      : "platforms/neoforge/1.21/versions/1.21.1",
         "platform-forge-1.16.5"         : "platforms/forge/modern/1.16.5",
         "platform-forge-1.19.2"         : "platforms/forge/modern/1.19.2",
@@ -58,7 +60,8 @@ def platformDependencies = [
         "platform-fabric-1.21.x": (['1.21'] + (1..11).collect { "1.21.${it}" })
                 .collect { "platform-fabric-${it}".toString() },
         "platform-fabric-26.x": ["26.1", "26.1.1", "26.1.2", "26.2"]
-                .collect { "platform-fabric-${it}".toString() }
+                .collect { "platform-fabric-${it}".toString() },
+        "platform-neoforge-1.20.1": ["platform-forge-1.20.1"]
 ]
 
 def normalizePlatform = { String value ->

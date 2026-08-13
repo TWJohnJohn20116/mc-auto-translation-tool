@@ -22,7 +22,8 @@ platforms/
 │  ├─ 26.x/versions/       # Exact 26.x implementations
 │  └─ shared/              # Source shared by legacy Forge builds
 └─ neoforge/
-   └─ 1.21/versions/1.21.1/
+   ├─ 1.20.1/              # NeoForge 47.1.106; shares the 1.20.1 Forge sources
+   └─ 1.21/versions/1.21.1/ # NeoForge 21.1.248
 ```
 
 The Gradle project names remain unchanged. A fully qualified task path includes its platform

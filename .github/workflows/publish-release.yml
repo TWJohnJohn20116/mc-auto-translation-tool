@@ -47,6 +47,20 @@ jobs:
             echo "Missing release directory: $release_dir" >&2
             exit 1
           fi
+          shopt -s nullglob
+          for first_part in "$release_dir"/*.jar.part-aa; do
+            jar="${first_part%.part-aa}"
+            parts=("$jar".part-*)
+            if [[ -e "$jar" ]]; then
+              echo "Both assembled JAR and split parts are present: $jar" >&2
+              exit 1
+            fi
+            if [[ "${#parts[@]}" -lt 2 ]]; then
+              echo "Incomplete split JAR: $jar" >&2
+              exit 1
+            fi
+            cat "${parts[@]}" > "$jar"
+          done
           expected=(
             "MCAutoTranslationTool-$version-mc1.8.9-forge.jar"
             "MCAutoTranslationTool-$version-mc1.12.2-forge.jar"
@@ -56,6 +70,8 @@ jobs:
             "MCAutoTranslationTool-$version-mc1.19.2-forge.jar"
             "MCAutoTranslationTool-$version-mc1.20.1-fabric.jar"
             "MCAutoTranslationTool-$version-mc1.20.1-forge.jar"
+            "MCAutoTranslationTool-$version-mc1.20.1-neoforge.jar"
+            "MCAutoTranslationTool-$version-mc1.21.1-neoforge.jar"
             "MCAutoTranslationTool-$version-mc1.21.x-fabric.jar"
             "MCAutoTranslationTool-$version-mc1.21-forge.jar"
             "MCAutoTranslationTool-$version-mc1.21.1-forge.jar"
@@ -87,6 +103,8 @@ jobs:
             unzip -tqq "$release_dir/$file"
           done
           unzip -l "$release_dir/MCAutoTranslationTool-$version-mc1.20.1-forge.jar" | grep -q 'main.refmap.json'
+          unzip -l "$release_dir/MCAutoTranslationTool-$version-mc1.20.1-neoforge.jar" | grep -q 'main.refmap.json'
+          unzip -l "$release_dir/MCAutoTranslationTool-$version-mc1.21.1-neoforge.jar" | grep -q 'universal-translator.neoforge.mixins.json'
           prerelease=false
           if [[ "$version" == *-* ]]; then
             prerelease=true

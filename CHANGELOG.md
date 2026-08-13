@@ -2,11 +2,17 @@
 
 ## 未发布
 
+## 1.3.0-beta.3 - 2026-08-13
+
 - 合并 Fabric 26.x 与 Forge 26.x 的重复源码，并将 Forge 1.21/26.x 的公共构建逻辑及版本 metadata 改为共享模板；各版本目录仅保留依赖与兼容性参数。
 - 修正 1.3.0-test.2 的 Forge 1.16.5、1.19.2 与 1.20.1 下载误用 Mojmap 开发 JAR，避免启动时因 `Minecraft.getInstance()` 未转换为 SRG 名称而崩溃；构建与发布流程新增运行时映射验证。
 - 根 Gradle 构建新增 `targetPlatform` 选择器，完整平台任务可自动载入所需模块，整合 JAR 会展开其版本依赖；默认只配置共用核心，避免单一目标触发所有 ForgeGradle 与 Loom 工作区。
 - 根构建加入 Java Toolchain，并让 Gradle Wrapper 在 `JAVA_HOME` 失效时回退至 `PATH` 中的 Java。
 - Forge 1.21 系列改用共用核心、共用资源与四个 API family，移除各精确版本间的大量重复 Java、语言及 Mixin 文件；NeoForge 1.21.1 同步重用这些来源。
+- 新增 Minecraft 1.20.1 NeoForge 独立构建，目标为 NeoForge `1.20.1-47.1.106`
+  与 Java 17；复用已验证的 1.20.1 翻译实现，但使用独立加载器依赖和下载文件名。
+- NeoForge 依赖范围固定为 `[47.1.106,47.2)`，避免误装 Forge 47.4.x 或其他不兼容
+  的 1.20.1 加载器实现。
 
 ## 1.3.0-test.2 - 2026-08-12
 

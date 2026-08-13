@@ -3,7 +3,7 @@ plugins {
 }
 
 group = "org.universaltranslator"
-version = "1.3.0-test.2"
+version = "1.3.0-beta.3"
 
 // Gradle itself runs on a modern JDK. Toolchains make compilation reproducible while
 // each module's existing options.release setting preserves its Java 8/17/21 bytecode target.
