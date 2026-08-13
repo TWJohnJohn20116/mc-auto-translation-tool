@@ -16,6 +16,7 @@ This document records only completed validation. “Builds successfully” is no
 | 1.19.2 | Fabric Loader 0.19.3 + Fabric API 0.77.0 | 17 | Passed; metadata and Mixins checked | Pending | Pending |
 | 1.19.2 | Forge 43.5.2 | 17 | Passed; SRG and refmap checked | Pending | Pending |
 | 1.20.1 | Fabric Loader 0.18.1 + Fabric API 0.92.11 | 17 | Passed | Pending | Pending |
+| All 1.20 releases (1.20-1.20.6), single JAR | Fabric Loader 0.15.11+ | 17 / 21 | Passed; exact Loader selection passed for all seven versions | Pending | Pending |
 | 1.20.1 | Forge 47.4.10 | 17 | Passed; SRG and refmap checked | Pending | Pending |
 | 1.20.1 | NeoForge 47.1.106 | 17 | Passed; metadata, Mixins, and refmap checked | Passed; mod initialized | Pending |
 | 1.21.1 | NeoForge 21.1.248 | 21 | Passed; metadata and Mixins checked | Pending | Pending |

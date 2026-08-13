@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "id": "universal_translator_1_20_x_bundle",
+  "version": "${version}",
+  "name": "MC Auto Translation Tool - Fabric 1.20.x Bundle",
+  "description": "Selects the exact compatible Universal Translator implementation for every Minecraft 1.20 release.",
+  "authors": [
+    "272635"
+  ],
+  "contact": {
+    "homepage": "https://space.bilibili.com/3546631091783712",
+    "sources": "https://github.com/wuxiangdan96-byte/mc-auto-translation-tool"
+  },
+  "license": "MIT",
+  "environment": "client",
+  "jars": [
+    {
+      "file": "META-INF/jars/universal-translator-1.20.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.20.1.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.20.2.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.20.3.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.20.4.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.20.5.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.20.6.jar"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=0.15.11",
+    "minecraft": [
+      "1.20",
+      "1.20.1",
+      "1.20.2",
+      "1.20.3",
+      "1.20.4",
+      "1.20.5",
+      "1.20.6"
+    ],
+    "java": ">=17",
+    "fabric-api": "*",
+    "universal_translator": "*"
+  }
+}

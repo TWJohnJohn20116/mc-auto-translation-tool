@@ -15,6 +15,7 @@
 | 1.19.2 | Fabric Loader 0.19.3 + Fabric API 0.77.0 | 17 | 通过，metadata 与 Mixin 已检查 | 待验证 | 待验证 |
 | 1.19.2 | Forge 43.5.2 | 17 | 通过，SRG 与 refmap 已检查 | 待验证 | 待验证 |
 | 1.20.1 | Fabric Loader 0.18.1 + Fabric API 0.92.11 | 17 | 通过 | 待验证 | 待验证 |
+| ?? 1.20 ???1.20-1.20.6??? JAR? | Fabric Loader 0.15.11+ | 17 / 21 | ????????????? Loader ???? | ??? | ??? |
 | 1.20.1 | Forge 47.4.10 | 17 | 通过，SRG 与 refmap 已检查 | 待验证 | 待验证 |
 | 1.20.1 | NeoForge 47.1.106 | 17 | 通过，metadata、Mixin 与 refmap 已检查 | 通过，模组初始化完成 | 待验证 |
 | 1.21.1 | NeoForge 21.1.248 | 21 | 通过，metadata 与 Mixin 已检查 | 待验证 | 待验证 |
