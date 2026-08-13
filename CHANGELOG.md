@@ -2,9 +2,14 @@
 
 ## 未发布
 
-- 发布资产由 27 个精确版本 JAR 缩减为 12 个可直接安装的 JAR：Fabric 统一为内含 19 个精确实现的自动选版 JAR；Forge 1.21.9–1.21.11 以双签章可选 Mixin 合并；class payload 相同的 Forge／NeoForge 1.20.1 合并为双加载器 JAR；其余不同 API 版本继续独立发布。
+## 1.3.0 - 2026-08-13
 
-- 合并 Fabric/Forge 1.16.5、1.19.2 与 1.20.1 的稳定源码和构建逻辑；新增通用发布 JAR 验证器，检查 metadata、Mixin/refmap、Fabric 内嵌 JAR、Forge 运行时映射与 SHA-256；并修正 Forge 26.1.1 发布 JAR 缺少 Mixin class 的问题。
+- 将 27 个精确版本构建产物整理为 13 个可直接安装的发布 JAR，覆盖 Forge 1.8.9、1.12.2、1.16.5、1.19.2、1.20.1、1.21／1.21.1／1.21.3–1.21.11 与 26.1–26.2，Fabric 1.16.5、1.19.2、1.20.1、1.21–1.21.11 与 26.1–26.2，以及 NeoForge 1.20.1 和 1.21.1；1.20.1 Forge／NeoForge 保留为分别验证的加载器专用文件。
+- Fabric 统一为内含 19 个精确实现、由 Loader 自动选版的单一 JAR；Forge 相邻版本在 payload 兼容时合并为四个兼容族群；Forge／NeoForge 1.20.1 保留加载器专用 JAR，其余不同 API 版本继续独立发布。
+- 合并 Fabric/Forge 1.16.5、1.19.2 与 1.20.1 的稳定源码和构建逻辑；新增通用发布 JAR 验证器，检查 metadata、版本一致性、Mixin/refmap、Fabric 内嵌 JAR、Forge 运行时映射与 SHA-256；并修正 Forge 26.1.1 发布 JAR 缺少 Mixin class 的问题。
+- 修正 Forge 1.8.9 与 1.12.2 的 `mcmod.info` 仍写入旧测试版号的问题，并加入发行文件名与 JAR metadata 版本一致性测试。
+- 修正分片 Fabric 1.21.x JAR 在 GitHub Actions 重组后仍保留分片、导致发布校验失败的问题；所有 Python 校验任务统一使用跨平台可用的 `python3`。
+- 全部目标完成干净构建、核心自测、Mixin/refmap 与发行结构校验；Fabric 两个整合 JAR 通过全部内嵌版本的真实 Loader 选版测试，NeoForge 1.20.1 使用 Java 17 实际启动并完成模组初始化。
 
 ## 1.3.0-beta.3 - 2026-08-13
 

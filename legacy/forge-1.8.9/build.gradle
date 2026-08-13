@@ -10,7 +10,10 @@ buildscript {
 
 apply plugin: "net.minecraftforge.gradle.forge"
 
-version = "1.3.0-beta.3"
+def releaseProperties = new Properties()
+file("../../gradle.properties").withInputStream { releaseProperties.load(it) }
+
+version = releaseProperties.getProperty("mod_version")
 group = "org.universaltranslator"
 archivesBaseName = "mc-auto-translation-tool-forge-1.8.9"
 
@@ -37,6 +40,13 @@ sourceSets.main.java.srcDirs += [
         "../../translator-core/src/main/java",
         "../../platforms/forge/shared/legacy-common/src/main/java"
 ]
+
+processResources {
+    inputs.property "version", project.version
+    filesMatching("mcmod.info") {
+        expand version: project.version
+    }
+}
 
 jar {
     from("../../LICENSE")

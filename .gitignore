@@ -22,6 +22,7 @@ config/
 *.jar
 !**/gradle/wrapper/gradle-wrapper.jar
 !downloads/**/*.jar
+!downloads/**/*.jar.part-*
 *.gguf
 *.part
 *.tmp

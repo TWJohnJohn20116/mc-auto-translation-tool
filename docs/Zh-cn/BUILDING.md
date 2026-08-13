@@ -186,21 +186,22 @@ Wrapper 固定 Gradle 2.14.1，ForgeGradle 使用 2.1 系列，Forge 固定
 也可直接验证任意构建产物：
 
 ```bash
-python scripts/verify_release_jars.py path/to/mod.jar
+python3 scripts/verify_release_jars.py path/to/mod.jar
 ```
 
 验证器会检查 ZIP 结构、metadata、entrypoint、Mixin class/refmap、Fabric 内嵌 JAR、
-Forge 旧版运行时映射，以及 checksum 内容与覆盖范围。
+Forge 旧版运行时映射、版本一致性、checksum 内容与覆盖范围。Fabric/Forge 1.16.5、
+1.19.2 与 1.20.1 的 `build` 任务也会验证它们生成的 JAR。
 
-发布流程会将 27 个精确构建产物缩减为 12 个可直接安装的 JAR：19 个 Fabric 实现会
-放进一个由 Loader 自动选版的 JAR；四组 Forge 版本在 payload 兼容时扩宽范围；class
-payload 相同的 Forge／NeoForge 1.20.1 则共用双加载器 JAR。不同 API 仍保持独立：
+发布流程会将 27 个精确构建产物缩减为 13 个可直接安装的 JAR：19 个 Fabric 实现会
+放进一个由 Loader 自动选版的 JAR；四组 Forge 版本在 payload 兼容时扩宽范围；
+Forge／NeoForge 1.20.1 保留为分别验证的加载器专用 JAR。不同 API 仍保持独立：
 
 ```bash
-python scripts/prepare_release_assets.py \
-  --release-dir downloads/1.3.0-beta.3 \
+python3 scripts/prepare_release_assets.py \
+  --release-dir downloads/1.3.0 \
   --output-dir build/release-assets \
-  --version 1.3.0-beta.3
+  --version 1.3.0
 ```
 
 ## 核心自测

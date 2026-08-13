@@ -124,7 +124,7 @@ tasks.register("verifyBuiltJar", Exec) {
     inputs.file(rootProject.file("scripts/verify_release_jars.py"))
     doFirst {
         commandLine(
-                "python",
+                "python3",
                 rootProject.file("scripts/verify_release_jars.py"),
                 tasks.named("remapJar").get().archiveFile.get().asFile
         )

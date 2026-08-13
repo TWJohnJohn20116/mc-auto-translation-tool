@@ -50,6 +50,9 @@ jar {
     from(rootProject.file("LICENSE")) {
         rename { "LICENSE_universal_translator_26_x_bundle" }
     }
+    from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) {
+        rename { "THIRD_PARTY_OFFLINE.md" }
+    }
 }
 
 tasks.register("verifyBundle") {

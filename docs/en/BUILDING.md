@@ -200,28 +200,28 @@ The root check validates every tracked release JAR and its checksum:
 To validate arbitrary build outputs directly, pass them to the standalone verifier:
 
 ```bash
-python scripts/verify_release_jars.py path/to/mod.jar
-python scripts/verify_release_jars.py \
-  --checksum-file downloads/1.3.0-test.2/SHA256SUMS.txt \
-  --require-complete-checksums downloads/1.3.0-test.2/*.jar
+python3 scripts/verify_release_jars.py path/to/mod.jar
+python3 scripts/verify_release_jars.py \
+  --checksum-file downloads/1.3.0/SHA256SUMS.txt \
+  --require-complete-checksums downloads/1.3.0/*.jar
 ```
 
 It checks ZIP structure, expanded metadata, entrypoints, declared Mixin classes and refmaps, nested
 Fabric JARs, legacy Forge runtime mappings, SHA-256 values, and checksum-manifest coverage. Legacy
 Fabric and Forge `build` tasks run the same verifier against their generated release JARs.
 
-The publish workflow reduces the 27 exact build artifacts to 12 directly installable JARs. It
+The publish workflow reduces the 27 exact build artifacts to 13 directly installable JARs. It
 flattens all 19 Fabric implementations into one Loader-selected bundle, broadens four Forge
-families after confirming compatible payloads, and combines the byte-identical Forge/NeoForge
-1.20.1 classes into one dual-loader JAR. Different APIs remain separate. Reproduce and validate
+families after confirming compatible payloads, and keeps Forge/NeoForge 1.20.1 as separately
+verified loader-specific JARs. Different APIs remain separate. Reproduce and validate
 the publish set with:
 
 ```bash
-python scripts/prepare_release_assets.py \
-  --release-dir downloads/1.3.0-beta.3 \
+python3 scripts/prepare_release_assets.py \
+  --release-dir downloads/1.3.0 \
   --output-dir build/release-assets \
-  --version 1.3.0-beta.3
-python scripts/verify_release_jars.py \
+  --version 1.3.0
+python3 scripts/verify_release_jars.py \
   --checksum-file build/release-assets/SHA256SUMS.txt \
   --require-complete-checksums build/release-assets/*.jar
 ```

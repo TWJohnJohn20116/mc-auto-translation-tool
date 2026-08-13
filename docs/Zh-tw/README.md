@@ -29,20 +29,20 @@ Minecraft 樣式代碼預設保持不變。
 
 | Minecraft | 載入器 | 下載 |
 | --- | --- | --- |
-| 1.8.9 | Forge | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.8.9-forge.jar) |
-| 1.12.2 | Forge | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.12.2-forge.jar) |
-| 1.20.1 | Fabric | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.20.1-fabric.jar) |
-| 1.20.1 | Forge | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.20.1-forge.jar) |
-| 1.21–1.21.11 | Fabric | [下載單一 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.21.x-fabric.jar) |
-| 1.21.11 | Fabric | [下載精確版本 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.21.11-fabric.jar) |
-| 1.21.11 | Forge | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc1.21.11-forge.jar) |
-| 26.1–26.2 | Fabric | [下載單一 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/MCAutoTranslationTool-1.2.1-mc26.x-fabric.jar) |
+| 1.8.9 | Forge | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.8.9-forge.jar) |
+| 1.12.2 | Forge | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.12.2-forge.jar) |
+| 所有受支援版本 | Fabric | [下載全版本自動選版 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-fabric-all.jar) |
+| 1.16.5、1.19.2、1.20.1、1.21–1.21.11 | Forge | [查看正式版相容檔案](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/tag/v1.3.0) |
+| 1.20.1 | Forge | [下載 Forge JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.20.1-forge.jar) |
+| 1.20.1 | NeoForge | [下載 NeoForge JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.20.1-neoforge.jar) |
+| 1.21.1 | NeoForge | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.21.1-neoforge.jar) |
+| 26.1–26.2 | Forge | [查看正式版相容檔案](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/tag/v1.3.0) |
 
 請勿跨版本或載入器混用 JAR。發行中只允許已完成建置驗證的精確 Minecraft 版本；
 鄰近版本會在個別驗證後再加入支援範圍。
 
 [查看所有版本與更新說明](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases) ·
-[SHA-256 校驗檔案](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.2.1/SHA256SUMS.txt)
+[SHA-256 校驗檔案](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/SHA256SUMS.txt)
 
 ## 設計原則
 
@@ -62,29 +62,26 @@ Minecraft 樣式代碼預設保持不變。
 | Minecraft | 載入器 | Java |
 | --- | --- | --- |
 | 26.1、26.1.1、26.1.2、26.2（單一 JAR） | Fabric | 25 |
-| 26.1、26.1.1、26.1.2、26.2（精確版本 JAR） | Forge | 25 |
+| 26.1、26.1.1、26.1.2、26.2（相容族群／獨立 JAR） | Forge | 25 |
 | 1.21–1.21.11（單一 JAR） | Fabric | 21 |
-| 1.21、1.21.1、1.21.3–1.21.11（精確版本 JAR） | Forge | 21 |
+| 1.21、1.21.1、1.21.3–1.21.11（相容族群／獨立 JAR） | Forge | 21 |
 | 1.20.1 | Forge | 17 |
 | 1.20.1 | Fabric | 17 |
-| 1.19.2（開發中） | Forge | 17 |
-| 1.19.2（開發中） | Fabric | 17 |
-| 1.16.5（開發中） | Forge | 8 |
-| 1.16.5（開發中） | Fabric | 8 |
+| 1.19.2 | Forge | 17 |
+| 1.19.2 | Fabric | 17 |
+| 1.16.5 | Forge | 8 |
+| 1.16.5 | Fabric | 8 |
 | 1.12.2 | Forge | 8 |
 | 1.8.9 | Forge | 8 |
 
 Fabric 1.21.x 與 26.x 各提供一個整合 JAR；整合包內仍保留精確版本實作，並共用相同的核心邏輯及設定語意。
 
-主分支另包含 Fabric 1.16.5、Fabric 1.19.2、Forge 1.16.5 與 Forge 1.19.2 獨立開發轉接；完成實機及伺服器內人工
-迴歸前不提供正式版下載。
-
 ## 目前狀態
 
-1.2.1 正式版提供八個用戶端 JAR：保留 1.2 的六個精確版本下載，並新增涵蓋
-1.21–1.21.11 與 26.1／26.1.1／26.1.2／26.2 的兩個 Fabric 單一 JAR。
-全部建置線均通過乾淨建置；兩個整合包通過真實 Fabric Loader 自動選版測試，
-共用核心自我測試通過。各目標的精確驗證層級請見相容性矩陣。
+1.3.0 正式版將 27 個精確建置產物整理為 13 個用戶端 JAR。全部建置線均通過乾淨建置；
+全版本 Fabric JAR 通過 19 個目標版本的真實 Loader 自動選版測試，NeoForge 1.20.1 使用 Java 17 完成實際用戶端啟動和
+模組初始化，發行 JAR 的版本、Mixin/refmap、執行階段映射與 SHA-256 均通過自動驗證。
+各目標的精確驗證層級請見相容性矩陣。
 
 Fabric 版本按下 `U` 開啟設定。Forge 1.16.5／1.19.2／1.20.1／1.21.11／26.x 修改
 `config/universal-translator.properties` 後按下 `U` 重新載入。模組預設關閉；新安裝預設選擇「離線」，並使用

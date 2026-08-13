@@ -67,7 +67,7 @@ jobs:
               exit 1
             fi
             cat "${parts[@]}" > "$jar"
-            rm -- "${parts[@]}"
+            rm -f -- "${parts[@]}"
           done
           expected=(
             "MCAutoTranslationTool-$version-mc1.8.9-forge.jar"
@@ -125,7 +125,7 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t jars < <(find "$RELEASE_DIR" -maxdepth 1 -type f -name '*.jar' -print | sort)
-          python scripts/verify_release_jars.py \
+          python3 scripts/verify_release_jars.py \
             --checksum-file "$RELEASE_DIR/SHA256SUMS.txt" \
             --require-complete-checksums \
             "${jars[@]}"
@@ -138,12 +138,12 @@ jobs:
           ASSET_DIR: ${{ runner.temp }}/release-assets
         run: |
           set -euo pipefail
-          python scripts/prepare_release_assets.py \
+          python3 scripts/prepare_release_assets.py \
             --release-dir "$RELEASE_DIR" \
             --output-dir "$ASSET_DIR" \
             --version "$VERSION"
           mapfile -t jars < <(find "$ASSET_DIR" -maxdepth 1 -type f -name '*.jar' -print | sort)
-          python scripts/verify_release_jars.py \
+          python3 scripts/verify_release_jars.py \
             --checksum-file "$ASSET_DIR/SHA256SUMS.txt" \
             --require-complete-checksums \
             "${jars[@]}"
@@ -162,6 +162,16 @@ jobs:
             echo "Expected twelve compatible JARs and SHA256SUMS.txt" >&2
             exit 1
           fi
+          notes="$RUNNER_TEMP/release-notes.md"
+          awk -v version="$VERSION" '
+            index($0, "## " version " - ") == 1 { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > "$notes"
+          if [[ ! -s "$notes" ]]; then
+            echo "Missing CHANGELOG section for $VERSION" >&2
+            exit 1
+          fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "${assets[@]}" --clobber
             mapfile -t old_jars < <(gh release view "$TAG" --json assets --jq '.assets[].name | select(endswith(".jar"))')
@@ -174,7 +184,7 @@ jobs:
             release_flags=(
               --target "$GITHUB_SHA"
               --title "MC 自动翻译工具 $VERSION"
-              --notes-file CHANGELOG.md
+              --notes-file "$notes"
             )
             if [[ "${{ steps.version.outputs.prerelease }}" == "true" ]]; then
               release_flags+=(--prerelease --latest=false)

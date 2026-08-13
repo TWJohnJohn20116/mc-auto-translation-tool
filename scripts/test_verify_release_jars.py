@@ -16,9 +16,14 @@ from verify_release_jars import (
 )
 
 
-def make_jar(entries: dict[str, bytes | str]) -> bytes:
+def make_jar(
+    entries: dict[str, bytes | str], include_legal_files: bool = True
+) -> bytes:
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w") as archive:
+        if include_legal_files:
+            archive.writestr("LICENSE_universal_translator", "MIT")
+            archive.writestr("THIRD_PARTY_OFFLINE.md", "Third-party notices")
         for name, value in entries.items():
             archive.writestr(name, value)
     return output.getvalue()
@@ -53,6 +58,7 @@ class JarVerifierTest(unittest.TestCase):
         metadata = {
             "schemaVersion": 1,
             "id": "universal_translator",
+            "version": "1.0",
             "depends": {"minecraft": "1.20.1"},
             "mixins": ["example.mixins.json"],
         }
@@ -75,6 +81,7 @@ modLoader="javafml"
 loaderVersion="[47,)"
 [[mods]]
 modId="universal_translator"
+version="1.0"
 [[dependencies.universal_translator]]
 modId="minecraft"
 versionRange="[1.20.1,1.20.2)"
@@ -97,6 +104,7 @@ modLoader="javafml"
 loaderVersion="[4,)"
 [[mods]]
 modId="universal_translator"
+version="1.0"
 [[dependencies.universal_translator]]
 modId="neoforge"
 versionRange="[21.1,22)"
@@ -181,6 +189,64 @@ versionRange="[1.21.1,1.21.2)"
             verify_jar_bytes(
                 make_jar({"fabric.mod.json": json.dumps(metadata)}),
                 "template.jar",
+            )
+
+    def test_release_filename_version_must_match_fabric_metadata(self) -> None:
+        metadata = {
+            "schemaVersion": 1,
+            "id": "universal_translator",
+            "version": "1.2.1",
+            "depends": {"minecraft": "1.20.1"},
+        }
+        with self.assertRaisesRegex(VerificationError, "version mismatch"):
+            verify_jar_bytes(
+                make_jar({"fabric.mod.json": json.dumps(metadata)}),
+                "MCAutoTranslationTool-1.3.0-mc1.20.1-fabric.jar",
+            )
+
+    def test_release_filename_version_must_match_classic_forge_metadata(self) -> None:
+        metadata = [{
+            "modid": "universal_translator",
+            "version": "1.3.0-test.2",
+            "mcversion": "1.8.9",
+        }]
+        with self.assertRaisesRegex(VerificationError, "version mismatch"):
+            verify_jar_bytes(
+                make_jar({"mcmod.info": json.dumps(metadata)}),
+                "MCAutoTranslationTool-1.3.0-mc1.8.9-forge.jar",
+            )
+
+    def test_missing_legal_files_are_rejected(self) -> None:
+        metadata = {
+            "schemaVersion": 1,
+            "id": "universal_translator",
+            "version": "1.3.0",
+            "depends": {"minecraft": "1.20.1"},
+        }
+        with self.assertRaisesRegex(VerificationError, "license"):
+            verify_jar_bytes(
+                make_jar(
+                    {"fabric.mod.json": json.dumps(metadata)},
+                    include_legal_files=False,
+                ),
+                "MCAutoTranslationTool-1.3.0-mc1.20.1-fabric.jar",
+            )
+
+    def test_too_new_class_file_is_rejected(self) -> None:
+        metadata = {
+            "schemaVersion": 1,
+            "id": "universal_translator",
+            "version": "1.3.0",
+            "depends": {"minecraft": "1.20.1"},
+        }
+        java_22_class = b"\xca\xfe\xba\xbe\x00\x00\x00\x42"
+        with self.assertRaisesRegex(VerificationError, "requires major 66"):
+            verify_jar_bytes(
+                make_jar({
+                    "fabric.mod.json": json.dumps(metadata),
+                    "example/TooNew.class": java_22_class,
+                }),
+                "MCAutoTranslationTool-1.3.0-mc1.20.1-fabric.jar",
             )
 
 

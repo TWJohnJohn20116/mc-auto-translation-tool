@@ -3,7 +3,7 @@ plugins {
 }
 
 group = "org.universaltranslator"
-version = "1.3.0-beta.3"
+version = project.mod_version
 
 // Gradle itself runs on a modern JDK. Toolchains make compilation reproducible while
 // each module's existing options.release setting preserves its Java 8/17/21 bytecode target.
@@ -187,7 +187,7 @@ tasks.register("testJarVerifier", Exec) {
             file("scripts/verify_release_jars.py"),
             file("scripts/test_verify_release_jars.py")
     )
-    commandLine "python", file("scripts/test_verify_release_jars.py")
+    commandLine "python3", file("scripts/test_verify_release_jars.py")
 }
 
 tasks.register("testReleaseAssetPreparer", Exec) {
@@ -197,7 +197,7 @@ tasks.register("testReleaseAssetPreparer", Exec) {
             file("scripts/prepare_release_assets.py"),
             file("scripts/test_prepare_release_assets.py")
     )
-    commandLine "python", file("scripts/test_prepare_release_assets.py")
+    commandLine "python3", file("scripts/test_prepare_release_assets.py")
 }
 
 tasks.register("verifyReleaseJars", Exec) {
@@ -217,7 +217,7 @@ tasks.register("verifyReleaseJars", Exec) {
         jars = (jars + splitJars).unique { it.absolutePath }
                 .sort { left, right -> left.name <=> right.name }
         commandLine(
-                ["python", file("scripts/verify_release_jars.py"),
+                ["python3", file("scripts/verify_release_jars.py"),
                  "--checksum-file", new File(releaseDirectory, "SHA256SUMS.txt"),
                  "--require-complete-checksums"] + jars
         )
@@ -230,11 +230,15 @@ tasks.register("prepareReleaseAssets", Exec) {
     group = "distribution"
     description = "Reduces exact-version artifacts to directly installable compatible JAR families."
     dependsOn("testReleaseAssetPreparer")
-    inputs.file(file("scripts/prepare_release_assets.py"))
+    inputs.files(
+            file("scripts/prepare_release_assets.py"),
+            file("LICENSE"),
+            file("docs/en/THIRD_PARTY_OFFLINE.md")
+    )
     inputs.files(releaseArtifacts)
     outputs.dir(preparedReleaseDirectory)
     commandLine(
-            "python", file("scripts/prepare_release_assets.py"),
+            "python3", file("scripts/prepare_release_assets.py"),
             "--release-dir", releaseDirectory,
             "--output-dir", preparedReleaseDirectory.get().asFile,
             "--version", project.mod_version
@@ -251,7 +255,7 @@ tasks.register("verifyPreparedReleaseAssets", Exec) {
         def jars = fileTree(directory).matching { include "*.jar" }.files
                 .sort { left, right -> left.name <=> right.name }
         commandLine(
-                ["python", file("scripts/verify_release_jars.py"),
+                ["python3", file("scripts/verify_release_jars.py"),
                  "--checksum-file", new File(directory, "SHA256SUMS.txt"),
                  "--require-complete-checksums"] + jars
         )

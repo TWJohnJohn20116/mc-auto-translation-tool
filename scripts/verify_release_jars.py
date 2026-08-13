@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import re
+import struct
 import sys
 import zipfile
 from collections import Counter
@@ -19,6 +20,10 @@ from typing import Iterable
 PLACEHOLDER = re.compile(r"\$\{[^}]+}")
 SHA256_LINE = re.compile(r"^([0-9a-fA-F]{64})\s+[* ]?(.+?)\s*$")
 SPLIT_JAR_PART = re.compile(r"^(?P<jar>.+\.jar)\.part-(?P<suffix>[a-z]{2})$")
+RELEASE_JAR = re.compile(
+    r"^MCAutoTranslationTool-(?P<version>.+)"
+    r"(?:-mc.+-(?:fabric|forge|neoforge|forge-neoforge)|-fabric-all)\.jar$"
+)
 
 
 class VerificationError(RuntimeError):
@@ -45,6 +50,59 @@ def _reject_placeholders(value: object, label: str) -> None:
         raise VerificationError(f"unexpanded template placeholder in {label}")
 
 
+def _expected_release_version(label: str) -> str | None:
+    outer_label = label.split("!/", 1)[0]
+    match = RELEASE_JAR.fullmatch(PurePosixPath(outer_label).name)
+    return match.group("version") if match else None
+
+
+def _class_major_for_minecraft(minecraft: str) -> int | None:
+    if minecraft in {"1.8.9", "1.12.2", "1.16.5"}:
+        return 52
+    if minecraft in {"1.19.2", "1.20.1"}:
+        return 61
+    if minecraft.startswith("1.21"):
+        return 65
+    if minecraft.startswith("26."):
+        return 69
+    return None
+
+
+def _expected_class_major(label: str) -> int | None:
+    outer_name = PurePosixPath(label.split("!/", 1)[0]).name
+    match = re.search(
+        r"-mc(.+)-(?:fabric|forge|neoforge|forge-neoforge)\.jar$", outer_name
+    )
+    return _class_major_for_minecraft(match.group(1)) if match else None
+
+
+def _validate_class_versions(
+    archive: zipfile.ZipFile, expected_major: int | None
+) -> None:
+    if expected_major is None:
+        return
+    for name in archive.namelist():
+        if not name.endswith(".class"):
+            continue
+        data = archive.read(name)
+        if len(data) < 8 or data[:4] != b"\xca\xfe\xba\xbe":
+            raise VerificationError(f"invalid class file header: {name}")
+        major = struct.unpack(">H", data[6:8])[0]
+        if major > expected_major:
+            raise VerificationError(
+                f"class file {name} requires major {major}, target allows {expected_major}"
+            )
+
+
+def _validate_mod_version(actual: object, expected: str | None, label: str) -> None:
+    if not isinstance(actual, str) or not actual.strip():
+        raise VerificationError(f"missing mod version in {label}")
+    if expected is not None and actual != expected:
+        raise VerificationError(
+            f"mod version mismatch in {label}: {actual} != {expected}"
+        )
+
+
 def _validate_archive_paths(archive: zipfile.ZipFile) -> None:
     names = archive.namelist()
     duplicates = sorted(name for name, count in Counter(names).items() if count > 1)
@@ -54,6 +112,14 @@ def _validate_archive_paths(archive: zipfile.ZipFile) -> None:
         path = PurePosixPath(name)
         if path.is_absolute() or ".." in path.parts:
             raise VerificationError(f"unsafe ZIP entry: {name}")
+
+
+def _validate_legal_files(archive: zipfile.ZipFile) -> None:
+    names = archive.namelist()
+    if not any(PurePosixPath(name).name.startswith("LICENSE") for name in names):
+        raise VerificationError("missing bundled license")
+    if not any(name.endswith("THIRD_PARTY_OFFLINE.md") for name in names):
+        raise VerificationError("missing third-party offline notice")
 
 
 def _manifest_attributes(archive: zipfile.ZipFile) -> dict[str, str]:
@@ -127,13 +193,21 @@ def _fabric_entrypoints(metadata: dict[str, object]) -> list[str]:
     return result
 
 
-def _validate_fabric(archive: zipfile.ZipFile, label: str) -> JarResult:
+def _validate_fabric(
+    archive: zipfile.ZipFile,
+    label: str,
+    expected_version: str | None,
+    expected_class_major: int | None,
+) -> JarResult:
     metadata = _read_json(archive, "fabric.mod.json")
     if not isinstance(metadata, dict):
         raise VerificationError("fabric.mod.json is not an object")
     _reject_placeholders(metadata, "fabric.mod.json")
     if metadata.get("schemaVersion") != 1 or not metadata.get("id"):
         raise VerificationError("invalid Fabric schemaVersion or mod id")
+    if str(metadata.get("id", "")).startswith("universal_translator"):
+        _validate_legal_files(archive)
+        _validate_mod_version(metadata.get("version"), expected_version, "fabric.mod.json")
     dependencies = metadata.get("depends")
     if not isinstance(dependencies, dict) or not dependencies.get("minecraft"):
         raise VerificationError("missing Fabric Minecraft dependency")
@@ -155,7 +229,20 @@ def _validate_fabric(archive: zipfile.ZipFile, label: str) -> JarResult:
         nested_name = nested.get("file") if isinstance(nested, dict) else None
         if not isinstance(nested_name, str) or nested_name not in archive.namelist():
             raise VerificationError(f"missing nested Fabric JAR: {nested_name}")
-        verify_jar_bytes(archive.read(nested_name), f"{label}!/{nested_name}")
+        nested_match = re.fullmatch(
+            r"META-INF/jars/universal-translator-(.+)\.jar", nested_name
+        )
+        nested_major = (
+            _class_major_for_minecraft(nested_match.group(1))
+            if nested_match
+            else expected_class_major
+        )
+        verify_jar_bytes(
+            archive.read(nested_name),
+            f"{label}!/{nested_name}",
+            expected_version,
+            nested_major,
+        )
         nested_count += 1
     return JarResult(label, "fabric", mixin_count, nested_count)
 
@@ -189,7 +276,10 @@ def _validate_legacy_forge_mapping(
 
 
 def _validate_forge(
-    archive: zipfile.ZipFile, label: str, metadata_path: str
+    archive: zipfile.ZipFile,
+    label: str,
+    metadata_path: str,
+    expected_version: str | None,
 ) -> JarResult:
     metadata = archive.read(metadata_path).decode("utf-8")
     if PLACEHOLDER.search(metadata):
@@ -197,6 +287,13 @@ def _validate_forge(
     for required in ('modLoader="javafml"', 'modId="universal_translator"'):
         if required not in metadata:
             raise VerificationError(f"missing Forge metadata field: {required}")
+    _validate_legal_files(archive)
+    version_match = re.search(r'^\s*version\s*=\s*"([^"]+)"', metadata, re.MULTILINE)
+    _validate_mod_version(
+        version_match.group(1) if version_match else None,
+        expected_version,
+        metadata_path,
+    )
     minecraft_range = _forge_minecraft_range(metadata)
     if not minecraft_range:
         raise VerificationError(f"missing exact Minecraft dependency range in {metadata_path}")
@@ -215,26 +312,57 @@ def _validate_forge(
     return JarResult(label, loader, mixin_count, 0)
 
 
-def _validate_classic_forge(archive: zipfile.ZipFile, label: str) -> JarResult:
+def _validate_classic_forge(
+    archive: zipfile.ZipFile, label: str, expected_version: str | None
+) -> JarResult:
     metadata = _read_json(archive, "mcmod.info")
     _reject_placeholders(metadata, "mcmod.info")
+    if not isinstance(metadata, list):
+        raise VerificationError("mcmod.info is not a list")
+    mods = [item for item in metadata if isinstance(item, dict)]
+    mod = next(
+        (item for item in mods if item.get("modid") == "universal_translator"),
+        None,
+    )
+    if mod is None:
+        raise VerificationError("mcmod.info is missing universal_translator")
+    _validate_legal_files(archive)
+    _validate_mod_version(mod.get("version"), expected_version, "mcmod.info")
+    if not mod.get("mcversion"):
+        raise VerificationError("mcmod.info is missing mcversion")
     mixin_count = _validate_mixins(archive, _mixin_configs(archive, []))
     return JarResult(label, "forge-classic", mixin_count, 0)
 
 
-def verify_jar_bytes(data: bytes, label: str) -> JarResult:
+def verify_jar_bytes(
+    data: bytes,
+    label: str,
+    expected_version: str | None = None,
+    expected_class_major: int | None = None,
+) -> JarResult:
+    if expected_version is None:
+        expected_version = _expected_release_version(label)
+    if expected_class_major is None:
+        expected_class_major = _expected_class_major(label)
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             _validate_archive_paths(archive)
+            _validate_class_versions(archive, expected_class_major)
             names = set(archive.namelist())
             if "fabric.mod.json" in names:
-                return _validate_fabric(archive, label)
+                return _validate_fabric(
+                    archive, label, expected_version, expected_class_major
+                )
             if "META-INF/mods.toml" in names:
-                return _validate_forge(archive, label, "META-INF/mods.toml")
+                return _validate_forge(
+                    archive, label, "META-INF/mods.toml", expected_version
+                )
             if "META-INF/neoforge.mods.toml" in names:
-                return _validate_forge(archive, label, "META-INF/neoforge.mods.toml")
+                return _validate_forge(
+                    archive, label, "META-INF/neoforge.mods.toml", expected_version
+                )
             if "mcmod.info" in names:
-                return _validate_classic_forge(archive, label)
+                return _validate_classic_forge(archive, label, expected_version)
             raise VerificationError("unrecognized mod metadata")
     except zipfile.BadZipFile as error:
         raise VerificationError(f"invalid ZIP/JAR: {error}") from error
