@@ -9,6 +9,7 @@ on:
       - "downloads/**"
       - "gradle.properties"
       - "CHANGELOG.md"
+      - "scripts/verify_release_jars.py"
   workflow_dispatch:
 
 permissions:
@@ -31,6 +32,11 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Read and validate release version
         id: version
@@ -100,11 +106,7 @@ jobs:
               echo "Missing release target: $release_dir/$file" >&2
               exit 1
             fi
-            unzip -tqq "$release_dir/$file"
           done
-          unzip -l "$release_dir/MCAutoTranslationTool-$version-mc1.20.1-forge.jar" | grep -q 'main.refmap.json'
-          unzip -l "$release_dir/MCAutoTranslationTool-$version-mc1.20.1-neoforge.jar" | grep -q 'main.refmap.json'
-          unzip -l "$release_dir/MCAutoTranslationTool-$version-mc1.21.1-neoforge.jar" | grep -q 'universal-translator.neoforge.mixins.json'
           prerelease=false
           if [[ "$version" == *-* ]]; then
             prerelease=true
@@ -114,26 +116,17 @@ jobs:
           echo "release_dir=$release_dir" >> "$GITHUB_OUTPUT"
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
 
-      - name: Verify release checksums
-        shell: bash
-        working-directory: ${{ steps.version.outputs.release_dir }}
-        run: sha256sum --check SHA256SUMS.txt
-
-      - name: Verify legacy Forge runtime mappings
+      - name: Verify release JARs and checksums
         shell: bash
         env:
-          VERSION: ${{ steps.version.outputs.version }}
           RELEASE_DIR: ${{ steps.version.outputs.release_dir }}
         run: |
           set -euo pipefail
-          for game_version in 1.16.5 1.19.2 1.20.1; do
-            jar="$RELEASE_DIR/MCAutoTranslationTool-$VERSION-mc$game_version-forge.jar"
-            bytecode="$(javap -classpath "$jar" -c -p org.universaltranslator.forge.ForgeTranslationRuntime)"
-            if grep -Fq 'net/minecraft/client/Minecraft.getInstance' <<<"$bytecode"; then
-              echo "Development mappings found in runtime JAR: $jar" >&2
-              exit 1
-            fi
-          done
+          mapfile -t jars < <(find "$RELEASE_DIR" -maxdepth 1 -type f -name '*.jar' -print | sort)
+          python scripts/verify_release_jars.py \
+            --checksum-file "$RELEASE_DIR/SHA256SUMS.txt" \
+            --require-complete-checksums \
+            "${jars[@]}"
 
       - name: Create or refresh GitHub Release
         shell: bash

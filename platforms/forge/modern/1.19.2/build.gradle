@@ -4,87 +4,12 @@ plugins {
     id "net.minecraftforge.renamer" version "1.0.14"
 }
 
-version = project.mod_version
-group = project.maven_group
+ext.legacyMinecraftVersion = "1.19.2"
+ext.legacyForgeVersion = "43.5.2"
+ext.legacyForgeLoaderMajor = "43"
+ext.legacyMinecraftNextVersion = "1.19.3"
+ext.legacyJavaRelease = 17
+ext.legacyPackFormat = 15
+ext.legacyAuthors = "??撘?272635"
 
-base {
-    archivesName = "mc-auto-translation-tool-forge-1.19.2"
-}
-
-minecraft {
-    mappings channel: "official", version: "1.19.2"
-    runs {
-        configureEach {
-            workingDir.convention layout.projectDirectory.dir("run")
-            args "--mixin.config=universal-translator.forge.mixins.json"
-            if (System.getProperty("os.name").startsWith("Mac")) {
-                jvmArgs "-XstartOnFirstThread"
-            }
-        }
-        register("client")
-    }
-}
-
-repositories {
-    minecraft.mavenizer(it)
-    maven fg.forgeMaven
-    maven fg.minecraftLibsMaven
-    mavenCentral()
-}
-
-dependencies {
-    implementation minecraft.dependency("net.minecraftforge:forge:1.19.2-43.5.2")
-    annotationProcessor "org.spongepowered:mixin:0.8.7:processor"
-}
-
-sourceSets {
-    main {
-        java.srcDir project(":translator-core").file("src/main/java")
-    }
-}
-
-renamer.enableMixinRefmaps {
-    config "universal-translator.forge.mixins.json"
-}
-
-renamer.classes(tasks.named("jar", Jar)) {
-    archiveClassifier = "runtime"
-    mappings renamer.mixin.generatedMappings
-}
-renamer.mappings(minecraft.dependency.toSrg)
-
-tasks.named("processResources", ProcessResources).configure {
-    inputs.property "version", project.version
-    filesMatching("META-INF/mods.toml") {
-        expand "version": project.version
-    }
-}
-
-tasks.named("jar", Jar).configure {
-    archiveClassifier = "dev"
-    manifest {
-        attributes "MixinConfigs": "universal-translator.forge.mixins.json"
-    }
-    from(rootProject.file("LICENSE")) {
-        rename { "LICENSE_universal_translator" }
-    }
-    from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) {
-        rename { "THIRD_PARTY_OFFLINE.md" }
-    }
-}
-
-tasks.register("releaseJar", Copy) {
-    dependsOn tasks.named("renameJar")
-    from(tasks.named("renameJar").flatMap { it.output })
-    into(layout.buildDirectory.dir("release"))
-    rename { "mc-auto-translation-tool-forge-1.19.2-${project.version}.jar" }
-}
-
-tasks.named("build").configure {
-    dependsOn tasks.named("releaseJar")
-}
-
-tasks.withType(JavaCompile).configureEach {
-    options.encoding = "UTF-8"
-    options.release = 17
-}
+apply from: rootProject.file("platforms/forge/modern/shared.gradle")

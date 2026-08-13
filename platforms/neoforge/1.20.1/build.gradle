@@ -32,10 +32,14 @@ legacyForge {
     }
 }
 
+def forgeLegacyShared = rootProject.file("platforms/forge/modern/shared")
+
 sourceSets {
     main {
         java.srcDirs = [
                 project(":platform-forge-1.20.1").file("src/main/java"),
+                new File(forgeLegacyShared, "common/src/main/java"),
+                new File(forgeLegacyShared, "family/1.19.2-plus/src/main/java"),
                 project(":translator-core").file("src/main/java")
         ]
         resources.setSrcDirs([])
@@ -52,10 +56,16 @@ mixin {
 }
 
 tasks.named("processResources", ProcessResources).configure {
-    inputs.property "version", project.version
+    inputs.properties("version": project.version, "packFormat": 15)
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     from(project(":platform-forge-1.20.1").file("src/main/resources")) {
         exclude "META-INF/mods.toml", "universal-translator.forge.mixins.json"
+    }
+    from(new File(forgeLegacyShared, "common/src/main/resources")) {
+        exclude "META-INF/mods.toml"
+        filesMatching("pack.mcmeta") {
+            expand "packFormat": 15
+        }
     }
     from("src/main/resources") {
         filesMatching("META-INF/mods.toml") {

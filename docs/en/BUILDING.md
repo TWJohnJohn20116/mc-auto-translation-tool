@@ -158,6 +158,11 @@ The current Gradle/Loom build requires JDK 17 or later, while the output targets
 ./gradlew :platform-fabric-1.16.5:build
 ```
 
+The Fabric and Forge 1.16.5, 1.19.2, and 1.20.1 modules compose stable code from
+`platforms/fabric/legacy/shared/` and `platforms/forge/modern/shared/`. Keep API-specific UI and
+Mixin adapters in their exact-version directories instead of adding compatibility branches to the
+shared runtime.
+
 ## Forge 1.12.2
 
 A full JDK 8 installation is required. Enter `legacy/forge-1.12.2/` and run:
@@ -183,6 +188,27 @@ If Gradle itself is running under a legacy JRE that has `java` but no `javac`, s
 compatible compiler explicitly with
 `./gradlew build -PlegacyJavac=/absolute/path/to/javac`. A normal full JDK 8 installation does not
 need this argument.
+
+## Release JAR verification
+
+The root check validates every tracked release JAR and its checksum:
+
+```bash
+./gradlew check
+```
+
+To validate arbitrary build outputs directly, pass them to the standalone verifier:
+
+```bash
+python scripts/verify_release_jars.py path/to/mod.jar
+python scripts/verify_release_jars.py \
+  --checksum-file downloads/1.3.0-test.2/SHA256SUMS.txt \
+  --require-complete-checksums downloads/1.3.0-test.2/*.jar
+```
+
+It checks ZIP structure, expanded metadata, entrypoints, declared Mixin classes and refmaps, nested
+Fabric JARs, legacy Forge runtime mappings, SHA-256 values, and checksum-manifest coverage. Legacy
+Fabric and Forge `build` tasks run the same verifier against their generated release JARs.
 
 ## Core self-test
 

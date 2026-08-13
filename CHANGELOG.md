@@ -2,6 +2,8 @@
 
 ## 未发布
 
+- 合并 Fabric/Forge 1.16.5、1.19.2 与 1.20.1 的稳定源码和构建逻辑；新增通用发布 JAR 验证器，检查 metadata、Mixin/refmap、Fabric 内嵌 JAR、Forge 运行时映射与 SHA-256；并修正 Forge 26.1.1 发布 JAR 缺少 Mixin class 的问题。
+
 ## 1.3.0-beta.3 - 2026-08-13
 
 - 合并 Fabric 26.x 与 Forge 26.x 的重复源码，并将 Forge 1.21/26.x 的公共构建逻辑及版本 metadata 改为共享模板；各版本目录仅保留依赖与兼容性参数。

@@ -18,7 +18,7 @@ bc5e40f587cf324de6791e2c32865e7c9995dcd549d9ecb4204852e5922fd4f2  MCAutoTranslat
 f74de24aae117d7ec665d80c1166d6a24d2abdf105f1368cac6f984897105366  MCAutoTranslationTool-1.3.0-test.2-mc1.21.x-fabric.jar
 798d3246ceb8ca34ff076c2094f7cdf90709962721ff3b6423a1251389921c51  MCAutoTranslationTool-1.3.0-test.2-mc1.21-forge.jar
 db8bc34b00cf43667025aa092230a5ce95a2014ecf2ec3245cf346925b382d03  MCAutoTranslationTool-1.3.0-test.2-mc1.8.9-forge.jar
-10daa6e3a83ee13dcc276db63d504ecb96ce439fdb02d9039baa189cd73623fc  MCAutoTranslationTool-1.3.0-test.2-mc26.1.1-forge.jar
+3bdf04b63a69c6827b32f4f5b5dd5cca2904f95deb14a478ce2dfedc8b7ce8ea  MCAutoTranslationTool-1.3.0-test.2-mc26.1.1-forge.jar
 bc3d845c3c5b2873932e995ef317ce775a2767baf868dbe23be0d346fecea50e  MCAutoTranslationTool-1.3.0-test.2-mc26.1.2-forge.jar
 21860b86a3f8b9cf5905464286505420d38c6ad88b2f40b1f41d614bb94576c6  MCAutoTranslationTool-1.3.0-test.2-mc26.1-forge.jar
 75989d3e2fe3a3588db4210501943bbdd79d31965803a9b0dbaaf74a5ae14fde  MCAutoTranslationTool-1.3.0-test.2-mc26.2-forge.jar
