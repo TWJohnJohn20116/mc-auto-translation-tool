@@ -7,7 +7,8 @@ platforms/
 ├─ fabric/
 │  ├─ legacy/              # 1.16.5, 1.19.2, and 1.20.1
 │  ├─ 1.21/
-│  │  ├─ versions/         # Exact 1.21 through 1.21.11 implementations
+│  │  ├─ versions/         # Exact metadata and dependency coordinates
+│  │  ├─ shared/           # Common code/resources plus API-specific layers
 │  │  ├─ bundle/           # The single downloadable 1.21.x JAR
 │  │  └─ shared-1.21.4-1.21.5/
 │  └─ 26.x/
@@ -28,3 +29,7 @@ The Gradle project names remain unchanged. A fully qualified task path includes 
 automatically. For IDE import or multiple targets, pass `-PtargetPlatform=<short-name>`; comma-separated
 values are supported, and `all` registers every platform. `settings.gradle` expands bundle dependencies
 without configuring unrelated ForgeGradle or Loom workspaces.
+
+Fabric 1.21 projects assemble their client sources from `platforms/fabric/1.21/shared`. The runtime,
+draw-context, and text-renderer layers isolate the few API boundaries while all other sources and
+resources remain common to every supported 1.21 version.

@@ -1,0 +1,103 @@
+def requiredProperties = [
+        "fabricMinecraftVersion",
+        "fabricYarnMappings",
+        "fabricLoaderVersion",
+        "fabricApiVersion"
+]
+requiredProperties.each { propertyName ->
+    if (!project.ext.has(propertyName)) {
+        throw new GradleException("Missing ${propertyName} before applying Fabric 1.21 shared.gradle")
+    }
+}
+
+def sourceLayers = [
+        "1.21"   : ["runtime/pre-1.21.9", "draw/1.21-1.21.5", "text-renderer/1.21-1.21.1"],
+        "1.21.1" : ["runtime/pre-1.21.9", "draw/1.21-1.21.5", "text-renderer/1.21-1.21.1"],
+        "1.21.2" : ["runtime/pre-1.21.9", "draw/1.21-1.21.5", "text-renderer/1.21.2-1.21.5"],
+        "1.21.3" : ["runtime/pre-1.21.9", "draw/1.21-1.21.5", "text-renderer/1.21.2-1.21.5"],
+        "1.21.4" : ["runtime/pre-1.21.9", "draw/1.21-1.21.5", "text-renderer/1.21.2-1.21.5"],
+        "1.21.5" : ["runtime/pre-1.21.9", "draw/1.21-1.21.5", "text-renderer/1.21.2-1.21.5"],
+        "1.21.6" : ["runtime/pre-1.21.9", "draw/1.21.6-plus", "text-renderer/1.21.6-1.21.10"],
+        "1.21.7" : ["runtime/pre-1.21.9", "draw/1.21.6-plus", "text-renderer/1.21.6-1.21.10"],
+        "1.21.8" : ["runtime/pre-1.21.9", "draw/1.21.6-plus", "text-renderer/1.21.6-1.21.10"],
+        "1.21.9" : ["runtime/1.21.9-plus", "draw/1.21.6-plus", "text-renderer/1.21.6-1.21.10"],
+        "1.21.10": ["runtime/1.21.9-plus", "draw/1.21.6-plus", "text-renderer/1.21.6-1.21.10"],
+        "1.21.11": ["runtime/1.21.9-plus", "draw/1.21.6-plus", "text-renderer/1.21.11"]
+]
+
+def sourceVersion = project.ext.has("fabricSourceVersion") ?
+        project.ext.fabricSourceVersion.toString() : project.name - "platform-fabric-"
+def layers = sourceLayers[sourceVersion]
+if (layers == null) {
+    throw new GradleException("No Fabric 1.21 source layers are registered for ${sourceVersion}")
+}
+
+def sharedRoot = rootProject.file("platforms/fabric/1.21/shared")
+def archiveVersion = project.ext.has("fabricArchiveVersion") ?
+        project.ext.fabricArchiveVersion : project.ext.fabricMinecraftVersion
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = "mc-auto-translation-tool-fabric-${archiveVersion}"
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.ext.fabricMinecraftVersion}"
+    mappings "net.fabricmc:yarn:${project.ext.fabricYarnMappings}:v2"
+    modImplementation "net.fabricmc:fabric-loader:${project.ext.fabricLoaderVersion}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.ext.fabricApiVersion}"
+}
+
+sourceSets {
+    main {
+        java.srcDir project(":translator-core").file("src/main/java")
+        resources.srcDir new File(sharedRoot, "common/src/main/resources")
+    }
+}
+
+loom {
+    splitEnvironmentSourceSets()
+
+    mods {
+        "universal_translator" {
+            sourceSet sourceSets.main
+            sourceSet sourceSets.client
+        }
+    }
+}
+
+sourceSets {
+    client {
+        java.srcDir new File(sharedRoot, "common/src/client/java")
+        layers.each { layer ->
+            java.srcDir new File(sharedRoot, "${layer}/src/client/java")
+        }
+    }
+}
+
+processResources {
+    inputs.property "version", project.version
+    filesMatching("fabric.mod.json") {
+        expand "version": project.version
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+    options.release = 21
+}
+
+java {
+    withSourcesJar()
+}
+
+jar {
+    from(rootProject.file("LICENSE")) {
+        rename { "LICENSE_universal_translator" }
+    }
+    from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) {
+        rename { "THIRD_PARTY_OFFLINE.md" }
+    }
+}
