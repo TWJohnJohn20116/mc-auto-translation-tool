@@ -190,6 +190,16 @@ tasks.register("testJarVerifier", Exec) {
     commandLine "python", file("scripts/test_verify_release_jars.py")
 }
 
+tasks.register("testReleaseAssetPreparer", Exec) {
+    group = "verification"
+    description = "Tests compatible Forge-family and all-version Fabric JAR preparation."
+    inputs.files(
+            file("scripts/prepare_release_assets.py"),
+            file("scripts/test_prepare_release_assets.py")
+    )
+    commandLine "python", file("scripts/test_prepare_release_assets.py")
+}
+
 tasks.register("verifyReleaseJars", Exec) {
     group = "verification"
     description = "Validates every tracked release JAR, Mixin class, mapping, and SHA-256 digest."
@@ -214,10 +224,44 @@ tasks.register("verifyReleaseJars", Exec) {
     }
 }
 
+def preparedReleaseDirectory = layout.buildDirectory.dir("release-assets")
+
+tasks.register("prepareReleaseAssets", Exec) {
+    group = "distribution"
+    description = "Reduces exact-version artifacts to directly installable compatible JAR families."
+    dependsOn("testReleaseAssetPreparer")
+    inputs.file(file("scripts/prepare_release_assets.py"))
+    inputs.files(releaseArtifacts)
+    outputs.dir(preparedReleaseDirectory)
+    commandLine(
+            "python", file("scripts/prepare_release_assets.py"),
+            "--release-dir", releaseDirectory,
+            "--output-dir", preparedReleaseDirectory.get().asFile,
+            "--version", project.mod_version
+    )
+}
+
+tasks.register("verifyPreparedReleaseAssets", Exec) {
+    group = "verification"
+    description = "Validates the reduced directly installable release JAR set."
+    dependsOn("prepareReleaseAssets", "verifyReleaseJars")
+    inputs.dir(preparedReleaseDirectory)
+    doFirst {
+        def directory = preparedReleaseDirectory.get().asFile
+        def jars = fileTree(directory).matching { include "*.jar" }.files
+                .sort { left, right -> left.name <=> right.name }
+        commandLine(
+                ["python", file("scripts/verify_release_jars.py"),
+                 "--checksum-file", new File(directory, "SHA256SUMS.txt"),
+                 "--require-complete-checksums"] + jars
+        )
+    }
+}
+
 tasks.named("check") {
     dependsOn(
             "validateMixinConfigs",
             "validateSharedPlatformLayouts",
-            "verifyReleaseJars"
+            "verifyPreparedReleaseAssets"
     )
 }

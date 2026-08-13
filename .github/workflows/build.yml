@@ -118,3 +118,32 @@ jobs:
           :platform-forge-1.16.5:build
           :platform-forge-1.19.2:build
           :platform-forge-1.20.1:build
+
+  release-assets:
+    name: Verify reduced release JARs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Verify every prepared release JAR and Fabric selection
+        run: >-
+          ./gradlew --no-daemon --max-workers=2
+          -PtargetPlatform=fabric-1.21.x
+          verifyPreparedReleaseAssets
+          :platform-fabric-1.21.x:verifyPreparedReleaseBundle
