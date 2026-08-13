@@ -1,0 +1,136 @@
+def requiredProperties = [
+        "legacyMinecraftVersion",
+        "legacyYarnMappings",
+        "legacyLoaderVersion",
+        "legacyFabricApiVersion",
+        "legacyJavaRelease",
+        "legacyFabricDependency"
+]
+requiredProperties.each { propertyName ->
+    if (!project.ext.has(propertyName)) {
+        throw new GradleException("Missing ${propertyName} before applying Fabric legacy shared.gradle")
+    }
+}
+
+def sourceLayers = [
+        "1.16.5": ["family/1.16.5-1.19.2", "rendered/1.16.5"],
+        "1.19.2": ["family/1.16.5-1.19.2", "rendered/1.19.2-plus"],
+        "1.20.1": ["rendered/1.19.2-plus"]
+]
+def gameVersion = project.ext.legacyMinecraftVersion.toString()
+def layers = sourceLayers[gameVersion]
+if (layers == null) {
+    throw new GradleException("No Fabric legacy source layers are registered for ${gameVersion}")
+}
+
+def sharedRoot = rootProject.file("platforms/fabric/legacy/shared")
+def splitEnvironment = gameVersion != "1.16.5"
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = "mc-auto-translation-tool-fabric-${gameVersion}"
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${gameVersion}"
+    mappings "net.fabricmc:yarn:${project.ext.legacyYarnMappings}:v2"
+    modImplementation "net.fabricmc:fabric-loader:${project.ext.legacyLoaderVersion}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.ext.legacyFabricApiVersion}"
+}
+
+sourceSets {
+    main {
+        java.srcDir project(":translator-core").file("src/main/java")
+        resources.srcDir new File(sharedRoot, "common/src/main/resources")
+    }
+}
+
+if (splitEnvironment) {
+    loom {
+        splitEnvironmentSourceSets()
+
+        mods {
+            "universal_translator" {
+                sourceSet sourceSets.main
+                sourceSet sourceSets.client
+            }
+        }
+    }
+
+    sourceSets {
+        client {
+            java.srcDir new File(sharedRoot, "common/src/client/java")
+            layers.each { layer ->
+                java.srcDir new File(sharedRoot, "${layer}/src/client/java")
+            }
+        }
+    }
+} else {
+    sourceSets {
+        main {
+            java.srcDir "src/client/java"
+            java.srcDir new File(sharedRoot, "common/src/client/java")
+            layers.each { layer ->
+                java.srcDir new File(sharedRoot, "${layer}/src/client/java")
+            }
+        }
+    }
+}
+
+processResources {
+    inputs.properties(
+            "version": project.version,
+            "minecraftVersion": gameVersion,
+            "loaderVersion": project.ext.legacyLoaderVersion,
+            "javaVersion": project.ext.legacyJavaRelease,
+            "fabricDependency": project.ext.legacyFabricDependency
+    )
+    filesMatching("fabric.mod.json") {
+        expand(
+                "version": project.version,
+                "minecraftVersion": gameVersion,
+                "loaderVersion": project.ext.legacyLoaderVersion,
+                "javaVersion": project.ext.legacyJavaRelease,
+                "fabricDependency": project.ext.legacyFabricDependency
+        )
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+    options.release = project.ext.legacyJavaRelease as int
+}
+
+java {
+    withSourcesJar()
+}
+
+jar {
+    from(rootProject.file("LICENSE")) {
+        rename { "LICENSE_universal_translator" }
+    }
+    from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) {
+        rename { "THIRD_PARTY_OFFLINE.md" }
+    }
+}
+
+tasks.register("verifyBuiltJar", Exec) {
+    group = "verification"
+    description = "Validates the remapped Fabric release JAR."
+    dependsOn tasks.named("remapJar")
+    inputs.file(tasks.named("remapJar").flatMap { it.archiveFile })
+    inputs.file(rootProject.file("scripts/verify_release_jars.py"))
+    doFirst {
+        commandLine(
+                "python",
+                rootProject.file("scripts/verify_release_jars.py"),
+                tasks.named("remapJar").get().archiveFile.get().asFile
+        )
+    }
+}
+
+tasks.named("build").configure {
+    dependsOn tasks.named("verifyBuiltJar")
+}

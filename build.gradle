@@ -90,8 +90,12 @@ tasks.register("validateSharedPlatformLayouts") {
         }
 
         def requiredSharedFiles = [
+                "platforms/fabric/legacy/shared.gradle",
+                "platforms/fabric/legacy/shared/common/src/main/resources/fabric.mod.json",
                 "platforms/fabric/26.x/shared.gradle",
                 "platforms/fabric/26.x/shared/common/src/main/resources/fabric.mod.json",
+                "platforms/forge/modern/shared.gradle",
+                "platforms/forge/modern/shared/common/src/main/resources/META-INF/mods.toml",
                 "platforms/forge/shared.gradle",
                 "platforms/forge/shared/common/src/main/resources/META-INF/mods.toml",
                 "platforms/forge/26.x/shared.gradle",
@@ -101,9 +105,119 @@ tasks.register("validateSharedPlatformLayouts") {
         if (!missing.isEmpty()) {
             throw new GradleException("Missing shared platform files:\n" + missing.join("\n"))
         }
+
+        def forbiddenLegacyCopies = []
+        ["1.16.5", "1.19.2", "1.20.1"].each { gameVersion ->
+            [
+                    "FabricConfig.java",
+                    "FabricLocalTextGuard.java",
+                    "FabricTranslationRuntime.java",
+                    "RenderedTextBridge.java",
+                    "TranslationRenderContext.java"
+            ].each { name ->
+                forbiddenLegacyCopies.add(
+                        "platforms/fabric/legacy/${gameVersion}/src/client/java/" +
+                                "org/universaltranslator/fabric/${name}")
+            }
+            ["en_us.json", "zh_cn.json", "zh_tw.json"].each { name ->
+                forbiddenLegacyCopies.add(
+                        "platforms/fabric/legacy/${gameVersion}/src/main/resources/" +
+                                "assets/universal_translator/lang/${name}")
+                forbiddenLegacyCopies.add(
+                        "platforms/forge/modern/${gameVersion}/src/main/resources/" +
+                                "assets/universal_translator/lang/${name}")
+            }
+            forbiddenLegacyCopies.add(
+                    "platforms/fabric/legacy/${gameVersion}/src/main/resources/fabric.mod.json")
+            [
+                    "ForgeConfig.java",
+                    "ForgeTranslationRuntime.java",
+                    "TranslationRenderContext.java"
+            ].each { name ->
+                forbiddenLegacyCopies.add(
+                        "platforms/forge/modern/${gameVersion}/src/main/java/" +
+                                "org/universaltranslator/forge/${name}")
+            }
+            forbiddenLegacyCopies.add(
+                    "platforms/forge/modern/${gameVersion}/src/main/resources/META-INF/mods.toml")
+            forbiddenLegacyCopies.add(
+                    "platforms/forge/modern/${gameVersion}/src/main/resources/pack.mcmeta")
+        }
+        ["1.16.5", "1.19.2"].each { gameVersion ->
+            forbiddenLegacyCopies.add(
+                    "platforms/fabric/legacy/${gameVersion}/src/client/java/" +
+                            "org/universaltranslator/fabric/ButtonWidget.java")
+            [
+                    "BossBarHudContextMixin.java", "ChatHudContextMixin.java",
+                    "InGameHudContextMixin.java", "PlayerListHudContextMixin.java",
+                    "ScreenMixin.java", "SignEditScreenMixin.java",
+                    "TextFieldWidgetMixin.java", "TextRendererMixin.java"
+            ].each { name ->
+                forbiddenLegacyCopies.add(
+                        "platforms/fabric/legacy/${gameVersion}/src/client/java/" +
+                                "org/universaltranslator/fabric/mixin/${name}")
+            }
+        }
+        ["1.19.2", "1.20.1"].each { gameVersion ->
+            ["ForgeLocalTextGuard.java", "RenderedTextBridge.java", "UniversalTranslatorForgeMod.java"].each { name ->
+                forbiddenLegacyCopies.add(
+                        "platforms/forge/modern/${gameVersion}/src/main/java/" +
+                                "org/universaltranslator/forge/${name}")
+            }
+        }
+        def duplicated = forbiddenLegacyCopies.findAll { file(it).exists() }
+        if (!duplicated.isEmpty()) {
+            throw new GradleException(
+                    "Legacy shared files must not be copied back into version directories:\n" +
+                            duplicated.sort().join("\n")
+            )
+        }
+    }
+}
+
+def releaseDirectory = file("downloads/${project.mod_version}")
+def releaseArtifacts = fileTree(releaseDirectory) {
+    include "*.jar", "*.jar.part-*"
+}
+
+tasks.register("testJarVerifier", Exec) {
+    group = "verification"
+    description = "Runs unit tests for the release JAR verifier."
+    inputs.files(
+            file("scripts/verify_release_jars.py"),
+            file("scripts/test_verify_release_jars.py")
+    )
+    commandLine "python", file("scripts/test_verify_release_jars.py")
+}
+
+tasks.register("verifyReleaseJars", Exec) {
+    group = "verification"
+    description = "Validates every tracked release JAR, Mixin class, mapping, and SHA-256 digest."
+    dependsOn("testJarVerifier")
+    inputs.file(file("scripts/verify_release_jars.py"))
+    inputs.file(new File(releaseDirectory, "SHA256SUMS.txt"))
+    inputs.files(releaseArtifacts)
+
+    doFirst {
+        def jars = releaseArtifacts.files
+                .findAll { it.name.endsWith(".jar") }
+        def splitJars = releaseArtifacts.files
+                .findAll { it.name.endsWith(".jar.part-aa") }
+                .collect { new File(it.parentFile, it.name.substring(0, it.name.length() - ".part-aa".length())) }
+        jars = (jars + splitJars).unique { it.absolutePath }
+                .sort { left, right -> left.name <=> right.name }
+        commandLine(
+                ["python", file("scripts/verify_release_jars.py"),
+                 "--checksum-file", new File(releaseDirectory, "SHA256SUMS.txt"),
+                 "--require-complete-checksums"] + jars
+        )
     }
 }
 
 tasks.named("check") {
-    dependsOn("validateMixinConfigs", "validateSharedPlatformLayouts")
+    dependsOn(
+            "validateMixinConfigs",
+            "validateSharedPlatformLayouts",
+            "verifyReleaseJars"
+    )
 }

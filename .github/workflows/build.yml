@@ -29,6 +29,11 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
@@ -49,8 +54,6 @@ jobs:
             java: "21"
           - target: fabric-26.x
             java: "25"
-          - target: forge-1.20.1
-            java: "21"
           - target: neoforge-1.20.1
             java: "21"
           - target: forge-1.21.1
@@ -82,3 +85,36 @@ jobs:
 
       - name: Build platform
         run: ./gradlew --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
+
+  legacy-build:
+    name: Build legacy Fabric and Forge
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build legacy platforms
+        run: >-
+          ./gradlew --no-daemon --max-workers=2
+          -PtargetPlatform=fabric-1.16.5,fabric-1.19.2,fabric-1.20.1,forge-1.16.5,forge-1.19.2,forge-1.20.1
+          :platform-fabric-1.16.5:build
+          :platform-fabric-1.19.2:build
+          :platform-fabric-1.20.1:build
+          :platform-forge-1.16.5:build
+          :platform-forge-1.19.2:build
+          :platform-forge-1.20.1:build
