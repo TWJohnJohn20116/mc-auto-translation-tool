@@ -1,0 +1,96 @@
+def requiredProperties = [
+        "fabricMinecraftVersion",
+        "fabricLoaderVersion",
+        "fabricApiVersion"
+]
+requiredProperties.each { propertyName ->
+    if (!project.ext.has(propertyName)) {
+        throw new GradleException("Missing ${propertyName} before applying Fabric 26.x shared.gradle")
+    }
+}
+
+def sourceLayers = [
+        "26.1"  : "api/26.1-26.1.2",
+        "26.1.1": "api/26.1-26.1.2",
+        "26.1.2": "api/26.1-26.1.2",
+        "26.2"  : "api/26.2"
+]
+
+def gameVersion = project.name - "platform-fabric-"
+def sourceLayer = sourceLayers[gameVersion]
+if (sourceLayer == null) {
+    throw new GradleException("No Fabric 26.x source layer is registered for ${gameVersion}")
+}
+
+def sharedRoot = rootProject.file("platforms/fabric/26.x/shared")
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = "mc-auto-translation-tool-fabric-${project.ext.fabricMinecraftVersion}"
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.ext.fabricMinecraftVersion}"
+    implementation "net.fabricmc:fabric-loader:${project.ext.fabricLoaderVersion}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${project.ext.fabricApiVersion}"
+}
+
+sourceSets {
+    main {
+        java.srcDir project(":translator-core").file("src/main/java")
+        resources.srcDir new File(sharedRoot, "common/src/main/resources")
+    }
+}
+
+loom {
+    splitEnvironmentSourceSets()
+
+    mods {
+        "universal_translator" {
+            sourceSet sourceSets.main
+            sourceSet sourceSets.client
+        }
+    }
+}
+
+sourceSets {
+    client {
+        java.srcDir new File(sharedRoot, "common/src/client/java")
+        java.srcDir new File(sharedRoot, "${sourceLayer}/src/client/java")
+    }
+}
+
+processResources {
+    inputs.properties(
+            "version": project.version,
+            "minecraftVersion": project.ext.fabricMinecraftVersion,
+            "loaderVersion": project.ext.fabricLoaderVersion
+    )
+    filesMatching("fabric.mod.json") {
+        expand(
+                "version": project.version,
+                "minecraftVersion": project.ext.fabricMinecraftVersion,
+                "loaderVersion": project.ext.fabricLoaderVersion
+        )
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+    options.release = 25
+}
+
+java {
+    withSourcesJar()
+}
+
+jar {
+    from(rootProject.file("LICENSE")) {
+        rename { "LICENSE_universal_translator" }
+    }
+    from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) {
+        rename { "THIRD_PARTY_OFFLINE.md" }
+    }
+}

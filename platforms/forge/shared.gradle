@@ -1,0 +1,92 @@
+def requiredProperties = [
+        "forgeMinecraftVersion",
+        "forgeVersion",
+        "forgeLoaderMajor",
+        "forgeMinecraftNextVersion",
+        "forgeJavaRelease"
+]
+requiredProperties.each { propertyName ->
+    if (!project.ext.has(propertyName)) {
+        throw new GradleException("Missing ${propertyName} before applying Forge shared.gradle")
+    }
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = "mc-auto-translation-tool-forge-${project.ext.forgeMinecraftVersion}"
+}
+
+minecraft {
+    mappings channel: "official", version: project.ext.forgeMinecraftVersion
+    runs {
+        configureEach {
+            workingDir.convention layout.projectDirectory.dir("run")
+            args "--mixin.config=universal-translator.forge.mixins.json"
+            if (System.getProperty("os.name").startsWith("Mac")) {
+                jvmArgs "-XstartOnFirstThread"
+            }
+        }
+        register("client")
+    }
+}
+
+repositories {
+    minecraft.mavenizer(it)
+    maven fg.forgeMaven
+    maven fg.minecraftLibsMaven
+    mavenCentral()
+}
+
+dependencies {
+    implementation minecraft.dependency(
+            "net.minecraftforge:forge:${project.ext.forgeMinecraftVersion}-${project.ext.forgeVersion}")
+    if (project.ext.has("forgeUseEventBusValidator") && project.ext.forgeUseEventBusValidator) {
+        annotationProcessor "net.minecraftforge:eventbus-validator:7.0.5"
+    }
+    annotationProcessor "org.spongepowered:mixin:0.8.7:processor"
+}
+
+def globalSharedRoot = rootProject.file("platforms/forge/shared")
+sourceSets {
+    main {
+        resources.srcDir new File(globalSharedRoot, "common/src/main/resources")
+    }
+}
+
+tasks.named("processResources", ProcessResources).configure {
+    inputs.properties(
+            "version": project.version,
+            "forgeLoaderMajor": project.ext.forgeLoaderMajor,
+            "forgeDependencyVersion": project.ext.forgeVersion,
+            "minecraftVersion": project.ext.forgeMinecraftVersion,
+            "minecraftNextVersion": project.ext.forgeMinecraftNextVersion
+    )
+    filesMatching("META-INF/mods.toml") {
+        expand(
+                "version": project.version,
+                "forgeLoaderMajor": project.ext.forgeLoaderMajor,
+                "forgeDependencyVersion": project.ext.forgeVersion,
+                "minecraftVersion": project.ext.forgeMinecraftVersion,
+                "minecraftNextVersion": project.ext.forgeMinecraftNextVersion
+        )
+    }
+}
+
+tasks.named("jar", Jar).configure {
+    manifest {
+        attributes "MixinConfigs": "universal-translator.forge.mixins.json"
+    }
+    from(rootProject.file("LICENSE")) {
+        rename { "LICENSE_universal_translator" }
+    }
+    from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) {
+        rename { "THIRD_PARTY_OFFLINE.md" }
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+    options.release = project.ext.forgeJavaRelease as int
+}

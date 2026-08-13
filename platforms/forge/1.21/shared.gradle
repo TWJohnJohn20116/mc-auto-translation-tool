@@ -24,3 +24,6 @@ sourceSets {
         resources.srcDir new File(sharedRoot, "common/src/main/resources")
     }
 }
+
+project.ext.forgeJavaRelease = 21
+apply from: rootProject.file("platforms/forge/shared.gradle")
