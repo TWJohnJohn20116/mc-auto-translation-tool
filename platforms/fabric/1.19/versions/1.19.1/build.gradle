@@ -1,0 +1,12 @@
+plugins {
+    id "net.fabricmc.fabric-loom-remap" version "${loom_1_19_2_version}"
+}
+
+ext.legacyMinecraftVersion = minecraft_1_19_1_version
+ext.legacyYarnMappings = yarn_1_19_1_mappings
+ext.legacyLoaderVersion = loader_1_19_1_version
+ext.legacyFabricApiVersion = fabric_api_1_19_1_version
+ext.legacyJavaRelease = 17
+ext.legacyFabricDependency = "fabric-api"
+
+apply from: rootProject.file("platforms/fabric/legacy/shared.gradle")

@@ -42,6 +42,18 @@ currently supported Minecraft 26.x releases: 26.1, 26.1.1, 26.1.2, and 26.2. It 
 implementations, and Fabric Loader selects the matching one. The build verifies every nested JAR
 and exercises real Loader resolution for all four versions.
 
+## Single Fabric 1.19.x JAR
+
+JDK 17 is required:
+
+```bash
+./gradlew :platform-fabric-1.19.x:build --max-workers=1
+```
+
+Output is written to `platforms/fabric/1.19/bundle/build/libs/`. This bundle embeds exact-version
+implementations for Minecraft 1.19, 1.19.1, 1.19.2, 1.19.3, and 1.19.4; Fabric Loader selects the
+matching implementation and the build verifies all five selections.
+
 ## Single Fabric 1.20.x JAR
 
 JDK 17 is required for Minecraft 1.20 through 1.20.4; Minecraft 1.20.5 and 1.20.6 require JDK 21.
