@@ -48,7 +48,7 @@ renamer.enableMixinRefmaps {
 }
 
 renamer.classes(tasks.named("jar", Jar)) {
-    archiveClassifier = "srg"
+    archiveClassifier = "runtime"
     mappings renamer.mixin.generatedMappings
 }
 renamer.mappings(minecraft.dependency.toSrg)
@@ -61,6 +61,7 @@ tasks.named("processResources", ProcessResources).configure {
 }
 
 tasks.named("jar", Jar).configure {
+    archiveClassifier = "dev"
     manifest {
         attributes "MixinConfigs": "universal-translator.forge.mixins.json"
     }
@@ -70,6 +71,17 @@ tasks.named("jar", Jar).configure {
     from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) {
         rename { "THIRD_PARTY_OFFLINE.md" }
     }
+}
+
+tasks.register("releaseJar", Copy) {
+    dependsOn tasks.named("renameJar")
+    from(tasks.named("renameJar").flatMap { it.output })
+    into(layout.buildDirectory.dir("release"))
+    rename { "mc-auto-translation-tool-forge-1.16.5-${project.version}.jar" }
+}
+
+tasks.named("build").configure {
+    dependsOn tasks.named("releaseJar")
 }
 
 tasks.withType(JavaCompile).configureEach {

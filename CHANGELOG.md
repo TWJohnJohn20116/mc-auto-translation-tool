@@ -2,6 +2,7 @@
 
 ## 未发布
 
+- 修正 1.3.0-test.2 的 Forge 1.16.5、1.19.2 与 1.20.1 下载误用 Mojmap 开发 JAR，避免启动时因 `Minecraft.getInstance()` 未转换为 SRG 名称而崩溃；构建与发布流程新增运行时映射验证。
 - 根 Gradle 构建新增 `targetPlatform` 选择器，完整平台任务可自动载入所需模块，整合 JAR 会展开其版本依赖；默认只配置共用核心，避免单一目标触发所有 ForgeGradle 与 Loom 工作区。
 - 根构建加入 Java Toolchain，并让 Gradle Wrapper 在 `JAVA_HOME` 失效时回退至 `PATH` 中的 Java。
 - Forge 1.21 系列改用共用核心、共用资源与四个 API family，移除各精确版本间的大量重复 Java、语言及 Mixin 文件；NeoForge 1.21.1 同步重用这些来源。
