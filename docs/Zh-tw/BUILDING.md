@@ -190,9 +190,9 @@ python scripts/verify_release_jars.py path/to/mod.jar
 驗證器會檢查 ZIP 結構、metadata、entrypoint、Mixin class/refmap、Fabric 內嵌 JAR、
 Forge 舊版執行階段映射，以及 checksum 內容與覆蓋範圍。
 
-發佈流程會將 27 個精確建置產物縮減為 14 個可直接安裝的 JAR：19 個 Fabric 實作會
-放進一個由 Loader 自動選版的 JAR；四組 Forge 版本只會在除 `mods.toml` 外的所有內容
-完全一致時擴寬相容範圍。不同 API 與載入器仍維持獨立：
+發佈流程會將 27 個精確建置產物縮減為 12 個可直接安裝的 JAR：19 個 Fabric 實作會
+放進一個由 Loader 自動選版的 JAR；四組 Forge 版本在 payload 相容時擴寬範圍；class
+payload 相同的 Forge／NeoForge 1.20.1 則共用雙載入器 JAR。不同 API 仍維持獨立：
 
 ```bash
 python scripts/prepare_release_assets.py \

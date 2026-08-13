@@ -41,7 +41,51 @@ versionRange="[51,)"
 modId="minecraft"
 versionRange="[{version},{version}.1)"
 '''
-    return jar({"META-INF/mods.toml": metadata, "example/Class.class": payload})
+    mixin = {
+        "required": True,
+        "package": "example.mixin",
+        "compatibilityLevel": "JAVA_17",
+        "client": ["ExampleMixin"],
+    }
+    return jar({
+        "META-INF/MANIFEST.MF": (
+            "Manifest-Version: 1.0\n"
+            "MixinConfigs: universal-translator.forge.mixins.json\n"
+        ),
+        "META-INF/mods.toml": metadata,
+        "universal-translator.forge.mixins.json": json.dumps(mixin),
+        "example/Class.class": payload,
+    })
+
+
+def neoforge_1201_jar(payload: bytes = b"same") -> bytes:
+    metadata = '''modLoader="javafml"
+loaderVersion="[47,)"
+[[mods]]
+modId="universal_translator"
+[[dependencies.universal_translator]]
+modId="forge"
+versionRange="[47.1.106,47.2)"
+[[dependencies.universal_translator]]
+modId="minecraft"
+versionRange="[1.20.1,1.20.2)"
+'''
+    mixin = {
+        "required": True,
+        "minVersion": "0.8.5",
+        "package": "example.mixin",
+        "compatibilityLevel": "JAVA_17",
+        "client": ["ExampleMixin"],
+    }
+    return jar({
+        "META-INF/MANIFEST.MF": (
+            "Manifest-Version: 1.0\n"
+            "MixinConfigs: universal-translator.neoforge.mixins.json\n"
+        ),
+        "META-INF/mods.toml": metadata,
+        "universal-translator.neoforge.mixins.json": json.dumps(mixin),
+        "example/Class.class": payload,
+    })
 
 
 class PrepareReleaseAssetsTest(unittest.TestCase):
@@ -55,7 +99,12 @@ class PrepareReleaseAssetsTest(unittest.TestCase):
                 (release / f"MCAutoTranslationTool-1.2.3-mc{version}-forge.jar").write_bytes(
                     forge_jar(version)
                 )
-        (release / "MCAutoTranslationTool-1.2.3-mc1.20.1-neoforge.jar").write_bytes(b"neo")
+        (release / "MCAutoTranslationTool-1.2.3-mc1.20.1-forge.jar").write_bytes(
+            forge_jar("1.20.1")
+        )
+        (release / "MCAutoTranslationTool-1.2.3-mc1.20.1-neoforge.jar").write_bytes(
+            neoforge_1201_jar()
+        )
 
     def test_creates_installable_fabric_bundle_and_forge_families(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -67,7 +116,9 @@ class PrepareReleaseAssetsTest(unittest.TestCase):
             names = {asset.name for asset in assets}
             self.assertIn("MCAutoTranslationTool-1.2.3-fabric-all.jar", names)
             self.assertIn("MCAutoTranslationTool-1.2.3-mc1.21-1.21.5-forge.jar", names)
-            self.assertIn("MCAutoTranslationTool-1.2.3-mc1.20.1-neoforge.jar", names)
+            self.assertIn("MCAutoTranslationTool-1.2.3-mc1.20.1-forge-neoforge.jar", names)
+            self.assertIn("MCAutoTranslationTool-1.2.3-mc1.21.9-1.21.11-forge.jar", names)
+            self.assertNotIn("MCAutoTranslationTool-1.2.3-mc1.20.1-neoforge.jar", names)
             self.assertNotIn("MCAutoTranslationTool-1.2.3-mc1.21.5-forge.jar", names)
 
             with zipfile.ZipFile(root / "assets/MCAutoTranslationTool-1.2.3-fabric-all.jar") as archive:
@@ -77,6 +128,11 @@ class PrepareReleaseAssetsTest(unittest.TestCase):
             with zipfile.ZipFile(root / "assets/MCAutoTranslationTool-1.2.3-mc1.21-1.21.5-forge.jar") as archive:
                 metadata = archive.read("META-INF/mods.toml").decode()
                 self.assertIn('versionRange="[1.21,1.21.6)"', metadata)
+            with zipfile.ZipFile(root / "assets/MCAutoTranslationTool-1.2.3-mc1.20.1-forge-neoforge.jar") as archive:
+                metadata = archive.read("META-INF/mods.toml").decode()
+                self.assertIn(
+                    'versionRange="[47.1.106,47.2),[47.4.10,)"', metadata
+                )
 
     def test_output_and_checksums_are_deterministic(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -101,6 +157,17 @@ class PrepareReleaseAssetsTest(unittest.TestCase):
             broken = release / "MCAutoTranslationTool-1.2.3-mc1.21.5-forge.jar"
             broken.write_bytes(forge_jar("1.21.5", b"different"))
             with self.assertRaisesRegex(PreparationError, "not byte-compatible"):
+                prepare_release(release, root / "assets", "1.2.3")
+
+    def test_rejects_incompatible_1201_loader_payloads(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            release = root / "release"
+            release.mkdir()
+            self._fixture(release)
+            broken = release / "MCAutoTranslationTool-1.2.3-mc1.20.1-neoforge.jar"
+            broken.write_bytes(neoforge_1201_jar(b"different"))
+            with self.assertRaisesRegex(PreparationError, "payloads are not byte-compatible"):
                 prepare_release(release, root / "assets", "1.2.3")
 
 

@@ -19,9 +19,16 @@ abstract class TextRendererMixin {
     }
 
     @ModifyVariable(
+            method = "prepareText(Lnet/minecraft/util/FormattedCharSequence;FFIZI)Lnet/minecraft/client/gui/Font$PreparedText;",
+            at = @At("HEAD"), argsOnly = true, require = 0)
+    private FormattedCharSequence universalTranslator$translatePreparedFormattedCharSequenceLegacy(FormattedCharSequence text) {
+        return RenderedTextBridge.translate(text);
+    }
+
+    @ModifyVariable(
             method = "prepareText(Lnet/minecraft/util/FormattedCharSequence;FFIZZI)Lnet/minecraft/client/gui/Font$PreparedText;",
-            at = @At("HEAD"), argsOnly = true)
-    private FormattedCharSequence universalTranslator$translatePreparedFormattedCharSequence(FormattedCharSequence text) {
+            at = @At("HEAD"), argsOnly = true, require = 0)
+    private FormattedCharSequence universalTranslator$translatePreparedFormattedCharSequenceCurrent(FormattedCharSequence text) {
         return RenderedTextBridge.translate(text);
     }
 
