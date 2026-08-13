@@ -118,8 +118,8 @@ JDK 17 or later is required:
 ```
 
 Forge 47.4.10 is resolved from the official Maven. Minecraft 1.20.1 still requires the Mojmap
-development output to be renamed to the SRG runtime namespace. Release the `-srg.jar` from
-`platforms/forge/modern/1.20.1/build/libs/`, not the unclassified development JAR beside it.
+development output to be renamed to the SRG runtime namespace. The build marks these artifacts as
+`-dev.jar` and `-runtime.jar`; publish the normalized JAR from `build/release/`.
 
 ## Forge 1.19.2
 
@@ -129,8 +129,8 @@ JDK 17 or later is required:
 ./gradlew :platform-forge-1.19.2:build
 ```
 
-Forge 43.5.2 is resolved from the official Forge Maven. Publish the `-srg.jar` from
-`platforms/forge/modern/1.19.2/build/libs/`; it contains the runtime mappings and Mixin refmap.
+Forge 43.5.2 is resolved from the official Forge Maven. Publish the normalized JAR from
+`platforms/forge/modern/1.19.2/build/release/`; it contains the runtime mappings and Mixin refmap.
 
 ## Fabric 1.19.2
 
@@ -148,7 +148,7 @@ The adapter targets Java 8 bytecode and Forge 36.2.42:
 ./gradlew :platform-forge-1.16.5:build
 ```
 
-Publish the `-srg.jar` from `platforms/forge/modern/1.16.5/build/libs/`.
+Publish the normalized runtime JAR from `platforms/forge/modern/1.16.5/build/release/`.
 
 ## Fabric 1.16.5
 

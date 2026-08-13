@@ -48,7 +48,7 @@ renamer.enableMixinRefmaps {
 }
 
 renamer.classes(tasks.named("jar", Jar)) {
-    archiveClassifier = "srg"
+    archiveClassifier = "runtime"
     mappings renamer.mixin.generatedMappings
 }
 renamer.mappings(minecraft.dependency.toSrg)
@@ -61,6 +61,7 @@ tasks.named("processResources", ProcessResources).configure {
 }
 
 tasks.named("jar", Jar).configure {
+    archiveClassifier = "dev"
     manifest {
         attributes "MixinConfigs": "universal-translator.forge.mixins.json"
     }
@@ -70,6 +71,32 @@ tasks.named("jar", Jar).configure {
     from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) {
         rename { "THIRD_PARTY_OFFLINE.md" }
     }
+}
+
+tasks.register("releaseJar", Copy) {
+    dependsOn tasks.named("renameJar")
+    from(tasks.named("renameJar").flatMap { it.output })
+    into(layout.buildDirectory.dir("release"))
+    rename { "mc-auto-translation-tool-forge-1.20.1-${project.version}.jar" }
+}
+
+tasks.register("verifyRuntimeJarMappings") {
+    dependsOn tasks.named("renameJar")
+    inputs.file(tasks.named("renameJar").flatMap { it.output })
+    doLast {
+        def runtimeJar = tasks.named("renameJar").get().output.get().asFile
+        def runtimeClass = zipTree(runtimeJar).matching {
+            include "org/universaltranslator/forge/ForgeTranslationRuntime.class"
+        }.singleFile
+        def constantPool = new String(runtimeClass.bytes, java.nio.charset.StandardCharsets.ISO_8859_1)
+        if (constantPool.contains("getInstance")) {
+            throw new GradleException("Runtime JAR still contains Mojmap method names: ${runtimeJar}")
+        }
+    }
+}
+
+tasks.named("build").configure {
+    dependsOn tasks.named("releaseJar"), tasks.named("verifyRuntimeJarMappings")
 }
 
 tasks.withType(JavaCompile).configureEach {

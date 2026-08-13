@@ -109,8 +109,7 @@ Minecraft 26.x 版本：26.1、26.1.1、26.1.2 及 26.2。它內嵌四個精確�
 ```
 
 Forge 47.4.10 從官方 Maven 解析。1.20.1 仍需將 Mojmap 開發產物轉換為 SRG 執行階段
-命名，因此正式發佈必須使用 `platforms/forge/modern/1.20.1/build/libs/` 中的 `-srg.jar`，
-不可誤發同一目錄下沒有分類器的開發 JAR。
+命名。建置產物會標記為 `-dev.jar` 與 `-runtime.jar`；發佈時使用 `build/release/` 中的標準命名 JAR。
 
 ## 1.19.2 Forge
 
@@ -121,7 +120,7 @@ Forge 47.4.10 從官方 Maven 解析。1.20.1 仍需將 Mojmap 開發產物轉�
 ```
 
 Forge 43.5.2 從 Forge 官方 Maven 解析。發佈時應使用
-`platforms/forge/modern/1.19.2/build/libs/` 中包含執行階段映射與 Mixin refmap 的 `-srg.jar`。
+`platforms/forge/modern/1.19.2/build/release/` 中包含執行階段映射與 Mixin refmap 的標準命名 JAR。
 
 ## 1.19.2 Fabric
 
@@ -139,7 +138,7 @@ Forge 43.5.2 從 Forge 官方 Maven 解析。發佈時應使用
 ./gradlew :platform-forge-1.16.5:build
 ```
 
-發佈時使用 `platforms/forge/modern/1.16.5/build/libs/` 中的 `-srg.jar`。
+發佈時使用 `platforms/forge/modern/1.16.5/build/release/` 中的標準命名執行階段 JAR。
 
 ## 1.16.5 Fabric
 
