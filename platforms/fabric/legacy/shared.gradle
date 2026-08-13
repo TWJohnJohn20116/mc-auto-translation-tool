@@ -15,7 +15,13 @@ requiredProperties.each { propertyName ->
 def sourceLayers = [
         "1.16.5": ["family/1.16.5-1.19.2", "rendered/1.16.5"],
         "1.19.2": ["family/1.16.5-1.19.2", "rendered/1.19.2-plus"],
-        "1.20.1": ["rendered/1.19.2-plus"]
+        "1.20": ["rendered/1.19.2-plus", "family/1.20.1"],
+        "1.20.1": ["rendered/1.19.2-plus", "family/1.20.1"],
+        "1.20.2": ["rendered/1.19.2-plus", "family/1.20.1"],
+        "1.20.3": ["rendered/1.19.2-plus", "family/1.20.1"],
+        "1.20.4": ["rendered/1.19.2-plus", "family/1.20.1"],
+        "1.20.5": ["rendered/1.19.2-plus", "family/1.20.1"],
+        "1.20.6": ["rendered/1.19.2-plus", "family/1.20.1"]
 ]
 def gameVersion = project.ext.legacyMinecraftVersion.toString()
 def layers = sourceLayers[gameVersion]
@@ -24,6 +30,11 @@ if (layers == null) {
 }
 
 def sharedRoot = rootProject.file("platforms/fabric/legacy/shared")
+def rootForLayer = { layer ->
+    layer.startsWith("family/1.20")
+            ? rootProject.file("platforms/fabric/1.20/shared")
+            : sharedRoot
+}
 def splitEnvironment = gameVersion != "1.16.5"
 
 version = project.mod_version
@@ -44,6 +55,9 @@ sourceSets {
     main {
         java.srcDir project(":translator-core").file("src/main/java")
         resources.srcDir new File(sharedRoot, "common/src/main/resources")
+        layers.each { layer ->
+            resources.srcDir new File(rootForLayer(layer), "${layer}/src/main/resources")
+        }
     }
 }
 
@@ -63,7 +77,7 @@ if (splitEnvironment) {
         client {
             java.srcDir new File(sharedRoot, "common/src/client/java")
             layers.each { layer ->
-                java.srcDir new File(sharedRoot, "${layer}/src/client/java")
+                java.srcDir new File(rootForLayer(layer), "${layer}/src/client/java")
             }
         }
     }
@@ -73,7 +87,7 @@ if (splitEnvironment) {
             java.srcDir "src/client/java"
             java.srcDir new File(sharedRoot, "common/src/client/java")
             layers.each { layer ->
-                java.srcDir new File(sharedRoot, "${layer}/src/client/java")
+                java.srcDir new File(rootForLayer(layer), "${layer}/src/client/java")
             }
         }
     }
