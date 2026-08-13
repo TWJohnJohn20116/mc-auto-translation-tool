@@ -1,0 +1,7 @@
+{
+  "required": false,
+  "package": "org.universaltranslator.fabric.mixin",
+  "compatibilityLevel": "JAVA_8",
+  "client": [],
+  "injectors": {"defaultRequire": 0}
+}

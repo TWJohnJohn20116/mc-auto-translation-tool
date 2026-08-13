@@ -11,6 +11,7 @@
 | 1.8.9 | Forge 11.15.1.2318 | 8 | 通過 | 歷史基準通過 | 待確認 |
 | 1.12.2 | Forge 14.23.5.2860 | 8 | 通過 | 歷史基準通過 | 待確認 |
 | 1.16.5 | Fabric Loader 0.19.3 + Fabric API 0.42.0 | 8 | 通過，中繼資料及 Mixin 已檢查 | 待驗證 | 待驗證 |
+| All 1.16 releases (1.16-1.16.5), single JAR | Fabric Loader 0.19.3 + Fabric API 0.42.0 | 8 | Passed; exact Loader selection passed for all six versions | Pending | Pending |
 | 1.16.5 | Forge 36.2.42 | 8 | 通過，SRG 與 refmap 已檢查 | 待驗證 | 待驗證 |
 | 1.19.2 | Fabric Loader 0.19.3 + Fabric API 0.77.0 | 17 | 通過，中繼資料及 Mixin 已檢查 | 待驗證 | 待驗證 |
 | ?? 1.19 ???1.19-1.19.4??? JAR? | Fabric Loader 0.19.3 | 17 | ????????????? Loader ???? | ??? | ??? |
