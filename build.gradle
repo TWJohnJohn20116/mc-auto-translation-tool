@@ -5,6 +5,21 @@ plugins {
 group = "org.universaltranslator"
 version = "1.3.0-test.2"
 
+// Gradle itself runs on a modern JDK. Toolchains make compilation reproducible while
+// each module's existing options.release setting preserves its Java 8/17/21 bytecode target.
+subprojects {
+    def requiredToolchain = project.name.startsWith("platform-fabric-26.") ||
+            project.name.startsWith("platform-forge-26.") ? 25 : 21
+
+    pluginManager.withPlugin("java") {
+        java {
+            toolchain {
+                languageVersion = JavaLanguageVersion.of(requiredToolchain)
+            }
+        }
+    }
+}
+
 tasks.register("validateMixinConfigs") {
     group = "verification"
     description = "Validates every source Mixin config and rejects unsupported Java compatibility levels."

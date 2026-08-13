@@ -36,11 +36,7 @@ dependencies {
     annotationProcessor "org.spongepowered:mixin:0.8.7:processor"
 }
 
-sourceSets {
-    main {
-        java.srcDir project(":translator-core").file("src/main/java")
-    }
-}
+apply from: rootProject.file("platforms/forge/1.21/shared.gradle")
 
 tasks.named("processResources", ProcessResources).configure {
     inputs.property "version", project.version

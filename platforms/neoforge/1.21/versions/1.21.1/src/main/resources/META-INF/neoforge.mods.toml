@@ -1,0 +1,28 @@
+modLoader="javafml"
+loaderVersion="[4,)"
+license="MIT"
+
+[[mods]]
+modId="universal_translator"
+version="${version}"
+displayName="MC Auto Translation Tool"
+displayURL="https://github.com/wuxiangdan96-byte/mc-auto-translation-tool"
+authors="我小张7272635"
+description='''Client-side automatic translation for server-provided text across Minecraft interfaces.'''
+
+[[mixins]]
+config="universal-translator.neoforge.mixins.json"
+
+[[dependencies.universal_translator]]
+modId="neoforge"
+type="required"
+versionRange="[21.1.248,22.0.0)"
+ordering="NONE"
+side="CLIENT"
+
+[[dependencies.universal_translator]]
+modId="minecraft"
+type="required"
+versionRange="[1.21.1,1.21.2)"
+ordering="NONE"
+side="CLIENT"
