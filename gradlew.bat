@@ -59,6 +59,11 @@ set JAVA_EXE=%JAVA_HOME%/bin/java.exe
 
 if exist "%JAVA_EXE%" goto execute
 
+@rem A stale JAVA_HOME should not hide a working JDK already available on PATH.
+set JAVA_EXE=java.exe
+%JAVA_EXE% -version >NUL 2>&1
+if %ERRORLEVEL% equ 0 goto execute
+
 echo. 1>&2
 echo ERROR: JAVA_HOME is set to an invalid directory: %JAVA_HOME% 1>&2
 echo. 1>&2

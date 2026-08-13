@@ -1,0 +1,26 @@
+def versionFamilies = [
+        "1.21-1.21.5"  : ["1.21", "1.21.1", "1.21.3", "1.21.4", "1.21.5"],
+        "1.21.6-1.21.8": ["1.21.6", "1.21.7", "1.21.8"],
+        "1.21.9-1.21.10": ["1.21.9", "1.21.10"],
+        "1.21.11"      : ["1.21.11"]
+]
+
+def gameVersion = project.name - "platform-forge-"
+def family = versionFamilies.find { entry -> entry.value.contains(gameVersion) }?.key
+if (family == null) {
+    throw new GradleException("No Forge 1.21 source family is registered for ${project.name}")
+}
+def modFamily = versionFamilies["1.21-1.21.5"].contains(gameVersion) ||
+        versionFamilies["1.21.6-1.21.8"].contains(gameVersion) ?
+        "1.21-1.21.8" : "1.21.9-1.21.11"
+
+def sharedRoot = rootProject.file("platforms/forge/1.21/shared")
+sourceSets {
+    main {
+        java.srcDir project(":translator-core").file("src/main/java")
+        java.srcDir new File(sharedRoot, "common/src/main/java")
+        java.srcDir new File(sharedRoot, "${family}/src/main/java")
+        java.srcDir new File(sharedRoot, "mod/${modFamily}/src/main/java")
+        resources.srcDir new File(sharedRoot, "common/src/main/resources")
+    }
+}

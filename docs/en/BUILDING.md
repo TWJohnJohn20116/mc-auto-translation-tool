@@ -2,9 +2,32 @@
 
 [简体中文](../Zh-cn/BUILDING.md) · [繁體中文](../Zh-tw/BUILDING.md) · [English](BUILDING.md) · [Back to English README](README.md)
 
-The project consists of one shared Java 8 core, twenty-two Fabric modules (including the shared 1.21.4–1.21.5 target plus the 1.21.x and 26.x bundles), two modern Forge modules,
-and two independent legacy Forge builds. Legacy ForgeGradle cannot run directly on modern JDKs, so one root Gradle
-command cannot build every version.
+The project consists of one shared Java 8-compatible core, versioned Fabric, Forge, and NeoForge
+modules, plus two independent legacy Forge builds. Legacy ForgeGradle uses its own wrapper and JDK.
+
+## Selecting root-build platforms
+
+The root build registers only `translator-core` by default. A fully qualified task path automatically
+registers the referenced platform and any bundle dependencies:
+
+```bash
+./gradlew :platform-forge-1.21.1:build
+```
+
+For IDE import, project discovery, or more than one platform, use the stable selector explicitly:
+
+```bash
+./gradlew -PtargetPlatform=forge-1.21.1 projects
+./gradlew -PtargetPlatform=fabric-1.21.11,neoforge-1.21.1 projects
+./gradlew -PtargetPlatform=all projects
+```
+
+Short names omit the `platform-` prefix. Bundle selectors such as `fabric-1.21.x` automatically include
+their exact-version implementation modules. `FORGE_TARGET` remains accepted for compatibility.
+
+The root build uses Gradle Java Toolchains: JDK 21 compiles the core and Minecraft versions through
+1.21.x, while 26.x selects JDK 25. Existing `options.release` values still produce Java 8, 17, 21, or
+25 bytecode as required. If `JAVA_HOME` is stale, both wrappers fall back to a working `java` on `PATH`.
 
 ## Single Fabric 26.x JAR
 
@@ -55,8 +78,7 @@ JDK 21 or later is required:
 Use JDK 25 and select one exact target at a time:
 
 ```powershell
-$env:FORGE_TARGET = "26.2"
-./gradlew.bat :platform-forge-26.2:build
+./gradlew.bat -PtargetPlatform=forge-26.2 :platform-forge-26.2:build
 ```
 
 Replace `26.2` with `26.1`, `26.1.1`, or `26.1.2`. Outputs are written under `platforms/forge/26.x/versions/<version>/build/libs/`. Forge API changes between 26.1.2 and 26.2 are handled by separate adapters and every JAR declares an exact Minecraft range.
@@ -66,14 +88,13 @@ Replace `26.2` with `26.1`, `26.1.1`, or `26.1.2`. Outputs are written under `pl
 Use JDK 21. Forge publishes Minecraft 1.21, 1.21.1, and 1.21.3 through 1.21.11; there is no Forge build for Minecraft 1.21.2. Select the exact target to avoid configuring every ForgeGradle mapping workspace at once:
 
 ```bash
-FORGE_TARGET=1.21.10 ./gradlew :platform-forge-1.21.10:build
+./gradlew -PtargetPlatform=forge-1.21.10 :platform-forge-1.21.10:build
 ```
 
 On PowerShell:
 
 ```powershell
-$env:FORGE_TARGET = "1.21.10"
-./gradlew.bat :platform-forge-1.21.10:build
+./gradlew.bat -PtargetPlatform=forge-1.21.10 :platform-forge-1.21.10:build
 ```
 
 Replace `1.21.10` with `1.21`, `1.21.1`, or any version from `1.21.3` through `1.21.11`. Outputs are written under `platforms/forge/1.21/versions/<version>/build/libs/`. Each JAR deliberately accepts only its exact Minecraft version.

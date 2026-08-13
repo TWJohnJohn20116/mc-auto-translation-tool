@@ -9,45 +9,112 @@ pluginManagement {
 rootProject.name = "mc-auto-translation-tool"
 include("translator-core")
 
-def includePlatform = { String name, String directory ->
-    include(name)
-    project(":${name}").projectDir = file(directory)
+def platformProjects = [
+        "platform-fabric-1.16.5"        : "platforms/fabric/legacy/1.16.5",
+        "platform-fabric-1.19.2"        : "platforms/fabric/legacy/1.19.2",
+        "platform-fabric-1.20.1"        : "platforms/fabric/legacy/1.20.1",
+        "platform-fabric-1.21"          : "platforms/fabric/1.21/versions/1.21",
+        "platform-fabric-1.21.1"        : "platforms/fabric/1.21/versions/1.21.1",
+        "platform-fabric-1.21.2"        : "platforms/fabric/1.21/versions/1.21.2",
+        "platform-fabric-1.21.3"        : "platforms/fabric/1.21/versions/1.21.3",
+        "platform-fabric-1.21.4"        : "platforms/fabric/1.21/versions/1.21.4",
+        "platform-fabric-1.21.5"        : "platforms/fabric/1.21/versions/1.21.5",
+        "platform-fabric-1.21.6"        : "platforms/fabric/1.21/versions/1.21.6",
+        "platform-fabric-1.21.7"        : "platforms/fabric/1.21/versions/1.21.7",
+        "platform-fabric-1.21.8"        : "platforms/fabric/1.21/versions/1.21.8",
+        "platform-fabric-1.21.9"        : "platforms/fabric/1.21/versions/1.21.9",
+        "platform-fabric-1.21.10"       : "platforms/fabric/1.21/versions/1.21.10",
+        "platform-fabric-1.21.11"       : "platforms/fabric/1.21/versions/1.21.11",
+        "platform-fabric-1.21.4-1.21.5": "platforms/fabric/1.21/shared-1.21.4-1.21.5",
+        "platform-fabric-1.21.x"        : "platforms/fabric/1.21/bundle",
+        "platform-fabric-26.1"          : "platforms/fabric/26.x/26.1",
+        "platform-fabric-26.1.1"        : "platforms/fabric/26.x/26.1.1",
+        "platform-fabric-26.1.2"        : "platforms/fabric/26.x/26.1.2",
+        "platform-fabric-26.2"          : "platforms/fabric/26.x/26.2",
+        "platform-fabric-26.x"          : "platforms/fabric/26.x/bundle",
+        "platform-neoforge-1.21.1"      : "platforms/neoforge/1.21/versions/1.21.1",
+        "platform-forge-1.16.5"         : "platforms/forge/modern/1.16.5",
+        "platform-forge-1.19.2"         : "platforms/forge/modern/1.19.2",
+        "platform-forge-1.20.1"         : "platforms/forge/modern/1.20.1",
+        "platform-forge-1.21"           : "platforms/forge/1.21/versions/1.21",
+        "platform-forge-1.21.1"         : "platforms/forge/1.21/versions/1.21.1",
+        "platform-forge-1.21.3"         : "platforms/forge/1.21/versions/1.21.3",
+        "platform-forge-1.21.4"         : "platforms/forge/1.21/versions/1.21.4",
+        "platform-forge-1.21.5"         : "platforms/forge/1.21/versions/1.21.5",
+        "platform-forge-1.21.6"         : "platforms/forge/1.21/versions/1.21.6",
+        "platform-forge-1.21.7"         : "platforms/forge/1.21/versions/1.21.7",
+        "platform-forge-1.21.8"         : "platforms/forge/1.21/versions/1.21.8",
+        "platform-forge-1.21.9"         : "platforms/forge/1.21/versions/1.21.9",
+        "platform-forge-1.21.10"        : "platforms/forge/1.21/versions/1.21.10",
+        "platform-forge-1.21.11"        : "platforms/forge/1.21/versions/1.21.11",
+        "platform-forge-26.1"           : "platforms/forge/26.x/versions/26.1",
+        "platform-forge-26.1.1"         : "platforms/forge/26.x/versions/26.1.1",
+        "platform-forge-26.1.2"         : "platforms/forge/26.x/versions/26.1.2",
+        "platform-forge-26.2"           : "platforms/forge/26.x/versions/26.2"
+]
+
+// Aggregate modules need their implementation projects available during configuration.
+def platformDependencies = [
+        "platform-fabric-1.21.4-1.21.5": ["platform-fabric-1.21.5"],
+        "platform-fabric-1.21.x": (['1.21'] + (1..11).collect { "1.21.${it}" })
+                .collect { "platform-fabric-${it}".toString() },
+        "platform-fabric-26.x": ["26.1", "26.1.1", "26.1.2", "26.2"]
+                .collect { "platform-fabric-${it}".toString() }
+]
+
+def normalizePlatform = { String value ->
+    def target = value.trim()
+    if (target == "all" || target == "core" || target == "translator-core") {
+        return target
+    }
+    target.startsWith("platform-") ? target.toString() : "platform-${target}".toString()
 }
 
-includePlatform("platform-fabric-1.16.5", "platforms/fabric/legacy/1.16.5")
-includePlatform("platform-fabric-1.19.2", "platforms/fabric/legacy/1.19.2")
-includePlatform("platform-fabric-1.20.1", "platforms/fabric/legacy/1.20.1")
-includePlatform("platform-fabric-1.21", "platforms/fabric/1.21/versions/1.21")
-includePlatform("platform-fabric-1.21.1", "platforms/fabric/1.21/versions/1.21.1")
-includePlatform("platform-fabric-1.21.2", "platforms/fabric/1.21/versions/1.21.2")
-includePlatform("platform-fabric-1.21.3", "platforms/fabric/1.21/versions/1.21.3")
-includePlatform("platform-fabric-1.21.4", "platforms/fabric/1.21/versions/1.21.4")
-includePlatform("platform-fabric-1.21.5", "platforms/fabric/1.21/versions/1.21.5")
-includePlatform("platform-fabric-1.21.6", "platforms/fabric/1.21/versions/1.21.6")
-includePlatform("platform-fabric-1.21.7", "platforms/fabric/1.21/versions/1.21.7")
-includePlatform("platform-fabric-1.21.8", "platforms/fabric/1.21/versions/1.21.8")
-includePlatform("platform-fabric-1.21.9", "platforms/fabric/1.21/versions/1.21.9")
-includePlatform("platform-fabric-1.21.10", "platforms/fabric/1.21/versions/1.21.10")
-includePlatform("platform-fabric-1.21.11", "platforms/fabric/1.21/versions/1.21.11")
-includePlatform("platform-fabric-1.21.4-1.21.5", "platforms/fabric/1.21/shared-1.21.4-1.21.5")
-includePlatform("platform-fabric-1.21.x", "platforms/fabric/1.21/bundle")
-includePlatform("platform-fabric-26.1", "platforms/fabric/26.x/26.1")
-includePlatform("platform-fabric-26.1.1", "platforms/fabric/26.x/26.1.1")
-includePlatform("platform-fabric-26.1.2", "platforms/fabric/26.x/26.1.2")
-includePlatform("platform-fabric-26.2", "platforms/fabric/26.x/26.2")
-includePlatform("platform-fabric-26.x", "platforms/fabric/26.x/bundle")
-includePlatform("platform-forge-1.16.5", "platforms/forge/modern/1.16.5")
-includePlatform("platform-forge-1.20.1", "platforms/forge/modern/1.20.1")
-includePlatform("platform-forge-1.19.2", "platforms/forge/modern/1.19.2")
-// Set FORGE_TARGET to configure one exact Forge mapping workspace at a time.
-def requestedForgeVersion = System.getenv("FORGE_TARGET")
-["1.21", "1.21.1", "1.21.3", "1.21.4", "1.21.5", "1.21.6", "1.21.7", "1.21.8", "1.21.9", "1.21.10", "1.21.11"].each { gameVersion ->
-    if (requestedForgeVersion == null || requestedForgeVersion == gameVersion) {
-        includePlatform("platform-forge-${gameVersion}", "platforms/forge/1.21/versions/${gameVersion}")
+def requested = [] as LinkedHashSet<String>
+def targetProperty = gradle.startParameter.projectProperties["targetPlatform"]
+if (targetProperty) {
+    targetProperty.toString().split(",").findAll { !it.trim().isEmpty() }.each {
+        requested.add(normalizePlatform(it))
+    }
+} else {
+    // A fully-qualified task path selects its platform automatically.
+    gradle.startParameter.taskNames.each { taskName ->
+        def matcher = taskName =~ /^:?(platform-[^:]+)(?::.*)?$/
+        if (matcher.matches()) {
+            requested.add(matcher.group(1))
+        }
+    }
+
+    // Retain compatibility with the previous Forge-only selector.
+    def legacyForgeTarget = System.getenv("FORGE_TARGET")
+    if (requested.isEmpty() && legacyForgeTarget) {
+        requested.add("platform-forge-${legacyForgeTarget}".toString())
     }
 }
-["26.1", "26.1.1", "26.1.2", "26.2"].each { gameVersion ->
-    if (requestedForgeVersion == null || requestedForgeVersion == gameVersion) {
-        includePlatform("platform-forge-${gameVersion}", "platforms/forge/26.x/versions/${gameVersion}")
+
+def selected = new LinkedHashSet<String>()
+if (requested.contains("all")) {
+    selected.addAll(platformProjects.keySet())
+} else {
+    requested.findAll { it != "core" && it != "translator-core" }.each { selected.add(it) }
+}
+
+def queue = new ArrayDeque<String>(selected)
+while (!queue.isEmpty()) {
+    def platform = queue.removeFirst()
+    if (!platformProjects.containsKey(platform)) {
+        throw new GradleException(
+                "Unknown targetPlatform '${platform}' (requested '${targetProperty}'). Available values: " +
+                        platformProjects.keySet().collect { it - "platform-" }.join(", ") + ", all")
     }
+    platformDependencies.getOrDefault(platform, []).each { dependency ->
+        if (selected.add(dependency)) {
+            queue.addLast(dependency)
+        }
+    }
+}
+
+selected.each { name ->
+    include(name)
+    project(":${name}").projectDir = file(platformProjects[name])
 }

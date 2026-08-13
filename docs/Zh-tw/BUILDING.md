@@ -2,8 +2,31 @@
 
 [简体中文](../Zh-cn/BUILDING.md) · [繁體中文](BUILDING.md) · [English](../en/BUILDING.md) · [返回繁中 README](README.md)
 
-專案由一個 Java 8 通用核心、二十二個 Fabric 模組（包含 1.21.4–1.21.5 共用目標以及 1.21.x、26.x 整合包）、兩個現代 Forge 模組及兩個獨立舊版 Forge 建置組成。
-舊版 ForgeGradle 無法直接在現代 JDK 上執行，因此無法用一條根 Gradle 指令建置所有版本。
+專案由一個相容 Java 8 的通用核心、各版本 Fabric、Forge、NeoForge 模組，以及兩個獨立舊版 Forge 建置組成。
+舊版 ForgeGradle 使用各自的 Wrapper 與 JDK。
+
+## 選擇根建置平台
+
+根建置預設只登錄 `translator-core`。使用完整任務路徑時，Gradle 會自動登錄指定平台及整合包相依模組：
+
+```bash
+./gradlew :platform-forge-1.21.1:build
+```
+
+IDE 匯入、查看專案或同時處理多個平台時，可明確指定穩定的選擇器：
+
+```bash
+./gradlew -PtargetPlatform=forge-1.21.1 projects
+./gradlew -PtargetPlatform=fabric-1.21.11,neoforge-1.21.1 projects
+./gradlew -PtargetPlatform=all projects
+```
+
+簡寫名稱省略 `platform-` 前綴；`fabric-1.21.x` 等整合包會自動加入所有精確版本實作。
+舊有 `FORGE_TARGET` 仍保留相容性。
+
+根建置使用 Gradle Java Toolchain：核心至 Minecraft 1.21.x 使用 JDK 21 編譯，26.x 自動選擇 JDK 25；
+既有 `options.release` 仍分別產生 Java 8、17、21 或 25 位元碼。`JAVA_HOME` 失效時，兩個 Wrapper
+會改用 `PATH` 中可執行的 `java`。
 
 ## Fabric 26.x 單一 JAR
 
@@ -52,8 +75,7 @@ Minecraft 26.x 版本：26.1、26.1.1、26.1.2 及 26.2。它內嵌四個精確�
 使用 JDK 25，並在一次建置中選擇一個精確目標：
 
 ```powershell
-$env:FORGE_TARGET = "26.2"
-./gradlew.bat :platform-forge-26.2:build
+./gradlew.bat -PtargetPlatform=forge-26.2 :platform-forge-26.2:build
 ```
 
 可將 `26.2` 替換為 `26.1`、`26.1.1` 或 `26.1.2`。輸出位於 `platforms/forge/26.x/versions/<版本>/build/libs/`。26.1.2 與 26.2 之間的 Forge API 差異由獨立轉接器處理，每個 JAR 都宣告精確的 Minecraft 版本範圍。
@@ -63,8 +85,7 @@ $env:FORGE_TARGET = "26.2"
 使用 JDK 21。Forge 發佈了 Minecraft 1.21、1.21.1 以及 1.21.3 至 1.21.11；Minecraft 1.21.2 沒有 Forge 建置。請選擇精確目標，避免一次設定所有 ForgeGradle 映射工作區：
 
 ```powershell
-$env:FORGE_TARGET = "1.21.10"
-./gradlew.bat :platform-forge-1.21.10:build
+./gradlew.bat -PtargetPlatform=forge-1.21.10 :platform-forge-1.21.10:build
 ```
 
 可將 `1.21.10` 替換為 `1.21`、`1.21.1` 或 `1.21.3` 至 `1.21.11` 中的版本。輸出位於 `platforms/forge/1.21/versions/<版本>/build/libs/`，每個 JAR 都宣告精確的 Minecraft 版本範圍。

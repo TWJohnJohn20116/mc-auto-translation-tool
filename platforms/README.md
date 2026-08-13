@@ -13,11 +13,18 @@ platforms/
 │  └─ 26.x/
 │     ├─ 26.1, 26.1.1, 26.1.2, 26.2  # Exact implementations
 │     └─ bundle/              # The single downloadable 26.x JAR
-└─ forge/
-   ├─ modern/              # 1.20.1 and 1.21.11
-   └─ shared/              # Source shared by legacy Forge builds
+├─ forge/
+│  ├─ modern/              # 1.16.5, 1.19.2, and 1.20.1
+│  ├─ 1.21/
+│  │  ├─ versions/         # Exact metadata and build configuration
+│  │  └─ shared/           # Common code/resources plus four API families
+│  ├─ 26.x/versions/       # Exact 26.x implementations
+│  └─ shared/              # Source shared by legacy Forge builds
+└─ neoforge/
+   └─ 1.21/versions/1.21.1/
 ```
 
-The Gradle project names remain unchanged. Existing commands such as
-`./gradlew :platform-fabric-1.21.x:build` and `./gradlew :platform-fabric-26.x:build` continue to work;
-`settings.gradle` maps those stable names to the organized directories above.
+The Gradle project names remain unchanged. A fully qualified task path includes its platform
+automatically. For IDE import or multiple targets, pass `-PtargetPlatform=<short-name>`; comma-separated
+values are supported, and `all` registers every platform. `settings.gradle` expands bundle dependencies
+without configuring unrelated ForgeGradle or Loom workspaces.
