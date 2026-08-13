@@ -1,0 +1,32 @@
+def sourceLayers = [
+        "26.1"  : "api/26.1-26.1.2",
+        "26.1.1": "api/26.1-26.1.2",
+        "26.1.2": "api/26.1-26.1.2",
+        "26.2"  : "api/26.2"
+]
+
+def gameVersion = project.name - "platform-forge-"
+def sourceLayer = sourceLayers[gameVersion]
+if (sourceLayer == null) {
+    throw new GradleException("No Forge 26.x source layer is registered for ${gameVersion}")
+}
+
+def sharedRoot = rootProject.file("platforms/forge/26.x/shared")
+sourceSets {
+    main {
+        java.srcDir project(":translator-core").file("src/main/java")
+        java.srcDir new File(sharedRoot, "common/src/main/java")
+        java.srcDir new File(sharedRoot, "${sourceLayer}/src/main/java")
+        resources.srcDir new File(sharedRoot, "common/src/main/resources")
+    }
+}
+
+project.ext.forgeJavaRelease = 25
+apply from: rootProject.file("platforms/forge/shared.gradle")
+
+tasks.named("processResources", ProcessResources).configure {
+    inputs.property "resourcePackFormat", project.ext.forgeResourcePackFormat
+    filesMatching("pack.mcmeta") {
+        expand "resourcePackFormat": project.ext.forgeResourcePackFormat
+    }
+}

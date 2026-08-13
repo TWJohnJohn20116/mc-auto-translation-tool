@@ -2,6 +2,7 @@
 
 ## 未发布
 
+- 合并 Fabric 26.x 与 Forge 26.x 的重复源码，并将 Forge 1.21/26.x 的公共构建逻辑及版本 metadata 改为共享模板；各版本目录仅保留依赖与兼容性参数。
 - 修正 1.3.0-test.2 的 Forge 1.16.5、1.19.2 与 1.20.1 下载误用 Mojmap 开发 JAR，避免启动时因 `Minecraft.getInstance()` 未转换为 SRG 名称而崩溃；构建与发布流程新增运行时映射验证。
 - 根 Gradle 构建新增 `targetPlatform` 选择器，完整平台任务可自动载入所需模块，整合 JAR 会展开其版本依赖；默认只配置共用核心，避免单一目标触发所有 ForgeGradle 与 Loom 工作区。
 - 根构建加入 Java Toolchain，并让 Gradle Wrapper 在 `JAVA_HOME` 失效时回退至 `PATH` 中的 Java。

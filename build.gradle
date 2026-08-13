@@ -70,6 +70,40 @@ tasks.register("validateMixinConfigs") {
     }
 }
 
+tasks.register("validateSharedPlatformLayouts") {
+    group = "verification"
+    description = "Ensures modern multi-version platforms keep sources in shared layers."
+
+    doLast {
+        def versionOwnedSources = fileTree("platforms") {
+            include "fabric/26.x/26.*/src/**"
+            include "forge/1.21/versions/*/src/**"
+            include "forge/26.x/versions/*/src/**"
+        }.files.findAll { it.isFile() }
+
+        if (!versionOwnedSources.isEmpty()) {
+            throw new GradleException(
+                    "Modern version directories must remain coordinate-only; move source differences " +
+                            "into a shared API family:\n" +
+                            versionOwnedSources.collect { relativePath(it) }.sort().join("\n")
+            )
+        }
+
+        def requiredSharedFiles = [
+                "platforms/fabric/26.x/shared.gradle",
+                "platforms/fabric/26.x/shared/common/src/main/resources/fabric.mod.json",
+                "platforms/forge/shared.gradle",
+                "platforms/forge/shared/common/src/main/resources/META-INF/mods.toml",
+                "platforms/forge/26.x/shared.gradle",
+                "platforms/forge/26.x/shared/common/src/main/resources/pack.mcmeta"
+        ]
+        def missing = requiredSharedFiles.findAll { !file(it).isFile() }
+        if (!missing.isEmpty()) {
+            throw new GradleException("Missing shared platform files:\n" + missing.join("\n"))
+        }
+    }
+}
+
 tasks.named("check") {
-    dependsOn("validateMixinConfigs")
+    dependsOn("validateMixinConfigs", "validateSharedPlatformLayouts")
 }

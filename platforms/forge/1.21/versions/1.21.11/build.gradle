@@ -3,62 +3,10 @@ plugins {
     id "net.minecraftforge.gradle" version "[7.0.29,8.0)"
 }
 
-version = project.mod_version
-group = project.maven_group
-
-base {
-    archivesName = "mc-auto-translation-tool-forge-1.21.11"
-}
-
-minecraft {
-    mappings channel: "official", version: "1.21.11"
-    runs {
-        configureEach {
-            workingDir.convention layout.projectDirectory.dir("run")
-            args "--mixin.config=universal-translator.forge.mixins.json"
-            if (System.getProperty("os.name").startsWith("Mac")) {
-                jvmArgs "-XstartOnFirstThread"
-            }
-        }
-        register("client")
-    }
-}
-
-repositories {
-    minecraft.mavenizer(it)
-    maven fg.forgeMaven
-    maven fg.minecraftLibsMaven
-    mavenCentral()
-}
-
-dependencies {
-    implementation minecraft.dependency("net.minecraftforge:forge:1.21.11-61.2.0")
-    annotationProcessor "net.minecraftforge:eventbus-validator:7.0.5"
-    annotationProcessor "org.spongepowered:mixin:0.8.7:processor"
-}
+ext.forgeMinecraftVersion = "1.21.11"
+ext.forgeVersion = "61.2.0"
+ext.forgeLoaderMajor = "61"
+ext.forgeMinecraftNextVersion = "1.21.12"
+ext.forgeUseEventBusValidator = true
 
 apply from: rootProject.file("platforms/forge/1.21/shared.gradle")
-
-tasks.named("processResources", ProcessResources).configure {
-    inputs.property "version", project.version
-    filesMatching("META-INF/mods.toml") {
-        expand "version": project.version
-    }
-}
-
-tasks.named("jar", Jar).configure {
-    manifest {
-        attributes "MixinConfigs": "universal-translator.forge.mixins.json"
-    }
-    from(rootProject.file("LICENSE")) {
-        rename { "LICENSE_universal_translator" }
-    }
-    from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) {
-        rename { "THIRD_PARTY_OFFLINE.md" }
-    }
-}
-
-tasks.withType(JavaCompile).configureEach {
-    options.encoding = "UTF-8"
-    options.release = 21
-}
