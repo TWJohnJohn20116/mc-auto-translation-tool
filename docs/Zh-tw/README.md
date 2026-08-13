@@ -42,23 +42,24 @@
 正式版將 27 個精確版本建置產物整理為 **13 個可直接安裝的 JAR**。Fabric 使用一個由 Loader
 自動選擇內嵌實作的全版本 JAR；Forge 只在已驗證相容的相鄰版本間共用 JAR。
 
-下表中的 `{版本}` 代表該次 Release 的版本號：
+Release 會在每個檔名前面自動帶上模組版本號，例如 `MCAutoTranslationTool-1.3.0-`。
+為了更容易在手機與窄視窗中閱讀，下表只列出需要辨認的**檔名結尾**：
 
-| Minecraft | 載入器 | Java | Release 檔名 |
+| Minecraft | 載入器 | Java | 檔名結尾 |
 | --- | --- | ---: | --- |
-| 1.16.5、1.19.2、1.20.1、1.21–1.21.11、26.1–26.2 | Fabric | 8 / 17 / 21 / 25 | `MCAutoTranslationTool-{版本}-fabric-all.jar` |
-| 1.8.9 | Forge | 8 | `MCAutoTranslationTool-{版本}-mc1.8.9-forge.jar` |
-| 1.12.2 | Forge | 8 | `MCAutoTranslationTool-{版本}-mc1.12.2-forge.jar` |
-| 1.16.5 | Forge | 8 | `MCAutoTranslationTool-{版本}-mc1.16.5-forge.jar` |
-| 1.19.2 | Forge | 17 | `MCAutoTranslationTool-{版本}-mc1.19.2-forge.jar` |
-| 1.20.1 | Forge | 17 | `MCAutoTranslationTool-{版本}-mc1.20.1-forge.jar` |
-| 1.21、1.21.1、1.21.3–1.21.5 | Forge | 21 | `MCAutoTranslationTool-{版本}-mc1.21-1.21.5-forge.jar` |
-| 1.21.6–1.21.8 | Forge | 21 | `MCAutoTranslationTool-{版本}-mc1.21.6-1.21.8-forge.jar` |
-| 1.21.9–1.21.11 | Forge | 21 | `MCAutoTranslationTool-{版本}-mc1.21.9-1.21.11-forge.jar` |
-| 26.1–26.1.2 | Forge | 25 | `MCAutoTranslationTool-{版本}-mc26.1-26.1.2-forge.jar` |
-| 26.2 | Forge | 25 | `MCAutoTranslationTool-{版本}-mc26.2-forge.jar` |
-| 1.20.1 | NeoForge 47.1.106–47.1.x | 17 | `MCAutoTranslationTool-{版本}-mc1.20.1-neoforge.jar` |
-| 1.21.1 | NeoForge 21.1.248 | 21 | `MCAutoTranslationTool-{版本}-mc1.21.1-neoforge.jar` |
+| 1.16.5、1.19.2、1.20.1、1.21–1.21.11、26.1–26.2 | Fabric | 8 / 17 / 21 / 25 | `fabric-all.jar` |
+| 1.8.9 | Forge | 8 | `mc1.8.9-forge.jar` |
+| 1.12.2 | Forge | 8 | `mc1.12.2-forge.jar` |
+| 1.16.5 | Forge | 8 | `mc1.16.5-forge.jar` |
+| 1.19.2 | Forge | 17 | `mc1.19.2-forge.jar` |
+| 1.20.1 | Forge | 17 | `mc1.20.1-forge.jar` |
+| 1.21、1.21.1、1.21.3–1.21.5 | Forge | 21 | `mc1.21-1.21.5-forge.jar` |
+| 1.21.6–1.21.8 | Forge | 21 | `mc1.21.6-1.21.8-forge.jar` |
+| 1.21.9–1.21.11 | Forge | 21 | `mc1.21.9-1.21.11-forge.jar` |
+| 26.1–26.1.2 | Forge | 25 | `mc26.1-26.1.2-forge.jar` |
+| 26.2 | Forge | 25 | `mc26.2-forge.jar` |
+| 1.20.1 | NeoForge 47.1.106–47.1.x | 17 | `mc1.20.1-neoforge.jar` |
+| 1.21.1 | NeoForge 21.1.248 | 21 | `mc1.21.1-neoforge.jar` |
 
 > **不要跨載入器或超出檔名範圍混用 JAR。** 相鄰 Minecraft 版本的渲染 API 與 Mixin
 > 目標可能不同；只有完成驗證的版本才會寫入發佈 metadata。

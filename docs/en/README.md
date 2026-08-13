@@ -44,23 +44,25 @@ The stable release turns 27 exact-version build artifacts into **13 directly ins
 one all-version JAR whose embedded implementation is selected by Loader. Forge shares a JAR only between
 adjacent versions with verified compatibility.
 
-In the table, `{version}` means the version number of that Release:
+Release assets automatically include the mod version at the start of each filename, for example
+`MCAutoTranslationTool-1.3.0-`. To remain readable on phones and narrow windows, the table shows only
+the identifying **filename suffix**:
 
-| Minecraft | Loader | Java | Release filename |
+| Minecraft | Loader | Java | Filename suffix |
 | --- | --- | ---: | --- |
-| 1.16.5, 1.19.2, 1.20.1, 1.21–1.21.11, 26.1–26.2 | Fabric | 8 / 17 / 21 / 25 | `MCAutoTranslationTool-{version}-fabric-all.jar` |
-| 1.8.9 | Forge | 8 | `MCAutoTranslationTool-{version}-mc1.8.9-forge.jar` |
-| 1.12.2 | Forge | 8 | `MCAutoTranslationTool-{version}-mc1.12.2-forge.jar` |
-| 1.16.5 | Forge | 8 | `MCAutoTranslationTool-{version}-mc1.16.5-forge.jar` |
-| 1.19.2 | Forge | 17 | `MCAutoTranslationTool-{version}-mc1.19.2-forge.jar` |
-| 1.20.1 | Forge | 17 | `MCAutoTranslationTool-{version}-mc1.20.1-forge.jar` |
-| 1.21, 1.21.1, 1.21.3–1.21.5 | Forge | 21 | `MCAutoTranslationTool-{version}-mc1.21-1.21.5-forge.jar` |
-| 1.21.6–1.21.8 | Forge | 21 | `MCAutoTranslationTool-{version}-mc1.21.6-1.21.8-forge.jar` |
-| 1.21.9–1.21.11 | Forge | 21 | `MCAutoTranslationTool-{version}-mc1.21.9-1.21.11-forge.jar` |
-| 26.1–26.1.2 | Forge | 25 | `MCAutoTranslationTool-{version}-mc26.1-26.1.2-forge.jar` |
-| 26.2 | Forge | 25 | `MCAutoTranslationTool-{version}-mc26.2-forge.jar` |
-| 1.20.1 | NeoForge 47.1.106–47.1.x | 17 | `MCAutoTranslationTool-{version}-mc1.20.1-neoforge.jar` |
-| 1.21.1 | NeoForge 21.1.248 | 21 | `MCAutoTranslationTool-{version}-mc1.21.1-neoforge.jar` |
+| 1.16.5, 1.19.2, 1.20.1, 1.21–1.21.11, 26.1–26.2 | Fabric | 8 / 17 / 21 / 25 | `fabric-all.jar` |
+| 1.8.9 | Forge | 8 | `mc1.8.9-forge.jar` |
+| 1.12.2 | Forge | 8 | `mc1.12.2-forge.jar` |
+| 1.16.5 | Forge | 8 | `mc1.16.5-forge.jar` |
+| 1.19.2 | Forge | 17 | `mc1.19.2-forge.jar` |
+| 1.20.1 | Forge | 17 | `mc1.20.1-forge.jar` |
+| 1.21, 1.21.1, 1.21.3–1.21.5 | Forge | 21 | `mc1.21-1.21.5-forge.jar` |
+| 1.21.6–1.21.8 | Forge | 21 | `mc1.21.6-1.21.8-forge.jar` |
+| 1.21.9–1.21.11 | Forge | 21 | `mc1.21.9-1.21.11-forge.jar` |
+| 26.1–26.1.2 | Forge | 25 | `mc26.1-26.1.2-forge.jar` |
+| 26.2 | Forge | 25 | `mc26.2-forge.jar` |
+| 1.20.1 | NeoForge 47.1.106–47.1.x | 17 | `mc1.20.1-neoforge.jar` |
+| 1.21.1 | NeoForge 21.1.248 | 21 | `mc1.21.1-neoforge.jar` |
 
 > **Do not mix loaders or use a JAR outside the range in its filename.** Adjacent Minecraft releases may
 > change rendering APIs and Mixin targets. Release metadata includes only versions that completed validation.
