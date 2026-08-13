@@ -2,7 +2,7 @@
 
 ## 未发布
 
-- 发布资产由 27 个精确版本 JAR 缩减为 14 个可直接安装的 JAR：Fabric 统一为内含 19 个精确实现的自动选版 JAR；class payload 完全相同的 Forge 版本扩宽为四个兼容族群，其余不同 API／加载器版本继续独立发布。
+- 发布资产由 27 个精确版本 JAR 缩减为 12 个可直接安装的 JAR：Fabric 统一为内含 19 个精确实现的自动选版 JAR；Forge 1.21.9–1.21.11 以双签章可选 Mixin 合并；class payload 相同的 Forge／NeoForge 1.20.1 合并为双加载器 JAR；其余不同 API 版本继续独立发布。
 
 - 合并 Fabric/Forge 1.16.5、1.19.2 与 1.20.1 的稳定源码和构建逻辑；新增通用发布 JAR 验证器，检查 metadata、Mixin/refmap、Fabric 内嵌 JAR、Forge 运行时映射与 SHA-256；并修正 Forge 26.1.1 发布 JAR 缺少 Mixin class 的问题。
 

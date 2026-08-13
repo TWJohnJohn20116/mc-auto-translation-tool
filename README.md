@@ -27,9 +27,9 @@ Minecraft 样式代码默认保留。
 推荐从 [GitHub Releases 下载最新版](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest)。
 请务必选择与你的 Minecraft 版本和模组加载器完全对应的文件：
 
-新版 Release 只提供一个 Fabric 全版本自动选版 JAR；Forge 中 class payload 完全相同的
-相邻版本会共用标有版本范围的 JAR（例如 `mc1.21-1.21.5-forge.jar`）。这些文件都能直接
-放入 `mods`，不需要解压缩。NeoForge 与 API 不兼容的 Forge 版本仍保持独立文件。
+新版 Release 只提供一个 Fabric 全版本自动选版 JAR；Forge 中相容的相邻版本会共用标有
+版本范围的 JAR（例如 `mc1.21-1.21.5-forge.jar`）。Forge／NeoForge 1.20.1 也共用一个
+双加载器 JAR。这些文件都能直接放入 `mods`，不需要解压缩；不同 API 仍保持独立。
 
 | Minecraft | 加载器 | 下载 |
 | --- | --- | --- |

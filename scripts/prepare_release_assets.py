@@ -42,9 +42,9 @@ FORGE_FAMILIES = (
         "[1.21.6,1.21.9)",
     ),
     ForgeFamily(
-        ("1.21.9", "1.21.10"),
-        "1.21.9-1.21.10",
-        "[1.21.9,1.21.11)",
+        ("1.21.9", "1.21.10", "1.21.11"),
+        "1.21.9-1.21.11",
+        "[1.21.9,1.21.12)",
     ),
     ForgeFamily(
         ("26.1", "26.1.1", "26.1.2"),
@@ -271,6 +271,65 @@ def _build_forge_family(
     return name, output.getvalue()
 
 
+def _build_1201_forge_neoforge(
+    release_version: str,
+    forge_data: bytes,
+    neoforge_data: bytes,
+) -> tuple[str, bytes]:
+    excluded = {
+        "META-INF/MANIFEST.MF",
+        "META-INF/mods.toml",
+        "fernflower_abstract_parameter_names.txt",
+        "universal-translator.forge.mixins.json",
+        "universal-translator.neoforge.mixins.json",
+    }
+    if _archive_files(forge_data, excluded) != _archive_files(neoforge_data, excluded):
+        raise PreparationError("Forge and NeoForge 1.20.1 payloads are not byte-compatible")
+
+    with zipfile.ZipFile(io.BytesIO(forge_data)) as forge_archive, zipfile.ZipFile(
+        io.BytesIO(neoforge_data)
+    ) as neoforge_archive:
+        forge_mixin = json.loads(
+            forge_archive.read("universal-translator.forge.mixins.json")
+        )
+        neoforge_mixin = json.loads(
+            neoforge_archive.read("universal-translator.neoforge.mixins.json")
+        )
+        neoforge_mixin.pop("minVersion", None)
+        if forge_mixin != neoforge_mixin:
+            raise PreparationError("Forge and NeoForge 1.20.1 Mixin configs differ")
+
+        metadata = forge_archive.read("META-INF/mods.toml").decode("utf-8")
+        dependency = re.compile(
+            r'(\[\[dependencies\.universal_translator]](?:(?!\[\[).)*?'
+            r'modId="forge"(?:(?!\[\[).)*?versionRange=")([^"]+)(")',
+            re.DOTALL,
+        )
+        metadata, count = dependency.subn(
+            lambda match: match.group(1)
+            + "[47.1.106,47.2),[47.4.10,)"
+            + match.group(3),
+            metadata,
+            count=1,
+        )
+        if count != 1:
+            raise PreparationError("missing Forge dependency in 1.20.1 loader pair")
+
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w") as target:
+            for entry in forge_archive.namelist():
+                data = (
+                    metadata.encode("utf-8")
+                    if entry == "META-INF/mods.toml"
+                    else forge_archive.read(entry)
+                )
+                _zip_entry(target, entry, data)
+    name = (
+        f"MCAutoTranslationTool-{release_version}-mc1.20.1-forge-neoforge.jar"
+    )
+    return name, output.getvalue()
+
+
 def prepare_release(
     release_dir: Path, output_dir: Path, version: str
 ) -> list[Path]:
@@ -292,6 +351,18 @@ def prepare_release(
     generated: dict[str, bytes] = {
         f"MCAutoTranslationTool-{version}-fabric-all.jar": _build_fabric_all(version, fabric)
     }
+
+    forge_1201 = forge_by_version.get("1.20.1")
+    neoforge_1201_name = f"MCAutoTranslationTool-{version}-mc1.20.1-neoforge.jar"
+    neoforge_1201 = jars.get(neoforge_1201_name)
+    if forge_1201 is None or neoforge_1201 is None:
+        raise PreparationError("Forge/NeoForge 1.20.1 loader pair is incomplete")
+    combined_name, combined_data = _build_1201_forge_neoforge(
+        version, forge_1201[1], neoforge_1201[1]
+    )
+    generated[combined_name] = combined_data
+    consumed.update((forge_1201[0], neoforge_1201_name))
+
     for family in FORGE_FAMILIES:
         missing = [item for item in family.members if item not in forge_by_version]
         if missing:

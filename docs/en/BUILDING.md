@@ -210,10 +210,11 @@ It checks ZIP structure, expanded metadata, entrypoints, declared Mixin classes 
 Fabric JARs, legacy Forge runtime mappings, SHA-256 values, and checksum-manifest coverage. Legacy
 Fabric and Forge `build` tasks run the same verifier against their generated release JARs.
 
-The publish workflow reduces the 27 exact build artifacts to 14 directly installable JARs. It
-flattens all 19 Fabric implementations into one Loader-selected bundle and broadens four Forge
-families only after confirming every ZIP entry except `mods.toml` is byte-identical. Different
-APIs and loaders remain separate. Reproduce and validate the publish set with:
+The publish workflow reduces the 27 exact build artifacts to 12 directly installable JARs. It
+flattens all 19 Fabric implementations into one Loader-selected bundle, broadens four Forge
+families after confirming compatible payloads, and combines the byte-identical Forge/NeoForge
+1.20.1 classes into one dual-loader JAR. Different APIs remain separate. Reproduce and validate
+the publish set with:
 
 ```bash
 python scripts/prepare_release_assets.py \
