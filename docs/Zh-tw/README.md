@@ -1,123 +1,118 @@
-# MC 自動翻譯工具（MC Auto Translation Tool）
+# MC 自動翻譯工具
+
+**MC Auto Translation Tool** 是一個面向 Minecraft Java 版的公益、開源、純用戶端全介面翻譯模組。
+伺服器不必安裝本模組；它可以翻譯聊天、任務書、模組選單、計分板、物品說明、告示牌等玩家可見文字。
 
 [简体中文](../Zh-cn/README.md) · [繁體中文](README.md) · [English](../en/README.md) · [儲存庫首頁](../../README.md)
 
-一個面向 Minecraft Java 版的公益、開源、純用戶端全介面翻譯模組。
-
 [⬇️ 下載最新版](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest) ·
-[📚 語言目錄](../README.md) · [📖 安裝及使用說明](USER_GUIDE.md)
+[📖 安裝與使用](USER_GUIDE.md) ·
+[✅ 相容性矩陣](COMPATIBILITY.md) ·
+[📝 更新記錄](../../CHANGELOG.md)
 
-原作者：[Bilibili「我小张7272635」](https://space.bilibili.com/3546631091783712)。
-轉載、再次發佈或改作時，請保留原作者署名及 MIT License 版權聲明。
+> 目前正式版與發佈日期以 [GitHub Releases](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest)
+> 為準。請只使用與你的 Minecraft 版本及模組載入器相符的 JAR。
 
-## 交流與支持
+## 為什麼使用它
+
+| 功能 | 說明 |
+| --- | --- |
+| 全介面翻譯 | 涵蓋聊天、任務／配方介面、模組選單、計分板、Tab、標題、Boss Bar、容器、物品名稱與 Lore、書、告示牌、全息文字等 |
+| 純用戶端 | Minecraft 伺服器不必安裝模組，也不會收到額外的模組資料封包 |
+| 本機離線 | 建議使用內建離線模式，不需要 API Key；模型與翻譯內容保留在使用者電腦上 |
+| 多種服務 | 亦可連接 LibreTranslate、OpenAI 相容 LLM API 或舊騰訊相容介面 |
+| 流暢與穩定 | 翻譯在背景執行；尚未完成或服務異常時繼續顯示原文，不阻塞渲染執行緒 |
+| 隱私保護 | 玩家名稱、伺服器位址、網址、數字與格式碼會先在本機分離，不送入翻譯請求 |
+| 本機快取 | 合併相同請求並快取譯文，降低重複翻譯的延遲與線上服務費用 |
+| 可選傳送翻譯 | 可將一般聊天翻譯後依序傳送；此功能預設關閉，指令永遠保持原樣 |
+
+## 快速開始
+
+1. 確認遊戲使用的 **Minecraft 版本、模組載入器與 Java 版本**。
+2. 開啟[最新 Release](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest)，依下表選擇 JAR。
+3. 將 JAR 放入該遊戲實例的 `mods` 資料夾。Fabric 還需安裝對應版本的 Fabric API。
+4. 啟動遊戲。按 `F8` 開啟或關閉自動翻譯；按 `U` 開啟設定或重新載入設定檔。
+5. 首次使用建議選擇「離線」與「僅譯文」。詳細步驟請見[安裝與使用指南](USER_GUIDE.md)。
+
+不同 Forge 版本的設定入口略有差異；需要手動設定時，請編輯遊戲實例中的
+`config/universal-translator.properties`，儲存後按 `U` 重新載入。
+
+## 下載與版本選擇
+
+正式版將 27 個精確版本建置產物整理為 **13 個可直接安裝的 JAR**。Fabric 使用一個由 Loader
+自動選擇內嵌實作的全版本 JAR；Forge 只在已驗證相容的相鄰版本間共用 JAR。
+
+下表中的 `{版本}` 代表該次 Release 的版本號：
+
+| Minecraft | 載入器 | Java | Release 檔名 |
+| --- | --- | ---: | --- |
+| 1.16.5、1.19.2、1.20.1、1.21–1.21.11、26.1–26.2 | Fabric | 8 / 17 / 21 / 25 | `MCAutoTranslationTool-{版本}-fabric-all.jar` |
+| 1.8.9 | Forge | 8 | `MCAutoTranslationTool-{版本}-mc1.8.9-forge.jar` |
+| 1.12.2 | Forge | 8 | `MCAutoTranslationTool-{版本}-mc1.12.2-forge.jar` |
+| 1.16.5 | Forge | 8 | `MCAutoTranslationTool-{版本}-mc1.16.5-forge.jar` |
+| 1.19.2 | Forge | 17 | `MCAutoTranslationTool-{版本}-mc1.19.2-forge.jar` |
+| 1.20.1 | Forge | 17 | `MCAutoTranslationTool-{版本}-mc1.20.1-forge.jar` |
+| 1.21、1.21.1、1.21.3–1.21.5 | Forge | 21 | `MCAutoTranslationTool-{版本}-mc1.21-1.21.5-forge.jar` |
+| 1.21.6–1.21.8 | Forge | 21 | `MCAutoTranslationTool-{版本}-mc1.21.6-1.21.8-forge.jar` |
+| 1.21.9–1.21.11 | Forge | 21 | `MCAutoTranslationTool-{版本}-mc1.21.9-1.21.11-forge.jar` |
+| 26.1–26.1.2 | Forge | 25 | `MCAutoTranslationTool-{版本}-mc26.1-26.1.2-forge.jar` |
+| 26.2 | Forge | 25 | `MCAutoTranslationTool-{版本}-mc26.2-forge.jar` |
+| 1.20.1 | NeoForge 47.1.106–47.1.x | 17 | `MCAutoTranslationTool-{版本}-mc1.20.1-neoforge.jar` |
+| 1.21.1 | NeoForge 21.1.248 | 21 | `MCAutoTranslationTool-{版本}-mc1.21.1-neoforge.jar` |
+
+> **不要跨載入器或超出檔名範圍混用 JAR。** 相鄰 Minecraft 版本的渲染 API 與 Mixin
+> 目標可能不同；只有完成驗證的版本才會寫入發佈 metadata。
+
+[查看最新 Release](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest) ·
+[查看所有版本](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases) ·
+[查看實際驗證範圍](COMPATIBILITY.md)
+
+## 翻譯方式與隱私
+
+| 方式 | 需要 API Key | 文字是否離開本機 | 適合情境 |
+| --- | --- | --- | --- |
+| 離線 Lite / Quality | 否 | 否 | 建議；首次使用會下載平台引擎與所選模型 |
+| 本機 LibreTranslate | 視服務設定 | 否 | 已在本機執行 LibreTranslate 的使用者 |
+| 遠端 LibreTranslate | 視服務設定 | 是 | 使用可信任的 HTTPS 翻譯服務 |
+| 本機 OpenAI 相容 API | 視服務設定 | 否 | 自行執行 llama.cpp、Ollama 等相容服務 |
+| 線上 OpenAI 相容 API | 通常需要 | 是 | 使用者自行選擇的 HTTPS LLM 服務 |
+| 騰訊相容介面 | 是 | 是 | 僅用於相容舊設定 |
+
+- 離線模式只在本機回環位址上執行；伺服器、模組與整合包文字不會傳送到專案方。
+- 使用遠端 API 時，獲准翻譯的可見文字會傳送到使用者設定的服務；專案不會代管金鑰。
+- API Key 只儲存在目前遊戲實例的設定檔中。遠端端點必須使用 HTTPS。
+- 可以分別關閉聊天內容、其他介面與玩家主動傳送翻譯；傳送翻譯預設關閉。
+- 快取鍵使用 SHA-256，原文不會以明文形式寫入快取檔案。
+
+完整設定、模型下載說明與常見問題請見[安裝與使用指南](USER_GUIDE.md)。
+
+## 目前驗證狀態
+
+目前正式版的所有目標均通過乾淨建置、共用核心自我測試、Mixin/refmap、執行階段映射、發佈結構與
+SHA-256 驗證。Fabric 全版本 JAR 內含 19 個精確實作，並已通過各目標版本的真實 Loader
+選擇測試；NeoForge 1.20.1 已完成實際用戶端啟動與模組初始化。
+
+「可以編譯」不等於「已完成伺服器內人工回歸」。各版本的建置、啟動與人工驗證層級會分別記錄，
+詳見[相容性矩陣](COMPATIBILITY.md)。
+
+## 文件
+
+| 文件 | 內容 |
+| --- | --- |
+| [安裝與使用指南](USER_GUIDE.md) | 安裝、首次設定、離線模型、API 設定、常見問題 |
+| [相容性矩陣](COMPATIBILITY.md) | 各 Minecraft／載入器目標的實際驗證層級 |
+| [建置指南](BUILDING.md) | 開發環境、Gradle 任務、發佈 JAR 驗證 |
+| [架構說明](ARCHITECTURE.md) | 共用核心、平台適配、翻譯與快取流程 |
+| [第三方離線服務](THIRD_PARTY_OFFLINE.md) | 連接使用者自行執行的本機翻譯服務 |
+| [更新記錄](../../CHANGELOG.md) | 正式版與測試版變更 |
+| [多語言文件目錄](../README.md) | 简体中文、繁體中文與 English 文件入口 |
+
+## 交流、作者與授權
 
 - QQ 交流群：`1054795488`
-- 愛發電贊助：[支持「我小张7272635」](https://afdian.com/a/XiaoZhangGG)
+- 愛發電：[支持「我小张7272635」](https://afdian.com/a/XiaoZhangGG)
+- 原作者：[Bilibili「我小张7272635」](https://space.bilibili.com/3546631091783712)
+- 授權條款：[MIT License](../../LICENSE)
 
-贊助完全自願；本專案仍會維持公益、開源及免費下載。
-
-本專案旨在翻譯伺服器、模組及整合包顯示給玩家的可見文字，包括聊天、任務書、
-模組設定與選單、記分板、Tab 清單、Action Bar、標題、Boss Bar、容器標題、
-物品名稱與 Lore、告示牌、書本、全像文字和實體自訂名稱。玩家名稱、數字、網址及
-Minecraft 樣式代碼預設保持不變。
-
-## 下載
-
-建議從 [GitHub Releases 下載最新版](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest)。
-請務必選擇與你的 Minecraft 版本及模組載入器完全相符的檔案：
-
-| Minecraft | 載入器 | 下載 |
-| --- | --- | --- |
-| 1.8.9 | Forge | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.8.9-forge.jar) |
-| 1.12.2 | Forge | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.12.2-forge.jar) |
-| 所有受支援版本 | Fabric | [下載全版本自動選版 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-fabric-all.jar) |
-| 1.16.5、1.19.2、1.20.1、1.21–1.21.11 | Forge | [查看正式版相容檔案](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/tag/v1.3.0) |
-| 1.20.1 | Forge | [下載 Forge JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.20.1-forge.jar) |
-| 1.20.1 | NeoForge | [下載 NeoForge JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.20.1-neoforge.jar) |
-| 1.21.1 | NeoForge | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.21.1-neoforge.jar) |
-| 26.1–26.2 | Forge | [查看正式版相容檔案](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/tag/v1.3.0) |
-
-請勿跨版本或載入器混用 JAR。發行中只允許已完成建置驗證的精確 Minecraft 版本；
-鄰近版本會在個別驗證後再加入支援範圍。
-
-[查看所有版本與更新說明](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases) ·
-[SHA-256 校驗檔案](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/SHA256SUMS.txt)
-
-## 設計原則
-
-- 伺服器無須安裝模組。
-- 預設使用玩家電腦上的離線模型，不需要 API 密鑰或專案伺服器。
-- 離線模式僅繫結至 `127.0.0.1`，伺服器文字不會離開玩家的電腦。
-- 可使用 LibreTranslate、騰訊相容介面或 OpenAI 相容 LLM API；離線失敗時的 API 備援預設關閉。
-- 可另行開啟「傳送翻譯」；一般聊天會在背景翻譯後依原順序傳送，命令維持原樣。
-- 翻譯在背景執行；服務無回應時立即保留原文，不影響遊戲。
-- 相同文字及動態文字範本使用本機快取，以降低延遲及費用。
-- 尚未進入世界時，也會擷取使用 Minecraft 原版字型彩現器的模組選單及整合包標題畫面。
-- 預設不翻譯玩家名稱、座標、數字、網址及格式代碼。
-- 玩家可依伺服器關閉私訊或其他敏感內容的外傳。
-
-## 版本模組
-
-| Minecraft | 載入器 | Java |
-| --- | --- | --- |
-| 26.1、26.1.1、26.1.2、26.2（單一 JAR） | Fabric | 25 |
-| 26.1、26.1.1、26.1.2、26.2（相容族群／獨立 JAR） | Forge | 25 |
-| 1.21–1.21.11（單一 JAR） | Fabric | 21 |
-| 1.21、1.21.1、1.21.3–1.21.11（相容族群／獨立 JAR） | Forge | 21 |
-| 1.20.1 | Forge | 17 |
-| 1.20.1 | Fabric | 17 |
-| 1.19.2 | Forge | 17 |
-| 1.19.2 | Fabric | 17 |
-| 1.16.5 | Forge | 8 |
-| 1.16.5 | Fabric | 8 |
-| 1.12.2 | Forge | 8 |
-| 1.8.9 | Forge | 8 |
-
-Fabric 1.21.x 與 26.x 各提供一個整合 JAR；整合包內仍保留精確版本實作，並共用相同的核心邏輯及設定語意。
-
-## 目前狀態
-
-1.3.0 正式版將 27 個精確建置產物整理為 13 個用戶端 JAR。全部建置線均通過乾淨建置；
-全版本 Fabric JAR 通過 19 個目標版本的真實 Loader 自動選版測試，NeoForge 1.20.1 使用 Java 17 完成實際用戶端啟動和
-模組初始化，發行 JAR 的版本、Mixin/refmap、執行階段映射與 SHA-256 均通過自動驗證。
-各目標的精確驗證層級請見相容性矩陣。
-
-Fabric 版本按下 `U` 開啟設定。Forge 1.16.5／1.19.2／1.20.1／1.21.11／26.x 修改
-`config/universal-translator.properties` 後按下 `U` 重新載入。模組預設關閉；新安裝預設選擇「離線」，並使用
-「僅顯示譯文」替換方式，避免記分板及容器文字因雙語串接而溢出。按下 `F8` 可隨時
-開啟或關閉翻譯，兩個快速鍵都能在 Minecraft 按鍵綁定介面中修改。第一次遇到待翻譯
-文字後，模組會在背景下載約 10–17 MB 的平台引擎及 491 MB 的 Lite 模型；下載期間
-繼續顯示原文。模型預設優先使用 ModelScope 中國來源，失敗後會自動續傳並切換至官方
-來源。所有檔案都必須通過大小及 SHA-256 校驗後才會執行。也可以繼續選擇
-LibreTranslate 或舊版騰訊相容模式。
-進入伺服器約三秒後，聊天欄會顯示一則只存在本機的 `U`／`F8` 操作提示，不會傳送
-任何聊天訊息或資料封包給伺服器。
-
-已驗證的行為：
-
-- 保護玩家名稱、伺服器 IP／網域名稱、連接埠、顏色代碼、數字、百分比及網址。
-- 受保護的內容會在本機分段，不會傳送給離線模型或線上 API。
-- 將動態記分板內容正規化為可重複使用的範本。
-- 快取譯文，並合併同時發生的相同請求。
-- 對已經是目標語言或只包含數字的內容略過連線。
-- 中英文混合文字只翻譯英文片段，已有中文保持不變。
-- 譯文可使用青色、綠色、金色等獨立顏色，也可保留原始顏色。
-- 翻譯服務異常時傳回原文。
-- 背景翻譯不會阻塞彩現執行緒。
-- 儲存設定後無須重新啟動遊戲即可套用。
-- 聊天及其他介面可分別禁止外傳。
-- 玩家傳送翻譯預設關閉，其目標語言與介面翻譯目標語言分開設定。
-- 模組選單、任務／配方介面及整合包自訂標題畫面不需連線伺服器即可翻譯。
-- 離線 Lite 及 Quality 模型會按需安裝，不包含在模組 JAR 中。
-
-## 隱私權提示
-
-離線模式不會傳送伺服器、模組或整合包文字。線上 API 模式或「API 備援」表示
-所選的伺服器文字及本機可見的模組／整合包文字可能會傳送至玩家設定的翻譯服務。
-專案提供明確的總開關、聊天／其他內容開關及
-本機快取。密鑰只儲存在玩家本機，禁止提交至程式碼儲存庫。遠端端點必須使用
-HTTPS；只有精確的本機回環位址可使用 HTTP。
-
-詳細安裝及使用方式請參閱 [使用指南](USER_GUIDE.md)；實際驗證範圍及後續版本順序
-請參閱 [相容性矩陣](COMPATIBILITY.md)。官方網站原始碼位於 `../../website/`。
+贊助完全自願；本專案會繼續維持公益、開源與免費下載。轉載、再次發佈或改作時，請保留
+原作者署名與 MIT License 版權聲明。

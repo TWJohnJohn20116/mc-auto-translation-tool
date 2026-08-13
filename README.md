@@ -1,131 +1,118 @@
-# MC 自动翻译工具（MC Auto Translation Tool）
+# MC 自动翻译工具
+
+**MC Auto Translation Tool** 是一个面向 Minecraft Java 版的公益、开源、纯客户端全界面翻译模组。
+服务器无需安装本模组；它可以翻译聊天、任务书、模组菜单、记分板、物品说明、告示牌等玩家可见文字。
 
 [简体中文](README.md) · [繁體中文](docs/Zh-tw/README.md) · [English](docs/en/README.md)
 
-一个面向 Minecraft Java 版的公益、开源、纯客户端全界面翻译模组。
-
 [⬇️ 下载最新版](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest) ·
-[📚 文档中心](docs/README.md) · [📖 安装与使用说明](docs/Zh-cn/USER_GUIDE.md)
+[📖 安装与使用](docs/Zh-cn/USER_GUIDE.md) ·
+[✅ 兼容性矩阵](docs/Zh-cn/COMPATIBILITY.md) ·
+[📝 更新记录](CHANGELOG.md)
 
-原作者：[B站「我小张7272635」](https://space.bilibili.com/3546631091783712)。
-转载、再发布或改编时，请保留原作者署名与 MIT License 版权声明。
+> 当前正式版与发布日期以 [GitHub Releases](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest)
+> 为准。请只使用与你的 Minecraft 版本和模组加载器相符的 JAR。
 
-## 交流与支持
+## 为什么使用它
+
+| 特性 | 说明 |
+| --- | --- |
+| 全界面翻译 | 覆盖聊天、任务/配方界面、模组菜单、记分板、Tab、标题、Boss Bar、容器、物品名与 Lore、书、告示牌、全息文字等 |
+| 纯客户端 | Minecraft 服务器无需安装模组，也不会收到额外的模组数据包 |
+| 本地离线 | 推荐使用内置离线模式，不需要 API Key；模型和翻译内容保留在用户电脑上 |
+| 多种服务 | 也可连接 LibreTranslate、OpenAI 兼容 LLM API 或旧腾讯兼容接口 |
+| 流畅与稳定 | 翻译在后台执行；未完成或服务异常时继续显示原文，不阻塞渲染线程 |
+| 隐私保护 | 玩家名、服务器地址、网址、数字和格式代码会先在本机分离，不送入翻译请求 |
+| 本地缓存 | 合并相同请求并缓存译文，降低重复翻译的延迟和在线服务费用 |
+| 可选发送翻译 | 可将普通聊天翻译后按顺序发送；该功能默认关闭，命令始终保持原样 |
+
+## 快速开始
+
+1. 确认游戏使用的 **Minecraft 版本、模组加载器和 Java 版本**。
+2. 打开 [最新 Release](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest)，按下表选择 JAR。
+3. 将 JAR 放进该游戏实例的 `mods` 文件夹。Fabric 还需安装对应版本的 Fabric API。
+4. 启动游戏。按 `F8` 开启或关闭自动翻译；按 `U` 打开设置或重新载入配置。
+5. 首次使用建议选择“离线”与“仅译文”。详细步骤见[安装与使用指南](docs/Zh-cn/USER_GUIDE.md)。
+
+不同 Forge 版本的设置入口略有差异；需要手动配置时，请编辑游戏实例中的
+`config/universal-translator.properties`，保存后按 `U` 重新载入。
+
+## 下载与版本选择
+
+正式版把 27 个精确版本构建产物整理为 **13 个可直接安装的 JAR**。Fabric 使用一个由 Loader
+自动选择内嵌实现的全版本 JAR；Forge 只在已验证兼容的相邻版本间共用 JAR。
+
+下表中的 `{版本}` 代表该次 Release 的版本号：
+
+| Minecraft | 加载器 | Java | Release 文件名 |
+| --- | --- | ---: | --- |
+| 1.16.5、1.19.2、1.20.1、1.21–1.21.11、26.1–26.2 | Fabric | 8 / 17 / 21 / 25 | `MCAutoTranslationTool-{版本}-fabric-all.jar` |
+| 1.8.9 | Forge | 8 | `MCAutoTranslationTool-{版本}-mc1.8.9-forge.jar` |
+| 1.12.2 | Forge | 8 | `MCAutoTranslationTool-{版本}-mc1.12.2-forge.jar` |
+| 1.16.5 | Forge | 8 | `MCAutoTranslationTool-{版本}-mc1.16.5-forge.jar` |
+| 1.19.2 | Forge | 17 | `MCAutoTranslationTool-{版本}-mc1.19.2-forge.jar` |
+| 1.20.1 | Forge | 17 | `MCAutoTranslationTool-{版本}-mc1.20.1-forge.jar` |
+| 1.21、1.21.1、1.21.3–1.21.5 | Forge | 21 | `MCAutoTranslationTool-{版本}-mc1.21-1.21.5-forge.jar` |
+| 1.21.6–1.21.8 | Forge | 21 | `MCAutoTranslationTool-{版本}-mc1.21.6-1.21.8-forge.jar` |
+| 1.21.9–1.21.11 | Forge | 21 | `MCAutoTranslationTool-{版本}-mc1.21.9-1.21.11-forge.jar` |
+| 26.1–26.1.2 | Forge | 25 | `MCAutoTranslationTool-{版本}-mc26.1-26.1.2-forge.jar` |
+| 26.2 | Forge | 25 | `MCAutoTranslationTool-{版本}-mc26.2-forge.jar` |
+| 1.20.1 | NeoForge 47.1.106–47.1.x | 17 | `MCAutoTranslationTool-{版本}-mc1.20.1-neoforge.jar` |
+| 1.21.1 | NeoForge 21.1.248 | 21 | `MCAutoTranslationTool-{版本}-mc1.21.1-neoforge.jar` |
+
+> **不要跨加载器或超出文件名范围混用 JAR。** 相邻 Minecraft 版本的渲染 API 与 Mixin
+> 目标可能不同；只有完成验证的版本才会写入发布 metadata。
+
+[查看最新 Release](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest) ·
+[查看所有版本](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases) ·
+[查看实际验证范围](docs/Zh-cn/COMPATIBILITY.md)
+
+## 翻译方式与隐私
+
+| 方式 | 需要 API Key | 文字是否离开本机 | 适合场景 |
+| --- | --- | --- | --- |
+| 离线 Lite / Quality | 否 | 否 | 推荐；首次使用会下载平台引擎和所选模型 |
+| 本地 LibreTranslate | 视服务配置 | 否 | 已在本机运行 LibreTranslate 的用户 |
+| 远程 LibreTranslate | 视服务配置 | 是 | 使用可信的 HTTPS 翻译服务 |
+| 本地 OpenAI 兼容 API | 视服务配置 | 否 | 自行运行 llama.cpp、Ollama 等兼容服务 |
+| 在线 OpenAI 兼容 API | 通常需要 | 是 | 使用用户自行选择的 HTTPS LLM 服务 |
+| 腾讯兼容接口 | 是 | 是 | 仅用于兼容旧配置 |
+
+- 离线模式只在本机回环地址上运行；服务器、模组和整合包文字不会发送到项目方。
+- 使用远程 API 时，获准翻译的可见文字会发送到用户配置的服务；项目不会代管密钥。
+- API Key 只保存在当前游戏实例的配置文件中。远程端点必须使用 HTTPS。
+- 可以分别关闭聊天内容、其他界面和玩家主动发送翻译；发送翻译默认关闭。
+- 缓存键使用 SHA-256，原文不会以明文形式写入缓存文件。
+
+完整设置项、模型下载说明和常见问题见[安装与使用指南](docs/Zh-cn/USER_GUIDE.md)。
+
+## 当前验证状态
+
+当前正式版的全部目标均通过干净构建、共享核心自测、Mixin/refmap、运行时映射、发布结构与
+SHA-256 校验。Fabric 全版本 JAR 内含 19 个精确实现，并已通过各目标版本的真实 Loader
+选择测试；NeoForge 1.20.1 已完成实际客户端启动与模组初始化。
+
+“能够编译”不等同于“完成服务器内人工回归”。各版本的构建、启动和人工验证层级会分别记录，
+详见[兼容性矩阵](docs/Zh-cn/COMPATIBILITY.md)。
+
+## 文档
+
+| 文档 | 内容 |
+| --- | --- |
+| [安装与使用指南](docs/Zh-cn/USER_GUIDE.md) | 安装、首次设置、离线模型、API 配置、常见问题 |
+| [兼容性矩阵](docs/Zh-cn/COMPATIBILITY.md) | 各 Minecraft／加载器目标的实际验证层级 |
+| [建置指南](docs/Zh-cn/BUILDING.md) | 开发环境、Gradle 任务、发布 JAR 验证 |
+| [架构说明](docs/Zh-cn/ARCHITECTURE.md) | 共用核心、平台适配、翻译与缓存流程 |
+| [第三方离线服务](docs/Zh-cn/THIRD_PARTY_OFFLINE.md) | 连接用户自行运行的本地翻译服务 |
+| [更新记录](CHANGELOG.md) | 正式版与测试版变更 |
+| [多语言文档目录](docs/README.md) | 简体中文、繁體中文与 English 文档入口 |
+
+## 交流、作者与授权
 
 - QQ 交流群：`1054795488`
-- 爱发电赞助：[支持「我小张7272635」](https://afdian.com/a/XiaoZhangGG)
+- 爱发电：[支持「我小张7272635」](https://afdian.com/a/XiaoZhangGG)
+- 原作者：[B站「我小张7272635」](https://space.bilibili.com/3546631091783712)
+- 授权协议：[MIT License](LICENSE)
 
-赞助完全自愿；本项目仍将保持公益、开源和免费下载。
-
-目标是翻译服务器、模组和整合包显示给玩家的可见文字，包括聊天、任务书、
-模组设置与菜单、记分板、Tab 列表、Action Bar、标题、Boss Bar、容器标题、
-物品名称与 Lore、告示牌、书、全息文字和实体自定义名称。玩家名、数字、网址和
-Minecraft 样式代码默认保留。
-
-## 下载
-
-推荐从 [GitHub Releases 下载最新版](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest)。
-请务必选择与你的 Minecraft 版本和模组加载器完全对应的文件：
-
-新版 Release 只提供一个 Fabric 全版本自动选版 JAR；Forge 中相容的相邻版本会共用标有
-版本范围的 JAR（例如 `mc1.21-1.21.5-forge.jar`）。Forge／NeoForge 1.20.1 保持为两个
-分别验证的加载器专用 JAR。这些文件都能直接放入 `mods`，不需要解压缩；不同 API 保持独立。
-
-| Minecraft | 加载器 | 下载 |
-| --- | --- | --- |
-| 1.8.9 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.8.9-forge.jar) |
-| 1.12.2 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.12.2-forge.jar) |
-| 1.16.5、1.19.2、1.20.1、1.21–1.21.11、26.1–26.2 | Fabric | [下载全版本自动选版 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-fabric-all.jar) |
-| 1.16.5、1.19.2、1.20.1 | Forge | [查看正式版文件](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/tag/v1.3.0) |
-| 1.20.1 | Forge | [下载 Forge JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.20.1-forge.jar) |
-| 1.20.1 | NeoForge | [下载 NeoForge JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.20.1-neoforge.jar) |
-| 1.21、1.21.1、1.21.3–1.21.5 | Forge | [下载兼容族群 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.21-1.21.5-forge.jar) |
-| 1.21.6–1.21.8 | Forge | [下载兼容族群 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.21.6-1.21.8-forge.jar) |
-| 1.21.9–1.21.11 | Forge | [下载兼容族群 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.21.9-1.21.11-forge.jar) |
-| 1.21.1 | NeoForge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.21.1-neoforge.jar) |
-| 26.1–26.1.2 | Forge | [下载兼容族群 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc26.1-26.1.2-forge.jar) |
-| 26.2 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc26.2-forge.jar) |
-
-请勿跨加载器混用 JAR。Forge 兼容族群只覆盖发布文件名与 metadata 明确声明的范围；
-不在表内的相邻版本仍需单独验证后才会加入支持范围。
-
-[查看全部版本与更新说明](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases) ·
-[SHA-256 校验文件](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/SHA256SUMS.txt)
-
-## 设计原则
-
-- 服务器无需安装模组。
-- 默认使用用户电脑上的离线模型，不要求 API 密钥或项目服务器。
-- 离线模式仅绑定 `127.0.0.1`，服务器文字不会离开用户电脑。
-- 可使用 LibreTranslate、腾讯兼容接口或 OpenAI 兼容 LLM API；离线失败时的 API 回退默认关闭。
-- 可单独开启“发送翻译”，普通聊天后台翻译后再按原顺序发送；命令保持原样。
-- 翻译在后台执行；服务不可用时立即保留原文，不影响游戏。
-- 相同文本和动态文本模板使用本地缓存，减少延迟与费用。
-- 在进入世界前也会捕获使用原版字体渲染器的模组菜单和整合包标题界面。
-- 默认不翻译玩家名、坐标、数字、网址和格式代码。
-- 用户可以按服务器关闭私聊或其他敏感内容的外发。
-
-## 版本模块
-
-| Minecraft | 加载器 | Java |
-| --- | --- | --- |
-| 26.1、26.1.1、26.1.2、26.2（单一 JAR） | Fabric | 25 |
-| 26.1、26.1.1、26.1.2、26.2（兼容族群／独立 JAR） | Forge | 25 |
-| 1.21–1.21.11（单一 JAR） | Fabric | 21 |
-| 1.21、1.21.1、1.21.3–1.21.11（兼容族群／独立 JAR） | Forge | 21 |
-| 1.20.1 | Forge | 17 |
-| 1.20.1 | NeoForge 47.1.106–47.1.x | 17 |
-| 1.21.1 | NeoForge 21.1.248 | 21 |
-| 1.20.1 | Fabric | 17 |
-| 1.19.2 | Forge | 17 |
-| 1.19.2 | Fabric | 17 |
-| 1.16.5 | Forge | 8 |
-| 1.16.5 | Fabric | 8 |
-| 1.12.2 | Forge | 8 |
-| 1.8.9 | Forge | 8 |
-
-Fabric 1.21.x 与 26.x 各提供一个整合 JAR；整合包内仍保留精确版本实现，并共享相同的核心逻辑和配置语义。
-
-## 当前状态
-
-1.3.0 正式版将 27 个精确构建产物整理为 13 个客户端 JAR。全部构建线均通过干净构建；
-全版本 Fabric JAR 通过 19 个目标版本的真实 Loader 自动选版测试，NeoForge 1.20.1 使用 Java 17 完成实际客户端启动和
-模组初始化，发行 JAR 的版本、Mixin/refmap、运行时映射与 SHA-256 均通过自动校验。
-详细验证层级见兼容性矩阵。
-
-Fabric 版本进入游戏后按 `U` 打开设置；Forge 1.16.5/1.19.2/1.20.1/1.21.11/26.x 当前使用
-`config/universal-translator.properties`，修改后按 `U` 重新载入。模组默认关闭；新安装默认选择“离线”，并使用
-“仅译文”替换方式，避免记分板和容器文字因双语拼接溢出。按 `F8` 可随时开启或
-关闭翻译，两个快捷键都能在 Minecraft 按键绑定界面修改。首次遇到待翻译文字后会在后台下载约 10–17 MB 的平台引擎
-和 491 MB 的 Lite 模型，下载期间继续显示原文；模型默认优先使用 ModelScope
-国内源，失败后自动续传并回退官方源。所有文件通过大小和 SHA-256 校验后才会执行。
-也可以继续选择 LibreTranslate 或旧腾讯兼容模式。
-进入服务器约三秒后，聊天栏会显示一条仅限本机的 `U`/`F8` 操作提示，不会发送
-任何聊天消息或数据包给服务器。
-
-已经验证的行为：
-
-- 保护玩家名、服务器 IP/域名、端口、颜色代码、数字、百分比和网址。
-- 受保护内容在本机分段，不会发送给离线模型或在线 API。
-- 将动态记分板内容归一为可复用模板。
-- 缓存译文并合并同时发生的相同请求。
-- 对已经是目标语言或只有数字的内容跳过联网。
-- 中英文混合文本只翻译英文片段，已有中文保持不变。
-- 译文可以使用青色、绿色、金色等独立颜色，也可保留原色。
-- 翻译服务异常时返回原文。
-- 后台翻译不会阻塞渲染线程。
-- 设置保存后无需重启游戏即可应用。
-- 聊天与其他界面可分别禁止外发。
-- 玩家发送翻译默认关闭，目标语言与界面翻译目标语言分开设置。
-- 模组菜单、任务/配方界面和整合包自定义标题屏可在未连接服务器时自动翻译。
-- 离线 Lite 与 Quality 模型按需安装，不放入模组 JAR。
-
-## 隐私提示
-
-离线模式不会发送服务器、模组或整合包文字。在线 API 模式或“API 回退”意味着
-选中的服务器文字以及本机可见的模组/整合包文字可能被发送到用户配置的翻译服务。项目会提供
-明确的总开关、聊天/其他内容开关和本地缓存。密钥只在用户本机配置，禁止提交
-到代码仓库。远程端点必须使用 HTTPS；只有精确的本机回环地址允许 HTTP。
-
-详细安装和使用方法见 `docs/Zh-cn/USER_GUIDE.md`，实际验证范围和后续版本顺序见
-`docs/Zh-cn/COMPATIBILITY.md`。官网源码位于 `website/`。
+赞助完全自愿；本项目会继续保持公益、开源和免费下载。转载、再发布或改编时，请保留
+原作者署名与 MIT License 版权声明。
