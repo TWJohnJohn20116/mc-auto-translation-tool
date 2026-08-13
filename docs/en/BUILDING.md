@@ -210,6 +210,21 @@ It checks ZIP structure, expanded metadata, entrypoints, declared Mixin classes 
 Fabric JARs, legacy Forge runtime mappings, SHA-256 values, and checksum-manifest coverage. Legacy
 Fabric and Forge `build` tasks run the same verifier against their generated release JARs.
 
+The publish workflow reduces the 27 exact build artifacts to 14 directly installable JARs. It
+flattens all 19 Fabric implementations into one Loader-selected bundle and broadens four Forge
+families only after confirming every ZIP entry except `mods.toml` is byte-identical. Different
+APIs and loaders remain separate. Reproduce and validate the publish set with:
+
+```bash
+python scripts/prepare_release_assets.py \
+  --release-dir downloads/1.3.0-beta.3 \
+  --output-dir build/release-assets \
+  --version 1.3.0-beta.3
+python scripts/verify_release_jars.py \
+  --checksum-file build/release-assets/SHA256SUMS.txt \
+  --require-complete-checksums build/release-assets/*.jar
+```
+
 ## Core self-test
 
 The root `translator-core` project does not depend on Minecraft. Its test sources are under

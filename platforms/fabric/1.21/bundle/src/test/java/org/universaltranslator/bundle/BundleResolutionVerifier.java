@@ -127,6 +127,7 @@ public final class BundleResolutionVerifier {
             return List.of(
                     builtin("minecraft", minecraftVersion),
                     builtin("fabricloader", "0.19.3"),
+                    builtin("fabric", "1.0.0"),
                     builtin("fabric-api", "1.0.0")
             );
         }

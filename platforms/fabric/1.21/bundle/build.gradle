@@ -75,6 +75,20 @@ tasks.register("verifyLoaderSelection", JavaExec) {
     args([jar.archiveFile.get().asFile.absolutePath] + supportedVersions)
 }
 
+tasks.register("verifyPreparedReleaseBundle", JavaExec) {
+    dependsOn rootProject.tasks.named("verifyPreparedReleaseAssets"), testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "org.universaltranslator.bundle.BundleResolutionVerifier"
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+    def allVersions = ["1.16.5", "1.19.2", "1.20.1"] + supportedVersions +
+            ["26.1", "26.1.1", "26.1.2", "26.2"]
+    args([rootProject.layout.buildDirectory.file(
+            "release-assets/MCAutoTranslationTool-${project.mod_version}-fabric-all.jar"
+    ).get().asFile.absolutePath] + allVersions)
+}
+
 test {
     enabled = false
 }

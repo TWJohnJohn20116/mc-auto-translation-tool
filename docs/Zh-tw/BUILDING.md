@@ -173,23 +173,33 @@ Wrapper 固定為 Gradle 2.14.1，ForgeGradle 使用 2.1 系列，Forge 固定�
 相容編譯器：`./gradlew build -PlegacyJavac=/absolute/path/to/javac`。一般完整 JDK 8
 環境不需要此參數。
 
-## ?? JAR ??
+## 發佈 JAR 驗證與縮減
 
-?????????????? JAR ? SHA-256?
+根檢查會驗證所有已追蹤的發佈 JAR 與 SHA-256：
 
 ```bash
 ./gradlew check
 ```
 
-?????????????
+也可以直接驗證任意建置產物：
 
 ```bash
 python scripts/verify_release_jars.py path/to/mod.jar
 ```
 
-?????? ZIP ???metadata?entrypoint?Mixin class/refmap?Fabric ?? JAR?
-Forge ????????checksum ????????Fabric/Forge 1.16.5?1.19.2 ? 1.20.1
-? `build` ??????????? JAR?
+驗證器會檢查 ZIP 結構、metadata、entrypoint、Mixin class/refmap、Fabric 內嵌 JAR、
+Forge 舊版執行階段映射，以及 checksum 內容與覆蓋範圍。
+
+發佈流程會將 27 個精確建置產物縮減為 14 個可直接安裝的 JAR：19 個 Fabric 實作會
+放進一個由 Loader 自動選版的 JAR；四組 Forge 版本只會在除 `mods.toml` 外的所有內容
+完全一致時擴寬相容範圍。不同 API 與載入器仍維持獨立：
+
+```bash
+python scripts/prepare_release_assets.py \
+  --release-dir downloads/1.3.0-beta.3 \
+  --output-dir build/release-assets \
+  --version 1.3.0-beta.3
+```
 
 ## 核心自我測試
 
