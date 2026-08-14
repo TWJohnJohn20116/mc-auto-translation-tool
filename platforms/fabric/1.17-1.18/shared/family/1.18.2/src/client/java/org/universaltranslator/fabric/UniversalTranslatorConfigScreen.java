@@ -41,6 +41,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private ButtonWidget enabledButton;
     private ButtonWidget chatButton;
     private ButtonWidget otherButton;
+    private ButtonWidget vanillaButton;
     private ButtonWidget cacheButton;
     private ButtonWidget providerButton;
     private ButtonWidget displayButton;
@@ -53,6 +54,10 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private ButtonWidget outgoingButton;
     private ButtonWidget targetLanguageButton;
     private ButtonWidget playerNamesButton;
+    private ButtonWidget translationTabButton;
+    private ButtonWidget serviceTabButton;
+    private ButtonWidget advancedTabButton;
+    private SettingsPage page = SettingsPage.TRANSLATION;
     private String status = "";
 
     UniversalTranslatorConfigScreen(Screen parent, FabricConfig config) {
@@ -87,16 +92,39 @@ final class UniversalTranslatorConfigScreen extends Screen {
                 ? original.blockedKeywords : blockedKeywords.getText();
         String outgoingTargetValue = outgoingTargetLanguage == null
                 ? original.outgoingTargetLanguage : outgoingTargetLanguage.getText();
+
         Layout layout = layout();
         int left = layout.left;
+
+        this.translationTabButton = addDrawableChild(ButtonWidget.builder(
+                new TranslatableText("screen.universal_translator.tab.translation"),
+                button -> selectPage(SettingsPage.TRANSLATION))
+                .dimensions(left, layout.tabY, layout.tabWidth, 20).build());
+        this.serviceTabButton = addDrawableChild(ButtonWidget.builder(
+                new TranslatableText("screen.universal_translator.tab.service"),
+                button -> selectPage(SettingsPage.SERVICE))
+                .dimensions(layout.middleTab, layout.tabY, layout.tabWidth, 20).build());
+        this.advancedTabButton = addDrawableChild(ButtonWidget.builder(
+                new TranslatableText("screen.universal_translator.tab.advanced"),
+                button -> selectPage(SettingsPage.ADVANCED))
+                .dimensions(layout.rightTab, layout.tabY, layout.tabWidth, 20).build());
+
+        // Translation page
         this.enabledButton = addDrawableChild(ButtonWidget.builder(new LiteralText(""), button -> {
             enabled = !enabled;
             refreshLabels();
         }).dimensions(left, layout.row(0), layout.buttonWidth, 20).build());
-        this.cacheButton = addDrawableChild(ButtonWidget.builder(new LiteralText(""), button -> {
-            diskCache = !diskCache;
+        int presetWidth = Math.max(46, Math.min(68, layout.buttonWidth / 2));
+        int languageWidth = layout.buttonWidth - presetWidth - 4;
+        this.targetLanguage = addDrawableChild(new TextFieldWidget(
+                this.textRenderer, layout.right, layout.row(0), languageWidth, 20,
+                new TranslatableText("screen.universal_translator.target_language")));
+        this.targetLanguage.setMaxLength(32);
+        this.targetLanguage.setText(targetValue);
+        this.targetLanguageButton = addDrawableChild(ButtonWidget.builder(new LiteralText(""), button -> {
+            targetLanguage.setText(TargetLanguage.nextPreset(targetLanguage.getText()));
             refreshLabels();
-        }).dimensions(layout.right, layout.row(0), layout.buttonWidth, 20).build());
+        }).dimensions(layout.right + languageWidth + 4, layout.row(0), presetWidth, 20).build());
         this.chatButton = addDrawableChild(ButtonWidget.builder(new LiteralText(""), button -> {
             translateChat = !translateChat;
             refreshLabels();
@@ -105,8 +133,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
             translateOther = !translateOther;
             refreshLabels();
         }).dimensions(layout.right, layout.row(1), layout.buttonWidth, 20).build());
-        this.providerButton = addDrawableChild(ButtonWidget.builder(new LiteralText(""), button -> {
-            provider = nextProvider(provider);
+        this.vanillaButton = addDrawableChild(ButtonWidget.builder(new LiteralText(""), button -> {
+            translateVanilla = !translateVanilla;
             refreshLabels();
         }).dimensions(left, layout.row(2), layout.buttonWidth, 20).build());
         this.displayButton = addDrawableChild(ButtonWidget.builder(new LiteralText(""), button -> {
@@ -123,6 +151,16 @@ final class UniversalTranslatorConfigScreen extends Screen {
             translatedTextColor = translatedTextColor.next();
             refreshLabels();
         }).dimensions(layout.right, layout.row(3), layout.buttonWidth, 20).build());
+
+        // Service page
+        this.providerButton = addDrawableChild(ButtonWidget.builder(new LiteralText(""), button -> {
+            provider = nextProvider(provider);
+            refreshLabels();
+        }).dimensions(left, layout.row(0), layout.buttonWidth, 20).build());
+        this.cacheButton = addDrawableChild(ButtonWidget.builder(new LiteralText(""), button -> {
+            diskCache = !diskCache;
+            refreshLabels();
+        }).dimensions(layout.right, layout.row(0), layout.buttonWidth, 20).build());
         this.downloadButton = addDrawableChild(ButtonWidget.builder(new LiteralText(""), button -> {
             if (isLlm()) {
                 if (this.client != null) {
@@ -133,68 +171,100 @@ final class UniversalTranslatorConfigScreen extends Screen {
                 offlineAutoDownload = !offlineAutoDownload;
             }
             refreshLabels();
-        }).dimensions(left, layout.row(4), layout.buttonWidth, 20).build());
-        this.fallbackButton = addDrawableChild(ButtonWidget.builder(new LiteralText(""), button -> {
-            apiFallback = !apiFallback;
-            refreshLabels();
-        }).dimensions(layout.right, layout.row(4), layout.buttonWidth, 20).build());
+        }).dimensions(left, layout.row(1), layout.buttonWidth, 20).build());
         this.modelButton = addDrawableChild(ButtonWidget.builder(new LiteralText(""), button -> {
             offlineModel = offlineModel.next();
             refreshLabels();
-        }).dimensions(left, layout.row(5), layout.buttonWidth, 20).build());
+        }).dimensions(layout.right, layout.row(1), layout.buttonWidth, 20).build());
+        this.fallbackButton = addDrawableChild(ButtonWidget.builder(new LiteralText(""), button -> {
+            apiFallback = !apiFallback;
+            refreshLabels();
+        }).dimensions(left, layout.row(2), layout.buttonWidth, 20).build());
         this.diagnosticsButton = addDrawableChild(ButtonWidget.builder(
                 new TranslatableText("screen.universal_translator.diagnostics.title"), button -> {
             if (client != null) {
                 client.setScreen(new UniversalTranslatorDiagnosticsScreen(this));
             }
-        }).dimensions(layout.right, layout.row(5), layout.buttonWidth, 20).build());
+        }).dimensions(layout.right, layout.row(2), layout.buttonWidth, 20).build());
+        this.endpoint = addDrawableChild(new TextFieldWidget(
+                this.textRenderer, left, layout.endpointY, layout.totalWidth, 20,
+                new TranslatableText("screen.universal_translator.endpoint")));
+        this.endpoint.setMaxLength(512);
+        this.endpoint.setText(endpointValue);
+
+        // Advanced page
+        this.outgoingButton = addDrawableChild(ButtonWidget.builder(new LiteralText(""), button -> {
+            translateOutgoing = !translateOutgoing;
+            refreshLabels();
+        }).dimensions(left, layout.row(0), layout.buttonWidth, 20).build());
+        this.outgoingTargetLanguage = addDrawableChild(new TextFieldWidget(
+                this.textRenderer, layout.right, layout.row(0), layout.buttonWidth, 20,
+                new TranslatableText("screen.universal_translator.outgoing_target_language")));
+        this.outgoingTargetLanguage.setMaxLength(32);
+        this.outgoingTargetLanguage.setText(outgoingTargetValue);
         this.playerNamesButton = addDrawableChild(ButtonWidget.builder(new LiteralText(""), button -> {
             translatePlayerNames = !translatePlayerNames;
             refreshLabels();
-        }).dimensions(left, layout.row(6), layout.buttonWidth, 20).build());
+        }).dimensions(left, layout.row(1), layout.buttonWidth, 20).build());
         this.blockedKeywords = addDrawableChild(new TextFieldWidget(
-                this.textRenderer, layout.right, layout.row(6), layout.buttonWidth, 20,
+                this.textRenderer, layout.right, layout.row(1), layout.buttonWidth, 20,
                 new TranslatableText("screen.universal_translator.blocked_keywords")));
         this.blockedKeywords.setMaxLength(4096);
         this.blockedKeywords.setText(blockedKeywordsValue);
         this.blockedKeywords.setSuggestion(tr("screen.universal_translator.blocked_keywords_hint"));
 
-        int presetWidth = Math.max(46, Math.min(68, layout.buttonWidth / 2));
-        int languageWidth = layout.buttonWidth - presetWidth - 4;
-        this.targetLanguage = addDrawableChild(new TextFieldWidget(
-                this.textRenderer, left, layout.targetY, languageWidth, 20,
-                new TranslatableText("screen.universal_translator.target_language")));
-        this.targetLanguage.setMaxLength(32);
-        this.targetLanguage.setText(targetValue);
-        this.targetLanguageButton = addDrawableChild(ButtonWidget.builder(new LiteralText(""), button -> {
-            targetLanguage.setText(TargetLanguage.nextPreset(targetLanguage.getText()));
-            refreshLabels();
-        }).dimensions(left + languageWidth + 4, layout.targetY, presetWidth, 20).build());
-        this.outgoingButton = addDrawableChild(ButtonWidget.builder(new LiteralText(""), button -> {
-            translateOutgoing = !translateOutgoing;
-            refreshLabels();
-        }).dimensions(layout.right, layout.targetY, layout.buttonWidth, 20).build());
-        this.endpoint = addDrawableChild(new TextFieldWidget(
-                this.textRenderer, left, layout.endpointY, layout.buttonWidth, 20,
-                new TranslatableText("screen.universal_translator.endpoint")));
-        this.endpoint.setMaxLength(512);
-        this.endpoint.setText(endpointValue);
-        this.outgoingTargetLanguage = addDrawableChild(new TextFieldWidget(
-                this.textRenderer, layout.right, layout.endpointY, layout.buttonWidth, 20,
-                new TranslatableText("screen.universal_translator.outgoing_target_language")));
-        this.outgoingTargetLanguage.setMaxLength(32);
-        this.outgoingTargetLanguage.setText(outgoingTargetValue);
-
-        addDrawableChild(ButtonWidget.builder(new TranslatableText("screen.universal_translator.save"), button -> saveAndApply())
+        addDrawableChild(ButtonWidget.builder(
+                new TranslatableText("screen.universal_translator.save"), button -> saveAndApply())
                 .dimensions(left, layout.saveY, layout.buttonWidth, 20).build());
         addDrawableChild(ButtonWidget.builder(new TranslatableText("gui.cancel"), button -> close())
                 .dimensions(layout.right, layout.saveY, layout.buttonWidth, 20).build());
         refreshLabels();
+        updatePageVisibility();
+    }
+
+    private void selectPage(SettingsPage nextPage) {
+        this.page = nextPage;
+        this.status = "";
+        updatePageVisibility();
+    }
+
+    private void updatePageVisibility() {
+        boolean translation = page == SettingsPage.TRANSLATION;
+        boolean service = page == SettingsPage.SERVICE;
+        boolean advanced = page == SettingsPage.ADVANCED;
+
+        translationTabButton.active = !translation;
+        serviceTabButton.active = !service;
+        advancedTabButton.active = !advanced;
+
+        enabledButton.visible = translation;
+        targetLanguage.visible = translation;
+        targetLanguageButton.visible = translation;
+        chatButton.visible = translation;
+        otherButton.visible = translation;
+        vanillaButton.visible = translation;
+        displayButton.visible = translation;
+        mixedTextButton.visible = translation;
+        colorButton.visible = translation;
+
+        providerButton.visible = service;
+        cacheButton.visible = service;
+        downloadButton.visible = service;
+        modelButton.visible = service;
+        fallbackButton.visible = service;
+        diagnosticsButton.visible = service;
+        endpoint.visible = service;
+
+        outgoingButton.visible = advanced;
+        outgoingTargetLanguage.visible = advanced;
+        playerNamesButton.visible = advanced;
+        blockedKeywords.visible = advanced;
     }
 
     private void refreshLabels() {
         enabledButton.setMessage(new TranslatableText("screen.universal_translator.option.automatic", onOff(enabled)));
         chatButton.setMessage(new TranslatableText("screen.universal_translator.option.chat", onOff(translateChat)));
+        vanillaButton.setMessage(new TranslatableText("screen.universal_translator.option.vanilla", onOff(translateVanilla)));
         otherButton.setMessage(new TranslatableText("screen.universal_translator.option.other", onOff(translateOther)));
         cacheButton.setMessage(new TranslatableText("screen.universal_translator.option.cache", onOff(diskCache)));
         providerButton.setMessage(new TranslatableText("screen.universal_translator.option.provider", providerLabel()));
@@ -284,41 +354,32 @@ final class UniversalTranslatorConfigScreen extends Screen {
 
     @Override
     public void render(MatrixStack matrices, int mouseX, int mouseY, float delta) {
-        drawCenteredText(matrices, this.textRenderer, this.title, this.width / 2, 18, 0xFFFFFF);
         Layout layout = layout();
-        int left = layout.left;
-        drawTextWithShadow(matrices, this.textRenderer,
-                new TranslatableText("screen.universal_translator.target_language_hint"),
-                left, layout.targetY - 11, 0xA0A0A0);
-        drawTextWithShadow(matrices, this.textRenderer,
-                new TranslatableText("screen.universal_translator.endpoint_hint"),
-                left, layout.endpointY - 11, 0xA0A0A0);
-        drawTextWithShadow(matrices, this.textRenderer,
-                new TranslatableText("screen.universal_translator.outgoing_target_hint"),
-                layout.right, layout.endpointY - 11, 0xA0A0A0);
+        drawCenteredText(matrices, this.textRenderer, this.title,
+                this.width / 2, layout.titleY, 0xFFFFFF);
+        drawCenteredText(matrices, this.textRenderer,
+                new TranslatableText(page.descriptionKey),
+                this.width / 2, layout.descriptionY, 0xA0A0A0);
+        if (page == SettingsPage.SERVICE) {
+            drawTextWithShadow(matrices, this.textRenderer,
+                    new TranslatableText("screen.universal_translator.endpoint_hint"),
+                    layout.left, layout.endpointY - 11, 0xA0A0A0);
+        }
+
         String rawRuntimeStatus = FabricTranslationRuntime.status();
         String runtimeStatus = TranslationStatusLocalizer.localize(rawRuntimeStatus,
                 UniversalTranslatorConfigScreen::tr);
-        int belowSave = layout.saveY + 28;
-        int messageY = belowSave <= this.height - 10 ? belowSave : layout.saveY - 14;
         if (!status.isEmpty()) {
             drawCenteredText(matrices, this.textRenderer, new LiteralText(status),
-                    this.width / 2, messageY, 0xFF5555);
+                    this.width / 2, layout.statusY, 0xFF5555);
         } else if (!runtimeStatus.isEmpty()) {
             drawCenteredText(matrices, this.textRenderer, new LiteralText(runtimeStatus),
-                    this.width / 2, messageY,
+                    this.width / 2, layout.statusY,
                     isFailureStatus(rawRuntimeStatus) ? 0xFF5555 : 0x55FF55);
-        } else if (layout.saveY - layout.endpointY >= 52) {
-            int infoY = layout.endpointY + 28;
-            drawCenteredText(matrices,
-                    this.textRenderer,
-                    new TranslatableText(isOffline()
-                            ? "screen.universal_translator.info.offline"
-                            : "screen.universal_translator.info.api"),
-                    this.width / 2, infoY, 0xFFAA55);
+        } else {
             drawCenteredText(matrices, this.textRenderer,
-                    new TranslatableText("screen.universal_translator.info.keybind"),
-                    this.width / 2, infoY + 15, 0xA0A0A0);
+                    new TranslatableText(isOffline() ? "screen.universal_translator.info.offline" : "screen.universal_translator.info.api"),
+                    this.width / 2, layout.statusY, 0xFFAA55);
         }
         super.render(matrices, mouseX, mouseY, delta);
     }
@@ -378,17 +439,25 @@ final class UniversalTranslatorConfigScreen extends Screen {
     }
 
     private Layout layout() {
-        int totalWidth = Math.max(180, Math.min(310, this.width - 20));
+        int totalWidth = Math.max(220, Math.min(460, this.width - 24));
         int gap = 8;
         int buttonWidth = (totalWidth - gap) / 2;
         int left = (this.width - totalWidth) / 2;
-        int top = Math.max(20, Math.min(44, 20 + Math.max(0, this.height - 220) / 4));
-        int rowStep = this.height >= 300 ? 26 : (this.height >= 260 ? 22 : 20);
-        int targetY = top + rowStep * 7 + 2;
-        int endpointY = targetY + (this.height >= 300 ? 32 : 28);
-        int saveY = Math.max(endpointY + 22, this.height - 24);
+        int titleY = this.height < 260 ? 8 : 14;
+        int tabY = titleY + 17;
+        int tabGap = 4;
+        int tabWidth = (totalWidth - tabGap * 2) / 3;
+        int descriptionY = tabY + 28;
+        int top = descriptionY + 16;
+        int rowStep = this.height >= 280 ? 26 : 23;
+        int endpointY = top + rowStep * 4;
+        int minimumSaveY = endpointY + 28;
+        int saveY = Math.min(this.height - 42, minimumSaveY);
+        int statusY = Math.min(this.height - 10, saveY + 27);
         return new Layout(left, left + buttonWidth + gap, totalWidth, buttonWidth,
-                top, rowStep, targetY, endpointY, saveY);
+                titleY, tabY, left + tabWidth + tabGap,
+                left + (tabWidth + tabGap) * 2, tabWidth,
+                descriptionY, top, rowStep, endpointY, saveY, statusY);
     }
 
     private static final class Layout {
@@ -396,27 +465,54 @@ final class UniversalTranslatorConfigScreen extends Screen {
         private final int right;
         private final int totalWidth;
         private final int buttonWidth;
+        private final int titleY;
+        private final int tabY;
+        private final int middleTab;
+        private final int rightTab;
+        private final int tabWidth;
+        private final int descriptionY;
         private final int top;
         private final int rowStep;
-        private final int targetY;
         private final int endpointY;
         private final int saveY;
+        private final int statusY;
 
         private Layout(int left, int right, int totalWidth, int buttonWidth,
-                       int top, int rowStep, int targetY, int endpointY, int saveY) {
+                       int titleY, int tabY, int middleTab, int rightTab, int tabWidth,
+                       int descriptionY, int top, int rowStep, int endpointY,
+                       int saveY, int statusY) {
             this.left = left;
             this.right = right;
             this.totalWidth = totalWidth;
             this.buttonWidth = buttonWidth;
+            this.titleY = titleY;
+            this.tabY = tabY;
+            this.middleTab = middleTab;
+            this.rightTab = rightTab;
+            this.tabWidth = tabWidth;
+            this.descriptionY = descriptionY;
             this.top = top;
             this.rowStep = rowStep;
-            this.targetY = targetY;
             this.endpointY = endpointY;
             this.saveY = saveY;
+            this.statusY = statusY;
         }
 
         private int row(int index) {
             return top + rowStep * index;
         }
     }
+
+    private enum SettingsPage {
+        TRANSLATION("screen.universal_translator.tab.translation.description"),
+        SERVICE("screen.universal_translator.tab.service.description"),
+        ADVANCED("screen.universal_translator.tab.advanced.description");
+
+        private final String descriptionKey;
+
+        SettingsPage(String descriptionKey) {
+            this.descriptionKey = descriptionKey;
+        }
+    }
+
 }

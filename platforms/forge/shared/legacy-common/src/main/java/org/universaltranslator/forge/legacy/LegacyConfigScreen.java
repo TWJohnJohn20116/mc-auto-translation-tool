@@ -35,6 +35,9 @@ final class LegacyConfigScreen extends GuiScreen {
     private static final int VANILLA = 17;
     private static final int OUTGOING_TARGET_LANGUAGE = 18;
     private static final int PLAYER_NAMES = 19;
+    private static final int TAB_TRANSLATION = 20;
+    private static final int TAB_SERVICE = 21;
+    private static final int TAB_ADVANCED = 22;
 
     private final GuiScreen parent;
     private final LegacyConfig original;
@@ -60,6 +63,7 @@ final class LegacyConfigScreen extends GuiScreen {
     private GuiTextField endpoint;
     private GuiTextField blockedKeywords;
     private FontRenderer renderer;
+    private SettingsPage page = SettingsPage.TRANSLATION;
     private String status = "";
 
     LegacyConfigScreen(GuiScreen parent, LegacyConfig config) {
@@ -95,53 +99,73 @@ final class LegacyConfigScreen extends GuiScreen {
         if (outgoingTargetLanguage == null) {
             outgoingTargetLanguage = TargetLanguage.canonicalize(original.outgoingTargetLanguage);
         }
+
         buttonList.clear();
         renderer = LegacyVersionAccess.fontRenderer();
         Layout layout = layout();
         int left = layout.left;
+
+        buttonList.add(new GuiButton(TAB_TRANSLATION, left, layout.tabY,
+                layout.tabWidth, 20, tr("screen.universal_translator.tab.translation")));
+        buttonList.add(new GuiButton(TAB_SERVICE, layout.middleTab, layout.tabY,
+                layout.tabWidth, 20, tr("screen.universal_translator.tab.service")));
+        buttonList.add(new GuiButton(TAB_ADVANCED, layout.rightTab, layout.tabY,
+                layout.tabWidth, 20, tr("screen.universal_translator.tab.advanced")));
+
+        // Translation page
         buttonList.add(new GuiButton(ENABLED, left, layout.row(0), layout.buttonWidth, 20, ""));
-        buttonList.add(new GuiButton(CACHE, layout.right, layout.row(0), layout.buttonWidth, 20, ""));
+        buttonList.add(new GuiButton(TARGET_LANGUAGE, layout.right, layout.row(0),
+                layout.buttonWidth, 20, ""));
         buttonList.add(new GuiButton(CHAT, left, layout.row(1), layout.buttonWidth, 20, ""));
         buttonList.add(new GuiButton(OTHER, layout.right, layout.row(1), layout.buttonWidth, 20, ""));
-        buttonList.add(new GuiButton(PROVIDER, left, layout.row(2), layout.buttonWidth, 20, ""));
+        buttonList.add(new GuiButton(VANILLA, left, layout.row(2), layout.buttonWidth, 20, ""));
         buttonList.add(new GuiButton(DISPLAY, layout.right, layout.row(2), layout.buttonWidth, 20, ""));
         buttonList.add(new GuiButton(MIXED_TEXT, left, layout.row(3), layout.buttonWidth, 20, ""));
         buttonList.add(new GuiButton(COLOR, layout.right, layout.row(3), layout.buttonWidth, 20, ""));
-        buttonList.add(new GuiButton(DOWNLOAD, left, layout.row(4), layout.buttonWidth, 20, ""));
-        buttonList.add(new GuiButton(FALLBACK, layout.right, layout.row(4), layout.buttonWidth, 20, ""));
-        buttonList.add(new GuiButton(MODEL, left, layout.row(5), layout.buttonWidth, 20, ""));
-        blockedKeywords = new GuiTextField(22, renderer, layout.right, layout.row(5),
+
+        // Service page
+        buttonList.add(new GuiButton(PROVIDER, left, layout.row(0), layout.buttonWidth, 20, ""));
+        buttonList.add(new GuiButton(CACHE, layout.right, layout.row(0), layout.buttonWidth, 20, ""));
+        buttonList.add(new GuiButton(DOWNLOAD, left, layout.row(1), layout.buttonWidth, 20, ""));
+        buttonList.add(new GuiButton(MODEL, layout.right, layout.row(1), layout.buttonWidth, 20, ""));
+        buttonList.add(new GuiButton(FALLBACK, left, layout.row(2), layout.buttonWidth, 20, ""));
+        buttonList.add(new GuiButton(DIAGNOSTICS, layout.right, layout.row(2),
+                layout.buttonWidth, 20, tr("screen.universal_translator.diagnostics.title")));
+        endpoint = new GuiTextField(21, renderer, left, layout.endpointY, layout.totalWidth, 20);
+        endpoint.setMaxStringLength(512);
+        endpoint.setText(endpointValue);
+
+        // Advanced page
+        buttonList.add(new GuiButton(OUTGOING, left, layout.row(0), layout.buttonWidth, 20, ""));
+        buttonList.add(new GuiButton(OUTGOING_TARGET_LANGUAGE, layout.right, layout.row(0),
+                layout.buttonWidth, 20, ""));
+        buttonList.add(new GuiButton(PLAYER_NAMES, left, layout.row(1),
+                layout.buttonWidth, 20, ""));
+        blockedKeywords = new GuiTextField(22, renderer, layout.right, layout.row(1),
                 layout.buttonWidth, 20);
         blockedKeywords.setMaxStringLength(4096);
         blockedKeywords.setText(blockedKeywordsValue);
-        int compactGap = 4;
-        int compactWidth = (layout.totalWidth - compactGap * 2) / 3;
-        int compactMiddle = left + compactWidth + compactGap;
-        int compactRight = compactMiddle + compactWidth + compactGap;
-        buttonList.add(new GuiButton(VANILLA, left, layout.row(6), compactWidth, 20, ""));
-        buttonList.add(new GuiButton(PLAYER_NAMES, compactMiddle, layout.row(6),
-                compactWidth, 20, ""));
-        buttonList.add(new GuiButton(DIAGNOSTICS, compactRight, layout.row(6),
-                compactWidth, 20, tr("screen.universal_translator.diagnostics.title")));
-        buttonList.add(new GuiButton(TARGET_LANGUAGE, left, layout.targetY,
-                layout.buttonWidth, 20, ""));
-        buttonList.add(new GuiButton(OUTGOING, layout.right, layout.targetY,
-                layout.buttonWidth, 20, ""));
-        endpoint = new GuiTextField(21, renderer, left, layout.endpointY, layout.buttonWidth, 20);
-        endpoint.setMaxStringLength(512);
-        endpoint.setText(endpointValue);
-        buttonList.add(new GuiButton(OUTGOING_TARGET_LANGUAGE, layout.right, layout.endpointY,
-                layout.buttonWidth, 20, ""));
+
         buttonList.add(new GuiButton(SAVE, left, layout.saveY, layout.buttonWidth, 20,
                 tr("screen.universal_translator.save")));
         buttonList.add(new GuiButton(CANCEL, layout.right, layout.saveY, layout.buttonWidth, 20,
                 tr("gui.cancel")));
         refreshLabels();
+        updatePageVisibility();
     }
 
     @Override
     protected void actionPerformed(GuiButton button) throws IOException {
-        if (button.id == ENABLED) {
+        if (button.id == TAB_TRANSLATION) {
+            selectPage(SettingsPage.TRANSLATION);
+            return;
+        } else if (button.id == TAB_SERVICE) {
+            selectPage(SettingsPage.SERVICE);
+            return;
+        } else if (button.id == TAB_ADVANCED) {
+            selectPage(SettingsPage.ADVANCED);
+            return;
+        } else if (button.id == ENABLED) {
             enabled = !enabled;
         } else if (button.id == CACHE) {
             diskCache = !diskCache;
@@ -189,6 +213,33 @@ final class LegacyConfigScreen extends GuiScreen {
             mc.displayGuiScreen(parent);
         }
         refreshLabels();
+    }
+
+    private void selectPage(SettingsPage nextPage) {
+        page = nextPage;
+        status = "";
+        updatePageVisibility();
+    }
+
+    private void updatePageVisibility() {
+        boolean translation = page == SettingsPage.TRANSLATION;
+        boolean service = page == SettingsPage.SERVICE;
+        boolean advanced = page == SettingsPage.ADVANCED;
+
+        button(TAB_TRANSLATION).enabled = !translation;
+        button(TAB_SERVICE).enabled = !service;
+        button(TAB_ADVANCED).enabled = !advanced;
+
+        setVisible(translation, ENABLED, TARGET_LANGUAGE, CHAT, OTHER,
+                VANILLA, DISPLAY, MIXED_TEXT, COLOR);
+        setVisible(service, PROVIDER, CACHE, DOWNLOAD, MODEL, FALLBACK, DIAGNOSTICS);
+        setVisible(advanced, OUTGOING, OUTGOING_TARGET_LANGUAGE, PLAYER_NAMES);
+    }
+
+    private void setVisible(boolean visible, int... ids) {
+        for (int id : ids) {
+            button(id).visible = visible;
+        }
     }
 
     private void refreshLabels() {
@@ -289,16 +340,20 @@ final class LegacyConfigScreen extends GuiScreen {
 
     @Override
     public void updateScreen() {
-        endpoint.updateCursorCounter();
-        blockedKeywords.updateCursorCounter();
+        if (page == SettingsPage.SERVICE) {
+            endpoint.updateCursorCounter();
+        } else if (page == SettingsPage.ADVANCED) {
+            blockedKeywords.updateCursorCounter();
+        }
     }
 
     @Override
     protected void keyTyped(char typedChar, int keyCode) throws IOException {
-        if (endpoint.textboxKeyTyped(typedChar, keyCode)) {
+        if (page == SettingsPage.SERVICE && endpoint.textboxKeyTyped(typedChar, keyCode)) {
             return;
         }
-        if (blockedKeywords.textboxKeyTyped(typedChar, keyCode)) {
+        if (page == SettingsPage.ADVANCED
+                && blockedKeywords.textboxKeyTyped(typedChar, keyCode)) {
             return;
         }
         super.keyTyped(typedChar, keyCode);
@@ -307,49 +362,48 @@ final class LegacyConfigScreen extends GuiScreen {
     @Override
     protected void mouseClicked(int mouseX, int mouseY, int mouseButton) throws IOException {
         super.mouseClicked(mouseX, mouseY, mouseButton);
-        endpoint.mouseClicked(mouseX, mouseY, mouseButton);
-        blockedKeywords.mouseClicked(mouseX, mouseY, mouseButton);
+        if (page == SettingsPage.SERVICE) {
+            endpoint.mouseClicked(mouseX, mouseY, mouseButton);
+        } else if (page == SettingsPage.ADVANCED) {
+            blockedKeywords.mouseClicked(mouseX, mouseY, mouseButton);
+        }
     }
 
     @Override
     public void drawScreen(int mouseX, int mouseY, float partialTicks) {
         drawDefaultBackground();
-        drawCenteredString(renderer, tr("screen.universal_translator.settings.title"),
-                width / 2, 18, 0xFFFFFF);
         Layout layout = layout();
-        int left = layout.left;
-        drawString(renderer, tr("screen.universal_translator.target_language_hint"),
-                left, layout.targetY - 11, 0xA0A0A0);
-        drawString(renderer, tr("screen.universal_translator.endpoint_hint"),
-                left, layout.endpointY - 11, 0xA0A0A0);
-        drawString(renderer, tr("screen.universal_translator.outgoing_target_hint"),
-                layout.right, layout.endpointY - 11, 0xA0A0A0);
-        endpoint.drawTextBox();
-        blockedKeywords.drawTextBox();
-        if (blockedKeywords.getText().isEmpty() && !blockedKeywords.isFocused()) {
-            drawString(renderer, tr("screen.universal_translator.blocked_keywords_hint"),
-                    layout.right + 4, layout.row(5) + 6, 0x808080);
+        drawCenteredString(renderer, tr("screen.universal_translator.settings.title"),
+                width / 2, layout.titleY, 0xFFFFFF);
+        drawCenteredString(renderer, tr(page.descriptionKey),
+                width / 2, layout.descriptionY, 0xA0A0A0);
+
+        if (page == SettingsPage.SERVICE) {
+            drawString(renderer, tr("screen.universal_translator.endpoint_hint"),
+                    layout.left, layout.endpointY - 11, 0xA0A0A0);
+            endpoint.drawTextBox();
+        } else if (page == SettingsPage.ADVANCED) {
+            blockedKeywords.drawTextBox();
+            if (blockedKeywords.getText().isEmpty() && !blockedKeywords.isFocused()) {
+                drawString(renderer, tr("screen.universal_translator.blocked_keywords_hint"),
+                        layout.right + 4, layout.row(1) + 6, 0x808080);
+            }
         }
+
         String rawRuntimeStatus = LegacyTranslationRuntime.status();
         String runtimeStatus = TranslationStatusLocalizer.localize(rawRuntimeStatus,
                 LegacyConfigScreen::tr);
-        int belowSave = layout.saveY + 28;
-        int messageY = belowSave <= height - 10 ? belowSave : layout.saveY - 14;
         if (!status.isEmpty()) {
-            drawCenteredString(renderer, status, width / 2, messageY, 0xFF5555);
+            drawCenteredString(renderer, status, width / 2, layout.statusY, 0xFF5555);
         } else if (!runtimeStatus.isEmpty()) {
-            drawCenteredString(renderer, runtimeStatus, width / 2, messageY,
+            drawCenteredString(renderer, runtimeStatus, width / 2, layout.statusY,
                     isFailureStatus(rawRuntimeStatus) ? 0xFF5555 : 0x55FF55);
-        } else if (layout.saveY - layout.endpointY >= 52) {
-            int infoY = layout.endpointY + 28;
-            drawCenteredString(
-                    renderer,
+        } else {
+            drawCenteredString(renderer,
                     tr(isOffline()
                             ? "screen.universal_translator.info.offline"
                             : "screen.universal_translator.info.api"),
-                    width / 2, infoY, 0xFFAA55);
-            drawCenteredString(renderer, tr("screen.universal_translator.info.keybind"),
-                    width / 2, infoY + 15, 0xA0A0A0);
+                    width / 2, layout.statusY, 0xFFAA55);
         }
         super.drawScreen(mouseX, mouseY, partialTicks);
     }
@@ -403,17 +457,25 @@ final class LegacyConfigScreen extends GuiScreen {
     }
 
     private Layout layout() {
-        int totalWidth = Math.max(180, Math.min(310, width - 20));
+        int totalWidth = Math.max(220, Math.min(460, width - 24));
         int gap = 8;
         int buttonWidth = (totalWidth - gap) / 2;
         int left = (width - totalWidth) / 2;
-        int top = Math.max(20, Math.min(44, 20 + Math.max(0, height - 220) / 4));
-        int rowStep = height >= 300 ? 26 : (height >= 260 ? 22 : 20);
-        int targetY = top + rowStep * 7 + 2;
-        int endpointY = targetY + (height >= 300 ? 32 : 28);
-        int saveY = height >= 330 ? 296 : Math.max(endpointY + 22, height - 24);
+        int titleY = height < 260 ? 8 : 14;
+        int tabY = titleY + 17;
+        int tabGap = 4;
+        int tabWidth = (totalWidth - tabGap * 2) / 3;
+        int descriptionY = tabY + 28;
+        int top = descriptionY + 16;
+        int rowStep = height >= 280 ? 26 : 23;
+        int endpointY = top + rowStep * 4;
+        int minimumSaveY = endpointY + 28;
+        int saveY = Math.min(height - 42, minimumSaveY);
+        int statusY = Math.min(height - 10, saveY + 27);
         return new Layout(left, left + buttonWidth + gap, totalWidth, buttonWidth,
-                top, rowStep, targetY, endpointY, saveY);
+                titleY, tabY, left + tabWidth + tabGap,
+                left + (tabWidth + tabGap) * 2, tabWidth,
+                descriptionY, top, rowStep, endpointY, saveY, statusY);
     }
 
     private static final class Layout {
@@ -421,27 +483,54 @@ final class LegacyConfigScreen extends GuiScreen {
         private final int right;
         private final int totalWidth;
         private final int buttonWidth;
+        private final int titleY;
+        private final int tabY;
+        private final int middleTab;
+        private final int rightTab;
+        private final int tabWidth;
+        private final int descriptionY;
         private final int top;
         private final int rowStep;
-        private final int targetY;
         private final int endpointY;
         private final int saveY;
+        private final int statusY;
 
         private Layout(int left, int right, int totalWidth, int buttonWidth,
-                       int top, int rowStep, int targetY, int endpointY, int saveY) {
+                       int titleY, int tabY, int middleTab, int rightTab, int tabWidth,
+                       int descriptionY, int top, int rowStep, int endpointY,
+                       int saveY, int statusY) {
             this.left = left;
             this.right = right;
             this.totalWidth = totalWidth;
             this.buttonWidth = buttonWidth;
+            this.titleY = titleY;
+            this.tabY = tabY;
+            this.middleTab = middleTab;
+            this.rightTab = rightTab;
+            this.tabWidth = tabWidth;
+            this.descriptionY = descriptionY;
             this.top = top;
             this.rowStep = rowStep;
-            this.targetY = targetY;
             this.endpointY = endpointY;
             this.saveY = saveY;
+            this.statusY = statusY;
         }
 
         private int row(int index) {
             return top + rowStep * index;
         }
     }
+
+    private enum SettingsPage {
+        TRANSLATION("screen.universal_translator.tab.translation.description"),
+        SERVICE("screen.universal_translator.tab.service.description"),
+        ADVANCED("screen.universal_translator.tab.advanced.description");
+
+        private final String descriptionKey;
+
+        SettingsPage(String descriptionKey) {
+            this.descriptionKey = descriptionKey;
+        }
+    }
+
 }
