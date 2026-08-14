@@ -40,51 +40,51 @@ IDE 匯入、查看專案或同時處理多個平台時，可明確指定穩定�
 Minecraft 26.x 版本：26.1、26.1.1、26.1.2 及 26.2。它內嵌四個精確版本實作，再由 Fabric Loader
 選擇相符實作；建置會檢查每個內嵌 JAR，並對全部四個版本執行真實 Loader 解析測試。
 
-## Fabric 1.17/1.18 ?? JAR
+## 單一 Fabric 1.17/1.18 JAR
 
-?? JDK 17??? `GRADLE_USER_HOME` ? Gradle ?????????? D: ??
+需要 JDK 17。請將 Gradle 發行版與相依套件快取放在 D: 磁碟，並設定 `GRADLE_USER_HOME`：
 
 ```powershell
 $env:GRADLE_USER_HOME = "D:\Gradle\cache"
 .\gradlew.bat :platform-fabric-1.17-1.18.x:build --max-workers=1
 ```
 
-???? `platforms/fabric/1.17-1.18/bundle/build/libs/`??????? 1.17?1.17.1?1.18?1.18.1
-? 1.18.2 ?????????? Fabric Loader ???????????????????
+輸出位於 `platforms/fabric/1.17-1.18/bundle/build/libs/`。該套件內嵌 1.17、1.17.1、1.18、1.18.1
+與 1.18.2 的精確版本實作；Fabric Loader 會選擇相符實作，建置會驗證全部五個選擇。
 
-## Fabric 1.19.x ?? JAR
+## 單一 Fabric 1.19.x JAR
 
-?? JDK 17?
+需要 JDK 17：
 
 ```bash
 ./gradlew :platform-fabric-1.19.x:build --max-workers=1
 ```
 
-???? `platforms/fabric/1.19/bundle/build/libs/`??????? Minecraft 1.19?1.19.1?1.19.2?
-1.19.3 ? 1.19.4 ????????? Fabric Loader ???????????????????
+輸出位於 `platforms/fabric/1.19/bundle/build/libs/`。該套件內嵌 Minecraft 1.19、1.19.1、1.19.2、
+1.19.3 與 1.19.4 的精確版本實作；Fabric Loader 會選擇相符實作，建置會驗證全部五個選擇。
 
-## Fabric 1.20.x ?? JAR
+## 單一 Fabric 1.20.x JAR
 
-Minecraft 1.20 ? 1.20.4 ?? JDK 17?1.20.5 ? 1.20.6 ?? JDK 21????????? JDK 21 ????????
+Minecraft 1.20 至 1.20.4 需要 JDK 17；1.20.5 與 1.20.6 需要 JDK 21。該套件可使用 JDK 21 或更新版本建置。
 
 ```bash
 ./gradlew :platform-fabric-1.20.x:build --max-workers=1
 ```
 
-???? `platforms/fabric/1.20/bundle/build/libs/`???? JAR ?? 1.20?1.20.1?1.20.2?1.20.3?
-1.20.4?1.20.5 ? 1.20.6 ?????????? Fabric Loader ???????????????????
+輸出位於 `platforms/fabric/1.20/bundle/build/libs/`。這個單一 JAR 內嵌 1.20、1.20.1、1.20.2、1.20.3、
+1.20.4、1.20.5 與 1.20.6 的精確版本實作；Fabric Loader 會選擇相符實作，建置會驗證全部七個選擇。
 
-## Fabric 1.16.x ? JAR / ?? JAR
+## 單一 Fabric 1.16.x JAR
 
-????? JDK 8?Gradle ???? D ??
+Minecraft 1.16 系列需要 JDK 8。請將 Gradle 快取放在 D: 磁碟：
 
 ```powershell
 $env:GRADLE_USER_HOME = "D:\Gradle\cache"
 .\gradlew.bat :platform-fabric-1.16.x:build --max-workers=1
 ```
 
-???? `platforms/fabric/1.16/bundle/build/libs/`??? 1.16 ? 1.16.5 ??????????
-Fabric Loader ????????
+輸出位於 `platforms/fabric/1.16/bundle/build/libs/`。該套件內嵌 1.16 至 1.16.5 的精確版本實作；
+Fabric Loader 會選擇相符實作，建置會驗證全部六個選擇。
 
 ## Fabric 1.21.x 單一 JAR
 
@@ -186,27 +186,27 @@ Forge 43.5.2 從 Forge 官方 Maven 解析。發佈時應使用
 
 發佈時使用 `platforms/forge/modern/1.16.5/build/release/` 中的標準命名執行階段 JAR。
 
-## Fabric 1.14/1.15 ? JAR / ?? JAR
+## 單一 Fabric 1.14/1.15 JAR
 
-????? Java 8?Gradle ???? D ??
+1.14 與 1.15 相容模組使用 Java 8。請將 Gradle 快取放在 D: 磁碟：
 
 ```powershell
 $env:GRADLE_USER_HOME = "D:\Gradle\cache"
 .\gradlew.bat :platform-fabric-1.14-1.15.x:build --max-workers=1
 ```
 
-???? `platforms/fabric/1.14-1.15/bundle/build/libs/`??? 1.14?1.15.2 ??????????
+輸出位於 `platforms/fabric/1.14-1.15/bundle/build/libs/`。該套件內嵌 1.14 至 1.15.2 的精確版本實作；建置會驗證全部八個選擇。
 
 ## Legacy Fabric 1.13.2
 
-Legacy Fabric 1.13 ??? 1.13.2 ???????? Java 8?Gradle ???? D ??
+Legacy Fabric 1.13 支援由 1.13.2 目標提供，使用 Java 8。請將 Gradle 快取放在 D: 磁碟：
 
 ```powershell
 $env:GRADLE_USER_HOME = "D:\Gradle\cache"
 .\gradlew.bat :platform-fabric-1.13.2:build --max-workers=1
 ```
 
-???? `platforms/fabric/1.13/versions/1.13.2/build/libs/`?
+輸出位於 `platforms/fabric/1.13/versions/1.13.2/build/libs/`。
 
 ## 1.16.5 Fabric
 
