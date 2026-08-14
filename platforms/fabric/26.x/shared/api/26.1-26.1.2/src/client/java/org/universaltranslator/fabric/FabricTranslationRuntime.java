@@ -56,6 +56,7 @@ public final class FabricTranslationRuntime {
         RenderTranslationSession created = new RenderTranslationSession(
                 provider, "auto", config.targetLanguage, store, workers, config.displayMode,
                 config.translateEnglishOnly);
+        created.setBlockedKeywords(config.blockedKeywords);
         created.setProtectedLiteralsSupplier(FabricTranslationRuntime::playerNameSnapshot);
         session = created;
     }
@@ -96,21 +97,26 @@ public final class FabricTranslationRuntime {
             return protectedPlayerNames;
         }
         Minecraft client = Minecraft.getInstance();
+        boolean protectPlayerNames = activeConfig == null || !activeConfig.translatePlayerNames;
         if (client.getConnection() == null) {
             protectedPlayerNames = Collections.emptyList();
         } else {
             List<String> names = new ArrayList<String>();
-            addProtectedLiteral(names, client.getUser().getName());
+            if (protectPlayerNames) {
+                addProtectedLiteral(names, client.getUser().getName());
+            }
             if (client.getCurrentServer() != null) {
                 addProtectedLiteral(names, client.getCurrentServer().ip);
             }
-            client.getConnection().getOnlinePlayers().forEach(entry -> {
-                if (names.size() >= MAX_PROTECTED_PLAYER_NAMES) {
-                    return;
-                }
-                String name = entry.getProfile().name();
-                addProtectedLiteral(names, name);
-            });
+            if (protectPlayerNames) {
+                client.getConnection().getOnlinePlayers().forEach(entry -> {
+                    if (names.size() >= MAX_PROTECTED_PLAYER_NAMES) {
+                        return;
+                    }
+                    String name = entry.getProfile().name();
+                    addProtectedLiteral(names, name);
+                });
+            }
             protectedPlayerNames = Collections.unmodifiableList(names);
         }
         protectedPlayerNamesExpireAt = now + PLAYER_NAME_SNAPSHOT_MILLIS;

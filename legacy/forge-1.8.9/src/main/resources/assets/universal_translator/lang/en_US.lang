@@ -112,3 +112,6 @@ screen.universal_translator.option.outgoing_target=Outgoing target: %s
 screen.universal_translator.home.enabled=Translation: %s
 screen.universal_translator.home.vanilla=Minecraft UI: %s
 screen.universal_translator.home.target=Target: %s
+screen.universal_translator.option.player_names=Player names: %s
+screen.universal_translator.blocked_keywords=Blocked keywords
+screen.universal_translator.blocked_keywords_hint=Blocked keywords (comma-separated)

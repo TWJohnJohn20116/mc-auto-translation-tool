@@ -2,7 +2,7 @@
 
 [返回使用指南](USER_GUIDE.md) · [简体中文完整設定表](../Zh-cn/ONLINE_APIS.md) · [English](../en/ONLINE_APIS.md)
 
-1.3.1 支援 `offline`、`libretranslate`、`baidu`、`tencent-tmt`、`tencent-hunyuan`、
+1.3.3 支援 `offline`、`libretranslate`、`baidu`、`tencent-tmt`、`tencent-hunyuan`、
 `aliyun-mt`、`youdao`、`volcengine-mt`、`iflytek-niutrans`、`huawei-cloud-mt`、`deepseek`、
 `dashscope`、`volcengine-ark`、`zhipu`、`openai-compatible` 與 `custom-http-json`。
 

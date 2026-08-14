@@ -34,6 +34,7 @@ final class LegacyConfigScreen extends GuiScreen {
     private static final int TARGET_LANGUAGE = 16;
     private static final int VANILLA = 17;
     private static final int OUTGOING_TARGET_LANGUAGE = 18;
+    private static final int PLAYER_NAMES = 19;
 
     private final GuiScreen parent;
     private final LegacyConfig original;
@@ -42,6 +43,7 @@ final class LegacyConfigScreen extends GuiScreen {
     private boolean translateOther;
     private boolean translateVanilla;
     private boolean translateOutgoing;
+    private boolean translatePlayerNames;
     private boolean diskCache;
     private boolean offlineAutoDownload;
     private OfflineModel offlineModel;
@@ -56,6 +58,7 @@ final class LegacyConfigScreen extends GuiScreen {
     private String targetLanguage;
     private String outgoingTargetLanguage;
     private GuiTextField endpoint;
+    private GuiTextField blockedKeywords;
     private FontRenderer renderer;
     private String status = "";
 
@@ -67,6 +70,7 @@ final class LegacyConfigScreen extends GuiScreen {
         this.translateOther = config.translateOther;
         this.translateVanilla = config.translateVanilla;
         this.translateOutgoing = config.translateOutgoing;
+        this.translatePlayerNames = config.translatePlayerNames;
         this.diskCache = config.diskCache;
         this.offlineAutoDownload = config.offlineAutoDownload;
         this.offlineModel = config.offlineModel;
@@ -86,6 +90,8 @@ final class LegacyConfigScreen extends GuiScreen {
             targetLanguage = TargetLanguage.canonicalize(original.targetLanguage);
         }
         String endpointValue = endpoint == null ? original.endpoint : endpoint.getText();
+        String blockedKeywordsValue = blockedKeywords == null
+                ? original.blockedKeywords : blockedKeywords.getText();
         if (outgoingTargetLanguage == null) {
             outgoingTargetLanguage = TargetLanguage.canonicalize(original.outgoingTargetLanguage);
         }
@@ -104,9 +110,19 @@ final class LegacyConfigScreen extends GuiScreen {
         buttonList.add(new GuiButton(DOWNLOAD, left, layout.row(4), layout.buttonWidth, 20, ""));
         buttonList.add(new GuiButton(FALLBACK, layout.right, layout.row(4), layout.buttonWidth, 20, ""));
         buttonList.add(new GuiButton(MODEL, left, layout.row(5), layout.buttonWidth, 20, ""));
-        buttonList.add(new GuiButton(VANILLA, left, layout.row(6), layout.buttonWidth, 20, ""));
-        buttonList.add(new GuiButton(DIAGNOSTICS, layout.right, layout.row(6),
-                layout.buttonWidth, 20, tr("screen.universal_translator.diagnostics.title")));
+        blockedKeywords = new GuiTextField(22, renderer, layout.right, layout.row(5),
+                layout.buttonWidth, 20);
+        blockedKeywords.setMaxStringLength(4096);
+        blockedKeywords.setText(blockedKeywordsValue);
+        int compactGap = 4;
+        int compactWidth = (layout.totalWidth - compactGap * 2) / 3;
+        int compactMiddle = left + compactWidth + compactGap;
+        int compactRight = compactMiddle + compactWidth + compactGap;
+        buttonList.add(new GuiButton(VANILLA, left, layout.row(6), compactWidth, 20, ""));
+        buttonList.add(new GuiButton(PLAYER_NAMES, compactMiddle, layout.row(6),
+                compactWidth, 20, ""));
+        buttonList.add(new GuiButton(DIAGNOSTICS, compactRight, layout.row(6),
+                compactWidth, 20, tr("screen.universal_translator.diagnostics.title")));
         buttonList.add(new GuiButton(TARGET_LANGUAGE, left, layout.targetY,
                 layout.buttonWidth, 20, ""));
         buttonList.add(new GuiButton(OUTGOING, layout.right, layout.targetY,
@@ -156,6 +172,8 @@ final class LegacyConfigScreen extends GuiScreen {
             apiFallback = !apiFallback;
         } else if (button.id == OUTGOING) {
             translateOutgoing = !translateOutgoing;
+        } else if (button.id == PLAYER_NAMES) {
+            translatePlayerNames = !translatePlayerNames;
         } else if (button.id == MODEL) {
             offlineModel = offlineModel.next();
         } else if (button.id == DIAGNOSTICS) {
@@ -192,6 +210,8 @@ final class LegacyConfigScreen extends GuiScreen {
         button(MODEL).displayString = tr("screen.universal_translator.option.model", offlineModel.displayName());
         button(FALLBACK).displayString = tr("screen.universal_translator.option.fallback", onOff(apiFallback));
         button(OUTGOING).displayString = tr("screen.universal_translator.option.outgoing", onOff(translateOutgoing));
+        button(PLAYER_NAMES).displayString = tr(
+                "screen.universal_translator.option.player_names", onOff(translatePlayerNames));
         button(TARGET_LANGUAGE).displayString = tr("screen.universal_translator.option.target_preset",
                 TargetLanguage.displayName(targetLanguage));
         button(OUTGOING_TARGET_LANGUAGE).displayString = tr(
@@ -228,6 +248,8 @@ final class LegacyConfigScreen extends GuiScreen {
                     translateOther,
                     translateVanilla,
                     translateOutgoing,
+                    translatePlayerNames,
+                    blockedKeywords.getText(),
                     targetLanguage,
                     outgoingTargetLanguage,
                     displayMode,
@@ -268,11 +290,15 @@ final class LegacyConfigScreen extends GuiScreen {
     @Override
     public void updateScreen() {
         endpoint.updateCursorCounter();
+        blockedKeywords.updateCursorCounter();
     }
 
     @Override
     protected void keyTyped(char typedChar, int keyCode) throws IOException {
         if (endpoint.textboxKeyTyped(typedChar, keyCode)) {
+            return;
+        }
+        if (blockedKeywords.textboxKeyTyped(typedChar, keyCode)) {
             return;
         }
         super.keyTyped(typedChar, keyCode);
@@ -282,6 +308,7 @@ final class LegacyConfigScreen extends GuiScreen {
     protected void mouseClicked(int mouseX, int mouseY, int mouseButton) throws IOException {
         super.mouseClicked(mouseX, mouseY, mouseButton);
         endpoint.mouseClicked(mouseX, mouseY, mouseButton);
+        blockedKeywords.mouseClicked(mouseX, mouseY, mouseButton);
     }
 
     @Override
@@ -298,6 +325,11 @@ final class LegacyConfigScreen extends GuiScreen {
         drawString(renderer, tr("screen.universal_translator.outgoing_target_hint"),
                 layout.right, layout.endpointY - 11, 0xA0A0A0);
         endpoint.drawTextBox();
+        blockedKeywords.drawTextBox();
+        if (blockedKeywords.getText().isEmpty() && !blockedKeywords.isFocused()) {
+            drawString(renderer, tr("screen.universal_translator.blocked_keywords_hint"),
+                    layout.right + 4, layout.row(5) + 6, 0x808080);
+        }
         String rawRuntimeStatus = LegacyTranslationRuntime.status();
         String runtimeStatus = TranslationStatusLocalizer.localize(rawRuntimeStatus,
                 LegacyConfigScreen::tr);

@@ -56,6 +56,7 @@ public final class LegacyTranslationRuntime {
             RenderTranslationSession created = new RenderTranslationSession(
                     provider, "auto", config.targetLanguage, store, workers, config.displayMode,
                     config.translateEnglishOnly);
+            created.setBlockedKeywords(config.blockedKeywords);
             created.setProtectedLiteralsSupplier(LegacyTranslationRuntime::playerNameSnapshot);
             session = created;
         }
@@ -96,19 +97,24 @@ public final class LegacyTranslationRuntime {
             return protectedPlayerNames;
         }
         Minecraft minecraft = Minecraft.getMinecraft();
+        boolean protectPlayerNames = activeConfig == null || !activeConfig.translatePlayerNames;
         NetHandlerPlayClient connection = LegacyVersionAccess.connection(minecraft);
         if (connection == null) {
             protectedPlayerNames = Collections.emptyList();
         } else {
             List<String> names = new ArrayList<String>();
-            addProtectedLiteral(names, LegacyVersionAccess.localPlayerName(minecraft));
+            if (protectPlayerNames) {
+                addProtectedLiteral(names, LegacyVersionAccess.localPlayerName(minecraft));
+            }
             addProtectedLiteral(names, LegacyVersionAccess.serverAddress(minecraft));
-            for (NetworkPlayerInfo player : connection.getPlayerInfoMap()) {
-                if (names.size() >= MAX_PROTECTED_PLAYER_NAMES) {
-                    break;
-                }
-                if (player.getGameProfile() != null && player.getGameProfile().getName() != null) {
-                    addProtectedLiteral(names, player.getGameProfile().getName());
+            if (protectPlayerNames) {
+                for (NetworkPlayerInfo player : connection.getPlayerInfoMap()) {
+                    if (names.size() >= MAX_PROTECTED_PLAYER_NAMES) {
+                        break;
+                    }
+                    if (player.getGameProfile() != null && player.getGameProfile().getName() != null) {
+                        addProtectedLiteral(names, player.getGameProfile().getName());
+                    }
                 }
             }
             protectedPlayerNames = Collections.unmodifiableList(names);

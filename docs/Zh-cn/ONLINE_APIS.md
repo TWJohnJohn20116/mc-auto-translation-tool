@@ -2,7 +2,7 @@
 
 [返回使用指南](USER_GUIDE.md) · [English](../en/ONLINE_APIS.md) · [繁體中文](../Zh-tw/ONLINE_APIS.md)
 
-1.3.1 可在同一份 `config/universal-translator.properties` 中选择下列服务。关闭游戏后修改配置，
+1.3.3 可在同一份 `config/universal-translator.properties` 中选择下列服务。关闭游戏后修改配置，
 再启动游戏；支持设置页的版本也可以按 `U` 重新载入。密钥只填在自己的游戏实例中，
 不要把真实密钥发到聊天、Issue、截图或仓库。
 

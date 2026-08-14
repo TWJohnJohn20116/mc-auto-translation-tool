@@ -38,6 +38,7 @@ public final class RenderTranslationSession implements AutoCloseable {
     private volatile boolean closed;
     private volatile String lastFailureStatus = "";
     private volatile String lastReportedFailureStatus = "";
+    private volatile TranslationBlocklist blockedKeywords = TranslationBlocklist.empty();
     private volatile Supplier<? extends Iterable<String>> protectedLiterals =
             new Supplier<Iterable<String>>() {
                 @Override
@@ -103,6 +104,9 @@ public final class RenderTranslationSession implements AutoCloseable {
 
     public String lookup(String original, TextKind kind) {
         if (closed || original == null || original.isEmpty()) {
+            return original;
+        }
+        if (blockedKeywords.matches(original)) {
             return original;
         }
         // A GUI text can pass through both a high-level draw hook and TextRenderer.
@@ -221,6 +225,9 @@ public final class RenderTranslationSession implements AutoCloseable {
         if (target.isEmpty()) {
             throw new IllegalArgumentException("targetLanguage is required");
         }
+        if (blockedKeywords.matches(original)) {
+            return CompletableFuture.completedFuture(TranslationResult.unchanged(original));
+        }
         Iterable<String> literals;
         try {
             literals = protectedLiterals.get();
@@ -243,6 +250,12 @@ public final class RenderTranslationSession implements AutoCloseable {
     ) {
         pending.remove(key);
         if (closed) {
+            return;
+        }
+        // The filter can be replaced while an older request is still completing.
+        // Never publish a result that is blocked by the current configuration.
+        if (blockedKeywords.matches(original)) {
+            retryAfter.remove(key);
             return;
         }
         if (error != null || result == null || result.isFailure()) {
@@ -290,6 +303,12 @@ public final class RenderTranslationSession implements AutoCloseable {
             throw new IllegalArgumentException("supplier cannot be null");
         }
         this.protectedLiterals = supplier;
+    }
+
+    /** Replaces the configured whole-text keyword filter. */
+    public void setBlockedKeywords(String configuredKeywords) {
+        this.blockedKeywords = TranslationBlocklist.parse(configuredKeywords);
+        clearRenderedTranslations();
     }
 
     /** Latest render-time failure, cleared after the next successful request. */

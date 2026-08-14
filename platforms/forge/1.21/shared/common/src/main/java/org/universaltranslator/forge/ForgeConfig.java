@@ -6,6 +6,7 @@ import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TextKind;
 import org.universaltranslator.core.LocalConfigSecurity;
 import org.universaltranslator.core.OfflineModel;
+import org.universaltranslator.core.TranslationBlocklist;
 import org.universaltranslator.core.provider.FallbackTranslationProvider;
 import org.universaltranslator.core.provider.LlamaCppOfflineProvider;
 import org.universaltranslator.core.provider.OnlineProviderConfig;
@@ -29,6 +30,8 @@ final class ForgeConfig {
     final boolean translateOther;
     final boolean translateVanilla;
     final boolean translateOutgoing;
+    final boolean translatePlayerNames;
+    final String blockedKeywords;
     final String targetLanguage;
     final String outgoingTargetLanguage;
     final TranslationDisplayMode displayMode;
@@ -61,6 +64,9 @@ final class ForgeConfig {
                 properties.getProperty("translate-vanilla", "true"));
         this.translateOutgoing = Boolean.parseBoolean(
                 properties.getProperty("translate-outgoing", "false"));
+        this.translatePlayerNames = Boolean.parseBoolean(
+                properties.getProperty("translate-player-names", "false"));
+        this.blockedKeywords = boundedKeywords(properties.getProperty("blocked-keywords", ""));
         this.targetLanguage = properties.getProperty("target-language", "zh-CN").trim();
         this.outgoingTargetLanguage = properties.getProperty(
                 "outgoing-target-language", "en").trim();
@@ -113,13 +119,13 @@ final class ForgeConfig {
         Properties properties = defaults();
         properties.putAll(stored);
         boolean legacyMigration = !stored.containsKey("config-version");
-        boolean migrated = configVersion(stored) < 5;
+        boolean migrated = configVersion(stored) < 6;
         if (legacyMigration) {
             properties.setProperty("display-mode", "translated-only");
             properties.setProperty("translate-english-only", "true");
             properties.setProperty("translated-text-color", "aqua");
         }
-        properties.setProperty("config-version", "5");
+        properties.setProperty("config-version", "6");
         LocalConfigSecurity.restrictToOwner(file);
         ForgeConfig loaded = new ForgeConfig(
                 properties, file, configDirectory.resolve("universal-translator-cache.properties"));
@@ -135,6 +141,8 @@ final class ForgeConfig {
             boolean translateOther,
             boolean translateVanilla,
             boolean translateOutgoing,
+            boolean translatePlayerNames,
+            String blockedKeywords,
             String targetLanguage,
             String outgoingTargetLanguage,
             TranslationDisplayMode displayMode,
@@ -156,6 +164,8 @@ final class ForgeConfig {
         properties.setProperty("translate-other", Boolean.toString(translateOther));
         properties.setProperty("translate-vanilla", Boolean.toString(translateVanilla));
         properties.setProperty("translate-outgoing", Boolean.toString(translateOutgoing));
+        properties.setProperty("translate-player-names", Boolean.toString(translatePlayerNames));
+        properties.setProperty("blocked-keywords", boundedKeywords(blockedKeywords));
         properties.setProperty("target-language", targetLanguage.trim());
         properties.setProperty("outgoing-target-language", outgoingTargetLanguage.trim());
         properties.setProperty("display-mode", displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED
@@ -254,12 +264,14 @@ final class ForgeConfig {
 
     private static Properties defaults() {
         Properties properties = new Properties();
-        properties.setProperty("config-version", "5");
+        properties.setProperty("config-version", "6");
         properties.setProperty("enabled", "false");
         properties.setProperty("translate-chat", "true");
         properties.setProperty("translate-other", "true");
         properties.setProperty("translate-vanilla", "true");
         properties.setProperty("translate-outgoing", "false");
+        properties.setProperty("translate-player-names", "false");
+        properties.setProperty("blocked-keywords", "");
         properties.setProperty("target-language", "zh-CN");
         properties.setProperty("outgoing-target-language", "en");
         properties.setProperty("display-mode", "translated-only");
@@ -286,12 +298,14 @@ final class ForgeConfig {
     private Properties toProperties() {
         Properties properties = new Properties();
         onlineProviderConfig.writeTo(properties);
-        properties.setProperty("config-version", "5");
+        properties.setProperty("config-version", "6");
         properties.setProperty("enabled", Boolean.toString(enabled));
         properties.setProperty("translate-chat", Boolean.toString(translateChat));
         properties.setProperty("translate-other", Boolean.toString(translateOther));
         properties.setProperty("translate-vanilla", Boolean.toString(translateVanilla));
         properties.setProperty("translate-outgoing", Boolean.toString(translateOutgoing));
+        properties.setProperty("translate-player-names", Boolean.toString(translatePlayerNames));
+        properties.setProperty("blocked-keywords", blockedKeywords);
         properties.setProperty("target-language", targetLanguage);
         properties.setProperty("outgoing-target-language", outgoingTargetLanguage);
         properties.setProperty("display-mode", displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED
@@ -321,5 +335,11 @@ final class ForgeConfig {
         } catch (NumberFormatException ignored) {
             return 1;
         }
+    }
+
+    private static String boundedKeywords(String value) {
+        String normalized = value == null ? "" : value.trim();
+        return normalized.length() <= TranslationBlocklist.MAX_CONFIG_LENGTH
+                ? normalized : normalized.substring(0, TranslationBlocklist.MAX_CONFIG_LENGTH);
     }
 }

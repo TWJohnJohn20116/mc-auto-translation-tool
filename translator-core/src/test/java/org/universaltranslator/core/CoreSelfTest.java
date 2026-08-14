@@ -58,6 +58,9 @@ public final class CoreSelfTest {
         protectsNetworkAddresses();
         skipsFullyProtectedText();
         neverSendsProtectedValuesToProvider();
+        blocksConfiguredKeywords();
+        discardsResultsBlockedWhileInFlight();
+        separatesCacheEntriesByTextKind();
         prefersChinaDownloadSources();
         configuresWindowsOfflineRuntimePath();
         reportsOfflineStartupDiagnostics();
@@ -766,6 +769,67 @@ public final class CoreSelfTest {
                     .get(2, TimeUnit.SECONDS);
             assertTrue(result.isFailure());
             assertEquals("Server restarting", result.getTranslatedText());
+        }
+    }
+
+    private static void blocksConfiguredKeywords() throws Exception {
+        TranslationBlocklist blocklist = TranslationBlocklist.parse(
+                " hello, Lobby\uff0cMaintenance\uff1bHELLO ");
+        assertTrue(blocklist.matches("Say HeLLo to everyone"));
+        assertTrue(blocklist.matches("Server maintenance starts soon"));
+        assertFalse(blocklist.matches("Welcome to the server"));
+        assertEquals(3, blocklist.keywords().size());
+
+        CountingProvider provider = new CountingProvider(false);
+        try (RenderTranslationSession session = new RenderTranslationSession(
+                provider, "auto", "zh-CN", 100, 1)) {
+            session.setBlockedKeywords("hello");
+            assertEquals("Hello players", session.lookup("Hello players", TextKind.CHAT));
+            TranslationResult result = session.translateInteractive(
+                    "say HELLO", TextKind.CHAT, "en", false).get(2, TimeUnit.SECONDS);
+            assertFalse(result.isTranslated());
+            assertEquals("say HELLO", result.getTranslatedText());
+            Thread.sleep(50L);
+            assertEquals(0, provider.calls.get());
+        }
+    }
+
+    private static void separatesCacheEntriesByTextKind() throws Exception {
+        KindRecordingProvider provider = new KindRecordingProvider();
+        try (TranslationCoordinator coordinator = new TranslationCoordinator(
+                provider, new TranslationCache(100), 1)) {
+            coordinator.translate("Welcome", "auto", "zh-CN", TextKind.CHAT)
+                    .get(2, TimeUnit.SECONDS);
+            coordinator.translate("Welcome", "auto", "zh-CN", TextKind.TITLE)
+                    .get(2, TimeUnit.SECONDS);
+            assertEquals(2, provider.calls.get());
+            assertEquals(TextKind.TITLE, provider.lastKind.get());
+        }
+    }
+
+    private static void discardsResultsBlockedWhileInFlight() throws Exception {
+        CountDownLatch release = new CountDownLatch(1);
+        TranslationProvider provider = new TranslationProvider() {
+            @Override
+            public String id() {
+                return "filter-race-test";
+            }
+
+            @Override
+            public String translate(TranslationRequest request) throws Exception {
+                release.await(5L, TimeUnit.SECONDS);
+                return "\u6b22\u8fce\u73a9\u5bb6";
+            }
+        };
+        try (RenderTranslationSession session = new RenderTranslationSession(
+                provider, "auto", "zh-CN", 100, 1)) {
+            assertEquals("Welcome players", session.lookup("Welcome players", TextKind.CHAT));
+            session.setBlockedKeywords("welcome");
+            release.countDown();
+            Thread.sleep(80L);
+            assertEquals("Welcome players", session.lookup("Welcome players", TextKind.CHAT));
+        } finally {
+            release.countDown();
         }
     }
 

@@ -5,7 +5,7 @@
 This document records only completed validation. “Builds successfully” is not reported as
 “compatible.”
 
-## Version 1.3.1 release validation
+## Version 1.3.3 release validation
 
 | Minecraft | Loader | Java | Build and self-test | Launched to main menu | Full manual in-server regression |
 | --- | --- | --- | --- | --- | --- |
@@ -39,7 +39,7 @@ startup passed ForgeBootstrap and reached GLFW graphics initialization, then sto
 automation environment exposes no primary monitor. That is not a mod failure, but it is not
 reported as a successful main-menu launch either.
 
-The 1.3.1 provider factory, custom JSON templates, nested response paths, signing digests, endpoint
+The 1.3.3 provider factory, custom JSON templates, nested response paths, signing digests, endpoint
 and header safety, bounded retries, and configuration migration passed core tests without real keys or
 external traffic. End-to-end provider calls still require a user's own account, quota, and region, so
 this table does not describe local protocol tests as successful calls to paid APIs.
@@ -81,7 +81,7 @@ the same build, mapping, launch, and in-server checks before being listed as sup
 - mod settings, quest books, recipe screens, and custom modpack title screens before joining a world;
 - mod/modpack text rendered through Minecraft's font is captured, while image text and custom renderers remain explicit limitations;
 - text entered and sent by the player remains unchanged;
-- online player names, the local player name, and server IP/domain/port remain unchanged;
+- online and local player names remain unchanged by default, and the player-name translation toggle works; server IP/domain/port always remain unchanged;
 - existing Chinese is not translated again, while English fragments can be translated;
 - translated-only mode does not overflow with bilingual text, and color options work;
 - the `U` control panel and `F8` master toggle work at different window sizes;

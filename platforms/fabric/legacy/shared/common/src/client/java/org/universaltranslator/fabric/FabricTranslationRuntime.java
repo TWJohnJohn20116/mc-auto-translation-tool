@@ -56,6 +56,7 @@ public final class FabricTranslationRuntime {
         RenderTranslationSession created = new RenderTranslationSession(
                 provider, "auto", config.targetLanguage, store, workers, config.displayMode,
                 config.translateEnglishOnly);
+        created.setBlockedKeywords(config.blockedKeywords);
         created.setProtectedLiteralsSupplier(FabricTranslationRuntime::playerNameSnapshot);
         session = created;
     }
@@ -96,21 +97,26 @@ public final class FabricTranslationRuntime {
             return protectedPlayerNames;
         }
         MinecraftClient client = MinecraftClient.getInstance();
+        boolean protectPlayerNames = activeConfig == null || !activeConfig.translatePlayerNames;
         if (client.getNetworkHandler() == null) {
             protectedPlayerNames = Collections.emptyList();
         } else {
             List<String> names = new ArrayList<String>();
-            addProtectedLiteral(names, client.getSession().getUsername());
+            if (protectPlayerNames) {
+                addProtectedLiteral(names, client.getSession().getUsername());
+            }
             if (client.getCurrentServerEntry() != null) {
                 addProtectedLiteral(names, client.getCurrentServerEntry().address);
             }
-            client.getNetworkHandler().getPlayerList().forEach(entry -> {
-                if (names.size() >= MAX_PROTECTED_PLAYER_NAMES) {
-                    return;
-                }
-                String name = entry.getProfile().getName();
-                addProtectedLiteral(names, name);
-            });
+            if (protectPlayerNames) {
+                client.getNetworkHandler().getPlayerList().forEach(entry -> {
+                    if (names.size() >= MAX_PROTECTED_PLAYER_NAMES) {
+                        return;
+                    }
+                    String name = entry.getProfile().getName();
+                    addProtectedLiteral(names, name);
+                });
+            }
             protectedPlayerNames = Collections.unmodifiableList(names);
         }
         protectedPlayerNamesExpireAt = now + PLAYER_NAME_SNAPSHOT_MILLIS;

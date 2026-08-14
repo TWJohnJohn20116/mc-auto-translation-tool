@@ -19,7 +19,7 @@ import java.util.Collections;
  */
 public final class TranslationCoordinator implements AutoCloseable {
     private static final int MAX_QUEUED_TRANSLATIONS = 128;
-    private static final String CACHE_FORMAT_VERSION = "translation-v5";
+    private static final String CACHE_FORMAT_VERSION = "translation-v6";
 
     private final TranslationProvider provider;
     private final TranslationStore cache;
@@ -84,11 +84,15 @@ public final class TranslationCoordinator implements AutoCloseable {
             return CompletableFuture.completedFuture(TranslationResult.unchanged(text));
         }
 
+        final String effectiveSource = sourceLanguage == null ? "auto" : sourceLanguage.trim();
+        final TextKind effectiveKind = kind == null ? TextKind.OTHER : kind;
+
         // Keep all regex construction, cache I/O and provider work off the render thread.
-        // The raw request key is deliberately cheap to construct and still de-duplicates
-        // the same text while a translation is in progress.
-        final String requestKey = CACHE_FORMAT_VERSION + "\n" + provider.id() + "\n" + sourceLanguage + "\n"
-                + targetLanguage + "\n" + kind + "\n" + preserveHanText + "\n" + text;
+        // Include the iterable identity so requests with different player-name snapshots
+        // cannot accidentally share an in-flight result without iterating on the render thread.
+        final String requestKey = CACHE_FORMAT_VERSION + "\n" + provider.id() + "\n" + effectiveSource + "\n"
+                + targetLanguage + "\n" + effectiveKind + "\n" + preserveHanText + "\n"
+                + System.identityHashCode(protectedLiterals) + "\n" + text;
         CompletableFuture<TranslationResult> existing = inFlight.get(requestKey);
         if (existing == null) {
             final CompletableFuture<TranslationResult> created =
@@ -107,7 +111,7 @@ public final class TranslationCoordinator implements AutoCloseable {
                             return;
                         }
                         String restored = TranslationOutputValidator.requireDisplaySafe(
-                                text, translateSegments(protectedText, sourceLanguage, targetLanguage, kind));
+                                text, translateSegments(protectedText, effectiveSource, targetLanguage, effectiveKind));
                         created.complete(TranslationResult.success(
                                 text, restored));
                     } catch (Exception exception) {
@@ -163,7 +167,7 @@ public final class TranslationCoordinator implements AutoCloseable {
             return segment;
         }
         String cacheKey = CACHE_FORMAT_VERSION + "\n" + provider.id()
-                + "\n" + sourceLanguage + "\n" + targetLanguage + "\n" + core;
+                + "\n" + sourceLanguage + "\n" + targetLanguage + "\n" + kind + "\n" + core;
         String translated = cache.get(cacheKey);
         if (translated != null) {
             try {

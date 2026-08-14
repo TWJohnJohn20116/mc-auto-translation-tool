@@ -22,6 +22,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private boolean translateOther;
     private boolean translateVanilla;
     private boolean translateOutgoing;
+    private boolean translatePlayerNames;
     private boolean diskCache;
     private boolean offlineAutoDownload;
     private OfflineModel offlineModel;
@@ -36,6 +37,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private TextFieldWidget targetLanguage;
     private TextFieldWidget outgoingTargetLanguage;
     private TextFieldWidget endpoint;
+    private TextFieldWidget blockedKeywords;
     private ButtonWidget enabledButton;
     private ButtonWidget chatButton;
     private ButtonWidget otherButton;
@@ -50,6 +52,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private ButtonWidget colorButton;
     private ButtonWidget outgoingButton;
     private ButtonWidget targetLanguageButton;
+    private ButtonWidget playerNamesButton;
     private String status = "";
 
     UniversalTranslatorConfigScreen(Screen parent, FabricConfig config) {
@@ -61,6 +64,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         this.translateOther = config.translateOther;
         this.translateVanilla = config.translateVanilla;
         this.translateOutgoing = config.translateOutgoing;
+        this.translatePlayerNames = config.translatePlayerNames;
         this.diskCache = config.diskCache;
         this.offlineAutoDownload = config.offlineAutoDownload;
         this.offlineModel = config.offlineModel;
@@ -79,6 +83,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
         String targetValue = targetLanguage == null
                 ? original.targetLanguage : targetLanguage.getText();
         String endpointValue = endpoint == null ? original.endpoint : endpoint.getText();
+        String blockedKeywordsValue = blockedKeywords == null
+                ? original.blockedKeywords : blockedKeywords.getText();
         String outgoingTargetValue = outgoingTargetLanguage == null
                 ? original.outgoingTargetLanguage : outgoingTargetLanguage.getText();
         Layout layout = layout();
@@ -142,6 +148,16 @@ final class UniversalTranslatorConfigScreen extends Screen {
                 client.setScreen(new UniversalTranslatorDiagnosticsScreen(this));
             }
         }).dimensions(layout.right, layout.row(5), layout.buttonWidth, 20).build());
+        this.playerNamesButton = addDrawableChild(ButtonWidget.builder(new LiteralText(""), button -> {
+            translatePlayerNames = !translatePlayerNames;
+            refreshLabels();
+        }).dimensions(left, layout.row(6), layout.buttonWidth, 20).build());
+        this.blockedKeywords = addDrawableChild(new TextFieldWidget(
+                this.textRenderer, layout.right, layout.row(6), layout.buttonWidth, 20,
+                new TranslatableText("screen.universal_translator.blocked_keywords")));
+        this.blockedKeywords.setMaxLength(4096);
+        this.blockedKeywords.setText(blockedKeywordsValue);
+        this.blockedKeywords.setSuggestion(tr("screen.universal_translator.blocked_keywords_hint"));
 
         int presetWidth = Math.max(46, Math.min(68, layout.buttonWidth / 2));
         int languageWidth = layout.buttonWidth - presetWidth - 4;
@@ -194,6 +210,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
         modelButton.setMessage(new TranslatableText("screen.universal_translator.option.model", offlineModel.displayName()));
         fallbackButton.setMessage(new TranslatableText("screen.universal_translator.option.fallback", onOff(apiFallback)));
         outgoingButton.setMessage(new TranslatableText("screen.universal_translator.option.outgoing", onOff(translateOutgoing)));
+        playerNamesButton.setMessage(new TranslatableText(
+                "screen.universal_translator.option.player_names", onOff(translatePlayerNames)));
         targetLanguageButton.setMessage(new TranslatableText("screen.universal_translator.option.target_preset",
                 TargetLanguage.displayName(targetLanguage.getText())));
         downloadButton.active = isOffline() || isLlm();
@@ -224,6 +242,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
                     translateOther,
                     translateVanilla,
                     translateOutgoing,
+                    translatePlayerNames,
+                    blockedKeywords.getText(),
                     targetLanguage.getText(),
                     outgoingTargetLanguage.getText(),
                     displayMode,
@@ -364,9 +384,9 @@ final class UniversalTranslatorConfigScreen extends Screen {
         int left = (this.width - totalWidth) / 2;
         int top = Math.max(20, Math.min(44, 20 + Math.max(0, this.height - 220) / 4));
         int rowStep = this.height >= 300 ? 26 : (this.height >= 260 ? 22 : 20);
-        int targetY = top + rowStep * 6 + 2;
+        int targetY = top + rowStep * 7 + 2;
         int endpointY = targetY + (this.height >= 300 ? 32 : 28);
-        int saveY = this.height >= 330 ? 270 : Math.max(endpointY + 22, this.height - 24);
+        int saveY = Math.max(endpointY + 22, this.height - 24);
         return new Layout(left, left + buttonWidth + gap, totalWidth, buttonWidth,
                 top, rowStep, targetY, endpointY, saveY);
     }

@@ -2,7 +2,7 @@
 
 [Back to the user guide](USER_GUIDE.md) · [简体中文](../Zh-cn/ONLINE_APIS.md) · [繁體中文](../Zh-tw/ONLINE_APIS.md)
 
-Version 1.3.1 supports `offline`, `libretranslate`, `baidu`, `tencent-tmt`, `tencent-hunyuan`,
+Version 1.3.3 supports `offline`, `libretranslate`, `baidu`, `tencent-tmt`, `tencent-hunyuan`,
 `aliyun-mt`, `youdao`, `volcengine-mt`, `iflytek-niutrans`, `huawei-cloud-mt`, `deepseek`,
 `dashscope`, `volcengine-ark`, `zhipu`, `openai-compatible`, and `custom-http-json` in
 `config/universal-translator.properties`.

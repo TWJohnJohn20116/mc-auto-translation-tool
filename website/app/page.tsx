@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "MC 自动翻译工具｜1.3.2 正式版",
+  title: "MC 自动翻译工具｜1.3.3 正式版",
   description:
-    "MC 自动翻译工具 1.3.2 正式版，提供 Fabric、Forge 与 NeoForge 下载，支持首页原版内容、服务器、模组、整合包界面、玩家发送内容与多种可配置翻译 API。",
+    "MC 自动翻译工具 1.3.3 正式版，提供 Fabric、Forge 与 NeoForge 下载，新增翻译关键词屏蔽、玩家名称翻译开关，并支持多种可配置翻译 API。",
 };
 
 const features = [
@@ -19,8 +19,8 @@ const features = [
   },
   {
     mark: "隐",
-    title: "隐私字段不翻译",
-    body: "玩家名、服务器域名、IPv4、IPv6、端口、URL、数字与已有中文会在本地拆分并原样保留，不发送给翻译模型。",
+    title: "隐私范围可控制",
+    body: "玩家名默认在本地拆分，也可主动开启玩家名翻译；服务器域名、IP、端口、URL 与数字仍会原样保护。",
   },
   {
     mark: "稳",
@@ -39,7 +39,7 @@ const versions = [
   ["26.1–26.2", "Fabric 单一 JAR / Forge 兼容族群", "正式版已发布", "ready"],
 ];
 
-const releaseVersion = "1.3.2";
+const releaseVersion = "1.3.3";
 const githubDownloadBase =
   `https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v${releaseVersion}`;
 
@@ -142,7 +142,7 @@ export default function Home() {
             自动处理聊天、记分板、箱子，以及模组和整合包界面里的英文内容。
           </p>
           <div className="heroActions">
-            <a className="primaryButton" href="#download">下载 1.3.2 正式版 <span>→</span></a>
+            <a className="primaryButton" href="#download">下载 1.3.3 正式版 <span>→</span></a>
             <a className="textButton" href="#how">查看安装方法</a>
           </div>
           <div className="trustLine">
@@ -173,7 +173,7 @@ export default function Home() {
                 <div className="arrowDown">↓</div>
                 <div className="translatedText"><span>译文</span> 欢迎来到空岛生存！</div>
               </div>
-              <div className="privacyChip">玩家名与服务器地址保持原样</div>
+              <div className="privacyChip">玩家名默认保护 · 可在设置中开启翻译</div>
             </div>
           </div>
         </div>
@@ -206,10 +206,10 @@ export default function Home() {
         <div className="shell privacyGrid">
           <div className="privacyCopy">
             <span className="sectionKicker light">隐私设计</span>
-            <h2>该保留的，永远原样保留。</h2>
+            <h2>该保护的保持原样，也把选择权交给你。</h2>
             <p>文本先在本地被拆分。只有需要翻译的自然语言片段会进入离线模型或你自行配置的 API。</p>
             <ul>
-              <li><span>01</span> 玩家名称与本机账号名</li>
+              <li><span>01</span> 玩家名称默认保护，可主动开启翻译</li>
               <li><span>02</span> 服务器域名、IP 地址与端口</li>
               <li><span>03</span> URL、数字、格式代码与已有中文</li>
             </ul>
@@ -224,7 +224,7 @@ export default function Home() {
               <span className="lockToken">play.example.cn:25565 🔒</span>
             </div>
             <div className="resultLine"><b>欢迎</b> Steve_42 <b>来到</b> play.example.cn:25565</div>
-            <small>锁定字段不会进入翻译模型</small>
+            <small>默认锁定字段不会进入翻译模型</small>
           </div>
         </div>
       </section>
@@ -260,9 +260,9 @@ export default function Home() {
 
       <section className="downloadSection shell" id="download">
         <div className="downloadIntro">
-          <span className="sectionKicker light">1.3.2 正式版</span>
+          <span className="sectionKicker light">1.3.3 正式版</span>
           <h2>免费使用，也欢迎一起把它做得更好。</h2>
-          <p>本次提供 13 个经过校验的 JAR，覆盖 Fabric、Forge 与 NeoForge 的已验证目标，并新增多种在线翻译及自定义 API。请选择与你的 Minecraft 版本及加载器完全对应的文件，切勿跨加载器混用。</p>
+          <p>本次提供 13 个经过校验的 JAR，覆盖 Fabric、Forge 与 NeoForge 的已验证目标；新增关键词屏蔽和玩家名称翻译开关，并保留多种在线翻译与自定义 API。请选择与你的 Minecraft 版本及加载器完全对应的文件，切勿跨加载器混用。</p>
         </div>
         <div className="downloadGrid">
           {downloads.map((item) => (

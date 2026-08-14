@@ -164,7 +164,7 @@ The endpoint, model name, and key are stored only in the current game instance's
 
 ### Other online services and custom APIs
 
-Version 1.3.1 also includes adapters for Baidu, Tencent Cloud TMT, Alibaba Cloud MT, Youdao,
+Version 1.3.3 includes adapters for Baidu, Tencent Cloud TMT, Alibaba Cloud MT, Youdao,
 Volcengine MT, iFlytek, Huawei Cloud, DeepSeek, Qwen, Volcengine Ark, and Zhipu. Custom HTTPS or
 loopback HTTP JSON request templates, headers, and response paths are supported as well. See the
 [online API configuration guide](ONLINE_APIS.md) for provider IDs, properties, examples, and safety limits.
@@ -176,8 +176,14 @@ quest books, recipe/item interfaces, and custom modpack title screens that use M
 renderer. In a world it also covers chat, scoreboards, the Tab list, Action Bar, titles, Boss Bar,
 menu/container titles, item names and Lore, tooltips, books, signs, holographic text, and entity
 names. Player names, the current server IP/domain and port,
-URLs, numbers, percentages, time values, and Minecraft `§` formatting codes are separated locally
-and preserved exactly. They are not sent to the translation model or API.
+URLs, numbers, percentages, time values, and Minecraft `§` formatting codes are separated locally.
+Player names are protected by default; enabling “Player names” allows them to be translated, while
+addresses, numbers, and formatting values remain protected from the translation model or API.
+
+“Blocked keywords” accepts comma-, semicolon-, or line-separated entries and matches without regard
+to case. If the source contains any entry, the entire text stays unchanged and is never sent to the
+translation service. For example, `hello,advertisement` skips chat, UI text, and outgoing translation
+that contains either keyword.
 
 For mixed text such as “Welcome 欢迎,” only `Welcome` is sent to the translation service by
 default. The existing Chinese text is reassembled locally without changes. This behavior can be
@@ -192,7 +198,9 @@ back or sent to the server.
 ## Cache and privacy
 
 - Source text is not written to cache files in plaintext; cache keys are SHA-256 hashes.
-- Player names, server addresses, numbers, and existing Chinese do not enter model requests and are reassembled locally.
+- Player names do not enter model requests by default; they participate only after “Player names” is enabled.
+- Text matching a blocked keyword never enters a model request.
+- Server addresses, numbers, and existing Chinese do not enter model requests and are reassembled locally.
 - Translations are stored locally to reduce repeated requests and scoreboard refresh latency.
 - The disk cache can be disabled in settings; a runtime-only memory cache still exists until restart.
 - Disabling “Chat content” prevents chat HUD text from reaching the service; disabling “Other interfaces” blocks server interfaces, mod menus, and modpack content.
@@ -225,7 +233,7 @@ chat verification may impose their own restrictions, which is why the feature is
 
 ## Current version
 
-This guide covers the `1.3.1` release. Twenty-seven exact build targets are packaged into 13
+This guide covers the `1.3.3` release. Twenty-seven exact build targets are packaged into 13
 installable JARs. Every target must pass clean builds, shared-core tests, and release-structure checks;
 the Fabric bundles also run real Loader selection checks. Back up the configuration before updating.
 When reporting untranslated

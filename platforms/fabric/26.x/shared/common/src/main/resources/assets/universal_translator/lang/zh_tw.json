@@ -113,4 +113,7 @@
   ,"screen.universal_translator.home.enabled": "翻譯總開關：%s"
   ,"screen.universal_translator.home.vanilla": "原版介面：%s"
   ,"screen.universal_translator.home.target": "目標語言：%s"
+  ,"screen.universal_translator.option.player_names": "玩家名稱翻譯：%s"
+  ,"screen.universal_translator.blocked_keywords": "翻譯屏蔽關鍵詞"
+  ,"screen.universal_translator.blocked_keywords_hint": "屏蔽關鍵詞（逗號分隔）"
 }

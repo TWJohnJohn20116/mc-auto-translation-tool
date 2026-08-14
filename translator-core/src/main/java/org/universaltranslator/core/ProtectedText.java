@@ -6,6 +6,8 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.Comparator;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * Replaces values that should survive translation verbatim with stable ASCII tokens.
@@ -78,9 +80,11 @@ public final class ProtectedText {
             throw new IllegalArgumentException("text cannot be null");
         }
         List<String> literals = new ArrayList<String>();
+        Set<String> seenLiterals = new HashSet<String>();
         if (protectedLiterals != null) {
             for (String literal : protectedLiterals) {
-                if (literal != null && !literal.isEmpty() && literals.size() < 1000) {
+                if (literal != null && !literal.isEmpty() && literal.length() <= 255
+                        && literals.size() < 1000 && seenLiterals.add(literal)) {
                     literals.add(literal);
                 }
             }

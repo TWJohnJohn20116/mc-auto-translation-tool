@@ -22,7 +22,7 @@
 | 本機離線 | 建議使用內建離線模式，不需要 API Key；模型與翻譯內容保留在使用者電腦上 |
 | 多種服務 | 內建多種中國大陸機器翻譯與 LLM 服務，也支援 LibreTranslate、OpenAI 相容及自訂 HTTP JSON API |
 | 流暢與穩定 | 翻譯在背景執行；尚未完成或服務異常時繼續顯示原文，不阻塞渲染執行緒 |
-| 隱私保護 | 玩家名稱、伺服器位址、網址、數字與格式碼會先在本機分離，不送入翻譯請求 |
+| 隱私保護 | 玩家名稱預設在本機分離，也可主動開啟翻譯；伺服器位址、網址、數字與格式碼仍會保持保護 |
 | 本機快取 | 合併相同請求並快取譯文，降低重複翻譯的延遲與線上服務費用 |
 | 可選傳送翻譯 | 可將一般聊天翻譯後依序傳送；此功能預設關閉，指令永遠保持原樣 |
 
@@ -46,19 +46,19 @@
 
 | Minecraft | 載入器 | Java | 下載 |
 | --- | --- | ---: | --- |
-| 1.16.5、1.19.2、1.20.1、1.21–1.21.11、26.1–26.2 | Fabric | 8 / 17 / 21 / 25 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-fabric-all.jar) |
-| 1.8.9 | Forge | 8 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.8.9-forge.jar) |
-| 1.12.2 | Forge | 8 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.12.2-forge.jar) |
-| 1.16.5 | Forge | 8 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.16.5-forge.jar) |
-| 1.19.2 | Forge | 17 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.19.2-forge.jar) |
-| 1.20.1 | Forge | 17 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.20.1-forge.jar) |
-| 1.21、1.21.1、1.21.3–1.21.5 | Forge | 21 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.21-1.21.5-forge.jar) |
-| 1.21.6–1.21.8 | Forge | 21 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.21.6-1.21.8-forge.jar) |
-| 1.21.9–1.21.11 | Forge | 21 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.21.9-1.21.11-forge.jar) |
-| 26.1–26.1.2 | Forge | 25 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc26.1-26.1.2-forge.jar) |
-| 26.2 | Forge | 25 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc26.2-forge.jar) |
-| 1.20.1 | NeoForge 47.1.106–47.1.x | 17 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.20.1-neoforge.jar) |
-| 1.21.1 | NeoForge 21.1.248 | 21 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.21.1-neoforge.jar) |
+| 1.16.5、1.19.2、1.20.1、1.21–1.21.11、26.1–26.2 | Fabric | 8 / 17 / 21 / 25 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.3/MCAutoTranslationTool-1.3.3-fabric-all.jar) |
+| 1.8.9 | Forge | 8 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.3/MCAutoTranslationTool-1.3.3-mc1.8.9-forge.jar) |
+| 1.12.2 | Forge | 8 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.3/MCAutoTranslationTool-1.3.3-mc1.12.2-forge.jar) |
+| 1.16.5 | Forge | 8 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.3/MCAutoTranslationTool-1.3.3-mc1.16.5-forge.jar) |
+| 1.19.2 | Forge | 17 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.3/MCAutoTranslationTool-1.3.3-mc1.19.2-forge.jar) |
+| 1.20.1 | Forge | 17 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.3/MCAutoTranslationTool-1.3.3-mc1.20.1-forge.jar) |
+| 1.21、1.21.1、1.21.3–1.21.5 | Forge | 21 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.3/MCAutoTranslationTool-1.3.3-mc1.21-1.21.5-forge.jar) |
+| 1.21.6–1.21.8 | Forge | 21 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.3/MCAutoTranslationTool-1.3.3-mc1.21.6-1.21.8-forge.jar) |
+| 1.21.9–1.21.11 | Forge | 21 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.3/MCAutoTranslationTool-1.3.3-mc1.21.9-1.21.11-forge.jar) |
+| 26.1–26.1.2 | Forge | 25 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.3/MCAutoTranslationTool-1.3.3-mc26.1-26.1.2-forge.jar) |
+| 26.2 | Forge | 25 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.3/MCAutoTranslationTool-1.3.3-mc26.2-forge.jar) |
+| 1.20.1 | NeoForge 47.1.106–47.1.x | 17 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.3/MCAutoTranslationTool-1.3.3-mc1.20.1-neoforge.jar) |
+| 1.21.1 | NeoForge 21.1.248 | 21 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.3/MCAutoTranslationTool-1.3.3-mc1.21.1-neoforge.jar) |
 
 > **不要跨載入器或超出檔名範圍混用 JAR。** 相鄰 Minecraft 版本的渲染 API 與 Mixin
 > 目標可能不同；只有完成驗證的版本才會寫入發佈 metadata。

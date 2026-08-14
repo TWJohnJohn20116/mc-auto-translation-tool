@@ -21,6 +21,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private boolean translateOther;
     private boolean translateVanilla;
     private boolean translateOutgoing;
+    private boolean translatePlayerNames;
     private boolean diskCache;
     private boolean offlineAutoDownload;
     private OfflineModel offlineModel;
@@ -35,10 +36,12 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private String targetLanguage;
     private String outgoingTargetLanguage;
     private EditBox endpoint;
+    private EditBox blockedKeywords;
     private Button enabledButton;
     private Button chatButton;
     private Button otherButton;
     private Button vanillaButton;
+    private Button playerNamesButton;
     private Button cacheButton;
     private Button providerButton;
     private Button displayButton;
@@ -62,6 +65,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         this.translateOther = config.translateOther;
         this.translateVanilla = config.translateVanilla;
         this.translateOutgoing = config.translateOutgoing;
+        this.translatePlayerNames = config.translatePlayerNames;
         this.diskCache = config.diskCache;
         this.offlineAutoDownload = config.offlineAutoDownload;
         this.offlineModel = config.offlineModel;
@@ -81,6 +85,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
             targetLanguage = TargetLanguage.canonicalize(original.targetLanguage);
         }
         String endpointValue = endpoint == null ? original.endpoint : endpoint.getValue();
+        String blockedKeywordsValue = blockedKeywords == null
+                ? original.blockedKeywords : blockedKeywords.getValue();
         if (outgoingTargetLanguage == null) {
             outgoingTargetLanguage = TargetLanguage.canonicalize(original.outgoingTargetLanguage);
         }
@@ -139,16 +145,31 @@ final class UniversalTranslatorConfigScreen extends Screen {
             offlineModel = offlineModel.next();
             refreshLabels();
         }).bounds(left, layout.row(5), layout.buttonWidth, 20).build());
+        this.blockedKeywords = addRenderableWidget(new EditBox(
+                this.font, layout.right, layout.row(5), layout.buttonWidth, 20,
+                Component.translatable("screen.universal_translator.blocked_keywords")));
+        this.blockedKeywords.setMaxLength(4096);
+        this.blockedKeywords.setValue(blockedKeywordsValue);
+        this.blockedKeywords.setHint(Component.translatable(
+                "screen.universal_translator.blocked_keywords_hint"));
+        int compactGap = 4;
+        int compactWidth = (layout.totalWidth - compactGap * 2) / 3;
+        int compactMiddle = left + compactWidth + compactGap;
+        int compactRight = compactMiddle + compactWidth + compactGap;
         this.diagnosticsButton = addRenderableWidget(Button.builder(
                 Component.translatable("screen.universal_translator.diagnostics.title"), button -> {
             if (minecraft != null) {
                 minecraft.gui.setScreen(new UniversalTranslatorDiagnosticsScreen(this));
             }
-        }).bounds(layout.right, layout.row(6), layout.buttonWidth, 20).build());
+        }).bounds(compactRight, layout.row(6), compactWidth, 20).build());
         this.vanillaButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
             translateVanilla = !translateVanilla;
             refreshLabels();
-        }).bounds(left, layout.row(6), layout.buttonWidth, 20).build());
+        }).bounds(left, layout.row(6), compactWidth, 20).build());
+        this.playerNamesButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+            translatePlayerNames = !translatePlayerNames;
+            refreshLabels();
+        }).bounds(compactMiddle, layout.row(6), compactWidth, 20).build());
 
         this.targetLanguageButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
             targetLanguage = TargetLanguage.nextPreset(targetLanguage);
@@ -180,6 +201,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
         chatButton.setMessage(Component.translatable("screen.universal_translator.option.chat", onOff(translateChat)));
         otherButton.setMessage(Component.translatable("screen.universal_translator.option.other", onOff(translateOther)));
         vanillaButton.setMessage(Component.translatable("screen.universal_translator.option.vanilla", onOff(translateVanilla)));
+        playerNamesButton.setMessage(Component.translatable(
+                "screen.universal_translator.option.player_names", onOff(translatePlayerNames)));
         cacheButton.setMessage(Component.translatable("screen.universal_translator.option.cache", onOff(diskCache)));
         providerButton.setMessage(Component.translatable("screen.universal_translator.option.provider", providerLabel()));
         displayButton.setMessage(Component.translatable("screen.universal_translator.option.display",
@@ -221,6 +244,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
                     translateOther,
                     translateVanilla,
                     translateOutgoing,
+                    translatePlayerNames,
+                    blockedKeywords.getValue(),
                     targetLanguage,
                     outgoingTargetLanguage,
                     displayMode,
