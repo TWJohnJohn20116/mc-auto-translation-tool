@@ -5,7 +5,7 @@
 This document records only completed validation. “Builds successfully” is not reported as
 “compatible.”
 
-## Version 1.3.0 release validation
+## Version 1.3.1 release validation
 
 | Minecraft | Loader | Java | Build and self-test | Launched to main menu | Full manual in-server regression |
 | --- | --- | --- | --- | --- | --- |
@@ -30,12 +30,19 @@ This document records only completed validation. “Builds successfully” is no
 | 26.1, 26.1.1, 26.1.2, 26.2 | Forge 62.0.9–65.1.1 | 25 | Compile passed for all four exact targets | Pending | Pending |
 | 26.1, 26.1.1, 26.1.2, 26.2, single JAR | Fabric Loader 0.19.3 | 25 | Passed; Loader selection passed for all four versions | 26.1 baseline passed | Pending |
 
-All 36 exact build artifacts share the same translation core and are reduced to 15 directly installable release JARs. Fabric 1.20.1 completed Loom remapping.
+The stable release starts from 27 formally shipped target JARs that share the same translation core
+and reduces them to 13 directly installable release JARs. Additional adjacent-version source targets
+are build-tested separately and are not counted as stable downloads. Fabric 1.20.1 completed Loom remapping.
 The Forge 1.20.1 artifact was renamed into the SRG runtime namespace and contains a refmap for all
 nine Mixin classes. Forge 1.21.11 was adapted to the Forge 7 event bus and Mojmap runtime. Its
 startup passed ForgeBootstrap and reached GLFW graphics initialization, then stopped because the
 automation environment exposes no primary monitor. That is not a mod failure, but it is not
 reported as a successful main-menu launch either.
+
+The 1.3.1 provider factory, custom JSON templates, nested response paths, signing digests, endpoint
+and header safety, bounded retries, and configuration migration passed core tests without real keys or
+external traffic. End-to-end provider calls still require a user's own account, quota, and region, so
+this table does not describe local protocol tests as successful calls to paid APIs.
 
 The single 1.21.x JAR embeds twelve exact-version implementations rather than widening one Mixin
 build across incompatible game APIs. Each nested implementation declares one Minecraft version,

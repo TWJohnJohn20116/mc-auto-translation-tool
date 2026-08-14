@@ -33,7 +33,8 @@ master switch at any time.
 1. Enter any world or server and press `U` to open the settings.
 2. Enter the target language, such as `zh-CN` for Simplified Chinese or `zh-TW` for Traditional
    Chinese. The shortcut button cycles through Simplified Chinese, Traditional Chinese, and English.
-3. Prefer “Offline.” You may also continue using “Libre,” “Tencent,” or “LLM API.”
+3. Prefer “Offline.” You can also select a built-in online service, an OpenAI-compatible endpoint,
+   or a configurable HTTP JSON API.
 4. Choose whether chat content and other interface text may be sent, and whether to use the local cache.
 5. The default display option is “Translated only.” Replacing the source directly prevents bilingual text from overflowing scoreboards and chest interfaces; switch to “Original + translation” when needed.
 6. “Translate only English in mixed text” is enabled by default, so existing Chinese is not translated again.
@@ -161,6 +162,13 @@ does not reveal a saved key: leave the field blank to keep it or enter a single 
 The endpoint, model name, and key are stored only in the current game instance's
 `config/universal-translator.properties`. The mod does not install or start third-party LLM services.
 
+### Other online services and custom APIs
+
+Version 1.3.1 also includes adapters for Baidu, Tencent Cloud TMT, Alibaba Cloud MT, Youdao,
+Volcengine MT, iFlytek, Huawei Cloud, DeepSeek, Qwen, Volcengine Ark, and Zhipu. Custom HTTPS or
+loopback HTTP JSON request templates, headers, and response paths are supported as well. See the
+[online API configuration guide](ONLINE_APIS.md) for provider IDs, properties, examples, and safety limits.
+
 ## What can be translated
 
 The mod works at the final text-rendering layer. Even before a world is joined it covers mod settings,
@@ -217,9 +225,9 @@ chat verification may impose their own restrictions, which is why the feature is
 
 ## Current version
 
-This guide covers the `1.2.1` release with eight JARs. Every target completed a clean build and the
-shared-core self-test; the 1.21.x and 26.x bundles also passed real Fabric Loader selection checks.
-The main branch still has unreleased Fabric adapters for 1.16.5 and 1.19.2. Back up the configuration
-before updating. When reporting untranslated
+This guide covers the `1.3.1` release. Twenty-seven exact build targets are packaged into 13
+installable JARs. Every target must pass clean builds, shared-core tests, and release-structure checks;
+the Fabric bundles also run real Loader selection checks. Back up the configuration before updating.
+When reporting untranslated
 interface text, include the Minecraft version, loader version, interface location, and `latest.log`,
 but omit API keys and private chat content.

@@ -6,11 +6,9 @@ import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TextKind;
 import org.universaltranslator.core.LocalConfigSecurity;
 import org.universaltranslator.core.OfflineModel;
-import org.universaltranslator.core.provider.LibreTranslateProvider;
-import org.universaltranslator.core.provider.TencentHunyuanProvider;
 import org.universaltranslator.core.provider.FallbackTranslationProvider;
 import org.universaltranslator.core.provider.LlamaCppOfflineProvider;
-import org.universaltranslator.core.provider.OpenAiChatTranslationProvider;
+import org.universaltranslator.core.provider.OnlineProviderConfig;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -52,6 +50,7 @@ final class LegacyConfig {
     final File offlineDirectory;
     final boolean diskCache;
     final File cacheFile;
+    private final OnlineProviderConfig onlineProviderConfig;
     private final File configFile;
 
     private LegacyConfig(Properties properties, File configFile, File cacheFile) {
@@ -88,6 +87,7 @@ final class LegacyConfig {
         apiFallbackProvider = properties.getProperty(
                 "api-fallback-provider", "libretranslate").trim();
         diskCache = Boolean.parseBoolean(properties.getProperty("disk-cache", "true"));
+        onlineProviderConfig = OnlineProviderConfig.from(properties);
         this.configFile = configFile;
         this.cacheFile = cacheFile;
         this.offlineDirectory = new File(configFile.getParentFile(), "universal-translator-offline");
@@ -113,13 +113,13 @@ final class LegacyConfig {
         Properties properties = defaults();
         properties.putAll(stored);
         boolean legacyMigration = !stored.containsKey("config-version");
-        boolean migrated = configVersion(stored) < 3;
+        boolean migrated = configVersion(stored) < 4;
         if (legacyMigration) {
             properties.setProperty("display-mode", "translated-only");
             properties.setProperty("translate-english-only", "true");
             properties.setProperty("translated-text-color", "aqua");
         }
-        properties.setProperty("config-version", "3");
+        properties.setProperty("config-version", "4");
         LocalConfigSecurity.restrictToOwner(file.toPath());
         LegacyConfig loaded = new LegacyConfig(
                 properties, file, new File(configDirectory, "universal-translator-cache.properties"));
@@ -237,22 +237,12 @@ final class LegacyConfig {
     }
 
     private TranslationProvider createApiProvider(String selectedProvider) {
-        if ("libretranslate".equalsIgnoreCase(selectedProvider)) {
-            return new LibreTranslateProvider(endpoint, apiKey);
-        }
-        if ("tencent-hunyuan".equalsIgnoreCase(selectedProvider)) {
-            return new TencentHunyuanProvider(tencentSecretId, tencentSecretKey, tencentModel);
-        }
-        if ("openai-compatible".equalsIgnoreCase(selectedProvider)) {
-            return new OpenAiChatTranslationProvider(
-                    llmEndpoint, llmApiKey, llmModel, "openai-compatible");
-        }
-        throw new IllegalArgumentException("Unsupported translation provider: " + selectedProvider);
+        return onlineProviderConfig.create(selectedProvider);
     }
 
     private static Properties defaults() {
         Properties properties = new Properties();
-        properties.setProperty("config-version", "3");
+        properties.setProperty("config-version", "4");
         properties.setProperty("enabled", "false");
         properties.setProperty("translate-chat", "true");
         properties.setProperty("translate-other", "true");
@@ -276,12 +266,14 @@ final class LegacyConfig {
         properties.setProperty("api-fallback", "false");
         properties.setProperty("api-fallback-provider", "libretranslate");
         properties.setProperty("disk-cache", "true");
+        OnlineProviderConfig.applyDefaults(properties);
         return properties;
     }
 
     private Properties toProperties() {
         Properties properties = new Properties();
-        properties.setProperty("config-version", "3");
+        onlineProviderConfig.writeTo(properties);
+        properties.setProperty("config-version", "4");
         properties.setProperty("enabled", Boolean.toString(enabled));
         properties.setProperty("translate-chat", Boolean.toString(translateChat));
         properties.setProperty("translate-other", Boolean.toString(translateOther));

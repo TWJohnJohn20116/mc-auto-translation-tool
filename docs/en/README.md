@@ -21,7 +21,7 @@ chat, quest books, mod menus, scoreboards, item descriptions, and signs.
 | Full-interface translation | Covers chat, quest and recipe screens, mod menus, scoreboards, Tab, titles, boss bars, containers, item names and lore, books, signs, holograms, and more |
 | Client-only | Minecraft servers do not need the mod and receive no extra mod network packets |
 | Local offline mode | The recommended built-in mode requires no API key; its model and translation content remain on the user's computer |
-| Multiple providers | Can also connect to LibreTranslate, an OpenAI-compatible LLM API, or the legacy Tencent-compatible interface |
+| Multiple providers | Built-in Chinese MT and LLM services, plus LibreTranslate, OpenAI-compatible, and custom HTTP JSON APIs |
 | Responsive and resilient | Translation runs in the background; unfinished requests and service failures keep the original text without blocking rendering |
 | Privacy protection | Player names, server addresses, URLs, numbers, and formatting codes are separated locally before a translation request |
 | Local cache | Coalesces identical requests and caches translations to reduce latency and remote-service costs |
@@ -49,19 +49,19 @@ README whenever a new stable version is published:
 
 | Minecraft | Loader | Java | Download |
 | --- | --- | ---: | --- |
-| 1.16.5, 1.19.2, 1.20.1, 1.21–1.21.11, 26.1–26.2 | Fabric | 8 / 17 / 21 / 25 | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-fabric-all.jar) |
-| 1.8.9 | Forge | 8 | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.8.9-forge.jar) |
-| 1.12.2 | Forge | 8 | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.12.2-forge.jar) |
-| 1.16.5 | Forge | 8 | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.16.5-forge.jar) |
-| 1.19.2 | Forge | 17 | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.19.2-forge.jar) |
-| 1.20.1 | Forge | 17 | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.20.1-forge.jar) |
-| 1.21, 1.21.1, 1.21.3–1.21.5 | Forge | 21 | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.21-1.21.5-forge.jar) |
-| 1.21.6–1.21.8 | Forge | 21 | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.21.6-1.21.8-forge.jar) |
-| 1.21.9–1.21.11 | Forge | 21 | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.21.9-1.21.11-forge.jar) |
-| 26.1–26.1.2 | Forge | 25 | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc26.1-26.1.2-forge.jar) |
-| 26.2 | Forge | 25 | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc26.2-forge.jar) |
-| 1.20.1 | NeoForge 47.1.106–47.1.x | 17 | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.20.1-neoforge.jar) |
-| 1.21.1 | NeoForge 21.1.248 | 21 | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.21.1-neoforge.jar) |
+| 1.16.5, 1.19.2, 1.20.1, 1.21–1.21.11, 26.1–26.2 | Fabric | 8 / 17 / 21 / 25 | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-fabric-all.jar) |
+| 1.8.9 | Forge | 8 | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.8.9-forge.jar) |
+| 1.12.2 | Forge | 8 | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.12.2-forge.jar) |
+| 1.16.5 | Forge | 8 | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.16.5-forge.jar) |
+| 1.19.2 | Forge | 17 | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.19.2-forge.jar) |
+| 1.20.1 | Forge | 17 | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.20.1-forge.jar) |
+| 1.21, 1.21.1, 1.21.3–1.21.5 | Forge | 21 | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.21-1.21.5-forge.jar) |
+| 1.21.6–1.21.8 | Forge | 21 | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.21.6-1.21.8-forge.jar) |
+| 1.21.9–1.21.11 | Forge | 21 | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.21.9-1.21.11-forge.jar) |
+| 26.1–26.1.2 | Forge | 25 | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc26.1-26.1.2-forge.jar) |
+| 26.2 | Forge | 25 | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc26.2-forge.jar) |
+| 1.20.1 | NeoForge 47.1.106–47.1.x | 17 | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.20.1-neoforge.jar) |
+| 1.21.1 | NeoForge 21.1.248 | 21 | [Download JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.21.1-neoforge.jar) |
 
 > **Do not mix loaders or use a JAR outside the range in its filename.** Adjacent Minecraft releases may
 > change rendering APIs and Mixin targets. Release metadata includes only versions that completed validation.
@@ -79,6 +79,8 @@ README whenever a new stable version is published:
 | Remote LibreTranslate | Depends on service | Yes | A trusted HTTPS translation service |
 | Local OpenAI-compatible API | Depends on service | No | A user-run compatible service such as llama.cpp or Ollama |
 | Online OpenAI-compatible API | Usually | Yes | A user-selected HTTPS LLM service |
+| Dedicated MT / LLM APIs | Usually | Yes | Baidu, Tencent Cloud, Alibaba Cloud, Youdao, Volcengine, iFlytek, Huawei Cloud, DeepSeek, Qwen, Zhipu, and others |
+| Custom HTTP JSON API | Depends on service | Depends on endpoint | User-defined safe request templates, authentication headers, and nested response paths |
 | Tencent-compatible interface | Yes | Yes | Legacy configuration compatibility only |
 
 - Offline mode runs only on a loopback address; server, mod, and modpack text is not sent to the project.
@@ -87,7 +89,8 @@ README whenever a new stable version is published:
 - Chat content, other interfaces, and player-initiated outgoing translation can be disabled separately. Outgoing translation is off by default.
 - Cache keys use SHA-256; original text is not written to the cache file in plaintext.
 
-See the [installation and usage guide](USER_GUIDE.md) for every setting, model downloads, and troubleshooting.
+See [online API configuration](ONLINE_APIS.md) for built-in services and custom requests, and the
+[installation and usage guide](USER_GUIDE.md) for other settings, model downloads, and troubleshooting.
 
 ## Current validation status
 
@@ -106,6 +109,7 @@ validation levels are recorded separately in the [compatibility matrix](COMPATIB
 | [Installation and usage guide](USER_GUIDE.md) | Installation, first-run setup, offline models, API configuration, and troubleshooting |
 | [Compatibility matrix](COMPATIBILITY.md) | Actual validation level for each Minecraft and loader target |
 | [Building guide](BUILDING.md) | Development environment, Gradle tasks, and release JAR validation |
+| [Online API configuration](ONLINE_APIS.md) | Built-in services, custom HTTP JSON, timeouts, retries, and security constraints |
 | [Architecture](ARCHITECTURE.md) | Shared core, platform adapters, translation flow, and caching |
 | [Third-party offline services](THIRD_PARTY_OFFLINE.md) | Connecting a local translation service run by the user |
 | [Changelog](../../CHANGELOG.md) | Stable and test release changes |

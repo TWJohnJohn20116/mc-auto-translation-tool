@@ -20,7 +20,7 @@
 | 全界面翻译 | 覆盖聊天、任务/配方界面、模组菜单、记分板、Tab、标题、Boss Bar、容器、物品名与 Lore、书、告示牌、全息文字等 |
 | 纯客户端 | Minecraft 服务器无需安装模组，也不会收到额外的模组数据包 |
 | 本地离线 | 推荐使用内置离线模式，不需要 API Key；模型和翻译内容保留在用户电脑上 |
-| 多种服务 | 也可连接 LibreTranslate、OpenAI 兼容 LLM API 或旧腾讯兼容接口 |
+| 多种服务 | 内置中国主流机器翻译与 LLM 服务，也支持 LibreTranslate、OpenAI 兼容和自定义 HTTP JSON API |
 | 流畅与稳定 | 翻译在后台执行；未完成或服务异常时继续显示原文，不阻塞渲染线程 |
 | 隐私保护 | 玩家名、服务器地址、网址、数字和格式代码会先在本机分离，不送入翻译请求 |
 | 本地缓存 | 合并相同请求并缓存译文，降低重复翻译的延迟和在线服务费用 |
@@ -46,19 +46,19 @@
 
 | Minecraft | 加载器 | Java | 下载 |
 | --- | --- | ---: | --- |
-| 1.16.5、1.19.2、1.20.1、1.21–1.21.11、26.1–26.2 | Fabric | 8 / 17 / 21 / 25 | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-fabric-all.jar) |
-| 1.8.9 | Forge | 8 | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.8.9-forge.jar) |
-| 1.12.2 | Forge | 8 | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.12.2-forge.jar) |
-| 1.16.5 | Forge | 8 | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.16.5-forge.jar) |
-| 1.19.2 | Forge | 17 | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.19.2-forge.jar) |
-| 1.20.1 | Forge | 17 | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.20.1-forge.jar) |
-| 1.21、1.21.1、1.21.3–1.21.5 | Forge | 21 | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.21-1.21.5-forge.jar) |
-| 1.21.6–1.21.8 | Forge | 21 | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.21.6-1.21.8-forge.jar) |
-| 1.21.9–1.21.11 | Forge | 21 | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.21.9-1.21.11-forge.jar) |
-| 26.1–26.1.2 | Forge | 25 | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc26.1-26.1.2-forge.jar) |
-| 26.2 | Forge | 25 | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc26.2-forge.jar) |
-| 1.20.1 | NeoForge 47.1.106–47.1.x | 17 | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.20.1-neoforge.jar) |
-| 1.21.1 | NeoForge 21.1.248 | 21 | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.21.1-neoforge.jar) |
+| 1.16.5、1.19.2、1.20.1、1.21–1.21.11、26.1–26.2 | Fabric | 8 / 17 / 21 / 25 | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-fabric-all.jar) |
+| 1.8.9 | Forge | 8 | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.8.9-forge.jar) |
+| 1.12.2 | Forge | 8 | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.12.2-forge.jar) |
+| 1.16.5 | Forge | 8 | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.16.5-forge.jar) |
+| 1.19.2 | Forge | 17 | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.19.2-forge.jar) |
+| 1.20.1 | Forge | 17 | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.20.1-forge.jar) |
+| 1.21、1.21.1、1.21.3–1.21.5 | Forge | 21 | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.21-1.21.5-forge.jar) |
+| 1.21.6–1.21.8 | Forge | 21 | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.21.6-1.21.8-forge.jar) |
+| 1.21.9–1.21.11 | Forge | 21 | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.21.9-1.21.11-forge.jar) |
+| 26.1–26.1.2 | Forge | 25 | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc26.1-26.1.2-forge.jar) |
+| 26.2 | Forge | 25 | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc26.2-forge.jar) |
+| 1.20.1 | NeoForge 47.1.106–47.1.x | 17 | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.20.1-neoforge.jar) |
+| 1.21.1 | NeoForge 21.1.248 | 21 | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.21.1-neoforge.jar) |
 
 > **不要跨加载器或超出文件名范围混用 JAR。** 相邻 Minecraft 版本的渲染 API 与 Mixin
 > 目标可能不同；只有完成验证的版本才会写入发布 metadata。
@@ -76,6 +76,8 @@
 | 远程 LibreTranslate | 视服务配置 | 是 | 使用可信的 HTTPS 翻译服务 |
 | 本地 OpenAI 兼容 API | 视服务配置 | 否 | 自行运行 llama.cpp、Ollama 等兼容服务 |
 | 在线 OpenAI 兼容 API | 通常需要 | 是 | 使用用户自行选择的 HTTPS LLM 服务 |
+| 专用机器翻译／LLM API | 通常需要 | 是 | 百度、腾讯云、阿里云、有道、火山引擎、讯飞、华为云、DeepSeek、通义千问、智谱等 |
+| 自定义 HTTP JSON API | 视服务配置 | 视端点而定 | 自行配置安全的请求模板、鉴权头与嵌套响应路径 |
 | 腾讯兼容接口 | 是 | 是 | 仅用于兼容旧配置 |
 
 - 离线模式只在本机回环地址上运行；服务器、模组和整合包文字不会发送到项目方。
@@ -84,7 +86,8 @@
 - 可以分别关闭聊天内容、其他界面和玩家主动发送翻译；发送翻译默认关闭。
 - 缓存键使用 SHA-256，原文不会以明文形式写入缓存文件。
 
-完整设置项、模型下载说明和常见问题见[安装与使用指南](docs/Zh-cn/USER_GUIDE.md)。
+完整在线服务和自定义请求配置见[在线翻译 API 配置](docs/Zh-cn/ONLINE_APIS.md)；
+其余设置、模型下载说明和常见问题见[安装与使用指南](docs/Zh-cn/USER_GUIDE.md)。
 
 ## 当前验证状态
 
@@ -102,6 +105,7 @@ SHA-256 校验。Fabric 全版本 JAR 内含 19 个精确实现，并已通过�
 | [安装与使用指南](docs/Zh-cn/USER_GUIDE.md) | 安装、首次设置、离线模型、API 配置、常见问题 |
 | [兼容性矩阵](docs/Zh-cn/COMPATIBILITY.md) | 各 Minecraft／加载器目标的实际验证层级 |
 | [建置指南](docs/Zh-cn/BUILDING.md) | 开发环境、Gradle 任务、发布 JAR 验证 |
+| [在线翻译 API 配置](docs/Zh-cn/ONLINE_APIS.md) | 内置服务、自定义 HTTP JSON、超时、重试与安全限制 |
 | [架构说明](docs/Zh-cn/ARCHITECTURE.md) | 共用核心、平台适配、翻译与缓存流程 |
 | [第三方离线服务](docs/Zh-cn/THIRD_PARTY_OFFLINE.md) | 连接用户自行运行的本地翻译服务 |
 | [更新记录](CHANGELOG.md) | 正式版与测试版变更 |

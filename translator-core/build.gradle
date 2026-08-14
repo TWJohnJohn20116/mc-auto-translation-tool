@@ -20,6 +20,13 @@ tasks.register("selfTest", JavaExec) {
     mainClass = "org.universaltranslator.core.CoreSelfTest"
 }
 
+tasks.register("providerSelfTest", JavaExec) {
+    group = "verification"
+    description = "Runs dependency-free online provider and custom API contract tests."
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "org.universaltranslator.core.provider.ProviderSelfTest"
+}
+
 tasks.named("test") {
     // Verification lives in the dependency-free CoreSelfTest JavaExec task.
     // Gradle 9 otherwise fails merely because no JUnit engine is configured.
@@ -27,5 +34,5 @@ tasks.named("test") {
 }
 
 tasks.named("check") {
-    dependsOn("selfTest")
+    dependsOn("selfTest", "providerSelfTest")
 }

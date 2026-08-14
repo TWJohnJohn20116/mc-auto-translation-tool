@@ -32,16 +32,37 @@ public final class HttpJsonClient {
     }
 
     public String post(URI endpoint, String jsonBody, Map<String, String> headers) throws IOException {
+        return request("POST", endpoint, jsonBody, "application/json; charset=utf-8", headers);
+    }
+
+    public String postForm(URI endpoint, String formBody, Map<String, String> headers) throws IOException {
+        return request("POST", endpoint, formBody,
+                "application/x-www-form-urlencoded; charset=utf-8", headers);
+    }
+
+    public String request(
+            String method,
+            URI endpoint,
+            String bodyText,
+            String contentType,
+            Map<String, String> headers
+    ) throws IOException {
+        String requestMethod = method == null ? "" : method.trim().toUpperCase(java.util.Locale.ROOT);
+        if (!"POST".equals(requestMethod) && !"PUT".equals(requestMethod)) {
+            throw new IllegalArgumentException("Only POST and PUT translation requests are supported");
+        }
+        String bodyValue = bodyText == null ? "" : bodyText;
         HttpURLConnection connection = (HttpURLConnection) endpoint.toURL().openConnection();
         try {
-            connection.setRequestMethod("POST");
+            connection.setRequestMethod(requestMethod);
             connection.setConnectTimeout(connectTimeoutMillis);
             connection.setReadTimeout(readTimeoutMillis);
             connection.setDoOutput(true);
             connection.setInstanceFollowRedirects(false);
             connection.setRequestProperty("Accept", "application/json");
-            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-            connection.setRequestProperty("User-Agent", "MCAutoTranslationTool/1.1");
+            connection.setRequestProperty("Content-Type", contentType == null || contentType.trim().isEmpty()
+                    ? "application/json; charset=utf-8" : contentType.trim());
+            connection.setRequestProperty("User-Agent", "MCAutoTranslationTool/1.3.1");
             if (headers != null) {
                 for (Map.Entry<String, String> header : headers.entrySet()) {
                     if (header.getKey() != null && header.getValue() != null) {
@@ -50,7 +71,7 @@ public final class HttpJsonClient {
                 }
             }
 
-            byte[] body = jsonBody.getBytes(StandardCharsets.UTF_8);
+            byte[] body = bodyValue.getBytes(StandardCharsets.UTF_8);
             connection.setFixedLengthStreamingMode(body.length);
             try (OutputStream output = connection.getOutputStream()) {
                 output.write(body);
@@ -66,7 +87,7 @@ public final class HttpJsonClient {
                 if (providerError == null) {
                     providerError = JsonStrings.readStringField(response, "Message");
                 }
-                throw new IOException("Translation service returned HTTP " + status
+                throw new HttpStatusException(status, "Translation service returned HTTP " + status
                         + (providerError == null ? "" : ": " + providerError));
             }
             return response;

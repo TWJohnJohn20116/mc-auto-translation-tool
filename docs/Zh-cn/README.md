@@ -28,27 +28,27 @@
 
 | Minecraft | 加载器 | 下载 |
 | --- | --- | --- |
-| 1.8.9 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.8.9-forge.jar) |
-| 1.12.2 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.12.2-forge.jar) |
-| 所有受支持版本 | Fabric | [下载全版本自动选版 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-fabric-all.jar) |
-| 1.16.5、1.19.2、1.20.1、1.21–1.21.11 | Forge | [查看正式版兼容文件](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/tag/v1.3.0) |
-| 1.20.1 | Forge | [下载 Forge JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.20.1-forge.jar) |
-| 1.20.1 | NeoForge | [下载 NeoForge JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.20.1-neoforge.jar) |
-| 1.21.1 | NeoForge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/MCAutoTranslationTool-1.3.0-mc1.21.1-neoforge.jar) |
-| 26.1–26.2 | Forge | [查看正式版兼容文件](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/tag/v1.3.0) |
+| 1.8.9 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.8.9-forge.jar) |
+| 1.12.2 | Forge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.12.2-forge.jar) |
+| 所有受支持版本 | Fabric | [下载全版本自动选版 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-fabric-all.jar) |
+| 1.16.5、1.19.2、1.20.1、1.21–1.21.11 | Forge | [查看正式版兼容文件](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/tag/v1.3.1) |
+| 1.20.1 | Forge | [下载 Forge JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.20.1-forge.jar) |
+| 1.20.1 | NeoForge | [下载 NeoForge JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.20.1-neoforge.jar) |
+| 1.21.1 | NeoForge | [下载 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/MCAutoTranslationTool-1.3.1-mc1.21.1-neoforge.jar) |
+| 26.1–26.2 | Forge | [查看正式版兼容文件](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/tag/v1.3.1) |
 
 请勿跨版本或加载器混用 JAR。发布元数据只允许已经完成构建验证的精确 Minecraft
 版本；相邻版本会在单独验证后再加入支持范围。
 
 [查看全部版本与更新说明](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases) ·
-[SHA-256 校验文件](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.0/SHA256SUMS.txt)
+[SHA-256 校验文件](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.1/SHA256SUMS.txt)
 
 ## 设计原则
 
 - 服务器无需安装模组。
 - 默认使用用户电脑上的离线模型，不要求 API 密钥或项目服务器。
 - 离线模式仅绑定 `127.0.0.1`，服务器文字不会离开用户电脑。
-- 可使用 LibreTranslate、腾讯兼容接口或 OpenAI 兼容 LLM API；离线失败时的 API 回退默认关闭。
+- 内置百度、腾讯云 TMT、阿里云、有道、火山引擎、讯飞、华为云，以及 DeepSeek、通义千问、火山方舟、智谱等在线接口；也支持 LibreTranslate、OpenAI 兼容和自定义 HTTP JSON API。
 - 可单独开启“发送翻译”，普通聊天会在后台翻译后按原顺序发送；命令保持原样。
 - 翻译在后台执行；服务不可用时立即保留原文，不影响游戏。
 - 相同文本和动态文本模板使用本地缓存，减少延迟与费用。
@@ -77,7 +77,7 @@ Fabric 1.21.x 与 26.x 各提供一个整合 JAR；整合包内仍保留精确�
 
 ## 当前状态
 
-1.3.0 正式版将 27 个精确构建产物整理为 13 个客户端 JAR。全部构建线均通过干净构建，
+1.3.1 正式版将 27 个精确构建产物整理为 13 个客户端 JAR。全部构建线均通过干净构建，
 全版本 Fabric JAR 通过 19 个目标版本的真实 Loader 自动选版测试，NeoForge 1.20.1 使用 Java 17 完成实际客户端启动和
 模组初始化，发行 JAR 的版本、Mixin/refmap、运行时映射与 SHA-256 均通过自动校验。
 详细验证层级见兼容性矩阵。
@@ -88,7 +88,8 @@ Fabric 版本按 `U` 打开设置。Forge 1.16.5/1.19.2/1.20.1/1.21.11/26.x 修�
 关闭翻译，两个快捷键都能在 Minecraft 按键绑定界面修改。首次遇到待翻译文字后会在后台下载约 10–17 MB 的平台引擎
 和 491 MB 的 Lite 模型，下载期间继续显示原文；模型默认优先使用 ModelScope
 国内源，失败后自动续传并回退官方源。所有文件通过大小和 SHA-256 校验后才会执行。
-也可以继续选择 LibreTranslate 或旧腾讯兼容模式。
+也可以选择多种中国大陆在线翻译服务、OpenAI 兼容服务或自定义 HTTP JSON API；
+完整配置项见[在线翻译 API 配置](ONLINE_APIS.md)。
 进入服务器约三秒后，聊天栏会显示一条仅限本机的 `U`/`F8` 操作提示，不会发送
 任何聊天消息或数据包给服务器。
 

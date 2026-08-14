@@ -28,6 +28,9 @@ their exact-version implementation modules. `FORGE_TARGET` remains accepted for 
 The root build uses Gradle Java Toolchains: JDK 21 compiles the core and Minecraft versions through
 1.21.x, while 26.x selects JDK 25. Existing `options.release` values still produce Java 8, 17, 21, or
 25 bytecode as required. If `JAVA_HOME` is stale, both wrappers fall back to a working `java` on `PATH`.
+For local compatibility diagnostics only, `-PtoolchainVersion=25` may override the root compiler
+toolchain. A release must still complete the full build with the target JDK 21/25 runtimes; the override
+does not replace runtime validation.
 
 ## Single Fabric 26.x JAR
 
@@ -252,7 +255,7 @@ $env:GRADLE_USER_HOME = "D:\Gradle\cache"
 ```
 
 The verified bundle is written to
-`platforms/fabric/1.0-1.8/bundle/build/libs/mc-auto-translation-tool-fabric-1.0.0-1.8.8-1.3.0.jar`.
+`platforms/fabric/1.0-1.8/bundle/build/libs/mc-auto-translation-tool-fabric-1.0.0-1.8.8-1.3.1.jar`.
 
 ## Fabric 1.8.9 through 1.12.2 (Ornithe bundle)
 
@@ -266,7 +269,7 @@ $env:GRADLE_USER_HOME = "D:\Gradle\cache"
 ```
 
 The verified bundle is written to
-`platforms/fabric/1.8-1.12/bundle/build/libs/mc-auto-translation-tool-fabric-1.8.9-1.12.2-1.3.0.jar`.
+`platforms/fabric/1.8-1.12/bundle/build/libs/mc-auto-translation-tool-fabric-1.8.9-1.12.2-1.3.1.jar`.
 
 ## Fabric 1.16.5
 
@@ -320,8 +323,8 @@ To validate arbitrary build outputs directly, pass them to the standalone verifi
 ```bash
 python3 scripts/verify_release_jars.py path/to/mod.jar
 python3 scripts/verify_release_jars.py \
-  --checksum-file downloads/1.3.0/SHA256SUMS.txt \
-  --require-complete-checksums downloads/1.3.0/*.jar
+  --checksum-file downloads/1.3.1/SHA256SUMS.txt \
+  --require-complete-checksums downloads/1.3.1/*.jar
 ```
 
 It checks ZIP structure, expanded metadata, entrypoints, declared Mixin classes and refmaps, nested
@@ -336,9 +339,9 @@ the publish set with:
 
 ```bash
 python3 scripts/prepare_release_assets.py \
-  --release-dir downloads/1.3.0 \
+  --release-dir downloads/1.3.1 \
   --output-dir build/release-assets \
-  --version 1.3.0
+  --version 1.3.1
 python3 scripts/verify_release_jars.py \
   --checksum-file build/release-assets/SHA256SUMS.txt \
   --require-complete-checksums build/release-assets/*.jar

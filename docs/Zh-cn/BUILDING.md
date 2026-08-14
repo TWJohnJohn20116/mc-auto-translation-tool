@@ -26,7 +26,9 @@ IDE 导入、查看项目或同时处理多个平台时，可明确指定稳定�
 
 根构建使用 Gradle Java Toolchain：核心至 Minecraft 1.21.x 使用 JDK 21 编译，26.x 自动选择 JDK 25；
 现有 `options.release` 仍分别生成 Java 8、17、21 或 25 字节码。`JAVA_HOME` 失效时，两个 Wrapper
-会改用 `PATH` 中可执行的 `java`。
+会改用 `PATH` 中可执行的 `java`。仅做本地兼容性诊断时可用
+`-PtoolchainVersion=25` 覆盖根构建的编译 Toolchain；正式发布仍必须分别使用目标要求的
+JDK 21／25 完成全量构建，不能用此参数替代运行时验证。
 
 ## Fabric 26.x 单一 JAR
 
@@ -280,9 +282,9 @@ Forge／NeoForge 1.20.1 保留为分别验证的加载器专用 JAR。不同 API
 
 ```bash
 python3 scripts/prepare_release_assets.py \
-  --release-dir downloads/1.3.0 \
+  --release-dir downloads/1.3.1 \
   --output-dir build/release-assets \
-  --version 1.3.0
+  --version 1.3.1
 ```
 
 ## 核心自测

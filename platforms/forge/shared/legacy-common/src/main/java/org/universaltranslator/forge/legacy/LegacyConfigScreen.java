@@ -12,6 +12,7 @@ import org.universaltranslator.core.OfflineModel;
 import org.universaltranslator.core.TargetLanguage;
 import org.universaltranslator.core.TranslationStatusLocalizer;
 import org.universaltranslator.core.TranslationTextColor;
+import org.universaltranslator.core.TranslationProviderCatalog;
 
 /** Dependency-free settings UI shared by Forge 1.8.9 and 1.12.2. */
 final class LegacyConfigScreen extends GuiScreen {
@@ -331,35 +332,20 @@ final class LegacyConfigScreen extends GuiScreen {
         return false;
     }
 
-    private boolean isTencent() {
-        return "tencent-hunyuan".equalsIgnoreCase(provider);
-    }
-
     private boolean isOffline() {
         return "offline".equalsIgnoreCase(provider);
     }
 
     private boolean isLlm() {
-        return "openai-compatible".equalsIgnoreCase(provider);
+        return TranslationProviderCatalog.usesLlmEditor(provider);
     }
 
     private String providerLabel() {
-        return isOffline() ? tr("value.universal_translator.provider_offline")
-                : (isTencent() ? tr("value.universal_translator.provider_tencent")
-                : (isLlm() ? tr("value.universal_translator.provider_llm") : "Libre"));
+        return TranslationProviderCatalog.displayName(provider);
     }
 
     private static String nextProvider(String current) {
-        if ("offline".equalsIgnoreCase(current)) {
-            return "libretranslate";
-        }
-        if ("libretranslate".equalsIgnoreCase(current)) {
-            return "tencent-hunyuan";
-        }
-        if ("tencent-hunyuan".equalsIgnoreCase(current)) {
-            return "openai-compatible";
-        }
-        return "offline";
+        return TranslationProviderCatalog.next(current);
     }
 
     void applyLlmSettings(String endpoint, String model, String apiKey) {
