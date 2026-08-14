@@ -21,6 +21,7 @@ public final class RenderTranslationSession implements AutoCloseable {
     private static final int MAX_PRIORITY_SUBMISSIONS_PER_SECOND = 12;
 
     private final TranslationCoordinator coordinator;
+    private final String providerCategory;
     private final String sourceLanguage;
     private final String targetLanguage;
     private final TranslationDisplayMode displayMode;
@@ -36,6 +37,7 @@ public final class RenderTranslationSession implements AutoCloseable {
             new SubmissionWindow(MAX_PRIORITY_SUBMISSIONS_PER_SECOND);
     private volatile boolean closed;
     private volatile String lastFailureStatus = "";
+    private volatile String lastReportedFailureStatus = "";
     private volatile Supplier<? extends Iterable<String>> protectedLiterals =
             new Supplier<Iterable<String>>() {
                 @Override
@@ -87,6 +89,7 @@ public final class RenderTranslationSession implements AutoCloseable {
             boolean preserveHanText
     ) {
         this.coordinator = new TranslationCoordinator(provider, store, workerCount);
+        this.providerCategory = safeProviderCategoryForLog(provider.id());
         this.sourceLanguage = sourceLanguage == null ? "auto" : sourceLanguage;
         if (targetLanguage == null || targetLanguage.trim().isEmpty()) {
             this.coordinator.close();
@@ -248,6 +251,7 @@ public final class RenderTranslationSession implements AutoCloseable {
             }
             retryAfter.put(key, System.currentTimeMillis() + FAILURE_RETRY_MILLIS);
             lastFailureStatus = safeFailureStatus(error, result);
+            reportFailureIfChanged(lastFailureStatus);
             return;
         }
         lastFailureStatus = "";
@@ -308,12 +312,45 @@ public final class RenderTranslationSession implements AutoCloseable {
         return "翻译失败：" + singleLine;
     }
 
+    private void reportFailureIfChanged(String status) {
+        if (status.equals(lastReportedFailureStatus)) {
+            return;
+        }
+        lastReportedFailureStatus = status;
+        // Minecraft captures stderr in latest.log. Log only the provider identifier and the
+        // sanitized status: never the source text, request body, endpoint path, or credentials.
+        System.err.println("[MC Auto Translation Tool] provider=" + providerCategory + " " + status);
+    }
+
+    static String safeProviderCategoryForLog(String providerId) {
+        if (providerId == null || providerId.trim().isEmpty()) {
+            return "unknown";
+        }
+        String singleLine = providerId.replace('\n', ' ').replace('\r', ' ').trim();
+        int separator = singleLine.indexOf(':');
+        String category = separator < 0 ? singleLine : singleLine.substring(0, separator);
+        StringBuilder safe = new StringBuilder(Math.min(category.length(), 40));
+        for (int index = 0; index < category.length() && safe.length() < 40; index++) {
+            char value = category.charAt(index);
+            if ((value >= 'a' && value <= 'z')
+                    || (value >= 'A' && value <= 'Z')
+                    || (value >= '0' && value <= '9')
+                    || value == '-' || value == '_' || value == '.') {
+                safe.append(value);
+            } else {
+                safe.append('_');
+            }
+        }
+        return safe.length() == 0 ? "unknown" : safe.toString();
+    }
+
     public synchronized void clearRenderedTranslations() {
         translated.clear();
         translatedOutputs.clear();
         pending.clear();
         retryAfter.clear();
         lastFailureStatus = "";
+        lastReportedFailureStatus = "";
         backgroundSubmissions.reset();
         prioritySubmissions.reset();
     }

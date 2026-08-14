@@ -107,5 +107,10 @@
   ,"message.universal_translator.outgoing_translating": "MC 自動翻譯工具：正在翻譯並傳送…"
   ,"message.universal_translator.outgoing_disconnected": "§c[MC 自動翻譯工具] 已與伺服器中斷連線，訊息未傳送。"
   ,"message.universal_translator.outgoing_failed": "§e[MC 自動翻譯工具] 傳送翻譯失敗，已傳送原文。"
-  ,"message.universal_translator.outgoing_too_long": "§e[MC 自動翻譯工具] 譯文超過伺服器聊天長度限制，已傳送原文。"
+ ,"message.universal_translator.outgoing_too_long": "§e[MC 自動翻譯工具] 譯文超過伺服器聊天長度限制，已傳送原文。"
+  ,"screen.universal_translator.option.vanilla": "原版介面翻譯：%s"
+  ,"screen.universal_translator.option.outgoing_target": "傳送目標語言：%s"
+  ,"screen.universal_translator.home.enabled": "翻譯總開關：%s"
+  ,"screen.universal_translator.home.vanilla": "原版介面：%s"
+  ,"screen.universal_translator.home.target": "目標語言：%s"
 }

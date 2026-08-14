@@ -4,6 +4,9 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.network.NetHandlerPlayClient;
 import net.minecraft.client.network.NetworkPlayerInfo;
 import org.universaltranslator.core.RenderTranslationSession;
+import org.universaltranslator.core.MinecraftContentScope;
+import org.universaltranslator.core.HomeQuickSettingsState;
+import org.universaltranslator.core.TargetLanguage;
 import org.universaltranslator.core.PersistentTranslationCache;
 import org.universaltranslator.core.TextKind;
 import org.universaltranslator.core.TranslationCache;
@@ -23,7 +26,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
-final class LegacyTranslationRuntime {
+public final class LegacyTranslationRuntime {
     private static final long PLAYER_NAME_SNAPSHOT_MILLIS = 5_000L;
     // Match ProtectedText's bounded literal limit so large network lobbies do not silently
     // drop names after the first few tab-list pages.
@@ -63,6 +66,8 @@ final class LegacyTranslationRuntime {
         LegacyConfig config = activeConfig;
         Minecraft minecraft = Minecraft.getMinecraft();
         if (active == null || config == null || !config.allows(kind)
+                || (!config.translateVanilla && kind == TextKind.OTHER
+                && MinecraftContentScope.isVanillaScreen(minecraft.currentScreen))
                 || minecraft.currentScreen instanceof LegacyConfigScreen
                 || minecraft.currentScreen instanceof LegacyDiagnosticsScreen
                 || LegacyLocalTextGuard.isLocalChatInput(minecraft.currentScreen, original)
@@ -213,5 +218,68 @@ final class LegacyTranslationRuntime {
                 .thenCompose(ignored -> translated);
         outgoingTail = next.handle((ignored, failure) -> null);
         return next;
+    }
+
+    public static synchronized HomeQuickSettingsState homeSettings() {
+        return homeSettingsState(activeConfig);
+    }
+
+    public static synchronized HomeQuickSettingsState toggleHomeEnabled() throws Exception {
+        LegacyConfig current = requireActiveConfig();
+        return applyHomeSettings(current, current.withHomeSettings(
+                !current.enabled, current.translateVanilla, current.targetLanguage));
+    }
+
+    public static synchronized HomeQuickSettingsState toggleHomeVanilla() throws Exception {
+        LegacyConfig current = requireActiveConfig();
+        return applyHomeSettings(current, current.withHomeSettings(
+                current.enabled, !current.translateVanilla, current.targetLanguage));
+    }
+
+    public static synchronized HomeQuickSettingsState cycleHomeTargetLanguage() throws Exception {
+        LegacyConfig current = requireActiveConfig();
+        return applyHomeSettings(current, current.withHomeSettings(
+                current.enabled, current.translateVanilla,
+                TargetLanguage.nextPreset(current.targetLanguage)));
+    }
+
+    private static LegacyConfig requireActiveConfig() {
+        LegacyConfig current = activeConfig;
+        if (current == null) {
+            throw new IllegalStateException("Translation settings are not loaded");
+        }
+        return current;
+    }
+
+    private static HomeQuickSettingsState applyHomeSettings(
+            LegacyConfig previous,
+            LegacyConfig updated
+    ) throws Exception {
+        boolean runtimeChanged = false;
+        try {
+            if (updated.enabled) {
+                updated.validateProviderConfiguration();
+            }
+            runtimeChanged = true;
+            initialize(updated);
+            updated.save();
+            return homeSettingsState(updated);
+        } catch (Exception failure) {
+            if (runtimeChanged) {
+                try {
+                    initialize(previous);
+                } catch (Exception restoreFailure) {
+                    failure.addSuppressed(restoreFailure);
+                }
+            }
+            throw failure;
+        }
+    }
+
+    private static HomeQuickSettingsState homeSettingsState(LegacyConfig config) {
+        return config == null
+                ? new HomeQuickSettingsState(false, true, TargetLanguage.SIMPLIFIED_CHINESE)
+                : new HomeQuickSettingsState(
+                        config.enabled, config.translateVanilla, config.targetLanguage);
     }
 }

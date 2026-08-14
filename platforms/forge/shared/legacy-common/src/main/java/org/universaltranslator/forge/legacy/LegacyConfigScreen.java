@@ -32,12 +32,15 @@ final class LegacyConfigScreen extends GuiScreen {
     private static final int MODEL = 14;
     private static final int DIAGNOSTICS = 15;
     private static final int TARGET_LANGUAGE = 16;
+    private static final int VANILLA = 17;
+    private static final int OUTGOING_TARGET_LANGUAGE = 18;
 
     private final GuiScreen parent;
     private final LegacyConfig original;
     private boolean enabled;
     private boolean translateChat;
     private boolean translateOther;
+    private boolean translateVanilla;
     private boolean translateOutgoing;
     private boolean diskCache;
     private boolean offlineAutoDownload;
@@ -50,8 +53,8 @@ final class LegacyConfigScreen extends GuiScreen {
     private String llmEndpoint;
     private String llmApiKey;
     private String llmModel;
-    private GuiTextField targetLanguage;
-    private GuiTextField outgoingTargetLanguage;
+    private String targetLanguage;
+    private String outgoingTargetLanguage;
     private GuiTextField endpoint;
     private FontRenderer renderer;
     private String status = "";
@@ -62,6 +65,7 @@ final class LegacyConfigScreen extends GuiScreen {
         this.enabled = config.enabled;
         this.translateChat = config.translateChat;
         this.translateOther = config.translateOther;
+        this.translateVanilla = config.translateVanilla;
         this.translateOutgoing = config.translateOutgoing;
         this.diskCache = config.diskCache;
         this.offlineAutoDownload = config.offlineAutoDownload;
@@ -78,11 +82,13 @@ final class LegacyConfigScreen extends GuiScreen {
 
     @Override
     public void initGui() {
-        String targetValue = targetLanguage == null
-                ? original.targetLanguage : targetLanguage.getText();
+        if (targetLanguage == null) {
+            targetLanguage = TargetLanguage.canonicalize(original.targetLanguage);
+        }
         String endpointValue = endpoint == null ? original.endpoint : endpoint.getText();
-        String outgoingTargetValue = outgoingTargetLanguage == null
-                ? original.outgoingTargetLanguage : outgoingTargetLanguage.getText();
+        if (outgoingTargetLanguage == null) {
+            outgoingTargetLanguage = TargetLanguage.canonicalize(original.outgoingTargetLanguage);
+        }
         buttonList.clear();
         renderer = LegacyVersionAccess.fontRenderer();
         Layout layout = layout();
@@ -98,24 +104,18 @@ final class LegacyConfigScreen extends GuiScreen {
         buttonList.add(new GuiButton(DOWNLOAD, left, layout.row(4), layout.buttonWidth, 20, ""));
         buttonList.add(new GuiButton(FALLBACK, layout.right, layout.row(4), layout.buttonWidth, 20, ""));
         buttonList.add(new GuiButton(MODEL, left, layout.row(5), layout.buttonWidth, 20, ""));
-        buttonList.add(new GuiButton(DIAGNOSTICS, layout.right, layout.row(5),
+        buttonList.add(new GuiButton(VANILLA, left, layout.row(6), layout.buttonWidth, 20, ""));
+        buttonList.add(new GuiButton(DIAGNOSTICS, layout.right, layout.row(6),
                 layout.buttonWidth, 20, tr("screen.universal_translator.diagnostics.title")));
-        int presetWidth = Math.max(46, Math.min(68, layout.buttonWidth / 2));
-        int languageWidth = layout.buttonWidth - presetWidth - 4;
-        targetLanguage = new GuiTextField(20, renderer, left, layout.targetY, languageWidth, 20);
-        targetLanguage.setMaxStringLength(32);
-        targetLanguage.setText(targetValue);
-        buttonList.add(new GuiButton(TARGET_LANGUAGE, left + languageWidth + 4, layout.targetY,
-                presetWidth, 20, ""));
+        buttonList.add(new GuiButton(TARGET_LANGUAGE, left, layout.targetY,
+                layout.buttonWidth, 20, ""));
         buttonList.add(new GuiButton(OUTGOING, layout.right, layout.targetY,
                 layout.buttonWidth, 20, ""));
         endpoint = new GuiTextField(21, renderer, left, layout.endpointY, layout.buttonWidth, 20);
         endpoint.setMaxStringLength(512);
         endpoint.setText(endpointValue);
-        outgoingTargetLanguage = new GuiTextField(
-                22, renderer, layout.right, layout.endpointY, layout.buttonWidth, 20);
-        outgoingTargetLanguage.setMaxStringLength(32);
-        outgoingTargetLanguage.setText(outgoingTargetValue);
+        buttonList.add(new GuiButton(OUTGOING_TARGET_LANGUAGE, layout.right, layout.endpointY,
+                layout.buttonWidth, 20, ""));
         buttonList.add(new GuiButton(SAVE, left, layout.saveY, layout.buttonWidth, 20,
                 tr("screen.universal_translator.save")));
         buttonList.add(new GuiButton(CANCEL, layout.right, layout.saveY, layout.buttonWidth, 20,
@@ -133,6 +133,8 @@ final class LegacyConfigScreen extends GuiScreen {
             translateChat = !translateChat;
         } else if (button.id == OTHER) {
             translateOther = !translateOther;
+        } else if (button.id == VANILLA) {
+            translateVanilla = !translateVanilla;
         } else if (button.id == PROVIDER) {
             provider = nextProvider(provider);
         } else if (button.id == DISPLAY) {
@@ -160,7 +162,9 @@ final class LegacyConfigScreen extends GuiScreen {
             mc.displayGuiScreen(new LegacyDiagnosticsScreen(this));
             return;
         } else if (button.id == TARGET_LANGUAGE) {
-            targetLanguage.setText(TargetLanguage.nextPreset(targetLanguage.getText()));
+            targetLanguage = TargetLanguage.nextPreset(targetLanguage);
+        } else if (button.id == OUTGOING_TARGET_LANGUAGE) {
+            outgoingTargetLanguage = TargetLanguage.nextPreset(outgoingTargetLanguage);
         } else if (button.id == SAVE) {
             saveAndApply();
         } else if (button.id == CANCEL) {
@@ -173,6 +177,7 @@ final class LegacyConfigScreen extends GuiScreen {
         button(ENABLED).displayString = tr("screen.universal_translator.option.automatic", onOff(enabled));
         button(CHAT).displayString = tr("screen.universal_translator.option.chat", onOff(translateChat));
         button(OTHER).displayString = tr("screen.universal_translator.option.other", onOff(translateOther));
+        button(VANILLA).displayString = tr("screen.universal_translator.option.vanilla", onOff(translateVanilla));
         button(CACHE).displayString = tr("screen.universal_translator.option.cache", onOff(diskCache));
         button(PROVIDER).displayString = tr("screen.universal_translator.option.provider", providerLabel());
         button(DISPLAY).displayString = tr("screen.universal_translator.option.display",
@@ -188,7 +193,10 @@ final class LegacyConfigScreen extends GuiScreen {
         button(FALLBACK).displayString = tr("screen.universal_translator.option.fallback", onOff(apiFallback));
         button(OUTGOING).displayString = tr("screen.universal_translator.option.outgoing", onOff(translateOutgoing));
         button(TARGET_LANGUAGE).displayString = tr("screen.universal_translator.option.target_preset",
-                TargetLanguage.displayName(targetLanguage.getText()));
+                TargetLanguage.displayName(targetLanguage));
+        button(OUTGOING_TARGET_LANGUAGE).displayString = tr(
+                "screen.universal_translator.option.outgoing_target",
+                TargetLanguage.displayName(outgoingTargetLanguage));
         button(DOWNLOAD).enabled = isOffline() || isLlm();
         button(MODEL).enabled = isOffline();
         button(FALLBACK).enabled = isOffline();
@@ -214,19 +222,14 @@ final class LegacyConfigScreen extends GuiScreen {
     private void saveAndApply() {
         boolean runtimeChanged = false;
         try {
-            if (targetLanguage.getText().trim().isEmpty()) {
-                throw new IllegalArgumentException(tr("error.universal_translator.target_required"));
-            }
-            if (translateOutgoing && outgoingTargetLanguage.getText().trim().isEmpty()) {
-                throw new IllegalArgumentException(tr("error.universal_translator.outgoing_target_required"));
-            }
             LegacyConfig updated = original.withSettings(
                     enabled,
                     translateChat,
                     translateOther,
+                    translateVanilla,
                     translateOutgoing,
-                    targetLanguage.getText(),
-                    outgoingTargetLanguage.getText(),
+                    targetLanguage,
+                    outgoingTargetLanguage,
                     displayMode,
                     translateEnglishOnly,
                     translatedTextColor,
@@ -264,16 +267,12 @@ final class LegacyConfigScreen extends GuiScreen {
 
     @Override
     public void updateScreen() {
-        targetLanguage.updateCursorCounter();
         endpoint.updateCursorCounter();
-        outgoingTargetLanguage.updateCursorCounter();
     }
 
     @Override
     protected void keyTyped(char typedChar, int keyCode) throws IOException {
-        if (targetLanguage.textboxKeyTyped(typedChar, keyCode)
-                || endpoint.textboxKeyTyped(typedChar, keyCode)
-                || outgoingTargetLanguage.textboxKeyTyped(typedChar, keyCode)) {
+        if (endpoint.textboxKeyTyped(typedChar, keyCode)) {
             return;
         }
         super.keyTyped(typedChar, keyCode);
@@ -282,9 +281,7 @@ final class LegacyConfigScreen extends GuiScreen {
     @Override
     protected void mouseClicked(int mouseX, int mouseY, int mouseButton) throws IOException {
         super.mouseClicked(mouseX, mouseY, mouseButton);
-        targetLanguage.mouseClicked(mouseX, mouseY, mouseButton);
         endpoint.mouseClicked(mouseX, mouseY, mouseButton);
-        outgoingTargetLanguage.mouseClicked(mouseX, mouseY, mouseButton);
     }
 
     @Override
@@ -300,9 +297,7 @@ final class LegacyConfigScreen extends GuiScreen {
                 left, layout.endpointY - 11, 0xA0A0A0);
         drawString(renderer, tr("screen.universal_translator.outgoing_target_hint"),
                 layout.right, layout.endpointY - 11, 0xA0A0A0);
-        targetLanguage.drawTextBox();
         endpoint.drawTextBox();
-        outgoingTargetLanguage.drawTextBox();
         String rawRuntimeStatus = LegacyTranslationRuntime.status();
         String runtimeStatus = TranslationStatusLocalizer.localize(rawRuntimeStatus,
                 LegacyConfigScreen::tr);
@@ -382,9 +377,9 @@ final class LegacyConfigScreen extends GuiScreen {
         int left = (width - totalWidth) / 2;
         int top = Math.max(20, Math.min(44, 20 + Math.max(0, height - 220) / 4));
         int rowStep = height >= 300 ? 26 : (height >= 260 ? 22 : 20);
-        int targetY = top + rowStep * 6 + 2;
+        int targetY = top + rowStep * 7 + 2;
         int endpointY = targetY + (height >= 300 ? 32 : 28);
-        int saveY = height >= 330 ? 270 : Math.max(endpointY + 22, height - 24);
+        int saveY = height >= 330 ? 296 : Math.max(endpointY + 22, height - 24);
         return new Layout(left, left + buttonWidth + gap, totalWidth, buttonWidth,
                 top, rowStep, targetY, endpointY, saveY);
     }

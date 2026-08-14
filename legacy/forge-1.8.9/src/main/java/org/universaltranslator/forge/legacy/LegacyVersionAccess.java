@@ -2,8 +2,13 @@ package org.universaltranslator.forge.legacy;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.FontRenderer;
+import net.minecraft.client.gui.GuiButton;
+import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.network.NetHandlerPlayClient;
 import net.minecraft.util.ChatComponentText;
+import net.minecraftforge.client.event.GuiScreenEvent;
+
+import java.util.List;
 
 /** Compile-time adapter for Minecraft 1.8.9 MCP names. */
 final class LegacyVersionAccess {
@@ -43,5 +48,21 @@ final class LegacyVersionAccess {
 
     static int maximumChatLength() {
         return 100;
+    }
+
+    static GuiScreen eventScreen(GuiScreenEvent event) {
+        return event.gui;
+    }
+
+    static List<GuiButton> buttonList(GuiScreenEvent.InitGuiEvent event) {
+        return event.buttonList;
+    }
+
+    static List<GuiButton> buttonList(GuiScreenEvent.ActionPerformedEvent event) {
+        return event.buttonList;
+    }
+
+    static GuiButton actionButton(GuiScreenEvent.ActionPerformedEvent event) {
+        return event.button;
     }
 }

@@ -16,6 +16,10 @@ final class ForgeLocalTextGuard {
     private ForgeLocalTextGuard() {
     }
 
+    static Object currentScreen(Minecraft client) {
+        return client == null ? null : client.gui.screen();
+    }
+
     static boolean isLocalChatInput(Minecraft client, String rendered) {
         if (client == null || !(client.gui.screen() instanceof ChatScreen)
                 || rendered == null || rendered.isEmpty()) {

@@ -16,8 +16,9 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.util.Comparator;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -162,30 +163,38 @@ public final class LlamaCppOfflineProvider
         Path server = ensureEngine();
         Path model = ensureModel();
         try {
-            startServer(server, model);
+            startServer(server, model, false);
         } catch (OfflineProcessExitedException firstFailure) {
             closeProcess();
-            if (autoDownload && !engineRepairAttempted) {
-                engineRepairAttempted = true;
-                status = "离线引擎启动失败，正在自动修复";
-                deleteTree(engineInstallDirectory());
-                server = ensureEngine();
-                try {
-                    startServer(server, model);
-                    return;
-                } catch (Exception repairFailure) {
-                    closeProcess();
-                    throw delayStartupRetries(repairFailure);
+            status = "离线引擎启动失败，正在使用兼容模式重试";
+            try {
+                startServer(server, model, true);
+                return;
+            } catch (Exception compatibilityFailure) {
+                closeProcess();
+                if (autoDownload && !engineRepairAttempted) {
+                    engineRepairAttempted = true;
+                    status = "离线引擎启动失败，正在自动修复";
+                    deleteTree(engineInstallDirectory());
+                    server = ensureEngine();
+                    try {
+                        startServer(server, model, true);
+                        return;
+                    } catch (Exception repairFailure) {
+                        closeProcess();
+                        throw delayStartupRetries(repairFailure);
+                    }
                 }
+                throw delayStartupRetries(compatibilityFailure);
             }
-            throw delayStartupRetries(firstFailure);
         } catch (Exception startupFailure) {
             closeProcess();
             throw delayStartupRetries(startupFailure);
         }
     }
 
-    private void startServer(Path server, Path model) throws Exception {
+    private void startServer(Path server, Path model, boolean conservativeFileAccess)
+            throws Exception {
         int port = reserveLoopbackPort();
         Path log = root.resolve("llama-server.log");
         long logStart = Files.isRegularFile(log) ? Files.size(log) : 0L;
@@ -195,7 +204,7 @@ public final class LlamaCppOfflineProvider
         // legacy clients when a busy lobby exposes many labels at once.
         int threads = Math.max(1, Math.min(2, processors / 2));
         status = "正在启动离线模型";
-        ProcessBuilder builder = new ProcessBuilder(
+        List<String> command = new ArrayList<String>(Arrays.asList(
                 server.toString(),
                 "-m", model.toString(),
                 "--host", "127.0.0.1",
@@ -204,7 +213,9 @@ public final class LlamaCppOfflineProvider
                 "--ctx-size", "1024",
                 "--parallel", "1",
                 "--threads", Integer.toString(threads),
-                "--threads-batch", Integer.toString(threads));
+                "--threads-batch", Integer.toString(threads)));
+        OfflineProcessSupport.appendStableModelLoadingArguments(command, conservativeFileAccess);
+        ProcessBuilder builder = new ProcessBuilder(command);
         builder.directory(server.getParent().toFile());
         OfflineProcessSupport.configureLibraryPath(builder, server.getParent());
         builder.redirectErrorStream(true);

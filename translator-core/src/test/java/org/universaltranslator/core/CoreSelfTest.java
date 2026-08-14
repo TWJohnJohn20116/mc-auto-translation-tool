@@ -47,6 +47,7 @@ public final class CoreSelfTest {
         translatesRelatedTooltipLinesTogether();
         translatesOutgoingChatAsynchronously();
         exposesRenderTranslationFailures();
+        sanitizesProviderLabelsForLogs();
         protectsLiteralsOffTheRenderThread();
         boundsBusyLobbyTranslationWork();
         rateLimitsBusyLobbyWithoutStarvingTooltips();
@@ -68,6 +69,8 @@ public final class CoreSelfTest {
         extractsOfflineEngineArchivesSafely();
         normalizesOfflineModelSelections();
         supportsTraditionalChineseTargets();
+        cyclesSelectableTargetLanguages();
+        identifiesVanillaScreenContent();
         formatsSecretFreeDiagnostics();
         localizesDiagnosticsAndRuntimeStatus();
         System.out.println("CoreSelfTest: all checks passed");
@@ -111,6 +114,31 @@ public final class CoreSelfTest {
                 .contains("Traditional Chinese characters"));
         assertFalse(LanguageHeuristics.shouldTranslate("金幣：123", "zh-TW"));
         assertTrue(LanguageHeuristics.shouldTranslate("Coins: 123", "zh-TW"));
+    }
+
+    private static void cyclesSelectableTargetLanguages() {
+        String target = TargetLanguage.SIMPLIFIED_CHINESE;
+        String[] expected = {
+                "zh-TW", "en", "ja", "ko", "fr", "de", "es", "pt", "ru", "zh-CN"
+        };
+        for (String next : expected) {
+            target = TargetLanguage.nextPreset(target);
+            assertEquals(next, target);
+            assertFalse(TargetLanguage.displayName(target).isEmpty());
+            assertFalse(TargetLanguage.translationInstruction(target).isEmpty());
+        }
+        assertEquals("pt", TargetLanguage.canonicalize("pt-BR"));
+        assertEquals("ja", TargetLanguage.libreTranslateCode("ja-JP"));
+    }
+
+    private static void identifiesVanillaScreenContent() {
+        assertTrue(MinecraftContentScope.isVanillaClassName(
+                "net.minecraft.client.gui.screen.TitleScreen"));
+        assertTrue(MinecraftContentScope.isVanillaClassName(
+                "net.minecraft.class_500"));
+        assertFalse(MinecraftContentScope.isVanillaClassName(
+                "com.example.mod.CustomMenuScreen"));
+        assertFalse(MinecraftContentScope.isVanillaClassName(null));
     }
 
     private static void localizesDiagnosticsAndRuntimeStatus() {
@@ -400,6 +428,17 @@ public final class CoreSelfTest {
         }
     }
 
+    private static void sanitizesProviderLabelsForLogs() {
+        assertEquals("libretranslate", RenderTranslationSession.safeProviderCategoryForLog(
+                "libretranslate:http://127.0.0.1:5000/translate?api_key=secret"));
+        assertEquals("openai-compatible", RenderTranslationSession.safeProviderCategoryForLog(
+                "openai-compatible:private-model-name"));
+        assertEquals("fallback", RenderTranslationSession.safeProviderCategoryForLog(
+                "fallback:offline-llama:lite:custom-http-json:private.example"));
+        assertFalse(RenderTranslationSession.safeProviderCategoryForLog(
+                "custom\nprovider:https://private.example").contains("private.example"));
+    }
+
     private static void protectsLiteralsOffTheRenderThread() throws Exception {
         CountingProvider provider = new CountingProvider(false);
         AtomicReference<String> iterationThread = new AtomicReference<String>();
@@ -559,6 +598,23 @@ public final class CoreSelfTest {
         assertTrue(missingDependency.contains("0xC0000135"));
         assertTrue(OfflineProcessSupport.describeStartupExit(2, "bad option")
                 .contains("bad option"));
+
+        String llamaLog = "main: loading model\n"
+                + "gguf_init_from_file_impl: failed to read magic\n"
+                + "common_init_from_params: failed to load model 'C:\\\\models\\\\qwen.gguf'\n"
+                + "srv operator(): operator(): cleaning up before exit...\n";
+        String summary = OfflineProcessSupport.summarizeLog(llamaLog);
+        assertTrue(summary.contains("failed to read magic"));
+        assertFalse(summary.contains("cleaning up"));
+        assertTrue(OfflineProcessSupport.describeStartupExit(1, summary)
+                .contains("模型文件读取失败"));
+
+        java.util.List<String> normal = new java.util.ArrayList<String>();
+        OfflineProcessSupport.appendStableModelLoadingArguments(normal, false);
+        assertEquals(Arrays.asList("-fit", "off", "--no-direct-io"), normal);
+        java.util.List<String> conservative = new java.util.ArrayList<String>();
+        OfflineProcessSupport.appendStableModelLoadingArguments(conservative, true);
+        assertTrue(conservative.contains("--no-mmap"));
     }
 
     private static void protectsDynamicScoreboardValues() {

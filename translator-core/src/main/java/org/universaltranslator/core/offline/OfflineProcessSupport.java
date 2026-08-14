@@ -68,6 +68,24 @@ public final class OfflineProcessSupport {
         environment.put(pathKey, joined.toString());
     }
 
+    /**
+     * Keep the pinned CPU server away from optional loading paths that are fragile on some
+     * launcher-managed Windows installations. The model and context sizes are already explicit,
+     * so llama.cpp's automatic device-memory fitting is unnecessary. The conservative retry also
+     * avoids memory mapping for game directories backed by unusual filesystems or security tools.
+     */
+    public static void appendStableModelLoadingArguments(
+            List<String> command,
+            boolean conservativeFileAccess
+    ) {
+        command.add("-fit");
+        command.add("off");
+        command.add("--no-direct-io");
+        if (conservativeFileAccess) {
+            command.add("--no-mmap");
+        }
+    }
+
     private static void addPath(List<String> entries, Path directory) {
         if (directory == null || !Files.isDirectory(directory)) {
             return;
@@ -103,14 +121,81 @@ public final class OfflineProcessSupport {
             }
             buffer.flip();
             String text = StandardCharsets.UTF_8.decode(buffer).toString();
-            String singleLine = text.replace('\r', ' ').replace('\n', ' ')
-                    .replaceAll("\\s+", " ").trim();
-            if (singleLine.length() > MAX_DETAIL_CHARACTERS) {
-                return "..." + singleLine.substring(singleLine.length() - MAX_DETAIL_CHARACTERS + 3);
-            }
-            return singleLine;
+            return summarizeLog(text);
         } catch (IOException ignored) {
             return "";
+        }
+    }
+
+    /** Visible for dependency-free regression tests. */
+    public static String summarizeLog(String text) {
+        if (text == null || text.trim().isEmpty()) {
+            return "";
+        }
+        List<String> specific = new ArrayList<String>();
+        List<String> errors = new ArrayList<String>();
+        List<String> meaningful = new ArrayList<String>();
+        for (String raw : text.split("\\r?\\n")) {
+            String line = raw.replaceAll("\\s+", " ").trim();
+            if (line.isEmpty()) {
+                continue;
+            }
+            String lower = line.toLowerCase(Locale.ROOT);
+            if (lower.contains("cleaning up before exit")
+                    || lower.contains("exiting due to model loading error")) {
+                continue;
+            }
+            meaningful.add(line);
+            if (isErrorLine(lower)) {
+                addUnique(errors, line);
+                if (isSpecificErrorLine(lower)) {
+                    addUnique(specific, line);
+                }
+            }
+        }
+        List<String> selected = !specific.isEmpty() ? specific
+                : (!errors.isEmpty() ? errors : meaningful);
+        if (selected.isEmpty()) {
+            return "";
+        }
+        int first = Math.max(0, selected.size() - 2);
+        StringBuilder joined = new StringBuilder();
+        for (int index = first; index < selected.size(); index++) {
+            if (joined.length() > 0) {
+                joined.append(" | ");
+            }
+            joined.append(selected.get(index));
+        }
+        if (joined.length() > MAX_DETAIL_CHARACTERS) {
+            return joined.substring(0, MAX_DETAIL_CHARACTERS - 3) + "...";
+        }
+        return joined.toString();
+    }
+
+    private static boolean isErrorLine(String lower) {
+        return lower.contains("error") || lower.contains("failed")
+                || lower.contains("failure") || lower.contains("exception")
+                || lower.contains("invalid") || lower.contains("unsupported")
+                || lower.contains("unknown") || lower.contains("unable")
+                || lower.contains("cannot") || lower.contains("out of memory")
+                || lower.contains("not enough memory") || lower.contains("access is denied")
+                || lower.contains("permission denied");
+    }
+
+    private static boolean isSpecificErrorLine(String lower) {
+        return lower.contains("failed to read magic") || lower.contains("read error")
+                || lower.contains("invalid") || lower.contains("unsupported")
+                || lower.contains("unknown") || lower.contains("exception")
+                || lower.contains("out of memory") || lower.contains("not enough memory")
+                || lower.contains("cannot allocate") || lower.contains("no cpu backend")
+                || lower.contains("failed to load cpu backend")
+                || lower.contains("access is denied") || lower.contains("permission denied")
+                || lower.contains("not a valid win32") || lower.contains("entry point");
+    }
+
+    private static void addUnique(List<String> values, String value) {
+        if (values.isEmpty() || !values.get(values.size() - 1).equals(value)) {
+            values.add(value);
         }
     }
 
@@ -121,6 +206,17 @@ public final class OfflineProcessSupport {
                     + "）";
         }
         String detail = logDetail == null ? "" : logDetail.trim();
+        String lower = detail.toLowerCase(Locale.ROOT);
+        if (lower.contains("out of memory") || lower.contains("not enough memory")
+                || lower.contains("cannot allocate")) {
+            return "离线模型加载时内存不足（退出码 " + code + "）：" + detail;
+        }
+        if (lower.contains("no cpu backend") || lower.contains("failed to load cpu backend")) {
+            return "离线引擎 CPU 后端加载失败（退出码 " + code + "）：" + detail;
+        }
+        if (lower.contains("failed to read magic") || lower.contains("read error")) {
+            return "离线模型文件读取失败（退出码 " + code + "）：" + detail;
+        }
         if (!detail.isEmpty()) {
             return "离线引擎启动失败（退出码 " + code + "）：" + detail;
         }

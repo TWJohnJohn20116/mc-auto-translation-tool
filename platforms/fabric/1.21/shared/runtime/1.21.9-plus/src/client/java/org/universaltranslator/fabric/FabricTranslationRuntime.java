@@ -2,6 +2,9 @@ package org.universaltranslator.fabric;
 
 import net.minecraft.client.MinecraftClient;
 import org.universaltranslator.core.RenderTranslationSession;
+import org.universaltranslator.core.MinecraftContentScope;
+import org.universaltranslator.core.HomeQuickSettingsState;
+import org.universaltranslator.core.TargetLanguage;
 import org.universaltranslator.core.PersistentTranslationCache;
 import org.universaltranslator.core.TextKind;
 import org.universaltranslator.core.TranslationCache;
@@ -21,7 +24,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
-final class FabricTranslationRuntime {
+public final class FabricTranslationRuntime {
     private static final long PLAYER_NAME_SNAPSHOT_MILLIS = 5_000L;
     // Match ProtectedText's bounded literal limit so large network lobbies do not silently
     // drop names after the first few tab-list pages.
@@ -62,6 +65,8 @@ final class FabricTranslationRuntime {
         FabricConfig config = activeConfig;
         MinecraftClient client = MinecraftClient.getInstance();
         if (active == null || config == null || !config.allows(kind)
+                || (!config.translateVanilla && kind == TextKind.OTHER
+                && MinecraftContentScope.isVanillaScreen(FabricLocalTextGuard.currentScreen(client)))
                 || client.currentScreen instanceof UniversalTranslatorConfigScreen
                 || client.currentScreen instanceof UniversalTranslatorDiagnosticsScreen
                 || client.currentScreen instanceof UniversalTranslatorLlmConfigScreen
@@ -214,5 +219,68 @@ final class FabricTranslationRuntime {
                 .thenCompose(ignored -> translated);
         outgoingTail = next.handle((ignored, failure) -> null);
         return next;
+    }
+
+    public static synchronized HomeQuickSettingsState homeSettings() {
+        return homeSettingsState(activeConfig);
+    }
+
+    public static synchronized HomeQuickSettingsState toggleHomeEnabled() throws Exception {
+        FabricConfig current = requireActiveConfig();
+        return applyHomeSettings(current, current.withHomeSettings(
+                !current.enabled, current.translateVanilla, current.targetLanguage));
+    }
+
+    public static synchronized HomeQuickSettingsState toggleHomeVanilla() throws Exception {
+        FabricConfig current = requireActiveConfig();
+        return applyHomeSettings(current, current.withHomeSettings(
+                current.enabled, !current.translateVanilla, current.targetLanguage));
+    }
+
+    public static synchronized HomeQuickSettingsState cycleHomeTargetLanguage() throws Exception {
+        FabricConfig current = requireActiveConfig();
+        return applyHomeSettings(current, current.withHomeSettings(
+                current.enabled, current.translateVanilla,
+                TargetLanguage.nextPreset(current.targetLanguage)));
+    }
+
+    private static FabricConfig requireActiveConfig() {
+        FabricConfig current = activeConfig;
+        if (current == null) {
+            throw new IllegalStateException("Translation settings are not loaded");
+        }
+        return current;
+    }
+
+    private static HomeQuickSettingsState applyHomeSettings(
+            FabricConfig previous,
+            FabricConfig updated
+    ) throws Exception {
+        boolean runtimeChanged = false;
+        try {
+            if (updated.enabled) {
+                updated.validateProviderConfiguration();
+            }
+            runtimeChanged = true;
+            initialize(updated);
+            updated.save();
+            return homeSettingsState(updated);
+        } catch (Exception failure) {
+            if (runtimeChanged) {
+                try {
+                    initialize(previous);
+                } catch (Exception restoreFailure) {
+                    failure.addSuppressed(restoreFailure);
+                }
+            }
+            throw failure;
+        }
+    }
+
+    private static HomeQuickSettingsState homeSettingsState(FabricConfig config) {
+        return config == null
+                ? new HomeQuickSettingsState(false, true, TargetLanguage.SIMPLIFIED_CHINESE)
+                : new HomeQuickSettingsState(
+                        config.enabled, config.translateVanilla, config.targetLanguage);
     }
 }

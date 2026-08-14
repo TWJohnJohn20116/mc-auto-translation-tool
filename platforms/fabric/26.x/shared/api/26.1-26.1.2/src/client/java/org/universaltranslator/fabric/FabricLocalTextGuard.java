@@ -16,6 +16,10 @@ final class FabricLocalTextGuard {
     private FabricLocalTextGuard() {
     }
 
+    static Object currentScreen(Minecraft client) {
+        return client == null ? null : client.screen;
+    }
+
     static boolean isLocalChatInput(Minecraft client, String rendered) {
         if (client == null || !(client.screen instanceof ChatScreen)
                 || rendered == null || rendered.isEmpty()) {

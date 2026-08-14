@@ -27,6 +27,7 @@ final class ForgeConfig {
     final boolean enabled;
     final boolean translateChat;
     final boolean translateOther;
+    final boolean translateVanilla;
     final boolean translateOutgoing;
     final String targetLanguage;
     final String outgoingTargetLanguage;
@@ -56,6 +57,8 @@ final class ForgeConfig {
         this.enabled = Boolean.parseBoolean(properties.getProperty("enabled", "false"));
         this.translateChat = Boolean.parseBoolean(properties.getProperty("translate-chat", "true"));
         this.translateOther = Boolean.parseBoolean(properties.getProperty("translate-other", "true"));
+        this.translateVanilla = Boolean.parseBoolean(
+                properties.getProperty("translate-vanilla", "true"));
         this.translateOutgoing = Boolean.parseBoolean(
                 properties.getProperty("translate-outgoing", "false"));
         this.targetLanguage = properties.getProperty("target-language", "zh-CN").trim();
@@ -110,13 +113,13 @@ final class ForgeConfig {
         Properties properties = defaults();
         properties.putAll(stored);
         boolean legacyMigration = !stored.containsKey("config-version");
-        boolean migrated = configVersion(stored) < 4;
+        boolean migrated = configVersion(stored) < 5;
         if (legacyMigration) {
             properties.setProperty("display-mode", "translated-only");
             properties.setProperty("translate-english-only", "true");
             properties.setProperty("translated-text-color", "aqua");
         }
-        properties.setProperty("config-version", "4");
+        properties.setProperty("config-version", "5");
         LocalConfigSecurity.restrictToOwner(file);
         ForgeConfig loaded = new ForgeConfig(
                 properties, file, configDirectory.resolve("universal-translator-cache.properties"));
@@ -130,6 +133,7 @@ final class ForgeConfig {
             boolean enabled,
             boolean translateChat,
             boolean translateOther,
+            boolean translateVanilla,
             boolean translateOutgoing,
             String targetLanguage,
             String outgoingTargetLanguage,
@@ -150,6 +154,7 @@ final class ForgeConfig {
         properties.setProperty("enabled", Boolean.toString(enabled));
         properties.setProperty("translate-chat", Boolean.toString(translateChat));
         properties.setProperty("translate-other", Boolean.toString(translateOther));
+        properties.setProperty("translate-vanilla", Boolean.toString(translateVanilla));
         properties.setProperty("translate-outgoing", Boolean.toString(translateOutgoing));
         properties.setProperty("target-language", targetLanguage.trim());
         properties.setProperty("outgoing-target-language", outgoingTargetLanguage.trim());
@@ -173,6 +178,18 @@ final class ForgeConfig {
     ForgeConfig withEnabled(boolean enabled) {
         Properties properties = toProperties();
         properties.setProperty("enabled", Boolean.toString(enabled));
+        return new ForgeConfig(properties, configFile, cacheFile);
+    }
+
+    ForgeConfig withHomeSettings(
+            boolean enabled,
+            boolean translateVanilla,
+            String targetLanguage
+    ) {
+        Properties properties = toProperties();
+        properties.setProperty("enabled", Boolean.toString(enabled));
+        properties.setProperty("translate-vanilla", Boolean.toString(translateVanilla));
+        properties.setProperty("target-language", targetLanguage.trim());
         return new ForgeConfig(properties, configFile, cacheFile);
     }
 
@@ -237,10 +254,11 @@ final class ForgeConfig {
 
     private static Properties defaults() {
         Properties properties = new Properties();
-        properties.setProperty("config-version", "4");
+        properties.setProperty("config-version", "5");
         properties.setProperty("enabled", "false");
         properties.setProperty("translate-chat", "true");
         properties.setProperty("translate-other", "true");
+        properties.setProperty("translate-vanilla", "true");
         properties.setProperty("translate-outgoing", "false");
         properties.setProperty("target-language", "zh-CN");
         properties.setProperty("outgoing-target-language", "en");
@@ -268,10 +286,11 @@ final class ForgeConfig {
     private Properties toProperties() {
         Properties properties = new Properties();
         onlineProviderConfig.writeTo(properties);
-        properties.setProperty("config-version", "4");
+        properties.setProperty("config-version", "5");
         properties.setProperty("enabled", Boolean.toString(enabled));
         properties.setProperty("translate-chat", Boolean.toString(translateChat));
         properties.setProperty("translate-other", Boolean.toString(translateOther));
+        properties.setProperty("translate-vanilla", Boolean.toString(translateVanilla));
         properties.setProperty("translate-outgoing", Boolean.toString(translateOutgoing));
         properties.setProperty("target-language", targetLanguage);
         properties.setProperty("outgoing-target-language", outgoingTargetLanguage);

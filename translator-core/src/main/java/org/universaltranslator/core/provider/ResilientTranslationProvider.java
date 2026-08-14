@@ -3,6 +3,7 @@ package org.universaltranslator.core.provider;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationRequest;
 import org.universaltranslator.core.net.HttpStatusException;
+import org.universaltranslator.core.net.TranslationEndpointUnavailableException;
 
 import java.io.IOException;
 
@@ -57,6 +58,9 @@ final class ResilientTranslationProvider implements TranslationProvider, AutoClo
     }
 
     private static boolean isRetryable(Exception exception) {
+        if (exception instanceof TranslationEndpointUnavailableException) {
+            return false;
+        }
         if (exception instanceof HttpStatusException) {
             return ((HttpStatusException) exception).isRetryable();
         }

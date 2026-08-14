@@ -107,5 +107,10 @@
   ,"message.universal_translator.outgoing_translating": "MC Auto Translation Tool: Translating and sending..."
   ,"message.universal_translator.outgoing_disconnected": "§c[MC Auto Translation Tool] Disconnected; message was not sent."
   ,"message.universal_translator.outgoing_failed": "§e[MC Auto Translation Tool] Outgoing translation failed; the original message was sent."
-  ,"message.universal_translator.outgoing_too_long": "§e[MC Auto Translation Tool] The translation exceeded the chat length limit; the original message was sent."
+ ,"message.universal_translator.outgoing_too_long": "§e[MC Auto Translation Tool] The translation exceeded the chat length limit; the original message was sent."
+  ,"screen.universal_translator.option.vanilla": "Minecraft UI: %s"
+  ,"screen.universal_translator.option.outgoing_target": "Outgoing target: %s"
+  ,"screen.universal_translator.home.enabled": "Translation: %s"
+  ,"screen.universal_translator.home.vanilla": "Minecraft UI: %s"
+  ,"screen.universal_translator.home.target": "Target: %s"
 }

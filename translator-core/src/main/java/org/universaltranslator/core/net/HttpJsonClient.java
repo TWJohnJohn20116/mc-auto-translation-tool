@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.ConnectException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
@@ -62,7 +63,7 @@ public final class HttpJsonClient {
             connection.setRequestProperty("Accept", "application/json");
             connection.setRequestProperty("Content-Type", contentType == null || contentType.trim().isEmpty()
                     ? "application/json; charset=utf-8" : contentType.trim());
-            connection.setRequestProperty("User-Agent", "MCAutoTranslationTool/1.3.1");
+            connection.setRequestProperty("User-Agent", "MCAutoTranslationTool/1.3.2");
             if (headers != null) {
                 for (Map.Entry<String, String> header : headers.entrySet()) {
                     if (header.getKey() != null && header.getValue() != null) {
@@ -91,6 +92,8 @@ public final class HttpJsonClient {
                         + (providerError == null ? "" : ": " + providerError));
             }
             return response;
+        } catch (ConnectException refused) {
+            throw TranslationEndpointUnavailableException.connectionRefused(endpoint, refused);
         } finally {
             connection.disconnect();
         }

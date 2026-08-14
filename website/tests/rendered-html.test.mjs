@@ -21,7 +21,7 @@ test("server-renders the public-benefit project home page", async () => {
 
   const html = await response.text();
   assert.match(html, /<html lang="zh-CN">/i);
-  assert.match(html, /<title>MC 自动翻译工具｜1\.3\.1 正式版<\/title>/i);
+  assert.match(html, /<title>MC 自动翻译工具｜1\.3\.2 正式版<\/title>/i);
   assert.match(html, /完全公益/);
   assert.match(html, /免费开源/);
   assert.match(html, /无广告/);
@@ -34,18 +34,18 @@ test("server-renders the public-benefit project home page", async () => {
   assert.match(html, /1\.19\.2/);
   assert.match(html, /1\.21\.11/);
   assert.match(html, /26\.2/);
-  assert.match(html, /1\.3\.1 正式版/);
+  assert.match(html, /1\.3\.2 正式版/);
   assert.match(html, /13 个经过校验的 JAR/);
   assert.match(html, /自定义 API/);
   assert.match(html, /从 GitHub 下载/);
   const releaseDownloads = html.match(
-    /https:\/\/github\.com\/wuxiangdan96-byte\/mc-auto-translation-tool\/releases\/download\/v1\.3\.1\/[A-Za-z0-9.-]+/g,
+    /https:\/\/github\.com\/wuxiangdan96-byte\/mc-auto-translation-tool\/releases\/download\/v1\.3\.2\/[A-Za-z0-9.-]+/g,
   ) ?? [];
   assert.equal(new Set(releaseDownloads).size, 14);
-  assert.match(html, /MCAutoTranslationTool-1\.3\.1-mc1\.8\.9-forge\.jar/);
-  assert.match(html, /MCAutoTranslationTool-1\.3\.1-fabric-all\.jar/);
-  assert.match(html, /MCAutoTranslationTool-1\.3\.1-mc1\.21\.9-1\.21\.11-forge\.jar/);
-  assert.match(html, /MCAutoTranslationTool-1\.3\.1-mc26\.1-26\.1\.2-forge\.jar/);
+  assert.match(html, /MCAutoTranslationTool-1\.3\.2-mc1\.8\.9-forge\.jar/);
+  assert.match(html, /MCAutoTranslationTool-1\.3\.2-fabric-all\.jar/);
+  assert.match(html, /MCAutoTranslationTool-1\.3\.2-mc1\.21\.9-1\.21\.11-forge\.jar/);
+  assert.match(html, /MCAutoTranslationTool-1\.3\.2-mc26\.1-26\.1\.2-forge\.jar/);
   assert.doesNotMatch(html, /1\.2\.1 正式版/);
   assert.match(html, /原作者：B站「我小张7272635」/);
   assert.match(html, /space\.bilibili\.com\/3546631091783712/);

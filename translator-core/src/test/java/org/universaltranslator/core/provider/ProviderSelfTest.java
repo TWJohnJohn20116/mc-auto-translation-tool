@@ -7,6 +7,7 @@ import org.universaltranslator.core.TextKind;
 import org.universaltranslator.core.net.CryptoSupport;
 import org.universaltranslator.core.net.HttpJsonClient;
 import org.universaltranslator.core.net.JsonStrings;
+import org.universaltranslator.core.net.TranslationEndpointUnavailableException;
 import org.universaltranslator.core.net.VolcengineV4Signer;
 
 import java.io.ByteArrayOutputStream;
@@ -14,6 +15,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
+import java.net.ConnectException;
+import java.net.URI;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
@@ -34,6 +37,7 @@ public final class ProviderSelfTest {
         rejectsUnsafeCustomHeaders();
         rejectsUnsignedProviderPaths();
         sendsCustomRequestsAndRetriesTransientFailures();
+        reportsRefusedLocalServicesWithoutRetrying();
         createsEveryConfiguredProviderWithoutNetworkTraffic();
         cyclesTheCompleteProviderCatalog();
         doesNotLeakVolcengineSecretsIntoHeaders();
@@ -154,6 +158,48 @@ public final class ProviderSelfTest {
         if (serverFailure.get() != null) {
             throw new AssertionError("Local custom API test server failed", serverFailure.get());
         }
+    }
+
+    private static void reportsRefusedLocalServicesWithoutRetrying() throws Exception {
+        URI endpoint = URI.create("http://127.0.0.1:8080/v1/chat/completions?token=secret");
+        TranslationEndpointUnavailableException refused =
+                TranslationEndpointUnavailableException.connectionRefused(
+                        endpoint, new ConnectException("Connection refused: getsockopt"));
+        assertTrue(refused.getMessage().contains("本机翻译服务未启动（127.0.0.1:8080）"));
+        assertFalse(refused.getMessage().contains("chat/completions"));
+        assertFalse(refused.getMessage().contains("secret"));
+        assertFalse(refused.getMessage().contains("getsockopt"));
+
+        ServerSocket unusedPort = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"));
+        int port = unusedPort.getLocalPort();
+        unusedPort.close();
+        try {
+            new HttpJsonClient(1000, 1000).post(
+                    URI.create("http://127.0.0.1:" + port + "/translate?token=not-for-logs"),
+                    "{}", "");
+            throw new AssertionError("Expected a refused local translation connection");
+        } catch (TranslationEndpointUnavailableException expected) {
+            assertTrue(expected.getMessage().contains("本机翻译服务未启动（127.0.0.1:" + port + "）"));
+            assertFalse(expected.getMessage().contains("not-for-logs"));
+        }
+
+        AtomicInteger attempts = new AtomicInteger();
+        TranslationProvider unavailable = new TranslationProvider() {
+            @Override
+            public String id() {
+                return "unavailable-local-test";
+            }
+
+            @Override
+            public String translate(TranslationRequest request) throws Exception {
+                attempts.incrementAndGet();
+                throw refused;
+            }
+        };
+        TranslationProvider resilient = new ResilientTranslationProvider(unavailable, 5, 0);
+        assertThrows(() -> resilient.translate(new TranslationRequest(
+                "Server restarting", "auto", "zh-CN", TextKind.CHAT)));
+        assertEquals(1, attempts.get());
     }
 
     private static HttpRequest readRequest(InputStream input) throws IOException {

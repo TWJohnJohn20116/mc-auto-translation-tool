@@ -20,6 +20,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private boolean enabled;
     private boolean translateChat;
     private boolean translateOther;
+    private boolean translateVanilla;
     private boolean translateOutgoing;
     private boolean diskCache;
     private boolean offlineAutoDownload;
@@ -58,6 +59,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         this.enabled = config.enabled;
         this.translateChat = config.translateChat;
         this.translateOther = config.translateOther;
+        this.translateVanilla = config.translateVanilla;
         this.translateOutgoing = config.translateOutgoing;
         this.diskCache = config.diskCache;
         this.offlineAutoDownload = config.offlineAutoDownload;
@@ -220,6 +222,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
                     enabled,
                     translateChat,
                     translateOther,
+                    translateVanilla,
                     translateOutgoing,
                     targetLanguage.getText(),
                     outgoingTargetLanguage.getText(),

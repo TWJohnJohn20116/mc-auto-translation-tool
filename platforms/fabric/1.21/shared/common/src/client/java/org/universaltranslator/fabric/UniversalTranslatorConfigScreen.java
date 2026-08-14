@@ -19,6 +19,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private boolean enabled;
     private boolean translateChat;
     private boolean translateOther;
+    private boolean translateVanilla;
     private boolean translateOutgoing;
     private boolean diskCache;
     private boolean offlineAutoDownload;
@@ -31,12 +32,13 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private String llmEndpoint;
     private String llmApiKey;
     private String llmModel;
-    private TextFieldWidget targetLanguage;
-    private TextFieldWidget outgoingTargetLanguage;
+    private String targetLanguage;
+    private String outgoingTargetLanguage;
     private TextFieldWidget endpoint;
     private ButtonWidget enabledButton;
     private ButtonWidget chatButton;
     private ButtonWidget otherButton;
+    private ButtonWidget vanillaButton;
     private ButtonWidget cacheButton;
     private ButtonWidget providerButton;
     private ButtonWidget displayButton;
@@ -48,6 +50,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private ButtonWidget colorButton;
     private ButtonWidget outgoingButton;
     private ButtonWidget targetLanguageButton;
+    private ButtonWidget outgoingTargetLanguageButton;
     private String status = "";
 
     UniversalTranslatorConfigScreen(Screen parent, FabricConfig config) {
@@ -57,6 +60,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         this.enabled = config.enabled;
         this.translateChat = config.translateChat;
         this.translateOther = config.translateOther;
+        this.translateVanilla = config.translateVanilla;
         this.translateOutgoing = config.translateOutgoing;
         this.diskCache = config.diskCache;
         this.offlineAutoDownload = config.offlineAutoDownload;
@@ -73,11 +77,13 @@ final class UniversalTranslatorConfigScreen extends Screen {
 
     @Override
     protected void init() {
-        String targetValue = targetLanguage == null
-                ? original.targetLanguage : targetLanguage.getText();
+        if (targetLanguage == null) {
+            targetLanguage = TargetLanguage.canonicalize(original.targetLanguage);
+        }
         String endpointValue = endpoint == null ? original.endpoint : endpoint.getText();
-        String outgoingTargetValue = outgoingTargetLanguage == null
-                ? original.outgoingTargetLanguage : outgoingTargetLanguage.getText();
+        if (outgoingTargetLanguage == null) {
+            outgoingTargetLanguage = TargetLanguage.canonicalize(original.outgoingTargetLanguage);
+        }
         Layout layout = layout();
         int left = layout.left;
         this.enabledButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
@@ -138,19 +144,16 @@ final class UniversalTranslatorConfigScreen extends Screen {
             if (client != null) {
                 client.setScreen(new UniversalTranslatorDiagnosticsScreen(this));
             }
-        }).dimensions(layout.right, layout.row(5), layout.buttonWidth, 20).build());
-
-        int presetWidth = Math.max(46, Math.min(68, layout.buttonWidth / 2));
-        int languageWidth = layout.buttonWidth - presetWidth - 4;
-        this.targetLanguage = addDrawableChild(new TextFieldWidget(
-                this.textRenderer, left, layout.targetY, languageWidth, 20,
-                Text.translatable("screen.universal_translator.target_language")));
-        this.targetLanguage.setMaxLength(32);
-        this.targetLanguage.setText(targetValue);
-        this.targetLanguageButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
-            targetLanguage.setText(TargetLanguage.nextPreset(targetLanguage.getText()));
+        }).dimensions(layout.right, layout.row(6), layout.buttonWidth, 20).build());
+        this.vanillaButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+            translateVanilla = !translateVanilla;
             refreshLabels();
-        }).dimensions(left + languageWidth + 4, layout.targetY, presetWidth, 20).build());
+        }).dimensions(left, layout.row(6), layout.buttonWidth, 20).build());
+
+        this.targetLanguageButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+            targetLanguage = TargetLanguage.nextPreset(targetLanguage);
+            refreshLabels();
+        }).dimensions(left, layout.targetY, layout.buttonWidth, 20).build());
         this.outgoingButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
             translateOutgoing = !translateOutgoing;
             refreshLabels();
@@ -160,11 +163,10 @@ final class UniversalTranslatorConfigScreen extends Screen {
                 Text.translatable("screen.universal_translator.endpoint")));
         this.endpoint.setMaxLength(512);
         this.endpoint.setText(endpointValue);
-        this.outgoingTargetLanguage = addDrawableChild(new TextFieldWidget(
-                this.textRenderer, layout.right, layout.endpointY, layout.buttonWidth, 20,
-                Text.translatable("screen.universal_translator.outgoing_target_language")));
-        this.outgoingTargetLanguage.setMaxLength(32);
-        this.outgoingTargetLanguage.setText(outgoingTargetValue);
+        this.outgoingTargetLanguageButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+            outgoingTargetLanguage = TargetLanguage.nextPreset(outgoingTargetLanguage);
+            refreshLabels();
+        }).dimensions(layout.right, layout.endpointY, layout.buttonWidth, 20).build());
 
         addDrawableChild(ButtonWidget.builder(Text.translatable("screen.universal_translator.save"), button -> saveAndApply())
                 .dimensions(left, layout.saveY, layout.buttonWidth, 20).build());
@@ -177,6 +179,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         enabledButton.setMessage(Text.translatable("screen.universal_translator.option.automatic", onOff(enabled)));
         chatButton.setMessage(Text.translatable("screen.universal_translator.option.chat", onOff(translateChat)));
         otherButton.setMessage(Text.translatable("screen.universal_translator.option.other", onOff(translateOther)));
+        vanillaButton.setMessage(Text.translatable("screen.universal_translator.option.vanilla", onOff(translateVanilla)));
         cacheButton.setMessage(Text.translatable("screen.universal_translator.option.cache", onOff(diskCache)));
         providerButton.setMessage(Text.translatable("screen.universal_translator.option.provider", providerLabel()));
         displayButton.setMessage(Text.translatable("screen.universal_translator.option.display",
@@ -192,7 +195,10 @@ final class UniversalTranslatorConfigScreen extends Screen {
         fallbackButton.setMessage(Text.translatable("screen.universal_translator.option.fallback", onOff(apiFallback)));
         outgoingButton.setMessage(Text.translatable("screen.universal_translator.option.outgoing", onOff(translateOutgoing)));
         targetLanguageButton.setMessage(Text.translatable("screen.universal_translator.option.target_preset",
-                TargetLanguage.displayName(targetLanguage.getText())));
+                TargetLanguage.displayName(targetLanguage)));
+        outgoingTargetLanguageButton.setMessage(Text.translatable(
+                "screen.universal_translator.option.outgoing_target",
+                TargetLanguage.displayName(outgoingTargetLanguage)));
         downloadButton.active = isOffline() || isLlm();
         modelButton.active = isOffline();
         fallbackButton.active = isOffline();
@@ -209,19 +215,14 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private void saveAndApply() {
         boolean runtimeChanged = false;
         try {
-            if (targetLanguage.getText().trim().isEmpty()) {
-                throw new IllegalArgumentException(tr("error.universal_translator.target_required"));
-            }
-            if (translateOutgoing && outgoingTargetLanguage.getText().trim().isEmpty()) {
-                throw new IllegalArgumentException(tr("error.universal_translator.outgoing_target_required"));
-            }
             FabricConfig updated = original.withSettings(
                     enabled,
                     translateChat,
                     translateOther,
+                    translateVanilla,
                     translateOutgoing,
-                    targetLanguage.getText(),
-                    outgoingTargetLanguage.getText(),
+                    targetLanguage,
+                    outgoingTargetLanguage,
                     displayMode,
                     translateEnglishOnly,
                     translatedTextColor,
@@ -361,9 +362,9 @@ final class UniversalTranslatorConfigScreen extends Screen {
         int left = (this.width - totalWidth) / 2;
         int top = Math.max(20, Math.min(44, 20 + Math.max(0, this.height - 220) / 4));
         int rowStep = this.height >= 300 ? 26 : (this.height >= 260 ? 22 : 20);
-        int targetY = top + rowStep * 6 + 2;
+        int targetY = top + rowStep * 7 + 2;
         int endpointY = targetY + (this.height >= 300 ? 32 : 28);
-        int saveY = this.height >= 330 ? 270 : Math.max(endpointY + 22, this.height - 24);
+        int saveY = this.height >= 330 ? 296 : Math.max(endpointY + 22, this.height - 24);
         return new Layout(left, left + buttonWidth + gap, totalWidth, buttonWidth,
                 top, rowStep, targetY, endpointY, saveY);
     }

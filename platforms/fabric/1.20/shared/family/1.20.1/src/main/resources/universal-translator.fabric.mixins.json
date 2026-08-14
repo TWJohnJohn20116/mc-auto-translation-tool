@@ -3,6 +3,7 @@
   "package": "org.universaltranslator.fabric.mixin",
   "compatibilityLevel": "JAVA_17",
   "client": [
+    "TitleScreenMixin",
     "DrawContextMixin",
     "ChatHudContextMixin",
     "ScreenMixin",
