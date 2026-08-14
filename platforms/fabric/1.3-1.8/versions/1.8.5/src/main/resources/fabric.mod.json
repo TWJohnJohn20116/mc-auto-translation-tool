@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "universal_translator",
+  "version": "${version}",
+  "name": "MC Auto Translation Tool",
+  "description": "Client-side automatic translation bootstrap for Fabric 1.8.5 (Ornithe/Calamus).",
+  "authors": [
+    "272635"
+  ],
+  "contact": {
+    "homepage": "https://space.bilibili.com/3546631091783712",
+    "sources": "https://github.com/wuxiangdan96-byte/mc-auto-translation-tool"
+  },
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "org.universaltranslator.fabric.UniversalTranslatorFabricClient"
+    ]
+  },
+  "mixins": [
+    "universal-translator.fabric.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.19.3",
+    "minecraft": "1.8.5",
+    "java": ">=8"
+  }
+}

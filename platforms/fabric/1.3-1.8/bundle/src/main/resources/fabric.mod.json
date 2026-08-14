@@ -1,0 +1,133 @@
+{
+  "schemaVersion": 1,
+  "id": "universal_translator_1_3_1_1_8_8_bundle",
+  "version": "${version}",
+  "name": "MC Auto Translation Tool - Fabric 1.3.1/1.8.8 Bundle",
+  "description": "Selects the exact compatible Ornithe Fabric implementation for Minecraft 1.3.1 through 1.8.8.",
+  "authors": [
+    "272635"
+  ],
+  "contact": {
+    "homepage": "https://space.bilibili.com/3546631091783712",
+    "sources": "https://github.com/wuxiangdan96-byte/mc-auto-translation-tool"
+  },
+  "license": "MIT",
+  "environment": "client",
+  "jars": [
+    {
+      "file": "META-INF/jars/universal-translator-1.3.1.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.3.2.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.4.2.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.4.4.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.4.5.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.4.6.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.4.7.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.5.1.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.5.2.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.6.1.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.6.4.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.7.2.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.7.4.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.7.5.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.7.6.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.7.8.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.7.9.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.7.10.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.8.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.8.1.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.8.2.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.8.3.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.8.4.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.8.5.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.8.6.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.8.7.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-1.8.8.jar"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=0.19.3",
+    "minecraft": [
+      "1.3.1",
+      "1.3.2",
+      "1.4.2",
+      "1.4.4",
+      "1.4.5",
+      "1.4.6",
+      "1.4.7",
+      "1.5.1",
+      "1.5.2",
+      "1.6.1",
+      "1.6.4",
+      "1.7.2",
+      "1.7.4",
+      "1.7.5",
+      "1.7.6",
+      "1.7.8",
+      "1.7.9",
+      "1.7.10",
+      "1.8",
+      "1.8.1",
+      "1.8.2",
+      "1.8.3",
+      "1.8.4",
+      "1.8.5",
+      "1.8.6",
+      "1.8.7",
+      "1.8.8"
+    ],
+    "java": ">=8",
+    "universal_translator": "*"
+  }
+}
