@@ -8,7 +8,7 @@ modId="universal_translator"
 version="${version}"
 displayName="MC Auto Translation Tool"
 displayURL="https://github.com/wuxiangdan96-byte/mc-auto-translation-tool"
-authors="??撘?272635"
+authors="272635"
 description='''Client-side automatic translation for server-provided text across Minecraft interfaces.'''
 
 [[dependencies.universal_translator]]

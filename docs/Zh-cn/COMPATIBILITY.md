@@ -13,13 +13,13 @@
 | All 1.14/1.15 releases (1.14-1.15.2), single JAR | Fabric Loader 0.19.3 + Fabric API 0.28.5 | 8 | Passed; exact Loader selection passed for all eight versions | Pending | Pending |
 | All 1.16 releases (1.16-1.16.5), single JAR | Fabric Loader 0.19.3 + Fabric API 0.42.0 | 8 | Passed; exact Loader selection passed for all six versions | Pending | Pending |
 | 1.16.5 | Fabric Loader 0.19.3 + Fabric API 0.42.0 | 8 | 通过，metadata 与 Mixin 已检查 | 待验证 | 待验证 |
-| ?? 1.17/1.18 ???1.17-1.18.2??? JAR? | Fabric Loader 0.19.3 | 17 | ????????????? Loader ???? | ??? | ??? |
+| 单一 1.17/1.18 JAR（1.17–1.18.2） | Fabric Loader 0.19.3 | 17 | 已通过；五个版本均通过精确 Loader 选择 | 待验证 | 待验证 |
 | 1.16.5 | Forge 36.2.42 | 8 | 通过，SRG 与 refmap 已检查 | 待验证 | 待验证 |
 | 1.19.2 | Fabric Loader 0.19.3 + Fabric API 0.77.0 | 17 | 通过，metadata 与 Mixin 已检查 | 待验证 | 待验证 |
-| ?? 1.19 ???1.19-1.19.4??? JAR? | Fabric Loader 0.19.3 | 17 | ????????????? Loader ???? | ??? | ??? |
+| 单一 1.19 JAR（1.19–1.19.4） | Fabric Loader 0.19.3 | 17 | 已通过；五个版本均通过精确 Loader 选择 | 待验证 | 待验证 |
 | 1.19.2 | Forge 43.5.2 | 17 | 通过，SRG 与 refmap 已检查 | 待验证 | 待验证 |
 | 1.20.1 | Fabric Loader 0.18.1 + Fabric API 0.92.11 | 17 | 通过 | 待验证 | 待验证 |
-| ?? 1.20 ???1.20-1.20.6??? JAR? | Fabric Loader 0.15.11+ | 17 / 21 | ????????????? Loader ???? | ??? | ??? |
+| 单一 1.20 JAR（1.20–1.20.6） | Fabric Loader 0.15.11+ | 17 / 21 | 已通过；七个版本均通过精确 Loader 选择 | 待验证 | 待验证 |
 | 1.20.1 | Forge 47.4.10 | 17 | 通过，SRG 与 refmap 已检查 | 待验证 | 待验证 |
 | 1.20.1 | NeoForge 47.1.106 | 17 | 通过，metadata、Mixin 与 refmap 已检查 | 通过，模组初始化完成 | 待验证 |
 | 1.21.1 | NeoForge 21.1.248 | 21 | 通过，metadata 与 Mixin 已检查 | 待验证 | 待验证 |
