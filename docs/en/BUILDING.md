@@ -81,6 +81,19 @@ Output is written to `platforms/fabric/1.20/bundle/build/libs/`. This single JAR
 exact-version implementations for 1.20, 1.20.1, 1.20.2, 1.20.3, 1.20.4, 1.20.5, and 1.20.6;
 Fabric Loader selects the matching implementation and the build verifies all seven selections.
 
+## Single Fabric 1.16.x JAR
+
+JDK 8 is required for the Minecraft 1.16 series. To keep the Gradle cache on the D: drive:
+
+```powershell
+$env:GRADLE_USER_HOME = "D:\Gradle\cache"
+.\gradlew.bat :platform-fabric-1.16.x:build --max-workers=1
+```
+
+Output is written to `platforms/fabric/1.16/bundle/build/libs/`. The bundle embeds exact-version
+implementations for 1.16, 1.16.1, 1.16.2, 1.16.3, 1.16.4, and 1.16.5; Fabric Loader selects the
+matching implementation and the build verifies all six selections.
+
 ## Single Fabric 1.21.x JAR
 
 JDK 21 or later is required:

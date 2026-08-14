@@ -21,10 +21,10 @@ dependencies {
 }
 
 base {
-    archivesName = "mc-auto-translation-tool-fabric-1.17-1.18.x"
+    archivesName = "mc-auto-translation-tool-fabric-1.16.x"
 }
 
-def supportedVersions = ["1.17", "1.17.1", "1.18", "1.18.1", "1.18.2"]
+def supportedVersions = ["1.16", "1.16.1", "1.16.2", "1.16.3", "1.16.4", "1.16.5"]
 supportedVersions.each { gameVersion ->
     evaluationDependsOn(":platform-fabric-${gameVersion}")
 }
@@ -67,7 +67,7 @@ tasks.register("verifyBundle") {
                 throw new GradleException("Missing bundle entry: ${path}")
             }
         }
-        println "Verified ${archive.name}: all ${supportedVersions.size()} Minecraft 1.17/1.18 implementations present"
+        println "Verified ${archive.name}: all ${supportedVersions.size()} Minecraft 1.16 implementations present"
     }
 }
 
@@ -76,20 +76,6 @@ tasks.register("verifyLoaderSelection", JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
     mainClass = "org.universaltranslator.bundle.BundleResolutionVerifier"
     args([jar.archiveFile.get().asFile.absolutePath] + supportedVersions)
-}
-
-tasks.register("verifyPreparedReleaseBundle", JavaExec) {
-    dependsOn rootProject.tasks.named("verifyPreparedReleaseAssets"), testClasses
-    classpath = sourceSets.test.runtimeClasspath
-    mainClass = "org.universaltranslator.bundle.BundleResolutionVerifier"
-    javaLauncher = javaToolchains.launcherFor {
-        languageVersion = JavaLanguageVersion.of(25)
-    }
-    def allVersions = supportedVersions +
-            ["26.1", "26.1.1", "26.1.2", "26.2"]
-    args([rootProject.layout.buildDirectory.file(
-            "release-assets/MCAutoTranslationTool-${project.mod_version}-fabric-all.jar"
-    ).get().asFile.absolutePath] + allVersions)
 }
 
 test {
