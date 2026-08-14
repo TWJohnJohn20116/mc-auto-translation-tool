@@ -210,6 +210,19 @@ $env:GRADLE_USER_HOME = "D:\Gradle\cache"
 
 输出位于 `platforms/fabric/1.13/versions/1.13.2/build/libs/`。
 
+## Fabric 1.13.0 和 1.13.1（Ornithe）
+
+Ornithe 为这两个版本提供 Fabric Loader 配置和 Calamus intermediary 映射。启动器把 Minecraft
+1.13.0 标记为 `1.13`；生成的文件名保留 `1.13.0` 别名。两个目标均使用 Java 8，可一次构建：
+
+```powershell
+$env:GRADLE_USER_HOME = "D:\Gradle\cache"
+.\gradlew.bat :platform-fabric-1.13.0:build :platform-fabric-1.13.1:build --max-workers=1
+```
+
+输出位于 `platforms/fabric/1.13/versions/1.13.0/build/libs/` 和
+`platforms/fabric/1.13/versions/1.13.1/build/libs/`。
+
 ## 1.16.5 Fabric
 
 需要 JDK 17 或更高版本运行当前 Gradle/Loom，但产物按 Java 8 编译：

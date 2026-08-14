@@ -11,6 +11,8 @@ rootProject.name = "mc-auto-translation-tool"
 include("translator-core")
 
 def platformProjects = [
+        "platform-fabric-1.13.0"        : "platforms/fabric/1.13/versions/1.13.0",
+        "platform-fabric-1.13.1"        : "platforms/fabric/1.13/versions/1.13.1",
         "platform-fabric-1.13.2"        : "platforms/fabric/1.13/versions/1.13.2",
         "platform-fabric-1.14"          : "platforms/fabric/1.14-1.15/versions/1.14",
         "platform-fabric-1.14.1"        : "platforms/fabric/1.14-1.15/versions/1.14.1",
