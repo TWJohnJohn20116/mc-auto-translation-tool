@@ -226,6 +226,20 @@ $env:GRADLE_USER_HOME = "D:\Gradle\cache"
 
 Output is written to `platforms/fabric/1.13/versions/1.13.2/build/libs/`.
 
+## Fabric 1.13.0 and 1.13.1 (Ornithe)
+
+Ornithe provides Fabric Loader profiles with Calamus intermediary mappings for these two releases.
+The launcher calls Minecraft 1.13.0 simply `1.13`; the generated artifact keeps the `1.13.0` alias
+in its file name. Both targets use Java 8 and are built separately:
+
+```powershell
+$env:GRADLE_USER_HOME = "D:\Gradle\cache"
+.\gradlew.bat :platform-fabric-1.13.0:build :platform-fabric-1.13.1:build --max-workers=1
+```
+
+Outputs are written to `platforms/fabric/1.13/versions/1.13.0/build/libs/` and
+`platforms/fabric/1.13/versions/1.13.1/build/libs/`.
+
 ## Fabric 1.16.5
 
 The current Gradle/Loom build requires JDK 17 or later, while the output targets Java 8:
