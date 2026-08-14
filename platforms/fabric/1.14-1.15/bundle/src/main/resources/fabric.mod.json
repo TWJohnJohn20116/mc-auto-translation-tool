@@ -1,18 +1,18 @@
 {
   "schemaVersion": 1,
-  "id": "universal_translator_1_14_1_15_bundle",
+  "id": "universal_translator",
   "version": "${version}",
-  "name": "MC Auto Translation Tool - Fabric 1.14/1.15 Bundle",
-  "description": "Selects the exact compatible implementation for Minecraft 1.14 and 1.15 releases.",
+  "name": "MC Auto Translation Tool - Fabric 1.14/1.15",
+  "description": "Direct client bootstrap shared by all Minecraft 1.14 and 1.15 releases.",
   "authors": ["272635"],
   "contact": {"homepage": "https://space.bilibili.com/3546631091783712", "sources": "https://github.com/wuxiangdan96-byte/mc-auto-translation-tool"},
   "license": "MIT",
   "environment": "client",
-  "jars": [
-    {"file": "META-INF/jars/universal-translator-1.14.jar"}, {"file": "META-INF/jars/universal-translator-1.14.1.jar"},
-    {"file": "META-INF/jars/universal-translator-1.14.2.jar"}, {"file": "META-INF/jars/universal-translator-1.14.3.jar"},
-    {"file": "META-INF/jars/universal-translator-1.14.4.jar"}, {"file": "META-INF/jars/universal-translator-1.15.jar"},
-    {"file": "META-INF/jars/universal-translator-1.15.1.jar"}, {"file": "META-INF/jars/universal-translator-1.15.2.jar"}
-  ],
-  "depends": {"fabricloader": ">=0.19.3", "minecraft": ["1.14", "1.14.1", "1.14.2", "1.14.3", "1.14.4", "1.15", "1.15.1", "1.15.2"], "java": ">=8", "fabric-api": "*", "universal_translator": "*"}
+  "entrypoints": {"client": ["org.universaltranslator.fabric.UniversalTranslatorFabricClient"]},
+  "mixins": ["universal-translator.fabric.mixins.json"],
+  "depends": {
+    "fabricloader": ">=0.19.3",
+    "minecraft": ["1.14", "1.14.1", "1.14.2", "1.14.3", "1.14.4", "1.15", "1.15.1", "1.15.2"],
+    "java": ">=8"
+  }
 }
