@@ -127,6 +127,8 @@ def platformProjects = [
         "platform-fabric-26.x"          : "platforms/fabric/26.x/bundle",
         "platform-neoforge-1.20.1"      : "platforms/neoforge/1.20.1",
         "platform-neoforge-1.21.1"      : "platforms/neoforge/1.21/versions/1.21.1",
+        "platform-neoforge-1.21.3"      : "platforms/neoforge/1.21/versions/1.21.3",
+        "platform-neoforge-1.21.11"     : "platforms/neoforge/1.21/versions/1.21.11",
         "platform-forge-1.16.5"         : "platforms/forge/modern/1.16.5",
         "platform-forge-1.19.2"         : "platforms/forge/modern/1.19.2",
         "platform-forge-1.20.1"         : "platforms/forge/modern/1.20.1",
