@@ -30,7 +30,7 @@ This document records only completed validation. “Builds successfully” is no
 | 26.1, 26.1.1, 26.1.2, 26.2 | Forge 62.0.9–65.1.1 | 25 | Compile passed for all four exact targets | Pending | Pending |
 | 26.1, 26.1.1, 26.1.2, 26.2, single JAR | Fabric Loader 0.19.3 | 25 | Passed; Loader selection passed for all four versions | 26.1 baseline passed | Pending |
 
-All 35 exact build artifacts share the same translation core and are reduced to 14 directly installable release JARs. Fabric 1.20.1 completed Loom remapping.
+All 36 exact build artifacts share the same translation core and are reduced to 15 directly installable release JARs. Fabric 1.20.1 completed Loom remapping.
 The Forge 1.20.1 artifact was renamed into the SRG runtime namespace and contains a refmap for all
 nine Mixin classes. Forge 1.21.11 was adapted to the Forge 7 event bus and Mojmap runtime. Its
 startup passed ForgeBootstrap and reached GLFW graphics initialization, then stopped because the
