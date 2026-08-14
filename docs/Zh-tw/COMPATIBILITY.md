@@ -10,6 +10,7 @@
 | --- | --- | --- | --- | --- | --- |
 | 1.8.9 | Forge 11.15.1.2318 | 8 | 通過 | 歷史基準通過 | 待確認 |
 | 1.12.2 | Forge 14.23.5.2860 | 8 | 通過 | 歷史基準通過 | 待確認 |
+| All 1.14/1.15 releases (1.14-1.15.2), single JAR | Fabric Loader 0.19.3 + Fabric API 0.28.5 | 8 | Passed; exact Loader selection passed for all eight versions | Pending | Pending |
 | 1.16.5 | Fabric Loader 0.19.3 + Fabric API 0.42.0 | 8 | 通過，中繼資料及 Mixin 已檢查 | 待驗證 | 待驗證 |
 | ?? 1.17/1.18 ???1.17-1.18.2??? JAR? | Fabric Loader 0.19.3 | 17 | ????????????? Loader ???? | ??? | ??? |
 | 1.16.5 | Forge 36.2.42 | 8 | 通過，SRG 與 refmap 已檢查 | 待驗證 | 待驗證 |
@@ -27,7 +28,7 @@
 | 26.1、26.1.1、26.1.2、26.2 | Forge 62.0.9–65.1.1 | 25 | 四個精確目標全部編譯通過 | 待驗證 | 待驗證 |
 | 26.1、26.1.1、26.1.2、26.2 單一 JAR | Fabric Loader 0.19.3 | 25 | 通過；四個版本的 Loader 選擇測試皆通過 | 26.1 歷史基準通過 | 待驗證 |
 
-27 個精確建置產物共用同一套翻譯核心，並整理為 13 個可直接安裝的發行 JAR。1.20.1 Fabric 已完成 Loom 重新映射；1.20.1 Forge
+35 個精確建置產物共用同一套翻譯核心，並整理為 14 個可直接安裝的發行 JAR。1.20.1 Fabric 已完成 Loom 重新映射；1.20.1 Forge
 產物已轉換成該版本執行階段使用的 SRG 名稱，並包含九個 Mixin 類別的 refmap；
 1.21.11 Forge 已轉接 Forge 7 事件匯流排與 Mojmap 執行階段。1.21.11 Forge 啟動已
 通過 ForgeBootstrap 並到達 GLFW 圖形初始化，之後因自動化環境沒有主顯示器而停止，

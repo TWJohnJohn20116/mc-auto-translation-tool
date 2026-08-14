@@ -1,0 +1,40 @@
+plugins { id "java" }
+
+repositories {
+    maven { url = "https://maven.fabricmc.net/" }
+    mavenCentral()
+}
+
+version = project.mod_version
+group = project.maven_group
+base { archivesName = "mc-auto-translation-tool-fabric-1.15.1" }
+
+dependencies {
+    compileOnly "net.fabricmc:fabric-loader:0.19.3"
+}
+
+sourceSets {
+    main {
+        java.srcDir rootProject.file("platforms/fabric/1.14-1.15/shared/family/1.14-1.15/src/client/java")
+        resources.srcDir rootProject.file("platforms/fabric/legacy/shared/common/src/main/resources")
+        resources.srcDir rootProject.file("platforms/fabric/1.14-1.15/shared/family/1.14-1.15/src/main/resources")
+    }
+}
+
+processResources {
+    inputs.properties("version": project.version, "minecraftVersion": "1.15.1", "loaderVersion": "0.19.3", "javaVersion": 8, "fabricDependency": "fabric-api")
+    filesMatching("fabric.mod.json") {
+        expand("version": project.version, "minecraftVersion": "1.15.1", "loaderVersion": "0.19.3", "javaVersion": 8, "fabricDependency": "fabric-api")
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+    options.release = 8
+}
+
+jar {
+    from(rootProject.file("LICENSE")) { rename { "LICENSE_universal_translator" } }
+    from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) { rename { "THIRD_PARTY_OFFLINE.md" } }
+}
+java { withSourcesJar() }

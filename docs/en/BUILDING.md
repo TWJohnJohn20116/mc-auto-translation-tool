@@ -189,6 +189,19 @@ The adapter targets Java 8 bytecode and Forge 36.2.42:
 
 Publish the normalized runtime JAR from `platforms/forge/modern/1.16.5/build/release/`.
 
+## Single Fabric 1.14/1.15 JAR
+
+The 1.14 and 1.15 compatibility modules target Java 8. Keep the Gradle cache on the D: drive:
+
+```powershell
+$env:GRADLE_USER_HOME = "D:\Gradle\cache"
+.\gradlew.bat :platform-fabric-1.14-1.15.x:build --max-workers=1
+```
+
+Output is written to `platforms/fabric/1.14-1.15/bundle/build/libs/`. The bundle embeds exact-version
+implementations for 1.14, 1.14.1, 1.14.2, 1.14.3, 1.14.4, 1.15, 1.15.1, and 1.15.2; Fabric Loader
+selects the matching implementation and the build verifies all eight selections.
+
 ## Fabric 1.16.5
 
 The current Gradle/Loom build requires JDK 17 or later, while the output targets Java 8:

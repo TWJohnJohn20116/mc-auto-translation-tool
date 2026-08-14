@@ -11,6 +11,15 @@ rootProject.name = "mc-auto-translation-tool"
 include("translator-core")
 
 def platformProjects = [
+        "platform-fabric-1.14"          : "platforms/fabric/1.14-1.15/versions/1.14",
+        "platform-fabric-1.14.1"        : "platforms/fabric/1.14-1.15/versions/1.14.1",
+        "platform-fabric-1.14.2"        : "platforms/fabric/1.14-1.15/versions/1.14.2",
+        "platform-fabric-1.14.3"        : "platforms/fabric/1.14-1.15/versions/1.14.3",
+        "platform-fabric-1.14.4"        : "platforms/fabric/1.14-1.15/versions/1.14.4",
+        "platform-fabric-1.15"          : "platforms/fabric/1.14-1.15/versions/1.15",
+        "platform-fabric-1.15.1"        : "platforms/fabric/1.14-1.15/versions/1.15.1",
+        "platform-fabric-1.15.2"        : "platforms/fabric/1.14-1.15/versions/1.15.2",
+        "platform-fabric-1.14-1.15.x"   : "platforms/fabric/1.14-1.15/bundle",
         "platform-fabric-1.16.5"        : "platforms/fabric/legacy/1.16.5",
         "platform-fabric-1.17"          : "platforms/fabric/1.17-1.18/versions/1.17",
         "platform-fabric-1.17.1"        : "platforms/fabric/1.17-1.18/versions/1.17.1",
@@ -75,6 +84,8 @@ def platformProjects = [
 
 // Aggregate modules need their implementation projects available during configuration.
 def platformDependencies = [
+        "platform-fabric-1.14-1.15.x": ["1.14", "1.14.1", "1.14.2", "1.14.3", "1.14.4", "1.15", "1.15.1", "1.15.2"]
+                .collect { "platform-fabric-${it}".toString() },
         "platform-fabric-1.17-1.18.x": ["1.17", "1.17.1", "1.18", "1.18.1", "1.18.2"]
                 .collect { "platform-fabric-${it}".toString() },
         "platform-fabric-1.19.x": ["1.19", "1.19.1", "1.19.2", "1.19.3", "1.19.4"]

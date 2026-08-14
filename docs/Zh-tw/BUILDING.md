@@ -174,6 +174,17 @@ Forge 43.5.2 從 Forge 官方 Maven 解析。發佈時應使用
 
 發佈時使用 `platforms/forge/modern/1.16.5/build/release/` 中的標準命名執行階段 JAR。
 
+## Fabric 1.14/1.15 ? JAR / ?? JAR
+
+????? Java 8?Gradle ???? D ??
+
+```powershell
+$env:GRADLE_USER_HOME = "D:\Gradle\cache"
+.\gradlew.bat :platform-fabric-1.14-1.15.x:build --max-workers=1
+```
+
+???? `platforms/fabric/1.14-1.15/bundle/build/libs/`??? 1.14?1.15.2 ??????????
+
 ## 1.16.5 Fabric
 
 目前 Gradle／Loom 建置需要 JDK 17 或更新版本，但輸出仍以 Java 8 為目標：
