@@ -62,7 +62,9 @@ public final class CoreSelfTest {
         discardsResultsBlockedWhileInFlight();
         separatesCacheEntriesByTextKind();
         prefersChinaDownloadSources();
+        selectsAndroidOfflineRuntime();
         configuresWindowsOfflineRuntimePath();
+        preparesAsciiWindowsModelPath();
         reportsOfflineStartupDiagnostics();
         matchesTencentCloudOfficialSignatureVector();
         keepsOriginalTextInBilingualMode();
@@ -586,6 +588,67 @@ public final class CoreSelfTest {
                 + File.pathSeparator + javaBin.toAbsolutePath().normalize().toString()
                 + File.pathSeparator;
         assertTrue(builder.environment().get("PATH").startsWith(expectedPrefix));
+
+        ProcessBuilder androidBuilder = new ProcessBuilder("offline-test");
+        androidBuilder.environment().put("LD_LIBRARY_PATH", "existing-library-path");
+        OfflineProcessSupport.prependEnvironmentPath(
+                androidBuilder, "LD_LIBRARY_PATH", server);
+        assertTrue(androidBuilder.environment().get("LD_LIBRARY_PATH")
+                .startsWith(server.toAbsolutePath().normalize().toString()
+                        + File.pathSeparator));
+    }
+
+    private static void selectsAndroidOfflineRuntime() {
+        assertTrue(OfflineEngineAsset.isAndroidRuntime(
+                "Linux", "OpenJDK Runtime Environment", "/data/user/0/net.kdt.pojavlaunch", false));
+        assertTrue(OfflineEngineAsset.isAndroidRuntime(
+                "Linux", "OpenJDK Runtime Environment", "/home/player", true));
+        assertFalse(OfflineEngineAsset.isAndroidRuntime(
+                "Linux", "OpenJDK Runtime Environment", "/home/player", false));
+
+        OfflineEngineAsset android = OfflineEngineAsset.select("Linux", "aarch64", true);
+        assertEquals("android-arm64", android.platformId);
+        assertEquals("llama-b9637-bin-android-arm64.tar.gz", android.archiveName);
+        assertEquals(75_515_871L, android.size);
+        assertEquals("66068af2400dbaaadb4dc3e4042d120c6633f115ecd2fe1a8979fb55e0648e4d",
+                android.sha256);
+        assertEquals("linux-arm64",
+                OfflineEngineAsset.select("Linux", "aarch64", false).platformId);
+        assertThrows(() -> OfflineEngineAsset.select("Linux", "x86_64", true));
+
+        assertTrue(OfflineProcessSupport.isAndroidSharedStorage(
+                java.nio.file.Paths.get("/storage/emulated/0/games/PojavLauncher")));
+        assertFalse(OfflineProcessSupport.isAndroidSharedStorage(
+                java.nio.file.Paths.get("/data/user/0/net.kdt.pojavlaunch/cache")));
+    }
+
+    private static void preparesAsciiWindowsModelPath() throws Exception {
+        Path asciiRoot = Files.createTempDirectory("offline-ascii-root");
+        Path unicodeDirectory = Files.createDirectories(asciiRoot.resolve("游戏目录"));
+        Path model = unicodeDirectory.resolve("qwen.gguf");
+        byte[] contents = "verified-model-data".getBytes(StandardCharsets.UTF_8);
+        Files.write(model, contents);
+
+        String modelDigest = org.universaltranslator.core.offline.VerifiedDownloader.sha256(model);
+        Path alias = OfflineProcessSupport.prepareModelPathForNativeProcess(
+                model, modelDigest, true);
+        assertTrue(OfflineProcessSupport.isAsciiPath(alias));
+        assertFalse(alias.equals(model.toAbsolutePath().normalize()));
+        assertTrue(Arrays.equals(contents, Files.readAllBytes(alias)));
+        assertEquals(alias, OfflineProcessSupport.prepareModelPathForNativeProcess(
+                model, modelDigest, true));
+
+        Files.delete(alias);
+        Files.write(alias, "damaged--model-data".getBytes(StandardCharsets.UTF_8));
+        assertEquals(alias, OfflineProcessSupport.prepareModelPathForNativeProcess(
+                model, modelDigest, true));
+        assertTrue(Arrays.equals(contents, Files.readAllBytes(alias)));
+
+        Path alreadyAscii = asciiRoot.resolve("qwen.gguf");
+        Files.write(alreadyAscii, contents);
+        assertEquals(alreadyAscii.toAbsolutePath().normalize(),
+                OfflineProcessSupport.prepareModelPathForNativeProcess(
+                        alreadyAscii, modelDigest, true));
     }
 
     private static void reportsOfflineStartupDiagnostics() throws Exception {
@@ -610,6 +673,9 @@ public final class CoreSelfTest {
         assertTrue(summary.contains("failed to read magic"));
         assertFalse(summary.contains("cleaning up"));
         assertTrue(OfflineProcessSupport.describeStartupExit(1, summary)
+                .contains("模型文件读取失败"));
+        assertTrue(OfflineProcessSupport.describeStartupExit(1,
+                "common_init_from_params: failed to load model 'C:\\\\bad\\\\qwen.gguf'")
                 .contains("模型文件读取失败"));
 
         java.util.List<String> normal = new java.util.ArrayList<String>();

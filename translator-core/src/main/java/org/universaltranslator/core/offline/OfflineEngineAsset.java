@@ -5,7 +5,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
-/** Pinned llama.cpp CPU builds for the desktop platforms supported by the mod. */
+/** Pinned llama.cpp CPU builds for the desktop and Android runtimes supported by the mod. */
 public final class OfflineEngineAsset {
     private static final String RELEASE = "b9637";
     private static final String BASE = "https://github.com/ggml-org/llama.cpp/releases/download/"
@@ -31,8 +31,40 @@ public final class OfflineEngineAsset {
     public static OfflineEngineAsset current() {
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         String arch = System.getProperty("os.arch", "").toLowerCase(Locale.ROOT);
+        return select(os, arch, currentRuntimeIsAndroid());
+    }
+
+    public static boolean currentRuntimeIsAndroid() {
+        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+        String runtime = System.getProperty("java.vendor", "") + " "
+                + System.getProperty("java.runtime.name", "") + " "
+                + System.getProperty("java.vm.name", "");
+        String paths = System.getProperty("java.home", "") + " "
+                + System.getProperty("user.home", "") + " "
+                + System.getProperty("java.io.tmpdir", "");
+        boolean androidEnvironment = environmentPathStartsWith("ANDROID_ROOT", "/system")
+                || environmentPathStartsWith("ANDROID_DATA", "/data")
+                || hasEnvironment("POJAV_HOME")
+                || hasEnvironment("POJAV_RENDERER")
+                || hasEnvironment("POJAV_NATIVEDIR")
+                || hasEnvironment("FCL_NATIVEDIR");
+        return isAndroidRuntime(os, runtime, paths, androidEnvironment);
+    }
+
+    /** Selects the pinned native build without treating Android launchers as desktop Linux. */
+    public static OfflineEngineAsset select(String os, String arch, boolean androidRuntime) {
+        os = os == null ? "" : os.toLowerCase(Locale.ROOT);
+        arch = arch == null ? "" : arch.toLowerCase(Locale.ROOT);
         boolean arm64 = arch.contains("aarch64") || arch.contains("arm64");
         boolean x64 = arch.contains("x86_64") || arch.contains("amd64") || arch.contains("x64");
+        if (androidRuntime && arm64) {
+            return asset("android-arm64", "llama-b9637-bin-android-arm64.tar.gz", 75_515_871L,
+                    "66068af2400dbaaadb4dc3e4042d120c6633f115ecd2fe1a8979fb55e0648e4d");
+        }
+        if (androidRuntime) {
+            throw new IllegalStateException(
+                    "Offline translation requires an Android ARM64 Java launcher; detected " + arch);
+        }
         if (os.contains("mac") && arm64) {
             return asset("macos-arm64", "llama-b9637-bin-macos-arm64.tar.gz", 10_586_927L,
                     "72a93f3e68c31de3e438d462669aad1fcdb423b995e9c41033cc7d27a9a3ac69");
@@ -60,6 +92,24 @@ public final class OfflineEngineAsset {
         throw new IllegalStateException("Offline translation is not packaged for " + os + " / " + arch);
     }
 
+    /** Visible for dependency-free launcher detection tests. */
+    public static boolean isAndroidRuntime(
+            String osName,
+            String runtimeDescription,
+            String pathDescription,
+            boolean androidEnvironment
+    ) {
+        String os = osName == null ? "" : osName.toLowerCase(Locale.ROOT);
+        String runtime = runtimeDescription == null
+                ? "" : runtimeDescription.toLowerCase(Locale.ROOT);
+        String paths = pathDescription == null ? "" : pathDescription
+                .replace('\\', '/').toLowerCase(Locale.ROOT);
+        return os.contains("android") || runtime.contains("android")
+                || runtime.contains("dalvik") || runtime.contains(" art ")
+                || androidEnvironment || paths.contains("/data/user/")
+                || paths.contains("/data/data/") || paths.contains("/storage/emulated/");
+    }
+
     /** A checksum-pinned acceleration source followed by the official GitHub release. */
     public List<URI> downloadSources() {
         return Arrays.asList(acceleratedUri, uri);
@@ -67,5 +117,19 @@ public final class OfflineEngineAsset {
 
     private static OfflineEngineAsset asset(String id, String name, long size, String sha256) {
         return new OfflineEngineAsset(id, name, size, sha256);
+    }
+
+    private static boolean hasEnvironment(String name) {
+        String value = System.getenv(name);
+        return value != null && !value.trim().isEmpty();
+    }
+
+    private static boolean environmentPathStartsWith(String name, String prefix) {
+        String value = System.getenv(name);
+        if (value == null) {
+            return false;
+        }
+        return value.trim().replace('\\', '/').toLowerCase(Locale.ROOT)
+                .startsWith(prefix.toLowerCase(Locale.ROOT));
     }
 }

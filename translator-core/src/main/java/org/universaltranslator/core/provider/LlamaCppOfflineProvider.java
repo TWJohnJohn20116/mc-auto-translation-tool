@@ -198,6 +198,8 @@ public final class LlamaCppOfflineProvider
         int port = reserveLoopbackPort();
         Path log = root.resolve("llama-server.log");
         long logStart = Files.isRegularFile(log) ? Files.size(log) : 0L;
+        Path nativeModel = OfflineProcessSupport.prepareModelPathForNativeProcess(
+                model, modelSha256);
         int processors = Runtime.getRuntime().availableProcessors();
         // The model shares the machine with Minecraft's render thread. Two inference
         // threads are enough for this small model and avoid sustained frame drops on
@@ -206,7 +208,7 @@ public final class LlamaCppOfflineProvider
         status = "正在启动离线模型";
         List<String> command = new ArrayList<String>(Arrays.asList(
                 server.toString(),
-                "-m", model.toString(),
+                "-m", nativeModel.toString(),
                 "--host", "127.0.0.1",
                 "--port", Integer.toString(port),
                 "--alias", "universal-translator-local",
@@ -247,7 +249,7 @@ public final class LlamaCppOfflineProvider
     private Path ensureEngine() throws IOException {
         OfflineEngineAsset asset = OfflineEngineAsset.current();
         Path engineRoot = engineRoot(asset);
-        Path installed = engineRoot.resolve("installed");
+        Path installed = engineInstallDirectory(asset);
         if (Files.isDirectory(installed)) {
             try {
                 return SafeArchiveExtractor.findServer(installed);
@@ -263,14 +265,14 @@ public final class LlamaCppOfflineProvider
         VerifiedDownloader.download(asset.downloadSources(), archive, asset.size, asset.sha256,
                 progressListener("正在下载离线引擎"));
         status = "离线引擎下载并校验完成";
-        Path staging = engineRoot.resolve("installing");
+        Path staging = installed.resolveSibling("installing");
         deleteTree(staging);
         Files.createDirectories(staging);
         status = "正在安装离线引擎";
         try {
             SafeArchiveExtractor.extract(archive, staging);
             SafeArchiveExtractor.findServer(staging);
-            Files.createDirectories(engineRoot);
+            Files.createDirectories(installed.getParent());
             try {
                 Files.move(staging, installed, StandardCopyOption.ATOMIC_MOVE);
             } catch (IOException atomicMoveUnsupported) {
@@ -283,8 +285,16 @@ public final class LlamaCppOfflineProvider
         return SafeArchiveExtractor.findServer(installed);
     }
 
-    private Path engineInstallDirectory() {
-        return engineRoot(OfflineEngineAsset.current()).resolve("installed");
+    private Path engineInstallDirectory() throws IOException {
+        return engineInstallDirectory(OfflineEngineAsset.current());
+    }
+
+    private Path engineInstallDirectory(OfflineEngineAsset asset) throws IOException {
+        if (asset.platformId.startsWith("android-")) {
+            return OfflineProcessSupport.androidEngineInstallDirectory(
+                    root, "b9637-" + asset.platformId).resolve("installed");
+        }
+        return engineRoot(asset).resolve("installed");
     }
 
     private Path engineRoot(OfflineEngineAsset asset) {

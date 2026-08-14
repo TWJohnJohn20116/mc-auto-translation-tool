@@ -5,6 +5,17 @@
 This document records only completed validation. “Builds successfully” is not reported as
 “compatible.”
 
+## Offline runtime fixes in the current source (no new release)
+
+- When a Windows game directory contains Chinese or other non-ASCII characters, the verified GGUF
+  model is exposed to the native engine through a same-volume hard link, with a one-time compatibility
+  copy fallback, so llama.cpp does not receive a mojibake model path.
+- Android ARM64 Java launchers are no longer mistaken for Ubuntu ARM64. They select the checksum-pinned
+  official Android ARM64 build from the same llama.cpp release, and install the executable engine in
+  private app storage instead of a shared-storage `noexec` mount.
+- Path handling, platform selection, and native library lookup are covered by the shared core tests.
+  Full Android in-game results still depend on launcher permissions, Android version, and available RAM.
+
 ## Version 1.3.3 release validation
 
 | Minecraft | Loader | Java | Build and self-test | Launched to main menu | Full manual in-server regression |
