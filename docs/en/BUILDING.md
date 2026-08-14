@@ -42,6 +42,20 @@ currently supported Minecraft 26.x releases: 26.1, 26.1.1, 26.1.2, and 26.2. It 
 implementations, and Fabric Loader selects the matching one. The build verifies every nested JAR
 and exercises real Loader resolution for all four versions.
 
+## Single Fabric 1.17/1.18 JAR
+
+JDK 17 is required. Keep the Gradle distribution and dependency cache on the D: drive with
+`GRADLE_USER_HOME`:
+
+```powershell
+$env:GRADLE_USER_HOME = "D:\Gradle\cache"
+.\gradlew.bat :platform-fabric-1.17-1.18.x:build --max-workers=1
+```
+
+Output is written to `platforms/fabric/1.17-1.18/bundle/build/libs/`. This bundle embeds exact-version
+implementations for 1.17, 1.17.1, 1.18, 1.18.1, and 1.18.2; Fabric Loader selects the matching
+implementation and the build verifies all five selections.
+
 ## Single Fabric 1.19.x JAR
 
 JDK 17 is required:
@@ -187,6 +201,19 @@ The adapter targets Java 8 bytecode and Forge 36.2.42:
 ```
 
 Publish the normalized runtime JAR from `platforms/forge/modern/1.16.5/build/release/`.
+
+## Single Fabric 1.14/1.15 JAR
+
+The 1.14 and 1.15 compatibility modules target Java 8. Keep the Gradle cache on the D: drive:
+
+```powershell
+$env:GRADLE_USER_HOME = "D:\Gradle\cache"
+.\gradlew.bat :platform-fabric-1.14-1.15.x:build --max-workers=1
+```
+
+Output is written to `platforms/fabric/1.14-1.15/bundle/build/libs/`. The bundle embeds exact-version
+implementations for 1.14, 1.14.1, 1.14.2, 1.14.3, 1.14.4, 1.15, 1.15.1, and 1.15.2; Fabric Loader
+selects the matching implementation and the build verifies all eight selections.
 
 ## Fabric 1.16.5
 

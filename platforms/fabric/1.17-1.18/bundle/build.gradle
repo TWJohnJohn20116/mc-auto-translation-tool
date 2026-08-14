@@ -1,0 +1,99 @@
+plugins {
+    id "java"
+}
+
+repositories {
+    maven { url = "https://maven.fabricmc.net/" }
+    mavenCentral()
+}
+
+version = project.mod_version
+group = project.maven_group
+
+dependencies {
+    testImplementation "net.fabricmc:fabric-loader:0.19.3"
+    testRuntimeOnly "org.ow2.asm:asm:9.10.1"
+    testRuntimeOnly "org.ow2.asm:asm-analysis:9.10.1"
+    testRuntimeOnly "org.ow2.asm:asm-commons:9.10.1"
+    testRuntimeOnly "org.ow2.asm:asm-tree:9.10.1"
+    testRuntimeOnly "org.ow2.asm:asm-util:9.10.1"
+    testRuntimeOnly "net.fabricmc:sponge-mixin:0.17.3+mixin.0.8.7"
+}
+
+base {
+    archivesName = "mc-auto-translation-tool-fabric-1.17-1.18.x"
+}
+
+def supportedVersions = ["1.17", "1.17.1", "1.18", "1.18.1", "1.18.2"]
+supportedVersions.each { gameVersion ->
+    evaluationDependsOn(":platform-fabric-${gameVersion}")
+}
+def implementationJars = supportedVersions.collectEntries { gameVersion ->
+    [(gameVersion): project(":platform-fabric-${gameVersion}").tasks.named("remapJar")]
+}
+
+processResources {
+    inputs.property "version", project.version
+    filesMatching("fabric.mod.json") {
+        expand "version": project.version
+    }
+}
+
+jar {
+    dependsOn implementationJars.values()
+    supportedVersions.each { gameVersion ->
+        from(implementationJars[gameVersion].flatMap { it.archiveFile }) {
+            into "META-INF/jars"
+            rename { "universal-translator-${gameVersion}.jar" }
+        }
+    }
+    from(rootProject.file("LICENSE")) {
+        rename { "LICENSE_universal_translator_bundle" }
+    }
+    from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) {
+        rename { "THIRD_PARTY_OFFLINE.md" }
+    }
+}
+
+tasks.register("verifyBundle") {
+    dependsOn jar
+    doLast {
+        def archive = jar.archiveFile.get().asFile
+        def required = ["fabric.mod.json"] + supportedVersions.collect {
+            "META-INF/jars/universal-translator-${it}.jar"
+        }
+        required.each { path ->
+            if (!zipTree(archive).matching { include path }.files) {
+                throw new GradleException("Missing bundle entry: ${path}")
+            }
+        }
+        println "Verified ${archive.name}: all ${supportedVersions.size()} Minecraft 1.17/1.18 implementations present"
+    }
+}
+
+tasks.register("verifyLoaderSelection", JavaExec) {
+    dependsOn jar, testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "org.universaltranslator.bundle.BundleResolutionVerifier"
+    args([jar.archiveFile.get().asFile.absolutePath] + supportedVersions)
+}
+
+tasks.register("verifyPreparedReleaseBundle", JavaExec) {
+    dependsOn rootProject.tasks.named("verifyPreparedReleaseAssets"), testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "org.universaltranslator.bundle.BundleResolutionVerifier"
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+    def allVersions = supportedVersions +
+            ["26.1", "26.1.1", "26.1.2", "26.2"]
+    args([rootProject.layout.buildDirectory.file(
+            "release-assets/MCAutoTranslationTool-${project.mod_version}-fabric-all.jar"
+    ).get().asFile.absolutePath] + allVersions)
+}
+
+test {
+    enabled = false
+}
+
+build.dependsOn verifyBundle, verifyLoaderSelection

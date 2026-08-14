@@ -40,6 +40,18 @@ IDE 匯入、查看專案或同時處理多個平台時，可明確指定穩定�
 Minecraft 26.x 版本：26.1、26.1.1、26.1.2 及 26.2。它內嵌四個精確版本實作，再由 Fabric Loader
 選擇相符實作；建置會檢查每個內嵌 JAR，並對全部四個版本執行真實 Loader 解析測試。
 
+## Fabric 1.17/1.18 ?? JAR
+
+?? JDK 17??? `GRADLE_USER_HOME` ? Gradle ?????????? D: ??
+
+```powershell
+$env:GRADLE_USER_HOME = "D:\Gradle\cache"
+.\gradlew.bat :platform-fabric-1.17-1.18.x:build --max-workers=1
+```
+
+???? `platforms/fabric/1.17-1.18/bundle/build/libs/`??????? 1.17?1.17.1?1.18?1.18.1
+? 1.18.2 ?????????? Fabric Loader ???????????????????
+
 ## Fabric 1.19.x ?? JAR
 
 ?? JDK 17?
@@ -173,6 +185,17 @@ Forge 43.5.2 從 Forge 官方 Maven 解析。發佈時應使用
 ```
 
 發佈時使用 `platforms/forge/modern/1.16.5/build/release/` 中的標準命名執行階段 JAR。
+
+## Fabric 1.14/1.15 ? JAR / ?? JAR
+
+????? Java 8?Gradle ???? D ??
+
+```powershell
+$env:GRADLE_USER_HOME = "D:\Gradle\cache"
+.\gradlew.bat :platform-fabric-1.14-1.15.x:build --max-workers=1
+```
+
+???? `platforms/fabric/1.14-1.15/bundle/build/libs/`??? 1.14?1.15.2 ??????????
 
 ## 1.16.5 Fabric
 

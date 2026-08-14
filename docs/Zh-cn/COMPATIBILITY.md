@@ -10,8 +10,10 @@
 | --- | --- | --- | --- | --- | --- |
 | 1.8.9 | Forge 11.15.1.2318 | 8 | 通过 | 历史基线通过 | 待确认 |
 | 1.12.2 | Forge 14.23.5.2860 | 8 | 通过 | 历史基线通过 | 待确认 |
-| 1.16.5 | Fabric Loader 0.19.3 + Fabric API 0.42.0 | 8 | 通过，metadata 与 Mixin 已检查 | 待验证 | 待验证 |
+| All 1.14/1.15 releases (1.14-1.15.2), single JAR | Fabric Loader 0.19.3 + Fabric API 0.28.5 | 8 | Passed; exact Loader selection passed for all eight versions | Pending | Pending |
 | All 1.16 releases (1.16-1.16.5), single JAR | Fabric Loader 0.19.3 + Fabric API 0.42.0 | 8 | Passed; exact Loader selection passed for all six versions | Pending | Pending |
+| 1.16.5 | Fabric Loader 0.19.3 + Fabric API 0.42.0 | 8 | 通过，metadata 与 Mixin 已检查 | 待验证 | 待验证 |
+| ?? 1.17/1.18 ???1.17-1.18.2??? JAR? | Fabric Loader 0.19.3 | 17 | ????????????? Loader ???? | ??? | ??? |
 | 1.16.5 | Forge 36.2.42 | 8 | 通过，SRG 与 refmap 已检查 | 待验证 | 待验证 |
 | 1.19.2 | Fabric Loader 0.19.3 + Fabric API 0.77.0 | 17 | 通过，metadata 与 Mixin 已检查 | 待验证 | 待验证 |
 | ?? 1.19 ???1.19-1.19.4??? JAR? | Fabric Loader 0.19.3 | 17 | ????????????? Loader ???? | ??? | ??? |
@@ -27,7 +29,7 @@
 | 26.1、26.1.1、26.1.2、26.2 | Forge 62.0.9–65.1.1 | 25 | 四个精确目标全部编译通过 | 待验证 | 待验证 |
 | 26.1、26.1.1、26.1.2、26.2 单一 JAR | Fabric Loader 0.19.3 | 25 | 通过；四个版本的 Loader 选择测试均通过 | 26.1 历史基线通过 | 待验证 |
 
-33 个精确构建产物共享同一套翻译核心，并整理为 14 个直接安装的发布 JAR。1.20.1 Fabric 已完成 Loom 重映射，1.20.1 Forge
+35 个精确构建产物共享同一套翻译核心，并整理为 14 个直接安装的发布 JAR。1.20.1 Fabric 已完成 Loom 重映射，1.20.1 Forge
 产物已重命名为该版本运行时使用的 SRG 名称且包含九个 Mixin 类的 refmap；1.21.11
 Forge 已适配 Forge 7 事件总线和 Mojmap 运行时。1.21.11 Forge 的启动流程已通过
 ForgeBootstrap 并到达 GLFW 图形初始化，随后因自动化环境没有主显示器而停止，因此
