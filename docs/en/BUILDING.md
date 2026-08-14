@@ -240,6 +240,20 @@ $env:GRADLE_USER_HOME = "D:\Gradle\cache"
 Outputs are written to `platforms/fabric/1.13/versions/1.13.0/build/libs/` and
 `platforms/fabric/1.13/versions/1.13.1/build/libs/`.
 
+## Fabric 1.0.0 through 1.8.8 (Ornithe bundle)
+
+Ornithe currently publishes Fabric Loader Gen2 profiles for 38 stable releases in this range. The
+bundle selects the exact nested implementation and keeps these legacy releases in one installable
+JAR:
+
+```powershell
+$env:GRADLE_USER_HOME = "D:\Gradle\cache"
+.\gradlew.bat :platform-fabric-1.0-1.8.x:build --max-workers=1
+```
+
+The verified bundle is written to
+`platforms/fabric/1.0-1.8/bundle/build/libs/mc-auto-translation-tool-fabric-1.0.0-1.8.8-1.3.0.jar`.
+
 ## Fabric 1.8.9 through 1.12.2 (Ornithe bundle)
 
 Ornithe provides Fabric Loader profiles and Calamus intermediary mappings for all 15 releases in
