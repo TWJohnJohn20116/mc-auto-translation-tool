@@ -1,0 +1,36 @@
+plugins { id "java" }
+
+repositories {
+    maven { url = "https://maven.fabricmc.net/" }
+    maven { url = "https://maven.ornithemc.net/releases/" }
+    mavenCentral()
+}
+
+version = project.mod_version
+group = project.maven_group
+base { archivesName = "mc-auto-translation-tool-fabric-1.7.3" }
+
+dependencies { compileOnly "net.fabricmc:fabric-loader:0.19.3" }
+
+sourceSets {
+    main {
+        java.srcDir rootProject.file("platforms/fabric/1.0-1.8/shared/common/src/main/java")
+        resources.srcDir rootProject.file("platforms/fabric/1.0-1.8/shared/common/src/main/resources")
+    }
+}
+
+processResources {
+    inputs.property "version", project.version
+    filesMatching("fabric.mod.json") { expand "version": project.version }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+    options.release = 8
+}
+
+java { withSourcesJar() }
+jar {
+    from(rootProject.file("LICENSE")) { rename { "LICENSE_universal_translator" } }
+    from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) { rename { "THIRD_PARTY_OFFLINE.md" } }
+}
