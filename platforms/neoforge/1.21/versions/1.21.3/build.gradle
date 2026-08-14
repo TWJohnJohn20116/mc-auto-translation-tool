@@ -1,0 +1,65 @@
+plugins {
+    id "java"
+    id "net.neoforged.moddev" version "${moddev_version}"
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = "mc-auto-translation-tool-neoforge-${minecraft_neoforge_1_21_3_version}"
+}
+
+def forgeShared = rootProject.file("platforms/forge/1.21/shared")
+def forgeCommon = new File(forgeShared, "common")
+def forgeFamily = new File(forgeShared, "1.21-1.21.5")
+
+neoForge {
+    version = project.neoforge_1_21_3_version
+
+    runs {
+        client {
+            client()
+        }
+    }
+
+    mods {
+        "universal_translator" {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+sourceSets {
+    main {
+        java.srcDir project(":translator-core").file("src/main/java")
+        java.srcDir new File(forgeCommon, "src/main/java")
+        java.srcDir new File(forgeFamily, "src/main/java")
+        java.exclude "**/UniversalTranslatorForgeMod.java"
+        java.exclude "**/UniversalTranslatorForgeClient.java"
+    }
+}
+
+tasks.named("processResources", ProcessResources).configure {
+    from(new File(forgeCommon, "src/main/resources")) {
+        exclude "universal-translator.forge.mixins.json"
+    }
+    inputs.property "version", project.version
+    filesMatching("META-INF/neoforge.mods.toml") {
+        expand "version": project.version
+    }
+}
+
+tasks.named("jar", Jar).configure {
+    from(rootProject.file("LICENSE")) {
+        rename { "LICENSE_universal_translator" }
+    }
+    from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) {
+        rename { "THIRD_PARTY_OFFLINE.md" }
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+    options.release = 21
+}
