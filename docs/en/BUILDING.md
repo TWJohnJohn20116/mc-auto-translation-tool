@@ -215,6 +215,17 @@ Output is written to `platforms/fabric/1.14-1.15/bundle/build/libs/`. The bundle
 implementations for 1.14, 1.14.1, 1.14.2, 1.14.3, 1.14.4, 1.15, 1.15.1, and 1.15.2; Fabric Loader
 selects the matching implementation and the build verifies all eight selections.
 
+## Legacy Fabric 1.13.2
+
+Legacy Fabric 1.13 support is provided by the 1.13.2 target and uses Java 8. Keep the Gradle cache on the D: drive:
+
+```powershell
+$env:GRADLE_USER_HOME = "D:\Gradle\cache"
+.\gradlew.bat :platform-fabric-1.13.2:build --max-workers=1
+```
+
+Output is written to `platforms/fabric/1.13/versions/1.13.2/build/libs/`.
+
 ## Fabric 1.16.5
 
 The current Gradle/Loom build requires JDK 17 or later, while the output targets Java 8:
