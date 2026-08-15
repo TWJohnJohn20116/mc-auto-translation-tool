@@ -74,6 +74,15 @@ def splitEnvironment = !(gameVersion in ["1.14", "1.14.1", "1.14.2", "1.14.3", "
         "1.15", "1.15.1", "1.15.2", "1.16", "1.16.1", "1.16.2", "1.16.3", "1.16.4", "1.16.5", "1.17", "1.17.1"])
 def early114115 = gameVersion.startsWith("1.14") || gameVersion.startsWith("1.15")
 def early116 = gameVersion in ["1.16", "1.16.1"]
+def hasModMenu = !(early114115 || early116 || gameVersion in ["1.16.2", "1.16.3", "1.16.4"])
+def modmenuEntrypoint = hasModMenu ? """,
+    "modmenu": [
+      "org.universaltranslator.fabric.ModMenuIntegration"
+    ]""" : ""
+def modmenuSuggests = hasModMenu ? """,
+  "suggests": {
+    "modmenu": "*"
+  }""" : ""
 
 version = project.mod_version
 group = project.maven_group
@@ -141,7 +150,9 @@ processResources {
             "minecraftVersion": gameVersion,
             "loaderVersion": project.ext.legacyLoaderVersion,
             "javaVersion": project.ext.legacyJavaRelease,
-            "fabricDependency": project.ext.legacyFabricDependency
+            "fabricDependency": project.ext.legacyFabricDependency,
+            "modmenuEntrypoint": modmenuEntrypoint,
+            "modmenuSuggests": modmenuSuggests
     )
     filesMatching("fabric.mod.json") {
         expand(
@@ -149,7 +160,9 @@ processResources {
                 "minecraftVersion": gameVersion,
                 "loaderVersion": project.ext.legacyLoaderVersion,
                 "javaVersion": project.ext.legacyJavaRelease,
-                "fabricDependency": project.ext.legacyFabricDependency
+                "fabricDependency": project.ext.legacyFabricDependency,
+                "modmenuEntrypoint": modmenuEntrypoint,
+                "modmenuSuggests": modmenuSuggests
         )
     }
 }
@@ -190,3 +203,8 @@ tasks.register("verifyBuiltJar", Exec) {
 tasks.named("build").configure {
     dependsOn tasks.named("verifyBuiltJar")
 }
+
+ext.modmenuEnabled = hasModMenu
+ext.modmenuApiFamily = "yarn"
+ext.modmenuClientSourceSet = splitEnvironment ? "client" : "main"
+apply from: rootProject.file("platforms/fabric/modmenu/modmenu.gradle")

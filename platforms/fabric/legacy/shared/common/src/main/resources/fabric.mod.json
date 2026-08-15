@@ -16,7 +16,7 @@
   "entrypoints": {
     "client": [
       "org.universaltranslator.fabric.UniversalTranslatorFabricClient"
-    ]
+    ]${modmenuEntrypoint}
   },
   "mixins": [
     "universal-translator.fabric.mixins.json"
@@ -26,5 +26,5 @@
     "minecraft": "${minecraftVersion}",
     "java": ">=${javaVersion}",
     "${fabricDependency}": "*"
-  }
+  }${modmenuSuggests}
 }

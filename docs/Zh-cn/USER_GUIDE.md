@@ -25,7 +25,8 @@
 
 ## 第一次设置
 
-以下图形设置步骤适用于 Fabric、Forge 和 NeoForge。进入游戏后按 `U` 打开设置。
+以下图形设置步骤适用于 Fabric、Forge 和 NeoForge。进入游戏后按 `U` 打开设置；
+已安装 Mod Menu 的 Fabric 实例也可从模组列表打开同一页面。
 仍会生成 `config/universal-translator.properties`，供腾讯云密钥等进阶选项使用；
 `F8` 可随时切换总开关。
 

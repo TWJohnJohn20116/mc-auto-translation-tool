@@ -32,10 +32,11 @@
 1. 确认游戏使用的 **Minecraft 版本、模组加载器和 Java 版本**。
 2. 打开 [最新 Release](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest)，按下表选择 JAR。
 3. 将 JAR 放进该游戏实例的 `mods` 文件夹。Fabric 还需安装对应版本的 Fabric API。
-4. 启动游戏。按 `F8` 开启或关闭自动翻译；按 `U` 打开设置。
+4. 启动游戏。按 `F8` 开启或关闭自动翻译；按 `U` 打开设置。若已安装 Mod Menu，也可在模组列表打开同一设置页。
 5. 首次使用建议选择“离线”与“仅译文”。详细步骤见[安装与使用指南](docs/Zh-cn/USER_GUIDE.md)。
 
 Fabric、Forge 与 NeoForge 均可按 `U` 打开图形设置，直接编辑屏蔽词、玩家名翻译等选项。
+已安装 Mod Menu 的 Fabric 实例也可从模组列表进入同一设置页。
 腾讯云密钥等进阶选项仍可写在游戏实例的 `config/universal-translator.properties`。
 
 ## 下载与版本选择

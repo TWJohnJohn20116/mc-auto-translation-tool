@@ -26,7 +26,8 @@ adjacent versions or interchange Fabric and Forge files.
 ## First-time setup
 
 The graphical steps below apply to Fabric, Forge, and NeoForge. Press `U` to open
-settings in-game. A `config/universal-translator.properties` file is still created
+settings in-game, or open the same screen from Mod Menu's mods list when that mod
+is installed. A `config/universal-translator.properties` file is still created
 for advanced options such as Tencent credentials; `F8` toggles the master switch
 at any time.
 

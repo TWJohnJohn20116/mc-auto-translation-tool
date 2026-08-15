@@ -1,0 +1,29 @@
+def enabled = !project.ext.has("modmenuEnabled") || project.ext.modmenuEnabled
+if (!enabled) {
+    return
+}
+
+def requiredProperties = ["modmenuApiFamily", "modmenuClientSourceSet"]
+requiredProperties.each { propertyName ->
+    if (!project.ext.has(propertyName)) {
+        throw new GradleException("Missing ${propertyName} before applying Fabric modmenu.gradle")
+    }
+}
+
+def apiFamily = project.ext.modmenuApiFamily.toString()
+def targetName = project.ext.modmenuClientSourceSet.toString()
+def modmenuRoot = rootProject.file("platforms/fabric/modmenu")
+def apiSources = new File(modmenuRoot, "api/${apiFamily}/src/main/java")
+def integrationSources = new File(modmenuRoot, "integration/${apiFamily}/src/client/java")
+if (!apiSources.isDirectory() || !integrationSources.isDirectory()) {
+    throw new GradleException("Mod Menu stub sources are missing for family ${apiFamily}")
+}
+
+sourceSets.named(targetName) {
+    java.srcDir apiSources
+    java.srcDir integrationSources
+}
+
+tasks.matching { it.name == "jar" || it.name == "remapJar" || it.name == "sourcesJar" || it.name == "remapSourcesJar" }.configureEach {
+    exclude "com/terraformersmc/modmenu/**"
+}

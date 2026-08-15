@@ -25,7 +25,8 @@ Fabric 與 Forge 之間混用。
 
 ## 首次設定
 
-以下圖形設定步驟適用於 Fabric、Forge 與 NeoForge。進入遊戲後按 `U` 開啟設定。
+以下圖形設定步驟適用於 Fabric、Forge 與 NeoForge。進入遊戲後按 `U` 開啟設定；
+已安裝 Mod Menu 的 Fabric 實例也可從模組清單開啟同一頁面。
 仍會產生 `config/universal-translator.properties`，供騰訊雲金鑰等進階選項使用；
 `F8` 可隨時切換總開關。
 

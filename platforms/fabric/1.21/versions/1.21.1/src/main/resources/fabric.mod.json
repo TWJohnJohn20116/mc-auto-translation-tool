@@ -16,11 +16,17 @@
   "entrypoints": {
     "client": [
       "org.universaltranslator.fabric.UniversalTranslatorFabricClient"
+    ],
+    "modmenu": [
+      "org.universaltranslator.fabric.ModMenuIntegration"
     ]
   },
   "mixins": [
     "universal-translator.fabric.mixins.json"
   ],
+  "suggests": {
+    "modmenu": "*"
+  },
   "depends": {
     "fabricloader": ">=0.19.3",
     "minecraft": "1.21.1",
