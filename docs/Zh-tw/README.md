@@ -23,6 +23,7 @@
 | 多種服務 | 內建多種中國大陸機器翻譯與 LLM 服務，也支援 LibreTranslate、OpenAI 相容及自訂 HTTP JSON API |
 | 流暢與穩定 | 翻譯在背景執行；尚未完成或服務異常時繼續顯示原文，不阻塞渲染執行緒 |
 | 隱私保護 | 玩家名稱預設在本機分離，也可主動開啟翻譯；伺服器位址、網址、數字與格式碼仍會保持保護 |
+| 屏蔽關鍵詞 | 自訂不翻譯關鍵詞；符合的整段文字保持原樣，不會進入離線模型或線上 API |
 | 本機快取 | 合併相同請求並快取譯文，降低重複翻譯的延遲與線上服務費用 |
 | 可選傳送翻譯 | 可將一般聊天翻譯後依序傳送；此功能預設關閉，指令永遠保持原樣 |
 
@@ -34,18 +35,30 @@
 4. 啟動遊戲。按 `F8` 開啟或關閉自動翻譯；按 `U` 開啟設定。
 5. 首次使用建議選擇「離線」與「僅譯文」。詳細步驟請見[安裝與使用指南](USER_GUIDE.md)。
 
+Fabric、Forge 與 NeoForge 均可按 `U` 開啟圖形設定，直接編輯屏蔽詞、玩家名稱翻譯等選項。
 騰訊雲金鑰等進階選項仍可寫在遊戲實例的 `config/universal-translator.properties`。
 
 ## 下載與版本選擇
 
 正式版將 27 個精確版本建置產物整理為 **13 個可直接安裝的 JAR**。Fabric 使用一個由 Loader
 自動選擇內嵌實作的全版本 JAR；Forge 只在已驗證相容的相鄰版本間共用 JAR。
+原始碼中另有已完成建置與 Loader 選版的鄰近 Fabric 族群、Ornithe 舊版，以及 NeoForge 1.21.3／1.21.11；
+這些目標尚未打入目前 GitHub 正式版，請不要把 v1.3.3 的 `fabric-all` 用在未列出的遊戲版本上。
 
-下表提供目前正式版各 JAR 的直接下載連結。發佈新版本時，這些連結會隨 README 一併更新：
+下表提供目前正式版各 JAR 的直接下載連結，並列出已驗證但尚未隨 v1.3.3 提供的版本。
+發佈新版本時，這些連結會隨 README 一併更新：
 
 | Minecraft | 載入器 | Java | 下載 |
 | --- | --- | ---: | --- |
 | 1.16.5、1.19.2、1.20.1、1.21–1.21.11、26.1–26.2 | Fabric | 8 / 17 / 21 / 25 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.3/MCAutoTranslationTool-1.3.3-fabric-all.jar) |
+| 1.0.0–1.8.8 | Fabric（Ornithe） | 8 | 尚未隨 v1.3.3 提供 |
+| 1.8.9–1.12.2 | Fabric（Ornithe） | 8 | 尚未隨 v1.3.3 提供 |
+| 1.13、1.13.1、1.13.2 | Fabric | 8 | 尚未隨 v1.3.3 提供 |
+| 1.14–1.15.2 | Fabric | 8 | 尚未隨 v1.3.3 提供 |
+| 1.16–1.16.4 | Fabric | 8 | 尚未隨 v1.3.3 提供（1.16.5 見上方全版本 JAR） |
+| 1.17–1.18.2 | Fabric | 17 | 尚未隨 v1.3.3 提供 |
+| 1.19、1.19.1、1.19.3、1.19.4 | Fabric | 17 | 尚未隨 v1.3.3 提供（1.19.2 見上方全版本 JAR） |
+| 1.20、1.20.2–1.20.6 | Fabric | 17 / 21 | 尚未隨 v1.3.3 提供（1.20.1 見上方全版本 JAR） |
 | 1.8.9 | Forge | 8 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.3/MCAutoTranslationTool-1.3.3-mc1.8.9-forge.jar) |
 | 1.12.2 | Forge | 8 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.3/MCAutoTranslationTool-1.3.3-mc1.12.2-forge.jar) |
 | 1.16.5 | Forge | 8 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.3/MCAutoTranslationTool-1.3.3-mc1.16.5-forge.jar) |
@@ -58,6 +71,8 @@
 | 26.2 | Forge | 25 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.3/MCAutoTranslationTool-1.3.3-mc26.2-forge.jar) |
 | 1.20.1 | NeoForge 47.1.106–47.1.x | 17 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.3/MCAutoTranslationTool-1.3.3-mc1.20.1-neoforge.jar) |
 | 1.21.1 | NeoForge 21.1.248 | 21 | [下載 JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.3/MCAutoTranslationTool-1.3.3-mc1.21.1-neoforge.jar) |
+| 1.21.3 | NeoForge 21.3.97 | 21 | 尚未隨 v1.3.3 提供 |
+| 1.21.11 | NeoForge 21.11.45 | 21 | 尚未隨 v1.3.3 提供 |
 
 > **不要跨載入器或超出檔名範圍混用 JAR。** 相鄰 Minecraft 版本的渲染 API 與 Mixin
 > 目標可能不同；只有完成驗證的版本才會寫入發佈 metadata。
@@ -84,6 +99,7 @@
 - API Key 只儲存在目前遊戲實例的設定檔中。遠端端點必須使用 HTTPS。
 - 可以分別關閉聊天內容、其他介面與玩家主動傳送翻譯；傳送翻譯預設關閉。
 - 快取鍵使用 SHA-256，原文不會以明文形式寫入快取檔案。
+- 命中屏蔽關鍵詞的文字會留在本機，不會傳送到翻譯服務。
 
 完整線上服務及自訂請求設定請見[線上翻譯 API 設定](ONLINE_APIS.md)；
 其餘設定、模型下載說明與常見問題請見[安裝與使用指南](USER_GUIDE.md)。
