@@ -32,11 +32,11 @@ chat, quest books, mod menus, scoreboards, item descriptions, and signs.
 1. Check the **Minecraft version, mod loader, and Java version** used by the game instance.
 2. Open the [latest release](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest) and select a JAR from the table below.
 3. Put the JAR in that instance's `mods` folder. Fabric also requires the matching version of Fabric API.
-4. Start the game. Press `F8` to toggle automatic translation; press `U` to open settings or reload the configuration.
+4. Start the game. Press `F8` to toggle automatic translation; press `U` to open settings.
 5. For a first run, choose **Offline** and **Translated only**. See the [installation and usage guide](USER_GUIDE.md) for details.
 
-The settings entry point differs slightly between Forge versions. When manual configuration is required,
-edit `config/universal-translator.properties` in the game instance, save it, and press `U` to reload.
+Tencent Hunyuan credentials and other advanced provider keys can still be edited in
+`config/universal-translator.properties` if the in-game editor does not expose them.
 
 ## Downloads and version selection
 

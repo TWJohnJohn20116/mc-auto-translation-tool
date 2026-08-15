@@ -68,11 +68,18 @@ public final class ForgeTranslationRuntime {
         if (active == null || config == null || !config.allows(kind)
                 || (!config.translateVanilla && kind == TextKind.OTHER
                 && MinecraftContentScope.isVanillaScreen(ForgeLocalTextGuard.currentScreen(client)))
+                || isSettingsScreen(ForgeLocalTextGuard.currentScreen(client))
                 || ForgeLocalTextGuard.isLocalChatInput(client, original)
                 || RECENT_USER_TEXT.shouldPreserve(original)) {
             return original;
         }
         return active.lookup(original, kind);
+    }
+
+    private static boolean isSettingsScreen(Object screen) {
+        return screen instanceof UniversalTranslatorConfigScreen
+                || screen instanceof UniversalTranslatorDiagnosticsScreen
+                || screen instanceof UniversalTranslatorLlmConfigScreen;
     }
 
     static synchronized void shutdown() {

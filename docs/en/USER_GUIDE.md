@@ -25,10 +25,10 @@ adjacent versions or interchange Fabric and Forge files.
 
 ## First-time setup
 
-The graphical steps below apply to Fabric and legacy Forge. Forge 1.20.1/1.21.11 creates
-`config/universal-translator.properties` on first start. Close the game, set `enabled=true` and
-other options in a plain-text editor, then restart or press `U` to reload; `F8` still toggles the
-master switch at any time.
+The graphical steps below apply to Fabric, Forge, and NeoForge. Press `U` to open
+settings in-game. A `config/universal-translator.properties` file is still created
+for advanced options such as Tencent credentials; `F8` toggles the master switch
+at any time.
 
 1. Enter any world or server and press `U` to open the settings.
 2. Click “Target language” and choose from the two-column list that opens directly on the current

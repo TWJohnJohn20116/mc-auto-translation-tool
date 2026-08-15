@@ -82,8 +82,8 @@ Fabric 1.21.x 与 26.x 各提供一个整合 JAR；整合包内仍保留精确�
 模组初始化，发行 JAR 的版本、Mixin/refmap、运行时映射与 SHA-256 均通过自动校验。
 详细验证层级见兼容性矩阵。
 
-Fabric 版本按 `U` 打开设置。Forge 1.16.5/1.19.2/1.20.1/1.21.11/26.x 修改
-`config/universal-translator.properties` 后按 `U` 重新载入。模组默认关闭；新安装默认选择“离线”，并使用
+Fabric、Forge 与 NeoForge 均按 `U` 打开设置。腾讯云密钥等进阶选项仍可写在
+`config/universal-translator.properties`。模组默认关闭；新安装默认选择“离线”，并使用
 “仅译文”替换方式，避免记分板和容器文字因双语拼接溢出。按 `F8` 可随时开启或
 关闭翻译，两个快捷键都能在 Minecraft 按键绑定界面修改。首次遇到待翻译文字后会在后台下载约 10–17 MB 的平台引擎
 和 491 MB 的 Lite 模型，下载期间继续显示原文；模型默认优先使用 ModelScope
