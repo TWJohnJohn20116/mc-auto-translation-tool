@@ -3,6 +3,7 @@
   "package": "org.universaltranslator.fabric.mixin",
   "compatibilityLevel": "JAVA_8",
   "client": [
+    "TitleScreenMixin",
     "ScreenMixin",
     "ClientPlayerEntityMixin",
     "SignEditScreenMixin",

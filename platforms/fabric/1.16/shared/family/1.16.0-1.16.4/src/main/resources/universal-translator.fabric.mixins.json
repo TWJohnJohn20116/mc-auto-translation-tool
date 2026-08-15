@@ -1,7 +1,20 @@
 {
-  "required": false,
+  "required": true,
   "package": "org.universaltranslator.fabric.mixin",
   "compatibilityLevel": "JAVA_8",
-  "client": [],
-  "injectors": {"defaultRequire": 0}
+  "client": [
+    "TitleScreenMixin",
+    "ScreenMixin",
+    "ClientPlayerEntityMixin",
+    "SignEditScreenMixin",
+    "TextFieldWidgetMixin",
+    "TextRendererMixin",
+    "InGameHudContextMixin",
+    "ChatHudContextMixin",
+    "PlayerListHudContextMixin",
+    "BossBarHudContextMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
 }
