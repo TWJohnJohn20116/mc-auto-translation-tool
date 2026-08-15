@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "universal_translator",
+  "version": "${version}",
+  "name": "MC Auto Translation Tool",
+  "description": "Client bootstrap for Fabric 1.14.1. Yarn v2 for this snapshot cannot be remapped by Loom, so the full settings UI ships from 1.14.3 onward.",
+  "authors": ["272635"],
+  "contact": {"homepage": "https://space.bilibili.com/3546631091783712", "sources": "https://github.com/wuxiangdan96-byte/mc-auto-translation-tool"},
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {"client": ["org.universaltranslator.fabric.UniversalTranslatorFabricClient"]},
+  "mixins": ["universal-translator.fabric.mixins.json"],
+  "depends": {"fabricloader": ">=0.19.3", "minecraft": "1.14.1", "java": ">=8"}
+}

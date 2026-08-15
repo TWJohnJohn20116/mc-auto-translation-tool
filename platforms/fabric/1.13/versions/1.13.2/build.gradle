@@ -1,30 +1,11 @@
-plugins { id "java" }
-
-repositories {
-    maven { url = "https://maven.fabricmc.net/" }
-    maven { url = "https://maven.legacyfabric.net/" }
-    mavenCentral()
+plugins {
+    id "fabric-loom" version "${loom_ornithe_version}"
 }
 
-version = project.mod_version
-group = project.maven_group
-base { archivesName = "mc-auto-translation-tool-fabric-1.13.2" }
+ext.legacyMinecraftVersion = minecraft_1_13_2_version
+ext.legacyYarnMappings = legacy_yarn_1_13_2_mappings
+ext.legacyLoaderVersion = loader_1_13_2_version
+ext.legacyFabricApiVersion = legacy_fabric_api_1_13_2_version
+ext.legacyArchivesName = "1.13.2"
 
-dependencies { compileOnly "net.fabricmc:fabric-loader:0.16.10" }
-
-
-processResources {
-    inputs.property "version", project.version
-    filesMatching("fabric.mod.json") { expand "version": project.version }
-}
-
-tasks.withType(JavaCompile).configureEach {
-    options.encoding = "UTF-8"
-    options.release = 8
-}
-
-java { withSourcesJar() }
-jar {
-    from(rootProject.file("LICENSE")) { rename { "LICENSE_universal_translator" } }
-    from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) { rename { "THIRD_PARTY_OFFLINE.md" } }
-}
+apply from: rootProject.file("platforms/fabric/1.13/legacy.gradle")

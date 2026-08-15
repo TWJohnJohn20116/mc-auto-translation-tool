@@ -1,0 +1,21 @@
+package org.universaltranslator.fabric.mixin;
+
+import net.minecraft.client.gui.widget.TextFieldWidget;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.universaltranslator.fabric.TranslationRenderContext;
+
+@Mixin(TextFieldWidget.class)
+abstract class TextFieldWidgetMixin {
+    @Inject(method = "render()V", at = @At("HEAD"), require = 0)
+    private void universalTranslator$pushTextInput(CallbackInfo callback) {
+        TranslationRenderContext.pushTextInput();
+    }
+
+    @Inject(method = "render()V", at = @At("RETURN"), require = 0)
+    private void universalTranslator$popTextInput(CallbackInfo callback) {
+        TranslationRenderContext.popTextInput();
+    }
+}

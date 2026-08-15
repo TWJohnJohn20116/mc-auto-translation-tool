@@ -22,7 +22,9 @@ dependencies {
 
 def supportedVersions = ["1.8.9","1.9","1.9.1","1.9.2","1.9.3","1.9.4","1.10","1.10.1","1.10.2","1.11","1.11.1","1.11.2","1.12","1.12.1","1.12.2"]
 supportedVersions.each { gameVersion -> evaluationDependsOn(":platform-fabric-${gameVersion}") }
-def implementationJars = supportedVersions.collectEntries { gameVersion -> [(gameVersion): project(":platform-fabric-${gameVersion}").tasks.named("jar")] }
+def implementationJars = supportedVersions.collectEntries { gameVersion ->
+    [(gameVersion): project(":platform-fabric-${gameVersion}").tasks.named("remapJar")]
+}
 
 processResources {
     inputs.property "version", project.version

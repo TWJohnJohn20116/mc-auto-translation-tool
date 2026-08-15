@@ -1,0 +1,66 @@
+def gameVersion = project.ext.legacyMinecraftVersion.toString()
+def sharedRoot = rootProject.file("platforms/fabric/1.13/shared/legacy-1.13.2")
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = "mc-auto-translation-tool-fabric-${project.ext.legacyArchivesName ?: gameVersion}"
+}
+
+repositories {
+    maven { url = "https://maven.legacyfabric.net/" }
+}
+
+loom {
+    intermediaryUrl = 'https://maven.legacyfabric.net/net/legacyfabric/intermediary/%1$s/intermediary-%1$s-v2.jar'
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${gameVersion}"
+    mappings "net.legacyfabric:yarn:${project.ext.legacyYarnMappings}:v2"
+    modImplementation "net.fabricmc:fabric-loader:${project.ext.legacyLoaderVersion}"
+}
+
+sourceSets {
+    main {
+        java.srcDir project(":translator-core").file("src/main/java")
+        java.srcDir new File(sharedRoot, "src/main/java")
+        resources.srcDir new File(sharedRoot, "src/main/resources")
+    }
+}
+
+processResources {
+    inputs.properties(
+            "version": project.version,
+            "minecraftVersion": gameVersion,
+            "loaderVersion": project.ext.legacyLoaderVersion
+    )
+    filesMatching("fabric.mod.json") {
+        expand(
+                "version": project.version,
+                "minecraftVersion": gameVersion,
+                "loaderVersion": project.ext.legacyLoaderVersion
+        )
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+    options.release = 8
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+    withSourcesJar()
+}
+
+jar {
+    from(rootProject.file("LICENSE")) {
+        rename { "LICENSE_universal_translator" }
+    }
+    from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) {
+        rename { "THIRD_PARTY_OFFLINE.md" }
+    }
+}

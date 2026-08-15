@@ -1,0 +1,18 @@
+{
+  "required": true,
+  "package": "org.universaltranslator.fabric.mixin",
+  "compatibilityLevel": "JAVA_8",
+  "client": [
+    "TextRendererMixin",
+    "ChatHudMixin",
+    "ScreenMixin",
+    "TextFieldWidgetMixin",
+    "SignEditScreenMixin",
+    "TitleScreenMixin",
+    "MinecraftMixin",
+    "LocalClientPlayerEntityMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}

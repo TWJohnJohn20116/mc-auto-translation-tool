@@ -13,14 +13,14 @@ requiredProperties.each { propertyName ->
 }
 
 def sourceLayers = [
-        "1.14": ["family/1.14-1.15"],
-        "1.14.1": ["family/1.14-1.15"],
-        "1.14.2": ["family/1.14-1.15"],
-        "1.14.3": ["family/1.14-1.15"],
-        "1.14.4": ["family/1.14-1.15"],
-        "1.15": ["family/1.14-1.15"],
-        "1.15.1": ["family/1.14-1.15"],
-        "1.15.2": ["family/1.14-1.15"],
+        "1.14": ["family/1.14"],
+        "1.14.1": ["family/1.14"],
+        "1.14.2": ["family/1.14"],
+        "1.14.3": ["family/1.14"],
+        "1.14.4": ["family/1.14"],
+        "1.15": ["family/1.15"],
+        "1.15.1": ["family/1.15"],
+        "1.15.2": ["family/1.15"],
         "1.16": ["family/1.16-1.16.1"],
         "1.16.1": ["family/1.16-1.16.1"],
         "1.16.2": ["family/1.16.0-1.16.4", "family/1.16.5-1.19.2", "rendered/1.16.5"],
@@ -56,7 +56,7 @@ def rootForLayer = { layer ->
     if (layer == "family/1.16-1.16.1" || layer == "family/1.16.0-1.16.4" || layer == "family/1.16.5") {
         return rootProject.file("platforms/fabric/1.16/shared")
     }
-    if (layer == "family/1.14-1.15") {
+    if (layer == "family/1.14" || layer == "family/1.15" || layer == "family/1.14-1.15") {
         return rootProject.file("platforms/fabric/1.14-1.15/shared")
     }
     if (layer.startsWith("family/1.20")) {

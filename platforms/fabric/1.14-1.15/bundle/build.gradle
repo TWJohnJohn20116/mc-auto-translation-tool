@@ -1,4 +1,6 @@
-plugins { id "java" }
+plugins {
+    id "java"
+}
 
 repositories {
     maven { url = "https://maven.fabricmc.net/" }
@@ -7,51 +9,80 @@ repositories {
 
 version = project.mod_version
 group = project.maven_group
-base { archivesName = "mc-auto-translation-tool-fabric-1.14-1.15.x" }
 
-dependencies { compileOnly "net.fabricmc:fabric-loader:0.19.3" }
+dependencies {
+    testImplementation "net.fabricmc:fabric-loader:0.19.3"
+    testRuntimeOnly "org.ow2.asm:asm:9.10.1"
+    testRuntimeOnly "org.ow2.asm:asm-analysis:9.10.1"
+    testRuntimeOnly "org.ow2.asm:asm-commons:9.10.1"
+    testRuntimeOnly "org.ow2.asm:asm-tree:9.10.1"
+    testRuntimeOnly "org.ow2.asm:asm-util:9.10.1"
+    testRuntimeOnly "net.fabricmc:sponge-mixin:0.17.3+mixin.0.8.7"
+}
 
-sourceSets {
-    main {
-        java.srcDir rootProject.file("platforms/fabric/1.14-1.15/shared/family/1.14-1.15/src/client/java")
-        resources.srcDir rootProject.file("platforms/fabric/1.14-1.15/shared/family/1.14-1.15/src/main/resources")
-    }
+base {
+    archivesName = "mc-auto-translation-tool-fabric-1.14-1.15.x"
+}
+
+def remappedVersions = ["1.14.3", "1.14.4", "1.15", "1.15.1", "1.15.2"]
+def stubVersions = ["1.14", "1.14.1", "1.14.2"]
+def supportedVersions = stubVersions + remappedVersions
+supportedVersions.each { gameVersion ->
+    evaluationDependsOn(":platform-fabric-${gameVersion}")
+}
+def implementationJars = supportedVersions.collectEntries { gameVersion ->
+    def taskName = remappedVersions.contains(gameVersion) ? "remapJar" : "jar"
+    [(gameVersion): project(":platform-fabric-${gameVersion}").tasks.named(taskName)]
 }
 
 processResources {
     inputs.property "version", project.version
-    filesMatching("fabric.mod.json") { expand "version": project.version }
-}
-
-tasks.withType(JavaCompile).configureEach {
-    options.encoding = "UTF-8"
-    options.release = 8
+    filesMatching("fabric.mod.json") {
+        expand "version": project.version
+    }
 }
 
 jar {
-    from(rootProject.file("LICENSE")) { rename { "LICENSE_universal_translator" } }
-    from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) { rename { "THIRD_PARTY_OFFLINE.md" } }
+    dependsOn implementationJars.values()
+    supportedVersions.each { gameVersion ->
+        from(implementationJars[gameVersion].flatMap { it.archiveFile }) {
+            into "META-INF/jars"
+            rename { "universal-translator-${gameVersion}.jar" }
+        }
+    }
+    from(rootProject.file("LICENSE")) {
+        rename { "LICENSE_universal_translator_bundle" }
+    }
+    from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) {
+        rename { "THIRD_PARTY_OFFLINE.md" }
+    }
 }
 
 tasks.register("verifyBundle") {
     dependsOn jar
     doLast {
         def archive = jar.archiveFile.get().asFile
-        [
-                "fabric.mod.json",
-                "universal-translator.fabric.mixins.json",
-                "org/universaltranslator/fabric/UniversalTranslatorFabricClient.class"
-        ].each { path ->
+        def required = ["fabric.mod.json"] + supportedVersions.collect {
+            "META-INF/jars/universal-translator-${it}.jar"
+        }
+        required.each { path ->
             if (!zipTree(archive).matching { include path }.files) {
-                throw new GradleException("Missing direct bundle entry: ${path}")
+                throw new GradleException("Missing bundle entry: ${path}")
             }
         }
-        if (zipTree(archive).matching { include "META-INF/jars/*.jar" }.files) {
-            throw new GradleException("Fabric 1.14/1.15 direct bundle must not contain nested JARs")
-        }
-        println "Verified ${archive.name}: direct Java 8 implementation for all Minecraft 1.14/1.15 releases"
+        println "Verified ${archive.name}: all ${supportedVersions.size()} Minecraft 1.14/1.15 implementations present"
     }
 }
 
-java { withSourcesJar() }
-build.dependsOn verifyBundle
+tasks.register("verifyLoaderSelection", JavaExec) {
+    dependsOn jar, testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "org.universaltranslator.bundle.BundleResolutionVerifier"
+    args([jar.archiveFile.get().asFile.absolutePath] + supportedVersions)
+}
+
+test {
+    enabled = false
+}
+
+build.dependsOn verifyBundle, verifyLoaderSelection
