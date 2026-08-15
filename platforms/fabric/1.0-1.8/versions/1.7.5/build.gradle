@@ -4,7 +4,7 @@ plugins {
 }
 
 ext.ornitheMinecraftVersion = "1.7.5"
-ext.ornitheFeatherBuild = feather_build_1_7_10
+ext.ornitheFeatherBuild = "30"
 ext.ornitheLoaderVersion = loader_1_0_0_to_1_8_8_version
 
 apply from: rootProject.file("platforms/fabric/1.0-1.8/shared.gradle")

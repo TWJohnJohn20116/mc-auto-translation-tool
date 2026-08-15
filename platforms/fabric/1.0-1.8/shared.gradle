@@ -11,6 +11,11 @@ requiredProperties.each { propertyName ->
 
 def gameVersion = project.ext.ornitheMinecraftVersion.toString()
 def sharedRoot = rootProject.file("platforms/fabric/1.0-1.8/shared/common")
+def playerFamily = (gameVersion.startsWith("1.0") || gameVersion.startsWith("1.1")
+        || gameVersion.startsWith("1.2") || gameVersion.startsWith("1.3")
+        || gameVersion.startsWith("1.4") || gameVersion.startsWith("1.5"))
+        ? "1.3-1.5" : "1.6-1.8"
+def playerFamilyRoot = rootProject.file("platforms/fabric/1.0-1.8/shared/family/${playerFamily}")
 
 version = project.mod_version
 group = project.maven_group
@@ -34,6 +39,7 @@ sourceSets {
     main {
         java.srcDir project(":translator-core").file("src/main/java")
         java.srcDir new File(sharedRoot, "src/main/java")
+        java.srcDir new File(playerFamilyRoot, "src/main/java")
         resources.srcDir new File(sharedRoot, "src/main/resources")
     }
 }

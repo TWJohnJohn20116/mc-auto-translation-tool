@@ -3,7 +3,7 @@
   "id": "universal_translator",
   "version": "${version}",
   "name": "MC Auto Translation Tool",
-  "description": "Client-side automatic translation bootstrap for Legacy Fabric 1.13.2.",
+  "description": "Client-side automatic translation for server-provided text on Legacy Fabric 1.13.2.",
   "authors": ["272635"],
   "contact": {"homepage": "https://space.bilibili.com/3546631091783712", "sources": "https://github.com/wuxiangdan96-byte/mc-auto-translation-tool"},
   "license": "MIT",

@@ -125,14 +125,6 @@ public final class FabricTranslationRuntime {
         return protectedPlayerNames;
     }
 
-    private static String sessionUsername() {
-        try {
-            return Minecraft.getInstance().getSession().getUsername();
-        } catch (RuntimeException ignored) {
-            return null;
-        }
-    }
-
     private static void addProtectedLiteral(List<String> values, String value) {
         if (value == null) {
             return;
