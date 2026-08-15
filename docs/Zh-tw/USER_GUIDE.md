@@ -25,9 +25,9 @@ Fabric 與 Forge 之間混用。
 
 ## 首次設定
 
-以下圖形設定步驟適用於 Fabric 與舊版 Forge。Forge 1.20.1／1.21.11 首次啟動後會
-產生 `config/universal-translator.properties`；關閉遊戲，以純文字編輯器設定
-`enabled=true` 及其他選項，重新進入或按下 `U` 即可載入，`F8` 仍可隨時切換總開關。
+以下圖形設定步驟適用於 Fabric、Forge 與 NeoForge。進入遊戲後按 `U` 開啟設定。
+仍會產生 `config/universal-translator.properties`，供騰訊雲金鑰等進階選項使用；
+`F8` 可隨時切換總開關。
 
 1. 進入任意世界或伺服器，按 `U` 開啟設定。
 2. 點擊「目標語言」，直接在目前設定頁展開的雙欄清單中選擇；不會跳轉到其他頁面，

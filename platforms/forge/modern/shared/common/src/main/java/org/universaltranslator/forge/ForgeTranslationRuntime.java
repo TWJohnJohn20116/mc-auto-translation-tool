@@ -68,6 +68,9 @@ public final class ForgeTranslationRuntime {
         if (active == null || config == null || !config.allows(kind)
                 || (!config.translateVanilla && kind == TextKind.OTHER
                 && MinecraftContentScope.isVanillaScreen(ForgeLocalTextGuard.currentScreen(client)))
+                || client.screen instanceof UniversalTranslatorConfigScreen
+                || client.screen instanceof UniversalTranslatorDiagnosticsScreen
+                || client.screen instanceof UniversalTranslatorLlmConfigScreen
                 || ForgeLocalTextGuard.isLocalChatInput(client, original)
                 || RECENT_USER_TEXT.shouldPreserve(original)) {
             return original;
