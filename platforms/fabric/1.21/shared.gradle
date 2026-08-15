@@ -11,18 +11,18 @@ requiredProperties.each { propertyName ->
 }
 
 def sourceLayers = [
-        "1.21"   : ["runtime/pre-1.21.9", "draw/1.21-1.21.5", "text-renderer/1.21-1.21.1"],
-        "1.21.1" : ["runtime/pre-1.21.9", "draw/1.21-1.21.5", "text-renderer/1.21-1.21.1"],
-        "1.21.2" : ["runtime/pre-1.21.9", "draw/1.21-1.21.5", "text-renderer/1.21.2-1.21.5"],
-        "1.21.3" : ["runtime/pre-1.21.9", "draw/1.21-1.21.5", "text-renderer/1.21.2-1.21.5"],
-        "1.21.4" : ["runtime/pre-1.21.9", "draw/1.21-1.21.5", "text-renderer/1.21.2-1.21.5"],
-        "1.21.5" : ["runtime/pre-1.21.9", "draw/1.21-1.21.5", "text-renderer/1.21.2-1.21.5"],
-        "1.21.6" : ["runtime/pre-1.21.9", "draw/1.21.6-plus", "text-renderer/1.21.6-1.21.10"],
-        "1.21.7" : ["runtime/pre-1.21.9", "draw/1.21.6-plus", "text-renderer/1.21.6-1.21.10"],
-        "1.21.8" : ["runtime/pre-1.21.9", "draw/1.21.6-plus", "text-renderer/1.21.6-1.21.10"],
-        "1.21.9" : ["runtime/1.21.9-plus", "draw/1.21.6-plus", "text-renderer/1.21.6-1.21.10"],
-        "1.21.10": ["runtime/1.21.9-plus", "draw/1.21.6-plus", "text-renderer/1.21.6-1.21.10"],
-        "1.21.11": ["runtime/1.21.9-plus", "draw/1.21.6-plus", "text-renderer/1.21.11"]
+        "1.21"   : ["runtime/pre-1.21.9", "draw/1.21-1.21.5", "text-renderer/1.21-1.21.1", "input/pre-1.21.9"],
+        "1.21.1" : ["runtime/pre-1.21.9", "draw/1.21-1.21.5", "text-renderer/1.21-1.21.1", "input/pre-1.21.9"],
+        "1.21.2" : ["runtime/pre-1.21.9", "draw/1.21-1.21.5", "text-renderer/1.21.2-1.21.5", "input/pre-1.21.9"],
+        "1.21.3" : ["runtime/pre-1.21.9", "draw/1.21-1.21.5", "text-renderer/1.21.2-1.21.5", "input/pre-1.21.9"],
+        "1.21.4" : ["runtime/pre-1.21.9", "draw/1.21-1.21.5", "text-renderer/1.21.2-1.21.5", "input/pre-1.21.9"],
+        "1.21.5" : ["runtime/pre-1.21.9", "draw/1.21-1.21.5", "text-renderer/1.21.2-1.21.5", "input/pre-1.21.9"],
+        "1.21.6" : ["runtime/pre-1.21.9", "draw/1.21.6-plus", "text-renderer/1.21.6-1.21.10", "input/pre-1.21.9"],
+        "1.21.7" : ["runtime/pre-1.21.9", "draw/1.21.6-plus", "text-renderer/1.21.6-1.21.10", "input/pre-1.21.9"],
+        "1.21.8" : ["runtime/pre-1.21.9", "draw/1.21.6-plus", "text-renderer/1.21.6-1.21.10", "input/pre-1.21.9"],
+        "1.21.9" : ["runtime/1.21.9-plus", "draw/1.21.6-plus", "text-renderer/1.21.6-1.21.10", "input/1.21.9-plus"],
+        "1.21.10": ["runtime/1.21.9-plus", "draw/1.21.6-plus", "text-renderer/1.21.6-1.21.10", "input/1.21.9-plus"],
+        "1.21.11": ["runtime/1.21.9-plus", "draw/1.21.6-plus", "text-renderer/1.21.11", "input/1.21.9-plus"]
 ]
 
 def sourceVersion = project.ext.has("fabricSourceVersion") ?

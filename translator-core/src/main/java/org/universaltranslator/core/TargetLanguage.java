@@ -23,6 +23,10 @@ public final class TargetLanguage {
     private TargetLanguage() {
     }
 
+    public static String[] presets() {
+        return PRESETS.clone();
+    }
+
     public static String canonicalize(String language) {
         if (language == null) {
             return "";

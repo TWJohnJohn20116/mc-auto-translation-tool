@@ -24,6 +24,10 @@ public final class TranslationProviderCatalog {
     private TranslationProviderCatalog() {
     }
 
+    public static String[] values() {
+        return PROVIDERS.clone();
+    }
+
     public static String next(String current) {
         for (int index = 0; index < PROVIDERS.length; index++) {
             if (PROVIDERS[index].equalsIgnoreCase(current)) {

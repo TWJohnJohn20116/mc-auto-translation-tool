@@ -32,6 +32,7 @@ final class LegacyConfig {
     final boolean translateVanilla;
     final boolean translateOutgoing;
     final boolean translatePlayerNames;
+    final boolean animatedUi;
     final String blockedKeywords;
     final String targetLanguage;
     final String outgoingTargetLanguage;
@@ -67,6 +68,7 @@ final class LegacyConfig {
                 properties.getProperty("translate-outgoing", "false"));
         translatePlayerNames = Boolean.parseBoolean(
                 properties.getProperty("translate-player-names", "false"));
+        animatedUi = Boolean.parseBoolean(properties.getProperty("animated-ui", "true"));
         blockedKeywords = boundedKeywords(properties.getProperty("blocked-keywords", ""));
         targetLanguage = properties.getProperty("target-language", "zh-CN").trim();
         outgoingTargetLanguage = properties.getProperty(
@@ -159,7 +161,8 @@ final class LegacyConfig {
             boolean offlineAutoDownload,
             OfflineModel offlineModel,
             boolean apiFallback,
-            boolean diskCache
+            boolean diskCache,
+            boolean animatedUi
     ) {
         Properties properties = toProperties();
         properties.setProperty("enabled", Boolean.toString(enabled));
@@ -185,6 +188,7 @@ final class LegacyConfig {
                 (offlineModel == null ? OfflineModel.LITE : offlineModel).configName());
         properties.setProperty("api-fallback", Boolean.toString(apiFallback));
         properties.setProperty("disk-cache", Boolean.toString(diskCache));
+        properties.setProperty("animated-ui", Boolean.toString(animatedUi));
         return new LegacyConfig(properties, configFile, cacheFile);
     }
 
@@ -276,6 +280,7 @@ final class LegacyConfig {
         properties.setProperty("translate-vanilla", "true");
         properties.setProperty("translate-outgoing", "false");
         properties.setProperty("translate-player-names", "false");
+        properties.setProperty("animated-ui", "true");
         properties.setProperty("blocked-keywords", "");
         properties.setProperty("target-language", "zh-CN");
         properties.setProperty("outgoing-target-language", "en");
@@ -310,6 +315,7 @@ final class LegacyConfig {
         properties.setProperty("translate-vanilla", Boolean.toString(translateVanilla));
         properties.setProperty("translate-outgoing", Boolean.toString(translateOutgoing));
         properties.setProperty("translate-player-names", Boolean.toString(translatePlayerNames));
+        properties.setProperty("animated-ui", Boolean.toString(animatedUi));
         properties.setProperty("blocked-keywords", blockedKeywords);
         properties.setProperty("target-language", targetLanguage);
         properties.setProperty("outgoing-target-language", outgoingTargetLanguage);

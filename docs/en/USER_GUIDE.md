@@ -31,18 +31,21 @@ other options in a plain-text editor, then restart or press `U` to reload; `F8` 
 master switch at any time.
 
 1. Enter any world or server and press `U` to open the settings.
-2. Enter the target language, such as `zh-CN` for Simplified Chinese or `zh-TW` for Traditional
-   Chinese. The shortcut button cycles through Simplified Chinese, Traditional Chinese, and English.
-3. Prefer “Offline.” You can also select a built-in online service, an OpenAI-compatible endpoint,
-   or a configurable HTTP JSON API.
+2. Click “Target language” and choose from the two-column list that opens directly on the current
+   settings screen. It does not navigate away and no language code needs to be typed.
+3. Click “Translation service” and choose “Offline,” a built-in online service, an
+   OpenAI-compatible endpoint, or a configurable HTTP JSON API from the same in-place list.
 4. Choose whether chat content and other interface text may be sent, and whether to use the local cache.
 5. The default display option is “Translated only.” Replacing the source directly prevents bilingual text from overflowing scoreboards and chest interfaces; switch to “Original + translation” when needed.
 6. “Translate only English in mixed text” is enabled by default, so existing Chinese is not translated again.
 7. Choose a translation color. Select “Keep original color” to disable color differentiation.
-8. Read the privacy notice in the interface, enable automatic translation, and save.
+8. New installations use the animated interface by default. Use the “UI: Animated/Classic” button
+   in the top-right corner to preview either style and return to the original classic interface.
+   “Save and apply” keeps the selected style for the next time you open settings.
+9. Read the privacy notice in the interface, enable automatic translation, and save.
 
 “Outgoing translation” is disabled by default. Enable it separately to translate messages you send
-into the server's language, and enter an outgoing target such as `en` or `ja`. Commands are never
+into the server's language, and choose the outgoing target from the in-place list. Commands are never
 translated. If translation fails or exceeds that Minecraft version's chat length limit, the original
 message is sent and a local warning is shown.
 
@@ -65,6 +68,7 @@ translated-text-color=aqua
 offline-auto-download=true
 offline-model=lite
 api-fallback=false
+animated-ui=true
 ```
 
 When translatable text first appears, the mod downloads the llama.cpp engine for the current
@@ -99,7 +103,9 @@ game exits or the configuration is reapplied. Its runtime log is
 “Translation diagnostics” on the settings screen shows the current service, target language,
 offline model, model-file integrity, automatic-download setting, disk cache, and latest runtime
 state. The diagnostics page never displays API endpoints, keys, or server text, and it updates
-download and startup status while open.
+download and startup status while open. “Export log” writes a sanitized text report to
+`config/universal-translator-diagnostics/`; chat text, translations, endpoints, and keys are
+deliberately excluded, so that report can be attached to an issue.
 
 To try an existing LibreTranslate API when offline installation or startup fails, enable “API
 fallback.” Text may then be sent to the API; this option is disabled by default. Configure the

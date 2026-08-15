@@ -31,6 +31,7 @@ final class FabricConfig {
     final boolean translateVanilla;
     final boolean translateOutgoing;
     final boolean translatePlayerNames;
+    final boolean animatedUi;
     final String blockedKeywords;
     final String targetLanguage;
     final String outgoingTargetLanguage;
@@ -66,6 +67,7 @@ final class FabricConfig {
                 properties.getProperty("translate-outgoing", "false"));
         this.translatePlayerNames = Boolean.parseBoolean(
                 properties.getProperty("translate-player-names", "false"));
+        this.animatedUi = Boolean.parseBoolean(properties.getProperty("animated-ui", "true"));
         this.blockedKeywords = boundedKeywords(properties.getProperty("blocked-keywords", ""));
         this.targetLanguage = properties.getProperty("target-language", "zh-CN").trim();
         this.outgoingTargetLanguage = properties.getProperty(
@@ -156,7 +158,8 @@ final class FabricConfig {
             boolean offlineAutoDownload,
             OfflineModel offlineModel,
             boolean apiFallback,
-            boolean diskCache
+            boolean diskCache,
+            boolean animatedUi
     ) {
         Properties properties = toProperties();
         properties.setProperty("enabled", Boolean.toString(enabled));
@@ -182,6 +185,7 @@ final class FabricConfig {
                 (offlineModel == null ? OfflineModel.LITE : offlineModel).configName());
         properties.setProperty("api-fallback", Boolean.toString(apiFallback));
         properties.setProperty("disk-cache", Boolean.toString(diskCache));
+        properties.setProperty("animated-ui", Boolean.toString(animatedUi));
         return new FabricConfig(properties, configFile, cacheFile);
     }
 
@@ -271,6 +275,7 @@ final class FabricConfig {
         properties.setProperty("translate-vanilla", "true");
         properties.setProperty("translate-outgoing", "false");
         properties.setProperty("translate-player-names", "false");
+        properties.setProperty("animated-ui", "true");
         properties.setProperty("blocked-keywords", "");
         properties.setProperty("target-language", "zh-CN");
         properties.setProperty("outgoing-target-language", "en");
@@ -305,6 +310,7 @@ final class FabricConfig {
         properties.setProperty("translate-vanilla", Boolean.toString(translateVanilla));
         properties.setProperty("translate-outgoing", Boolean.toString(translateOutgoing));
         properties.setProperty("translate-player-names", Boolean.toString(translatePlayerNames));
+        properties.setProperty("animated-ui", Boolean.toString(animatedUi));
         properties.setProperty("blocked-keywords", blockedKeywords);
         properties.setProperty("target-language", targetLanguage);
         properties.setProperty("outgoing-target-language", outgoingTargetLanguage);

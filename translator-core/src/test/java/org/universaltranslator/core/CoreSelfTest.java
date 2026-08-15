@@ -65,6 +65,9 @@ public final class CoreSelfTest {
         selectsAndroidOfflineRuntime();
         configuresWindowsOfflineRuntimePath();
         preparesAsciiWindowsModelPath();
+        animatesSettingsUiDeterministically();
+        laysOutInPlaceSettingsLists();
+        exportsSecretFreeDiagnostics();
         reportsOfflineStartupDiagnostics();
         matchesTencentCloudOfficialSignatureVector();
         keepsOriginalTextInBilingualMode();
@@ -649,6 +652,55 @@ public final class CoreSelfTest {
         assertEquals(alreadyAscii.toAbsolutePath().normalize(),
                 OfflineProcessSupport.prepareModelPathForNativeProcess(
                         alreadyAscii, modelDigest, true));
+    }
+
+    private static void animatesSettingsUiDeterministically() {
+        long start = 1_000_000_000L;
+        assertEquals(0.0F, SettingsUiAnimation.openProgress(start, start));
+        assertEquals(1.0F, SettingsUiAnimation.openProgress(
+                start, start + SettingsUiAnimation.OPEN_DURATION_NANOS));
+        float midpoint = SettingsUiAnimation.openProgress(
+                start, start + SettingsUiAnimation.OPEN_DURATION_NANOS / 2L);
+        assertTrue(midpoint > 0.49F && midpoint < 0.51F);
+        assertEquals(150, SettingsUiAnimation.openingOverlayAlpha(0.0F));
+        assertEquals(0, SettingsUiAnimation.openingOverlayAlpha(1.0F));
+        assertEquals(50, SettingsUiAnimation.expandingHalfWidth(100, 0.5F));
+        assertTrue(SettingsUiAnimation.sweepX(10, 110, start) >= 10);
+        assertTrue(SettingsUiAnimation.sweepX(10, 110, start) <= 110);
+        assertEquals(0xFF000000, SettingsUiAnimation.pulseColor(start) & 0xFF000000);
+    }
+
+    private static void laysOutInPlaceSettingsLists() {
+        assertEquals(16, SettingsSelectionList.values(
+                SettingsSelectionList.Kind.PROVIDER).length);
+        assertEquals(10, SettingsSelectionList.values(
+                SettingsSelectionList.Kind.TARGET_LANGUAGE).length);
+        SettingsSelectionList.Layout layout = SettingsSelectionList.layout(320, 240, 16);
+        assertTrue(layout.x(0) < layout.x(1));
+        assertEquals(layout.y(0), layout.y(1));
+        assertTrue(layout.y(2) > layout.y(0));
+        assertTrue(layout.panelBottom < 240);
+        assertEquals(0, layout.optionAt(
+                layout.x(0) + 1, layout.y(0) + 1, 16));
+        assertEquals(1, layout.optionAt(
+                layout.x(1) + 1, layout.y(1) + 1, 16));
+        assertEquals(-1, layout.optionAt(0, 0, 16));
+        assertTrue(layout.contains(layout.panelLeft(), layout.panelTop));
+        assertFalse(layout.contains(0, 0));
+    }
+
+    private static void exportsSecretFreeDiagnostics() throws Exception {
+        Path directory = Files.createTempDirectory("universal-translator-diagnostics-");
+        Path report = DiagnosticsLogExporter.export(directory, java.util.Arrays.asList(
+                "Runtime: failed https://secret.example/translate",
+                "api-key=abc123",
+                "authorization: Bearer private-token"));
+        String output = new String(Files.readAllBytes(report), StandardCharsets.UTF_8);
+        assertTrue(output.contains("MC Auto Translation Tool - Diagnostics"));
+        assertFalse(output.contains("secret.example"));
+        assertFalse(output.contains("abc123"));
+        assertFalse(output.contains("private-token"));
+        assertTrue(output.contains("[address hidden]"));
     }
 
     private static void reportsOfflineStartupDiagnostics() throws Exception {
