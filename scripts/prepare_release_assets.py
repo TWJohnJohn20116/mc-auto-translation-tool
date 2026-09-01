@@ -284,6 +284,33 @@ def _build_forge_family(
     return name, output.getvalue()
 
 
+def unmerged_forge_groups(
+    jars: dict[str, tuple[Path, bytes]], release_version: str
+) -> list[tuple[str, ...]]:
+    """Report Forge versions with identical payloads that no family merges together.
+
+    Byte-identical payloads are the precondition `_build_forge_family` enforces, so any
+    such group outside `FORGE_FAMILIES` is a release JAR that could have been merged and
+    was not. Declared families are excluded because they are already collapsed.
+    """
+    declared = {member for family in FORGE_FAMILIES for member in family.members}
+    payloads: dict[str, bytes] = {}
+    for name, (_, data) in jars.items():
+        forge_version = _forge_version_from_name(name, release_version)
+        if forge_version is None or forge_version in declared:
+            continue
+        entries = _archive_files(data, {"META-INF/mods.toml"})
+        payloads[forge_version] = repr(sorted(entries.items())).encode("utf-8")
+    grouped: dict[bytes, list[str]] = {}
+    for forge_version, digest in payloads.items():
+        grouped.setdefault(digest, []).append(forge_version)
+    return [
+        tuple(sorted(group, key=_version_key))
+        for group in grouped.values()
+        if len(group) > 1
+    ]
+
+
 def prepare_release(
     release_dir: Path, output_dir: Path, version: str
 ) -> list[Path]:
@@ -302,6 +329,14 @@ def prepare_release(
             f"{version}: {', '.join(mismatched)}"
         )
     fabric, consumed = _fabric_implementations(jars)
+
+    for group in unmerged_forge_groups(jars, version):
+        print(
+            "NOTE: Forge "
+            + ", ".join(group)
+            + " have identical payloads and could share one JAR",
+            file=sys.stderr,
+        )
 
     forge_by_version: dict[str, tuple[str, bytes]] = {}
     for name, (_, data) in jars.items():
