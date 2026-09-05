@@ -8,7 +8,12 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from prepare_release_assets import FORGE_FAMILIES, PreparationError, prepare_release
+from prepare_release_assets import (
+    FORGE_FAMILIES,
+    PreparationError,
+    prepare_release,
+    unmerged_forge_groups,
+)
 
 
 def jar(entries: dict[str, bytes | str]) -> bytes:
@@ -185,6 +190,36 @@ class PrepareReleaseAssetsTest(unittest.TestCase):
             with zipfile.ZipFile(root / "assets" / neoforge.name) as archive:
                 self.assertEqual(b"loader-specific", archive.read("example/Class.class"))
 
+
+    def test_reports_identical_forge_payloads_outside_declared_families(self) -> None:
+        jars = {
+            "MCAutoTranslationTool-1.2.3-mc1.19.2-forge.jar": (
+                Path("a"),
+                forge_jar("1.19.2", b"shared"),
+            ),
+            "MCAutoTranslationTool-1.2.3-mc1.20.1-forge.jar": (
+                Path("b"),
+                forge_jar("1.20.1", b"shared"),
+            ),
+            "MCAutoTranslationTool-1.2.3-mc1.16.5-forge.jar": (
+                Path("c"),
+                forge_jar("1.16.5", b"distinct"),
+            ),
+        }
+        self.assertEqual(
+            [("1.19.2", "1.20.1")], unmerged_forge_groups(jars, "1.2.3")
+        )
+
+    def test_declared_families_are_not_reported_as_unmerged(self) -> None:
+        jars = {
+            f"MCAutoTranslationTool-1.2.3-mc{member}-forge.jar": (
+                Path(member),
+                forge_jar(member),
+            )
+            for family in FORGE_FAMILIES
+            for member in family.members
+        }
+        self.assertEqual([], unmerged_forge_groups(jars, "1.2.3"))
 
 if __name__ == "__main__":
     unittest.main()
