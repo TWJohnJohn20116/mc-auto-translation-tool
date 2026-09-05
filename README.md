@@ -3,6 +3,7 @@
 **模组权限已转给瓜瓜，有事不要问我（小张）了**
 
 模组原作者：https://space.bilibili.com/3546631091783712
+
 现维护者：https://space.bilibili.com/3546554256328745
 
 **MC Auto Translation Tool** 是一个面向 Minecraft Java 版的公益、开源、纯客户端全界面翻译模组。
