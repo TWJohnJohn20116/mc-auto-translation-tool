@@ -10,7 +10,7 @@ This document records only completed validation. “Builds successfully” is no
 - Compatibility mode no longer repeats newer optional switches after the first offline-engine startup failure, allowing launcher-cached older llama.cpp builds to start.
 - Startup exits, timeouts, permissions, missing files, unsupported CPU instructions, and memory-pressure termination now produce focused diagnostics using only the current attempt's appended log output.
 - The 1.21.x Forge and NeoForge release targets are validated on Java 21. Do not substitute Java 25: an older LWJGL native layer may terminate before a Java stack trace can be produced.
-- Remove 1.3.7 and every older copy from the `mods` directory when updating; keep exactly one 1.3.8 JAR matching the game version and loader.
+- Remove 1.3.8 and every older copy from the `mods` directory when updating; keep exactly one 1.3.9 JAR matching the game version and loader.
 
 ## Settings selection fix added in 1.3.5
 
