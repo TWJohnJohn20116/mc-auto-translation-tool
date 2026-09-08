@@ -46,73 +46,55 @@ const githubDownloadBase =
 const releaseFile = (target: string) =>
   `MCAutoTranslationTool-${releaseVersion}-mc${target}.jar`;
 
-const downloads = [
+const downloadGroups = [
   {
-    version: "1.8.9",
-    loader: "Forge",
-    java: "Java 8",
-    file: releaseFile("1.8.9-forge"),
+    title: "Fabric",
+    note: "一个 JAR 覆盖 1.16–1.21.11 与 26.1–26.2。Loader 按游戏版本选择内嵌实现。",
+    featured: true,
+    items: [
+      {
+        version: "1.16–1.21.11、26.1–26.2",
+        loader: "Fabric 全版本单一 JAR",
+        java: "Java 随游戏为 8 / 17 / 21 / 25",
+        file: `MCAutoTranslationTool-${releaseVersion}-fabric-all.jar`,
+      },
+    ],
   },
   {
-    version: "1.12.2",
-    loader: "Forge",
-    java: "Java 8",
-    file: releaseFile("1.12.2-forge"),
+    title: "Forge",
+    note: "只在已验证兼容的相邻版本间共用 JAR。",
+    featured: false,
+    items: [
+      { version: "1.8.9", loader: "Forge", java: "Java 8", file: releaseFile("1.8.9-forge") },
+      { version: "1.12.2", loader: "Forge", java: "Java 8", file: releaseFile("1.12.2-forge") },
+      { version: "1.16.5", loader: "Forge", java: "Java 8", file: releaseFile("1.16.5-forge") },
+      { version: "1.19.2", loader: "Forge", java: "Java 17", file: releaseFile("1.19.2-forge") },
+      { version: "1.20.1", loader: "Forge", java: "Java 17", file: releaseFile("1.20.1-forge") },
+      ...["1.21-1.21.5", "1.21.6-1.21.8", "1.21.9-1.21.11"].map((version) => ({
+        version: version.replaceAll("-", "–"),
+        loader: "Forge 兼容族群",
+        java: "Java 21",
+        file: releaseFile(`${version}-forge`),
+      })),
+      ...["26.1-26.1.2", "26.2"].map((version) => ({
+        version: version.replaceAll("-", "–"),
+        loader: "Forge 兼容族群",
+        java: "Java 25",
+        file: releaseFile(`${version}-forge`),
+      })),
+    ],
   },
   {
-    version: "1.16.5",
-    loader: "Forge",
-    java: "Java 8",
-    file: releaseFile("1.16.5-forge"),
+    title: "NeoForge",
+    note: "无法像 Fabric 那样合成单档：FML 不允许同一 JAR 内嵌多套同 modId 实现，且 1.20.1 与 1.21.1 / 1.21.3 / 1.21.11 的 API 互不兼容。",
+    featured: false,
+    items: [
+      { version: "1.20.1", loader: "NeoForge 47.1.x", java: "Java 17", file: releaseFile("1.20.1-neoforge") },
+      { version: "1.21.1", loader: "NeoForge 21.1.248", java: "Java 21", file: releaseFile("1.21.1-neoforge") },
+      { version: "1.21.3", loader: "NeoForge 21.3.97", java: "Java 21", file: releaseFile("1.21.3-neoforge") },
+      { version: "1.21.11", loader: "NeoForge 21.11.45", java: "Java 21", file: releaseFile("1.21.11-neoforge") },
+    ],
   },
-  {
-    version: "1.19.2",
-    loader: "Forge",
-    java: "Java 17",
-    file: releaseFile("1.19.2-forge"),
-  },
-  {
-    version: "1.20.1",
-    loader: "Forge",
-    java: "Java 17",
-    file: releaseFile("1.20.1-forge"),
-  },
-  {
-    version: "1.20.1",
-    loader: "NeoForge",
-    java: "Java 17",
-    file: releaseFile("1.20.1-neoforge"),
-  },
-  {
-    version: "1.16–1.20.6 / 1.21.x / 26.x",
-    loader: "Fabric 全版本单一 JAR",
-    java: "按 Minecraft 版本",
-    file: `MCAutoTranslationTool-${releaseVersion}-fabric-all.jar`,
-  },
-  ...["1.21-1.21.5", "1.21.6-1.21.8", "1.21.9-1.21.11"].map((version) => ({
-    version: version.replaceAll("-", "–"),
-    loader: "Forge 兼容族群",
-    java: "Java 21",
-    file: releaseFile(`${version}-forge`),
-  })),
-  {
-    version: "1.21.1",
-    loader: "NeoForge",
-    java: "Java 21",
-    file: releaseFile("1.21.1-neoforge"),
-  },
-  ...["1.21.3", "1.21.11"].map((version) => ({
-    version,
-    loader: "NeoForge",
-    java: "Java 21",
-    file: releaseFile(`${version}-neoforge`),
-  })),
-  ...["26.1-26.1.2", "26.2"].map((version) => ({
-    version: version.replaceAll("-", "–"),
-    loader: "Forge 兼容族群",
-    java: "Java 25",
-    file: releaseFile(`${version}-forge`),
-  })),
 ];
 
 export default function Home() {
@@ -268,23 +250,34 @@ export default function Home() {
         <div className="downloadIntro">
           <span className="sectionKicker light">1.3.8 正式版</span>
           <h2>免费使用，也欢迎一起把它做得更好。</h2>
-          <p>本次提供 15 个经过校验的 JAR，覆盖 Fabric、Forge 与 NeoForge 的已验证目标；修复开启发送消息翻译后，译文再次触发发送事件并被重复拦截、导致消息无法正常发出的问题，并完整保留此前的聊天兼容、离线模型、设置页、诊断、在线服务与自定义 API 修复。更新前请删除旧版，只保留与你的 Minecraft 版本及加载器完全对应的 1.3.8 文件。</p>
+          <p>先选加载器，再选 Minecraft 版本。本次提供 15 个经过校验的 JAR；修复开启发送消息翻译后，译文再次触发发送事件并被重复拦截、导致消息无法正常发出的问题。更新前请删除旧版，只保留与你的 Minecraft 版本及加载器完全对应的 1.3.8 文件。</p>
         </div>
-        <div className="downloadGrid">
-          {downloads.map((item) => (
-            <article className="downloadCard" key={`${item.version}-${item.loader}`}>
-              <div>
-                <strong>Minecraft {item.version}</strong>
-                <span>{item.loader} · {item.java}</span>
+        <div className="downloadGroups">
+          {downloadGroups.map((group) => (
+            <section className="downloadGroup" key={group.title} aria-labelledby={`download-${group.title}`}>
+              <h3 id={`download-${group.title}`}>{group.title}</h3>
+              <p>{group.note}</p>
+              <div className="downloadGrid">
+                {group.items.map((item) => (
+                  <article
+                    className={group.featured ? "downloadCard featured" : "downloadCard"}
+                    key={`${item.version}-${item.loader}`}
+                  >
+                    <div>
+                      <strong>Minecraft {item.version}</strong>
+                      <span>{item.loader} · {item.java}</span>
+                    </div>
+                    <a
+                      className="lightButton"
+                      href={`${githubDownloadBase}/${item.file}`}
+                      aria-label={`从 GitHub 下载 Minecraft ${item.version} ${item.loader} 版本`}
+                    >
+                      从 GitHub 下载 <span aria-hidden="true">↓</span>
+                    </a>
+                  </article>
+                ))}
               </div>
-              <a
-                className="lightButton"
-                href={`${githubDownloadBase}/${item.file}`}
-                aria-label={`从 GitHub 下载 Minecraft ${item.version} ${item.loader} 版本`}
-              >
-                从 GitHub 下载 <span aria-hidden="true">↓</span>
-              </a>
-            </article>
+            </section>
           ))}
         </div>
         <div className="downloadMeta">
