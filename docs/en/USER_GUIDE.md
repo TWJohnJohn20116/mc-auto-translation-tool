@@ -173,7 +173,7 @@ The endpoint, model name, and key are stored only in the current game instance's
 
 ### Other online services and custom APIs
 
-Version 1.3.9 includes adapters for Baidu, Tencent Cloud TMT, Alibaba Cloud MT, Youdao,
+Version 1.3.10 includes adapters for Baidu, Tencent Cloud TMT, Alibaba Cloud MT, Youdao,
 Volcengine MT, iFlytek, Huawei Cloud, DeepSeek, Qwen, Volcengine Ark, and Zhipu. Custom HTTPS or
 loopback HTTP JSON request templates, headers, and response paths are supported as well. See the
 [online API configuration guide](ONLINE_APIS.md) for provider IDs, properties, examples, and safety limits.
@@ -242,7 +242,7 @@ chat verification may impose their own restrictions, which is why the feature is
 
 ## Current version
 
-This guide covers the `1.3.9` release. Thirty release build targets are packaged into 15
+This guide covers the `1.3.10` release. Thirty-three release build targets are packaged into 16
 installable JARs. Every target must pass clean builds, shared-core tests, and release-structure checks;
 the Fabric bundles also run real Loader selection checks. Back up the configuration before updating.
 When reporting untranslated

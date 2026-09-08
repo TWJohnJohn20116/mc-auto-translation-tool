@@ -16,6 +16,7 @@ requiredProperties.each { propertyName ->
 def gameVersion = project.ext.legacyMinecraftVersion.toString()
 def sourceLayers = [
         "1.16.5": [],
+        "1.18.2": [],
         "1.19.2": ["family/1.19.2-plus"],
         "1.20.1": ["family/1.19.2-plus"]
 ]
@@ -47,9 +48,40 @@ minecraft {
 }
 
 repositories {
+    // com.mojang artifacts only exist on libraries.minecraft.net; mirror them when that host is blocked.
+    maven {
+        name = "localMavenizerMojang"
+        url = uri(new File(
+                System.getenv("GRADLE_USER_HOME") ?: gradle.gradleUserHomeDir.absolutePath,
+                "caches/minecraftforge/forgegradle/mavenizer/caches/maven/mojang"))
+        content {
+            includeGroup "com.mojang"
+        }
+        metadataSources {
+            mavenPom()
+            artifact()
+        }
+    }
+    maven {
+        name = "bmclapiMinecraftLibraries"
+        url = "https://bmclapi2.bangbang93.com/maven"
+        content {
+            includeGroup "com.mojang"
+        }
+        metadataSources {
+            mavenPom()
+            artifact()
+        }
+    }
     minecraft.mavenizer(it)
     maven fg.forgeMaven
-    maven fg.minecraftLibsMaven
+    maven {
+        name = "Minecraft libraries"
+        url = "https://libraries.minecraft.net/"
+        content {
+            includeGroup "com.mojang"
+        }
+    }
     mavenCentral()
 }
 

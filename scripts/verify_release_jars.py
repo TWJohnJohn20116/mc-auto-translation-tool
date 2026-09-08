@@ -57,9 +57,11 @@ def _expected_release_version(label: str) -> str | None:
 
 
 def _class_major_for_minecraft(minecraft: str) -> int | None:
-    if minecraft in {"1.8.9", "1.12.2", "1.16.5"}:
+    if minecraft in {"1.8.9", "1.12.2", "1.16.5"} or minecraft.startswith(
+        ("1.13", "1.14", "1.15")
+    ):
         return 52
-    if minecraft in {"1.19.2", "1.20.1"}:
+    if minecraft in {"1.18.2", "1.19.2", "1.20.1"}:
         return 61
     if minecraft.startswith("1.21"):
         return 65

@@ -9,7 +9,7 @@
 - 離線引擎首次啟動失敗後，相容模式不再重複傳遞新版選用參數，可相容啟動器快取中的舊版 llama.cpp；
 - 啟動失敗、逾時、權限、遺失檔案、CPU 指令及記憶體終止均提供中文診斷，並只讀取本次啟動追加的日誌；
 - 1.21.x Forge／NeoForge 發佈目標使用 Java 21 驗證。請勿以 Java 25 取代，舊版 LWJGL 可能在產生 Java 堆疊前由原生層終止；
-- 更新時必須從 `mods` 資料夾移除 1.3.8 及更早版本，只保留一個與載入器及遊戲版本相符的 1.3.9 JAR。
+- 更新時必須從 `mods` 資料夾移除 1.3.9 及更早版本，只保留一個與載入器及遊戲版本相符的 1.3.10 JAR。
 
 ## 1.3.5 設定選擇修正
 
@@ -31,11 +31,13 @@
 | --- | --- | --- | --- | --- | --- |
 | 1.8.9 | Forge 11.15.1.2318 | 8 | 通過 | 歷史基準通過 | 待確認 |
 | 1.12.2 | Forge 14.23.5.2860 | 8 | 通過 | 歷史基準通過 | 待確認 |
+| 單一 1.13.x JAR（1.13、1.13.1、1.13.2） | Ornithe Loader 0.19.3／Legacy Fabric Loader 0.16.10 | 8 | 已通過；三個版本均通過精確 Loader 選擇 | 待驗證 | 待驗證 |
 | All 1.14/1.15 releases (1.14-1.15.2), single JAR | Fabric Loader 0.19.3 + Fabric API 0.28.5 | 8 | Passed; exact Loader selection passed for all eight versions | Pending | Pending |
 | All 1.16 releases (1.16-1.16.5), single JAR | Fabric Loader 0.19.3 + Fabric API 0.42.0 | 8 | Passed; exact Loader selection passed for all six versions | Pending | Pending |
 | 1.16.5 | Fabric Loader 0.19.3 + Fabric API 0.42.0 | 8 | 通過，中繼資料及 Mixin 已檢查 | 待驗證 | 待驗證 |
 | 單一 1.17/1.18 JAR（1.17–1.18.2） | Fabric Loader 0.19.3 | 17 | 已通過；五個版本均通過精確 Loader 選擇 | 待驗證 | 待驗證 |
 | 1.16.5 | Forge 36.2.42 | 8 | 通過，SRG 與 refmap 已檢查 | 待驗證 | 待驗證 |
+| 1.18.2 | Forge 40.2.21 | 17 | 通過，SRG 與 refmap 已檢查 | 待驗證 | 待驗證 |
 | 1.19.2 | Fabric Loader 0.19.3 + Fabric API 0.77.0 | 17 | 通過，中繼資料及 Mixin 已檢查 | 待驗證 | 待驗證 |
 | 單一 1.19 JAR（1.19–1.19.4） | Fabric Loader 0.19.3 | 17 | 已通過；五個版本均通過精確 Loader 選擇 | 待驗證 | 待驗證 |
 | 1.19.2 | Forge 43.5.2 | 17 | 通過，SRG 與 refmap 已檢查 | 待驗證 | 待驗證 |
@@ -50,7 +52,7 @@
 | 26.1、26.1.1、26.1.2、26.2 | Forge 62.0.9–65.1.1 | 25 | 四個精確目標全部編譯通過 | 待驗證 | 待驗證 |
 | 26.1、26.1.1、26.1.2、26.2 單一 JAR | Fabric Loader 0.19.3 | 25 | 通過；四個版本的 Loader 選擇測試皆通過 | 26.1 歷史基準通過 | 待驗證 |
 
-正式版以 30 個共用同一翻譯核心的發行目標 JAR 為輸入，並整理為 15 個可直接安裝的發行 JAR；
+正式版以 33 個共用同一翻譯核心的發行目標 JAR 為輸入，並整理為 16 個可直接安裝的發行 JAR；
 額外的相鄰版本原始碼目標會另外完成建置測試，不計入正式下載。1.20.1 Fabric 已完成 Loom 重新映射；1.20.1 Forge
 產物已轉換成該版本執行階段使用的 SRG 名稱，並包含九個 Mixin 類別的 refmap；
 1.21.11 Forge 已轉接 Forge 7 事件匯流排與 Mojmap 執行階段。1.21.11 Forge 開發用戶端已初始化
@@ -78,9 +80,8 @@ JAR 安全涵蓋所有 Java 版。專案會依具代表性且長期使用的版�
 1. 1.12.2 Cleanroom；
 2. 1.7.10 Forge；
 3. 1.16.5 Forge；
-4. 1.18.2 Forge/Fabric；
-5. 1.21.1 Fabric/NeoForge；
-6. 後續仍有較多玩家使用的新版本。
+4. 1.21.1 Fabric/NeoForge；
+5. 後續仍有較多玩家使用的新版本。
 
 「鄰近版本」不會靠放寬 `fabric.mod.json` 或 `mods.toml` 的版本範圍來猜測支援。
 例如 1.20.1 JAR 會明確拒絕 1.20.2，Fabric 與 Forge 也絕不混用。細微的方法描述符

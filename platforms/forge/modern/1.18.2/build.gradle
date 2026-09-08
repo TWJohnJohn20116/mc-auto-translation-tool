@@ -1,0 +1,15 @@
+plugins {
+    id "java"
+    id "net.minecraftforge.gradle" version "[7.0.29,8.0)"
+    id "net.minecraftforge.renamer" version "1.0.14"
+}
+
+ext.legacyMinecraftVersion = "1.18.2"
+ext.legacyForgeVersion = "40.2.21"
+ext.legacyForgeLoaderMajor = "40"
+ext.legacyMinecraftNextVersion = "1.19"
+ext.legacyJavaRelease = 17
+ext.legacyPackFormat = 8
+ext.legacyAuthors = "我小张7272635"
+
+apply from: rootProject.file("platforms/forge/modern/shared.gradle")

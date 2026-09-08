@@ -1,6 +1,6 @@
 # Forge legacy shared sources
 
-Forge 1.16.5, 1.19.2, and 1.20.1 use
+Forge 1.16.5, 1.18.2, 1.19.2, and 1.20.1 use
 `platforms/forge/modern/shared.gradle` for common ForgeGradle, Renamer, release,
 and metadata configuration.
 
@@ -8,3 +8,5 @@ and metadata configuration.
 - `family/1.19.2-plus`: client bootstrap and rendered-text APIs shared by 1.19.2 and 1.20.1.
 
 Version directories retain the Mixin and client adapters whose Mojmap APIs differ.
+1.18.2 keeps its own rendered-text and client bootstrap because it still uses
+`TextComponent` / `TranslatableComponent` and unsigned `LocalPlayer.chat`.

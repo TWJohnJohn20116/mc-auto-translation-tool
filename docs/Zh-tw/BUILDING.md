@@ -159,6 +159,19 @@ Fabric Loader 會選擇相符實作，建置會驗證全部六個選擇。
 Forge 47.4.10 從官方 Maven 解析。1.20.1 仍需將 Mojmap 開發產物轉換為 SRG 執行階段
 命名。建置產物會標記為 `-dev.jar` 與 `-runtime.jar`；發佈時使用 `build/release/` 中的標準命名 JAR。
 
+## 1.18.2 Forge
+
+需要 JDK 17 或更新版本：
+
+```bash
+./gradlew :platform-forge-1.18.2:build
+```
+
+Forge 40.2.21 從 Forge 官方 Maven 解析。發佈時應使用
+`platforms/forge/modern/1.18.2/build/release/` 中包含執行階段映射與 Mixin refmap 的標準命名 JAR。
+1.18.2 仍使用 `TextComponent`／`TranslatableComponent` 與未簽名的 `LocalPlayer.chat`，
+因此不與 1.19.2+ 共用 family 層。
+
 ## 1.19.2 Forge
 
 需要 JDK 17 或更新版本：
@@ -198,6 +211,18 @@ $env:GRADLE_USER_HOME = "D:\Gradle\cache"
 ```
 
 輸出位於 `platforms/fabric/1.14-1.15/bundle/build/libs/`。該套件內嵌 1.14 至 1.15.2 的精確版本實作；建置會驗證全部八個選擇。
+
+## 單一 Fabric 1.13.x JAR
+
+1.13、1.13.1（Ornithe）與 1.13.2（Legacy Fabric）使用 Java 8。請將 Gradle 快取放在 D: 磁碟：
+
+```powershell
+$env:GRADLE_USER_HOME = "D:\Gradle\cache"
+.\gradlew.bat :platform-fabric-1.13.x:build --max-workers=1
+```
+
+輸出位於 `platforms/fabric/1.13/bundle/build/libs/`。啟動器把 Minecraft 1.13.0 標記為 `1.13`；
+內嵌 JAR 與 Loader 選擇均使用該別名。
 
 ## Legacy Fabric 1.13.2
 
@@ -274,15 +299,15 @@ python3 scripts/verify_release_jars.py path/to/mod.jar
 Forge 舊版執行階段映射、版本一致性、checksum 內容及覆蓋範圍。Fabric/Forge 1.16.5、
 1.19.2 與 1.20.1 的 `build` 任務也會驗證其產生的 JAR。
 
-發佈流程會將 30 個發佈建置產物縮減為 15 個可直接安裝的 JAR：39 個 Fabric 實作會
+發佈流程會將 33 個發佈建置產物縮減為 16 個可直接安裝的 JAR：45 個 Fabric 實作會
 放進一個由 Loader 自動選版的 JAR；四組 Forge 版本在 payload 相容時擴寬範圍；
 Forge／NeoForge 1.20.1 保留為分別驗證的載入器專用 JAR。不同 API 仍維持獨立：
 
 ```bash
 python3 scripts/prepare_release_assets.py \
-  --release-dir downloads/1.3.9 \
+  --release-dir downloads/1.3.10 \
   --output-dir build/release-assets \
-  --version 1.3.9
+  --version 1.3.10
 ```
 
 ## 核心自我測試

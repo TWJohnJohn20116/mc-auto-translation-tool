@@ -176,6 +176,18 @@ Forge 47.4.10 is resolved from the official Maven. Minecraft 1.20.1 still requir
 development output to be renamed to the SRG runtime namespace. The build marks these artifacts as
 `-dev.jar` and `-runtime.jar`; publish the normalized JAR from `build/release/`.
 
+## Forge 1.18.2
+
+JDK 17 or later is required:
+
+```bash
+./gradlew :platform-forge-1.18.2:build
+```
+
+Forge 40.2.21 is resolved from the official Forge Maven. Publish the normalized JAR from
+`platforms/forge/modern/1.18.2/build/release/`. 1.18.2 still uses `TextComponent` /
+`TranslatableComponent` and unsigned `LocalPlayer.chat`, so it does not share the 1.19.2+ family.
+
 ## Forge 1.19.2
 
 JDK 17 or later is required:
@@ -217,6 +229,18 @@ $env:GRADLE_USER_HOME = "D:\Gradle\cache"
 Output is written to `platforms/fabric/1.14-1.15/bundle/build/libs/`. The bundle embeds exact-version
 implementations for 1.14, 1.14.1, 1.14.2, 1.14.3, 1.14.4, 1.15, 1.15.1, and 1.15.2; Fabric Loader
 selects the matching implementation and the build verifies all eight selections.
+
+## Single Fabric 1.13.x JAR
+
+1.13 and 1.13.1 (Ornithe) plus 1.13.2 (Legacy Fabric) use Java 8. Keep the Gradle cache on the D: drive:
+
+```powershell
+$env:GRADLE_USER_HOME = "D:\Gradle\cache"
+.\gradlew.bat :platform-fabric-1.13.x:build --max-workers=1
+```
+
+Output is written to `platforms/fabric/1.13/bundle/build/libs/`. The launcher calls Minecraft 1.13.0
+simply `1.13`; nested JARs and Loader selection both use that alias.
 
 ## Legacy Fabric 1.13.2
 
@@ -323,25 +347,25 @@ To validate arbitrary build outputs directly, pass them to the standalone verifi
 ```bash
 python3 scripts/verify_release_jars.py path/to/mod.jar
 python3 scripts/verify_release_jars.py \
-  --checksum-file downloads/1.3.9/SHA256SUMS.txt \
-  --require-complete-checksums downloads/1.3.9/*.jar
+  --checksum-file downloads/1.3.10/SHA256SUMS.txt \
+  --require-complete-checksums downloads/1.3.10/*.jar
 ```
 
 It checks ZIP structure, expanded metadata, entrypoints, declared Mixin classes and refmaps, nested
 Fabric JARs, legacy Forge runtime mappings, SHA-256 values, and checksum-manifest coverage. Legacy
 Fabric and Forge `build` tasks run the same verifier against their generated release JARs.
 
-The publish workflow reduces the 30 release build artifacts to 15 directly installable JARs. It
-flattens all 39 Fabric implementations into one Loader-selected bundle, broadens four Forge
+The publish workflow reduces the 33 release build artifacts to 16 directly installable JARs. It
+flattens all 45 Fabric implementations into one Loader-selected bundle, broadens four Forge
 families after confirming compatible payloads, and keeps Forge/NeoForge 1.20.1 as separately
 verified loader-specific JARs. Different APIs remain separate. Reproduce and validate
 the publish set with:
 
 ```bash
 python3 scripts/prepare_release_assets.py \
-  --release-dir downloads/1.3.9 \
+  --release-dir downloads/1.3.10 \
   --output-dir build/release-assets \
-  --version 1.3.9
+  --version 1.3.10
 python3 scripts/verify_release_jars.py \
   --checksum-file build/release-assets/SHA256SUMS.txt \
   --require-complete-checksums build/release-assets/*.jar

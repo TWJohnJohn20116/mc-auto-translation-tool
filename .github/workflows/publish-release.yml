@@ -72,9 +72,12 @@ jobs:
           expected=(
             "MCAutoTranslationTool-$version-mc1.8.9-forge.jar"
             "MCAutoTranslationTool-$version-mc1.12.2-forge.jar"
+            "MCAutoTranslationTool-$version-mc1.13.x-fabric.jar"
+            "MCAutoTranslationTool-$version-mc1.14-1.15.x-fabric.jar"
             "MCAutoTranslationTool-$version-mc1.16.5-fabric.jar"
             "MCAutoTranslationTool-$version-mc1.16.5-forge.jar"
             "MCAutoTranslationTool-$version-mc1.17-1.18.x-fabric.jar"
+            "MCAutoTranslationTool-$version-mc1.18.2-forge.jar"
             "MCAutoTranslationTool-$version-mc1.19.x-fabric.jar"
             "MCAutoTranslationTool-$version-mc1.19.2-forge.jar"
             "MCAutoTranslationTool-$version-mc1.20.x-fabric.jar"
@@ -161,8 +164,8 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t assets < <(find "$ASSET_DIR" -maxdepth 1 -type f \( -name '*.jar' -o -name 'SHA256SUMS.txt' \) -print | sort)
-          if [[ "${#assets[@]}" -ne 16 ]]; then
-            echo "Expected fifteen compatible JARs and SHA256SUMS.txt" >&2
+          if [[ "${#assets[@]}" -ne 17 ]]; then
+            echo "Expected sixteen compatible JARs and SHA256SUMS.txt" >&2
             exit 1
           fi
           notes="$RUNNER_TEMP/release-notes.md"

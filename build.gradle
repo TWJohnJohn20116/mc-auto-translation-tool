@@ -55,7 +55,7 @@ tasks.register("validateMixinConfigs") {
 
             def relativeConfigPath = relativePath(config).replace('\\', '/')
             def maximumLevel = relativeConfigPath.contains("/1.16.5/") ? "JAVA_8" :
-                    (relativeConfigPath.contains("/1.19.2/") || relativeConfigPath.contains("/1.20.1/")) ?
+                    (relativeConfigPath.contains("/1.18.2/") || relativeConfigPath.contains("/1.19.2/") || relativeConfigPath.contains("/1.20.1/")) ?
                             "JAVA_17" : "JAVA_21"
             if (level != null && compatibilityLevels.indexOf(level) > compatibilityLevels.indexOf(maximumLevel)) {
                 throw new GradleException(
@@ -63,6 +63,7 @@ tasks.register("validateMixinConfigs") {
                 )
             }
             if ((relativeConfigPath.contains("/forge/modern/1.16.5/") ||
+                    relativeConfigPath.contains("/forge/modern/1.18.2/") ||
                     relativeConfigPath.contains("/forge/modern/1.19.2/")) &&
                     parsed.injectors?.defaultRequire != 0) {
                 throw new GradleException(

@@ -1,0 +1,91 @@
+plugins {
+    id "java"
+}
+
+repositories {
+    maven { url = "https://maven.fabricmc.net/" }
+    mavenCentral()
+}
+
+version = project.mod_version
+group = project.maven_group
+
+dependencies {
+    testImplementation "net.fabricmc:fabric-loader:0.19.3"
+    testRuntimeOnly "org.ow2.asm:asm:9.10.1"
+    testRuntimeOnly "org.ow2.asm:asm-analysis:9.10.1"
+    testRuntimeOnly "org.ow2.asm:asm-commons:9.10.1"
+    testRuntimeOnly "org.ow2.asm:asm-tree:9.10.1"
+    testRuntimeOnly "org.ow2.asm:asm-util:9.10.1"
+    testRuntimeOnly "net.fabricmc:sponge-mixin:0.17.3+mixin.0.8.7"
+}
+
+base {
+    archivesName = "mc-auto-translation-tool-fabric-1.13.x"
+}
+
+// Launchers call Minecraft 1.13.0 simply "1.13"; nested JARs must use that id.
+def implementations = [
+        "1.13"  : "1.13.0",
+        "1.13.1": "1.13.1",
+        "1.13.2": "1.13.2"
+]
+def supportedVersions = implementations.keySet() as List
+implementations.values().each { projectVersion ->
+    evaluationDependsOn(":platform-fabric-${projectVersion}")
+}
+def implementationJars = implementations.collectEntries { minecraftVersion, projectVersion ->
+    [(minecraftVersion): project(":platform-fabric-${projectVersion}").tasks.named("remapJar")]
+}
+
+processResources {
+    inputs.property "version", project.version
+    filesMatching("fabric.mod.json") {
+        expand "version": project.version
+    }
+}
+
+jar {
+    dependsOn implementationJars.values()
+    supportedVersions.each { minecraftVersion ->
+        from(implementationJars[minecraftVersion].flatMap { it.archiveFile }) {
+            into "META-INF/jars"
+            rename { "universal-translator-${minecraftVersion}.jar" }
+        }
+    }
+    from(rootProject.file("LICENSE")) {
+        rename { "LICENSE_universal_translator_bundle" }
+    }
+    from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) {
+        rename { "THIRD_PARTY_OFFLINE.md" }
+    }
+}
+
+tasks.register("verifyBundle") {
+    dependsOn jar
+    doLast {
+        def archive = jar.archiveFile.get().asFile
+        def required = ["fabric.mod.json"] + supportedVersions.collect {
+            "META-INF/jars/universal-translator-${it}.jar"
+        }
+        required.each { path ->
+            if (!zipTree(archive).matching { include path }.files) {
+                throw new GradleException("Missing bundle entry: ${path}")
+            }
+        }
+        println "Verified ${archive.name}: all ${supportedVersions.size()} Minecraft 1.13 implementations present"
+    }
+}
+
+tasks.register("verifyLoaderSelection", JavaExec) {
+    dependsOn jar, testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "org.universaltranslator.bundle.BundleResolutionVerifier"
+    args([jar.archiveFile.get().asFile.absolutePath] + supportedVersions)
+}
+
+test {
+    enabled = false
+}
+
+build.dependsOn verifyBundle, verifyLoaderSelection

@@ -10,7 +10,7 @@ This document records only completed validation. “Builds successfully” is no
 - Compatibility mode no longer repeats newer optional switches after the first offline-engine startup failure, allowing launcher-cached older llama.cpp builds to start.
 - Startup exits, timeouts, permissions, missing files, unsupported CPU instructions, and memory-pressure termination now produce focused diagnostics using only the current attempt's appended log output.
 - The 1.21.x Forge and NeoForge release targets are validated on Java 21. Do not substitute Java 25: an older LWJGL native layer may terminate before a Java stack trace can be produced.
-- Remove 1.3.8 and every older copy from the `mods` directory when updating; keep exactly one 1.3.9 JAR matching the game version and loader.
+- Remove 1.3.9 and every older copy from the `mods` directory when updating; keep exactly one 1.3.10 JAR matching the game version and loader.
 
 ## Settings selection fix added in 1.3.5
 
@@ -36,11 +36,13 @@ This document records only completed validation. “Builds successfully” is no
 | --- | --- | --- | --- | --- | --- |
 | 1.8.9 | Forge 11.15.1.2318 | 8 | Passed | Historical baseline passed | Pending confirmation |
 | 1.12.2 | Forge 14.23.5.2860 | 8 | Passed | Historical baseline passed | Pending confirmation |
+| All 1.13 releases (1.13–1.13.2), single JAR | Ornithe Loader 0.19.3 / Legacy Fabric Loader 0.16.10 | 8 | Passed; exact Loader selection passed for all three versions | Pending | Pending |
 | All 1.14/1.15 releases (1.14-1.15.2), single JAR | Fabric Loader 0.19.3 + Fabric API 0.28.5 | 8 | Passed; exact Loader selection passed for all eight versions | Pending | Pending |
 | All 1.16 releases (1.16-1.16.5), single JAR | Fabric Loader 0.19.3 + Fabric API 0.42.0 | 8 | Passed; exact Loader selection passed for all six versions | Pending | Pending |
 | 1.16.5 | Fabric Loader 0.19.3 + Fabric API 0.42.0 | 8 | Passed; metadata and Mixins checked | Pending | Pending |
 | All 1.17/1.18 releases (1.17-1.18.2), single JAR | Fabric Loader 0.19.3 | 17 | Passed; exact Loader selection passed for all five versions | Pending | Pending |
 | 1.16.5 | Forge 36.2.42 | 8 | Passed; SRG and refmap checked | Pending | Pending |
+| 1.18.2 | Forge 40.2.21 | 17 | Passed; SRG and refmap checked | Pending | Pending |
 | 1.19.2 | Fabric Loader 0.19.3 + Fabric API 0.77.0 | 17 | Passed; metadata and Mixins checked | Pending | Pending |
 | All 1.19 releases (1.19-1.19.4), single JAR | Fabric Loader 0.19.3 | 17 | Passed; exact Loader selection passed for all five versions | Pending | Pending |
 | 1.19.2 | Forge 43.5.2 | 17 | Passed; SRG and refmap checked | Pending | Pending |
@@ -55,8 +57,8 @@ This document records only completed validation. “Builds successfully” is no
 | 26.1, 26.1.1, 26.1.2, 26.2 | Forge 62.0.9–65.1.1 | 25 | Compile passed for all four exact targets | Pending | Pending |
 | 26.1, 26.1.1, 26.1.2, 26.2, single JAR | Fabric Loader 0.19.3 | 25 | Passed; Loader selection passed for all four versions | 26.1 baseline passed | Pending |
 
-The stable release starts from 30 formally shipped target JARs that share the same translation core
-and reduces them to 15 directly installable release JARs. Additional adjacent-version source targets
+The stable release starts from 33 formally shipped target JARs that share the same translation core
+and reduces them to 16 directly installable release JARs. Additional adjacent-version source targets
 are build-tested separately and are not counted as stable downloads. Fabric 1.20.1 completed Loom remapping.
 The Forge 1.20.1 artifact was renamed into the SRG runtime namespace and contains a refmap for all
 nine Mixin classes. Forge 1.21.11 was adapted to the Forge 7 event bus and Mojmap runtime. Its
@@ -88,9 +90,8 @@ Planned candidates, in order:
 1. 1.12.2 Cleanroom;
 2. 1.7.10 Forge;
 3. 1.16.5 Forge;
-4. 1.18.2 Forge/Fabric;
-5. 1.21.1 Fabric/NeoForge;
-6. later releases that retain a substantial player base.
+4. 1.21.1 Fabric/NeoForge;
+5. later releases that retain a substantial player base.
 
 “Nearby version” support is never guessed by widening the version range in `fabric.mod.json` or
 `mods.toml`. For example, the 1.20.1 JAR intentionally rejects 1.20.2, and Fabric and Forge JARs
