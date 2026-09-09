@@ -166,6 +166,18 @@ def _version_key(version: str) -> tuple[int, ...]:
         raise PreparationError(f"unsupported Minecraft version: {version}") from error
 
 
+def _stored_jar(data: bytes) -> bytes:
+    with zipfile.ZipFile(io.BytesIO(data)) as src:
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as dst:
+            for item in src.infolist():
+                info = zipfile.ZipInfo(item.filename, ZIP_TIMESTAMP)
+                info.compress_type = zipfile.ZIP_STORED
+                info.external_attr = item.external_attr
+                dst.writestr(info, src.read(item.filename))
+        return output.getvalue()
+
+
 def _build_fabric_all(version: str, implementations: dict[str, bytes]) -> bytes:
     versions = sorted(implementations, key=_version_key)
     metadata = {
@@ -213,7 +225,7 @@ def _build_fabric_all(version: str, implementations: dict[str, bytes]) -> bytes:
             _zip_entry(
                 archive,
                 f"META-INF/jars/universal-translator-{item}.jar",
-                implementations[item],
+                _stored_jar(implementations[item]),
             )
     return output.getvalue()
 

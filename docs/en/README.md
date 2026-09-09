@@ -14,8 +14,8 @@ chat, quest books, mod menus, scoreboards, item descriptions, and signs.
 > See [GitHub Releases](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest) for the
 > current stable version and publication date. Use only the JAR matching your Minecraft version and mod loader.
 >
-> Testing build **1.3.11-beta.1** (title screen now has a single Translation settings entry) is on
-> [GitHub Pre-release](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/tag/v1.3.11-beta.1).
+> Testing build **1.3.11-beta.2** (title screen now has a single Translation settings entry, optimized fabric-all size) is on
+> [GitHub Pre-release](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/tag/v1.3.11-beta.2).
 > It does not replace stable 1.3.10.
 
 ## Why use it
