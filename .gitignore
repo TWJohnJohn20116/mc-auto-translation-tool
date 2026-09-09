@@ -30,3 +30,4 @@ __pycache__/
 *.pyc
 config/universal-translator*.json
 config/universal-translator*.properties
+scripts/_*

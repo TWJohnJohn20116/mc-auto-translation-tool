@@ -122,6 +122,7 @@
  ,"message.universal_translator.outgoing_too_long": "§e[MC 自动翻译工具] 译文超过服务器聊天长度限制，已发送原文。"
   ,"screen.universal_translator.option.vanilla": "原版界面翻译：%s"
   ,"screen.universal_translator.option.outgoing_target": "发送目标语言：%s"
+  ,"screen.universal_translator.home.open": "翻译设置"
   ,"screen.universal_translator.home.enabled": "翻译总开关：%s"
   ,"screen.universal_translator.home.vanilla": "原版界面：%s"
   ,"screen.universal_translator.home.target": "目标语言：%s"

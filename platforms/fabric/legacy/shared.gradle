@@ -192,8 +192,9 @@ tasks.register("verifyBuiltJar", Exec) {
     inputs.file(tasks.named("remapJar").flatMap { it.archiveFile })
     inputs.file(rootProject.file("scripts/verify_release_jars.py"))
     doFirst {
+        def pythonCmd = System.getProperty("os.name").toLowerCase().contains("windows") ? "python" : "python3"
         commandLine(
-                "python3",
+                pythonCmd,
                 rootProject.file("scripts/verify_release_jars.py"),
                 tasks.named("remapJar").get().archiveFile.get().asFile
         )

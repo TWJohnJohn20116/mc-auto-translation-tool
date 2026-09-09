@@ -13,16 +13,12 @@ import net.minecraftforge.fml.common.gameevent.TickEvent;
 import org.lwjgl.input.Keyboard;
 import org.universaltranslator.core.TranslationResult;
 import org.universaltranslator.core.TranslationStatusLocalizer;
-import org.universaltranslator.core.HomeQuickSettingsState;
-import org.universaltranslator.core.TargetLanguage;
 
 import java.io.File;
 
 /** Forge 1.8.9/1.12.2 compatible key binding and settings-screen launcher. */
 public final class LegacyClientEvents {
-    private static final int HOME_ENABLED = 31_700;
-    private static final int HOME_VANILLA = 31_701;
-    private static final int HOME_TARGET = 31_702;
+    private static final int HOME_OPEN = 31_700;
     private static final long FAILURE_NOTIFICATION_COOLDOWN_MILLIS = 60_000L;
     private static final LegacyClientEvents INSTANCE = new LegacyClientEvents();
     private static final KeyBinding OPEN_SETTINGS = new KeyBinding(
@@ -55,11 +51,8 @@ public final class LegacyClientEvents {
             return;
         }
         int x = Math.max(4, LegacyVersionAccess.eventScreen(event).width - 136);
-        java.util.List<GuiButton> buttons = LegacyVersionAccess.buttonList(event);
-        buttons.add(new GuiButton(HOME_ENABLED, x, 6, 132, 20, ""));
-        buttons.add(new GuiButton(HOME_VANILLA, x, 29, 132, 20, ""));
-        buttons.add(new GuiButton(HOME_TARGET, x, 52, 132, 20, ""));
-        refreshHomeButtons(buttons, LegacyTranslationRuntime.homeSettings());
+        LegacyVersionAccess.buttonList(event).add(new GuiButton(
+                HOME_OPEN, x, 6, 132, 20, tr("screen.universal_translator.home.open")));
     }
 
     @SubscribeEvent
@@ -67,26 +60,20 @@ public final class LegacyClientEvents {
         if (!(LegacyVersionAccess.eventScreen(event) instanceof GuiMainMenu)) {
             return;
         }
-        int id = LegacyVersionAccess.actionButton(event).id;
-        if (id != HOME_ENABLED && id != HOME_VANILLA && id != HOME_TARGET) {
+        if (LegacyVersionAccess.actionButton(event).id != HOME_OPEN) {
             return;
         }
         event.setCanceled(true);
+        Minecraft minecraft = Minecraft.getMinecraft();
+        if (minecraft.currentScreen instanceof LegacyConfigScreen || configDirectory == null) {
+            return;
+        }
         try {
-            HomeQuickSettingsState state;
-            if (id == HOME_ENABLED) {
-                state = LegacyTranslationRuntime.toggleHomeEnabled();
-            } else if (id == HOME_VANILLA) {
-                state = LegacyTranslationRuntime.toggleHomeVanilla();
-            } else {
-                state = LegacyTranslationRuntime.cycleHomeTargetLanguage();
-            }
-            refreshHomeButtons(LegacyVersionAccess.buttonList(event), state);
+            LegacyConfig config = LegacyConfig.load(configDirectory);
+            minecraft.displayGuiScreen(new LegacyConfigScreen(
+                    LegacyVersionAccess.eventScreen(event), config));
         } catch (Exception exception) {
-            System.err.println("[MC Auto Translation Tool] Could not update title-screen setting: " + exception);
-            refreshHomeButtons(
-                    LegacyVersionAccess.buttonList(event),
-                    LegacyTranslationRuntime.homeSettings());
+            System.err.println("[MC Auto Translation Tool] Could not open settings: " + exception);
         }
     }
 
@@ -214,28 +201,6 @@ public final class LegacyClientEvents {
 
     private static boolean isFailureStatus(String status) {
         return TranslationStatusLocalizer.isFailure(status);
-    }
-
-    private static void refreshHomeButtons(
-            java.util.List<GuiButton> buttons,
-            HomeQuickSettingsState state
-    ) {
-        for (GuiButton button : buttons) {
-            if (button.id == HOME_ENABLED) {
-                button.displayString = tr("screen.universal_translator.home.enabled",
-                        tr(state.isEnabled()
-                                ? "value.universal_translator.enabled"
-                                : "value.universal_translator.disabled"));
-            } else if (button.id == HOME_VANILLA) {
-                button.displayString = tr("screen.universal_translator.home.vanilla",
-                        tr(state.isTranslateVanilla()
-                                ? "value.universal_translator.enabled"
-                                : "value.universal_translator.disabled"));
-            } else if (button.id == HOME_TARGET) {
-                button.displayString = tr("screen.universal_translator.home.target",
-                        TargetLanguage.displayName(state.getTargetLanguage()));
-            }
-        }
     }
 
     private static String tr(String key, Object... arguments) {

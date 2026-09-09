@@ -42,6 +42,7 @@ sourceSets.main.java.srcDirs += [
 ]
 
 processResources {
+    filteringCharset = "UTF-8"
     inputs.property "version", project.version
     filesMatching("mcmod.info") {
         expand version: project.version

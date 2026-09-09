@@ -47,6 +47,7 @@ public final class UniversalTranslatorForgeClient {
         try {
             ForgeConfig config = ForgeConfig.load(FMLPaths.CONFIGDIR.get());
             ForgeTranslationRuntime.initialize(config);
+            ForgeTranslationRuntime.setTitleSettingsOpener(UniversalTranslatorForgeClient::openFromTitle);
             UniversalTranslatorForgeMod.LOGGER.info(
                     "MC Auto Translation Tool initialized; enabled={}", config.enabled);
         } catch (Exception exception) {
@@ -114,6 +115,21 @@ public final class UniversalTranslatorForgeClient {
             ForgeTranslationRuntime.translateOutgoing(message).whenComplete((result, error) ->
                     client.execute(() -> sendCompletedMessage(client, message, result, error)));
             return true;
+        }
+    }
+
+    private static void openFromTitle(Object parent) {
+        Minecraft client = Minecraft.getInstance();
+        if (client == null || parent instanceof UniversalTranslatorConfigScreen) {
+            return;
+        }
+        try {
+            ForgeConfig config = ForgeConfig.load(FMLPaths.CONFIGDIR.get());
+            client.gui.setScreen(new UniversalTranslatorConfigScreen(
+                    (net.minecraft.client.gui.screens.Screen) parent, config));
+        } catch (Exception exception) {
+            UniversalTranslatorForgeMod.LOGGER.error(
+                    "Could not open MC Auto Translation Tool settings", exception);
         }
     }
 

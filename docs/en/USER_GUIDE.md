@@ -25,13 +25,14 @@ adjacent versions or interchange Fabric and Forge files.
 
 ## First-time setup
 
-The graphical steps below apply to Fabric, Forge, and NeoForge. Press `U` to open
-settings in-game, or open the same screen from Mod Menu's mods list when that mod
-is installed. A `config/universal-translator.properties` file is still created
-for advanced options such as Tencent credentials; `F8` toggles the master switch
-at any time.
+The graphical steps below apply to Fabric, Forge, and NeoForge. Open the same
+settings screen from the “Translation settings” button at the top-right of
+Minecraft's title screen, by pressing `U` in-game, or from Mod Menu's mods list
+when that mod is installed. A `config/universal-translator.properties` file is
+still created for advanced options such as Tencent credentials; `F8` toggles the
+master switch at any time.
 
-1. Enter any world or server and press `U` to open the settings.
+1. Click “Translation settings” on the title screen, or enter any world or server and press `U`.
 2. Click “Target language” and choose from the two-column list that opens directly on the current
    settings screen. It does not navigate away and no language code needs to be typed.
 3. Click “Translation service” and choose “Offline,” a built-in online service, an

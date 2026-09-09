@@ -122,6 +122,7 @@
  ,"message.universal_translator.outgoing_too_long": "§e[MC Auto Translation Tool] The translation exceeded the chat length limit; the original message was sent."
   ,"screen.universal_translator.option.vanilla": "Minecraft UI: %s"
   ,"screen.universal_translator.option.outgoing_target": "Outgoing target: %s"
+  ,"screen.universal_translator.home.open": "Translation settings"
   ,"screen.universal_translator.home.enabled": "Translation: %s"
   ,"screen.universal_translator.home.vanilla": "Minecraft UI: %s"
   ,"screen.universal_translator.home.target": "Target: %s"

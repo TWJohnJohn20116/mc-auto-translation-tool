@@ -3,6 +3,7 @@ package org.universaltranslator.fabric;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.ChatScreen;
 import org.universaltranslator.core.TranslationResult;
 import org.universaltranslator.core.TranslationStatusLocalizer;
@@ -146,4 +147,19 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
             OrnitheClientAccess.overlay("message.universal_translator.runtime_status", localized);
         }
     }
+
+    public static void openSettingsScreen(Screen parent) {
+        Minecraft client = Minecraft.getInstance();
+        if (client == null || parent instanceof UniversalTranslatorConfigScreen) {
+            return;
+        }
+        try {
+            FabricConfig config = FabricConfig.load(FabricLoader.getInstance().getConfigDir());
+            OrnitheClientAccess.openScreen(new UniversalTranslatorConfigScreen(parent, config));
+        } catch (Exception exception) {
+            LOGGER.log(java.util.logging.Level.SEVERE,
+                    "Could not open MC Auto Translation Tool settings", exception);
+        }
+    }
+
 }

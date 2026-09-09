@@ -18,6 +18,9 @@
 
 > 目前正式版與發佈日期以 [GitHub Releases](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest)
 > 為準。請只使用與你的 Minecraft 版本及模組載入器相符的 JAR。
+>
+> 測試版 **1.3.11-beta.1**（主畫面改為單一「翻譯設定」入口）見
+> [GitHub Pre-release](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/tag/v1.3.11-beta.1)，不取代 1.3.10 正式版。
 
 ## 為什麼使用它
 
@@ -38,7 +41,7 @@
 1. 確認遊戲使用的 **Minecraft 版本、模組載入器與 Java 版本**。
 2. 開啟[最新 Release](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest)，依下表選擇 JAR。
 3. 先從該實例的 `mods` 資料夾移除 1.3.9 及更早版本，再放入唯一一個相符的 1.3.10 JAR。Fabric 還需安裝對應版本的 Fabric API。
-4. 啟動遊戲。按 `F8` 開啟或關閉自動翻譯；按 `U` 開啟設定。若已安裝 Mod Menu，也可在模組清單開啟同一設定頁。
+4. 啟動遊戲。按 `F8` 開啟或關閉自動翻譯；主畫面右上角「翻譯設定」或按 `U` 開啟設定。若已安裝 Mod Menu，也可在模組清單開啟同一設定頁。
 5. 首次使用建議選擇「離線」與「僅譯文」。詳細步驟請見[安裝與使用指南](USER_GUIDE.md)。
 
 Fabric、Forge 與 NeoForge 均可按 `U` 開啟圖形設定，直接編輯屏蔽詞、玩家名稱翻譯等選項。

@@ -13,6 +13,10 @@ chat, quest books, mod menus, scoreboards, item descriptions, and signs.
 
 > See [GitHub Releases](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest) for the
 > current stable version and publication date. Use only the JAR matching your Minecraft version and mod loader.
+>
+> Testing build **1.3.11-beta.1** (title screen now has a single Translation settings entry) is on
+> [GitHub Pre-release](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/tag/v1.3.11-beta.1).
+> It does not replace stable 1.3.10.
 
 ## Why use it
 
@@ -33,7 +37,7 @@ chat, quest books, mod menus, scoreboards, item descriptions, and signs.
 1. Check the **Minecraft version, mod loader, and Java version** used by the game instance.
 2. Open the [latest release](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest) and select a JAR from the table below.
 3. Remove 1.3.9 and every older copy from that instance's `mods` folder, then add exactly one matching 1.3.10 JAR. Fabric also requires the matching version of Fabric API.
-4. Start the game. Press `F8` to toggle automatic translation; press `U` to open settings. If Mod Menu is installed, the same settings screen is also available from the mods list.
+4. Start the game. Press `F8` to toggle automatic translation. Open settings from the title-screen “Translation settings” button, by pressing `U`, or from the mods list if Mod Menu is installed.
 5. For a first run, choose **Offline** and **Translated only**. See the [installation and usage guide](USER_GUIDE.md) for details.
 
 Fabric, Forge, and NeoForge all open the graphical settings with `U`, including blocked keywords

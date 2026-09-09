@@ -1,6 +1,6 @@
 package org.universaltranslator.core;
 
-/** Secret-free state shown by the compact translation controls on Minecraft's title screen. */
+/** Secret-free snapshot of the master switch, vanilla-UI switch, and target language. */
 public final class HomeQuickSettingsState {
     private final boolean enabled;
     private final boolean translateVanilla;

@@ -304,6 +304,8 @@ def releaseArtifacts = fileTree(releaseDirectory) {
     include "*.jar", "*.jar.part-*"
 }
 
+def pythonCmd = System.getProperty("os.name").toLowerCase().contains("windows") ? "python" : "python3"
+
 tasks.register("testJarVerifier", Exec) {
     group = "verification"
     description = "Runs unit tests for the release JAR verifier."
@@ -311,7 +313,7 @@ tasks.register("testJarVerifier", Exec) {
             file("scripts/verify_release_jars.py"),
             file("scripts/test_verify_release_jars.py")
     )
-    commandLine "python3", file("scripts/test_verify_release_jars.py")
+    commandLine pythonCmd, file("scripts/test_verify_release_jars.py")
 }
 
 tasks.register("testReleaseAssetPreparer", Exec) {
@@ -321,7 +323,7 @@ tasks.register("testReleaseAssetPreparer", Exec) {
             file("scripts/prepare_release_assets.py"),
             file("scripts/test_prepare_release_assets.py")
     )
-    commandLine "python3", file("scripts/test_prepare_release_assets.py")
+    commandLine pythonCmd, file("scripts/test_prepare_release_assets.py")
 }
 
 tasks.register("verifyReleaseJars", Exec) {
@@ -341,7 +343,7 @@ tasks.register("verifyReleaseJars", Exec) {
         jars = (jars + splitJars).unique { it.absolutePath }
                 .sort { left, right -> left.name <=> right.name }
         commandLine(
-                ["python3", file("scripts/verify_release_jars.py"),
+                [pythonCmd, file("scripts/verify_release_jars.py"),
                  "--checksum-file", new File(releaseDirectory, "SHA256SUMS.txt"),
                  "--require-complete-checksums"] + jars
         )
@@ -362,7 +364,7 @@ tasks.register("prepareReleaseAssets", Exec) {
     inputs.files(releaseArtifacts)
     outputs.dir(preparedReleaseDirectory)
     commandLine(
-            "python3", file("scripts/prepare_release_assets.py"),
+            pythonCmd, file("scripts/prepare_release_assets.py"),
             "--release-dir", releaseDirectory,
             "--output-dir", preparedReleaseDirectory.get().asFile,
             "--version", project.mod_version
@@ -379,7 +381,7 @@ tasks.register("verifyPreparedReleaseAssets", Exec) {
         def jars = fileTree(directory).matching { include "*.jar" }.files
                 .sort { left, right -> left.name <=> right.name }
         commandLine(
-                ["python3", file("scripts/verify_release_jars.py"),
+                [pythonCmd, file("scripts/verify_release_jars.py"),
                  "--checksum-file", new File(directory, "SHA256SUMS.txt"),
                  "--require-complete-checksums"] + jars
         )

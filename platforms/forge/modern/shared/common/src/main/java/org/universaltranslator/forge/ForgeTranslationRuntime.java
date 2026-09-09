@@ -41,6 +41,19 @@ public final class ForgeTranslationRuntime {
     private ForgeTranslationRuntime() {
     }
 
+    private static volatile java.util.function.Consumer<Object> titleSettingsOpener;
+
+    public static void setTitleSettingsOpener(java.util.function.Consumer<Object> opener) {
+        titleSettingsOpener = opener;
+    }
+
+    public static void openSettingsScreen(Object parent) {
+        java.util.function.Consumer<Object> opener = titleSettingsOpener;
+        if (opener != null) {
+            opener.accept(parent);
+        }
+    }
+
     static synchronized void initialize(ForgeConfig config) throws IOException {
         shutdown();
         activeConfig = config;

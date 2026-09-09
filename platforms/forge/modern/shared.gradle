@@ -56,6 +56,7 @@ repositories {
                 "caches/minecraftforge/forgegradle/mavenizer/caches/maven/mojang"))
         content {
             includeGroup "com.mojang"
+            includeGroup "oshi-project"
         }
         metadataSources {
             mavenPom()
@@ -67,6 +68,7 @@ repositories {
         url = "https://bmclapi2.bangbang93.com/maven"
         content {
             includeGroup "com.mojang"
+            includeGroup "oshi-project"
         }
         metadataSources {
             mavenPom()
@@ -80,6 +82,7 @@ repositories {
         url = "https://libraries.minecraft.net/"
         content {
             includeGroup "com.mojang"
+            includeGroup "oshi-project"
         }
     }
     mavenCentral()
@@ -167,8 +170,9 @@ tasks.register("verifyBuiltJar", Exec) {
     inputs.file(normalizedReleaseJar)
     inputs.file(rootProject.file("scripts/verify_release_jars.py"))
     doFirst {
+        def pythonCmd = System.getProperty("os.name").toLowerCase().contains("windows") ? "python" : "python3"
         commandLine(
-                "python3",
+                pythonCmd,
                 rootProject.file("scripts/verify_release_jars.py"),
                 normalizedReleaseJar.get().asFile
         )

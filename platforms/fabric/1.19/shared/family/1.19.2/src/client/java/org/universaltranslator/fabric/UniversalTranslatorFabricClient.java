@@ -6,6 +6,7 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.text.Text;
@@ -194,4 +195,18 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
     private static String tr(String key, Object... arguments) {
         return Text.translatable(key, arguments).getString();
     }
+
+    public static void openSettingsScreen(Screen parent) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null || parent instanceof UniversalTranslatorConfigScreen) {
+            return;
+        }
+        try {
+            FabricConfig config = FabricConfig.load(FabricLoader.getInstance().getConfigDir());
+            client.setScreen(new UniversalTranslatorConfigScreen(parent, config));
+        } catch (Exception exception) {
+            LOGGER.error("Could not open MC Auto Translation Tool settings", exception);
+        }
+    }
+
 }
