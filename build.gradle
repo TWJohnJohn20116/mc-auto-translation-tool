@@ -111,7 +111,13 @@ tasks.register("validateSharedPlatformLayouts") {
         }
 
         def forbiddenLegacyCopies = []
+        def fabricVersionDir = { String gv ->
+            gv.startsWith("1.16") ? "platforms/fabric/1.16/versions/${gv}" :
+            gv.startsWith("1.19") ? "platforms/fabric/1.19/versions/${gv}" :
+            "platforms/fabric/1.20/versions/${gv}"
+        }
         ["1.16.5", "1.19.2", "1.20.1"].each { gameVersion ->
+            def vDir = fabricVersionDir(gameVersion)
             [
                     "FabricConfig.java",
                     "FabricLocalTextGuard.java",
@@ -120,19 +126,19 @@ tasks.register("validateSharedPlatformLayouts") {
                     "TranslationRenderContext.java"
             ].each { name ->
                 forbiddenLegacyCopies.add(
-                        "platforms/fabric/legacy/${gameVersion}/src/client/java/" +
+                        "${vDir}/src/client/java/" +
                                 "org/universaltranslator/fabric/${name}")
             }
             ["en_us.json", "zh_cn.json", "zh_tw.json"].each { name ->
                 forbiddenLegacyCopies.add(
-                        "platforms/fabric/legacy/${gameVersion}/src/main/resources/" +
+                        "${vDir}/src/main/resources/" +
                                 "assets/universal_translator/lang/${name}")
                 forbiddenLegacyCopies.add(
                         "platforms/forge/modern/${gameVersion}/src/main/resources/" +
                                 "assets/universal_translator/lang/${name}")
             }
             forbiddenLegacyCopies.add(
-                    "platforms/fabric/legacy/${gameVersion}/src/main/resources/fabric.mod.json")
+                    "${vDir}/src/main/resources/fabric.mod.json")
             [
                     "ForgeConfig.java",
                     "ForgeTranslationRuntime.java",

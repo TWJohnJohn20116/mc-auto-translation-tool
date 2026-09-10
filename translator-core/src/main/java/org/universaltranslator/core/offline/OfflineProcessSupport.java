@@ -140,6 +140,9 @@ public final class OfflineProcessSupport {
         }
         String normalized = path.toAbsolutePath().normalize().toString()
                 .replace('\\', '/').toLowerCase(Locale.ROOT);
+        if (normalized.length() >= 2 && normalized.charAt(1) == ':') {
+            normalized = normalized.substring(2);
+        }
         return normalized.equals("/sdcard") || normalized.startsWith("/sdcard/")
                 || normalized.equals("/storage/emulated")
                 || normalized.startsWith("/storage/emulated/")

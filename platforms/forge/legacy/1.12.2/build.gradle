@@ -4,18 +4,18 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        classpath "net.minecraftforge.gradle:ForgeGradle:2.1-SNAPSHOT"
+        classpath "net.minecraftforge.gradle:ForgeGradle:3.0.197"
     }
 }
 
-apply plugin: "net.minecraftforge.gradle.forge"
+apply plugin: "net.minecraftforge.gradle"
 
 def releaseProperties = new Properties()
-file("../../gradle.properties").withInputStream { releaseProperties.load(it) }
+file("../../../../gradle.properties").withInputStream { releaseProperties.load(it) }
 
 version = releaseProperties.getProperty("mod_version")
 group = "org.universaltranslator"
-archivesBaseName = "mc-auto-translation-tool-forge-1.8.9"
+archivesBaseName = "mc-auto-translation-tool-forge-1.12.2"
 
 sourceCompatibility = targetCompatibility = "1.8"
 
@@ -31,14 +31,16 @@ if (project.hasProperty("legacyJavac")) {
 }
 
 minecraft {
-    version = "1.8.9-11.15.1.2318-1.8.9"
-    runDir = "run"
-    mappings = "stable_22"
+    mappings channel: "stable", version: "39-1.12"
+}
+
+dependencies {
+    minecraft "net.minecraftforge:forge:1.12.2-14.23.5.2860"
 }
 
 sourceSets.main.java.srcDirs += [
-        "../../translator-core/src/main/java",
-        "../../platforms/forge/shared/legacy-common/src/main/java"
+        "../../../../translator-core/src/main/java",
+        "../../shared/legacy-common/src/main/java"
 ]
 
 processResources {
@@ -50,13 +52,15 @@ processResources {
 }
 
 jar {
-    from("../../LICENSE")
-    from("../../docs/en/THIRD_PARTY_OFFLINE.md")
+    from("../../../../LICENSE")
+    from("../../../../docs/en/THIRD_PARTY_OFFLINE.md")
     manifest {
         attributes(
-                "FMLCorePlugin": "org.universaltranslator.forge.v189.LegacyCorePlugin",
+                "FMLCorePlugin": "org.universaltranslator.forge.v1122.LegacyCorePlugin",
                 "FMLCorePluginContainsFMLMod": "true",
                 "ForceLoadAsMod": "true"
         )
     }
 }
+
+jar.finalizedBy("reobfJar")

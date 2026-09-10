@@ -14,6 +14,7 @@ import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TranslationProviderCatalog;
 import org.universaltranslator.core.SettingsUiAnimation;
 import org.universaltranslator.core.SettingsSelectionList;
+import org.universaltranslator.core.SettingsScreenLayout;
 
 /** Dependency-free settings UI shared by Forge 1.8.9 and 1.12.2. */
 final class UniversalTranslatorConfigScreen extends Screen {
@@ -365,30 +366,23 @@ final class UniversalTranslatorConfigScreen extends Screen {
         }
         drawCenteredString(renderer, tr("screen.universal_translator.settings.title"),
                 width / 2, 18,
-                animatedUi ? SettingsUiAnimation.pulseColor(now) : 0xFFFFFF);
-        int left = layout.left;
-        drawWithShadow(renderer, tr("screen.universal_translator.target_language_hint"),
-                left, layout.targetY - 11, 0xA0A0A0);
-        drawWithShadow(renderer, tr("screen.universal_translator.endpoint_hint"),
-                left, layout.endpointY - 11, 0xA0A0A0);
-        drawWithShadow(renderer, tr("screen.universal_translator.outgoing_target_hint"),
-                layout.right, layout.endpointY - 11, 0xA0A0A0);
+                animatedUi ? SettingsUiAnimation.pulseColor(now) : 0xFFFFFFFF);
         endpoint.method_18385(mouseX, mouseY, partialTicks);
         blockedKeywords.method_18385(mouseX, mouseY, partialTicks);
         if (blockedKeywords.getText().isEmpty() && !blockedKeywords.isFocused()) {
             drawWithShadow(renderer, tr("screen.universal_translator.blocked_keywords_hint"),
-                    layout.right + 4, layout.row(5) + 6, 0x808080);
+                    layout.right + 4, layout.row(5) + 6, 0xFF808080);
         }
         String rawRuntimeStatus = FabricTranslationRuntime.status();
         String runtimeStatus = TranslationStatusLocalizer.localize(rawRuntimeStatus,
                 UniversalTranslatorConfigScreen::tr);
         int belowSave = layout.saveY + 28;
-        int messageY = belowSave <= height - 10 ? belowSave : layout.saveY - 14;
+        int messageY = belowSave <= height - 10 ? belowSave : SettingsScreenLayout.COMPACT_STATUS_Y;
         if (!status.isEmpty()) {
-            drawCenteredString(renderer, status, width / 2, messageY, 0xFF5555);
+            drawCenteredString(renderer, status, width / 2, messageY, 0xFFFF5555);
         } else if (!runtimeStatus.isEmpty()) {
             drawCenteredString(renderer, runtimeStatus, width / 2, messageY,
-                    isFailureStatus(rawRuntimeStatus) ? 0xFF5555 : 0x55FF55);
+                    isFailureStatus(rawRuntimeStatus) ? 0xFFFF5555 : 0xFF55FF55);
         } else if (layout.saveY - layout.endpointY >= 52) {
             int infoY = layout.endpointY + 28;
             drawCenteredString(
@@ -396,9 +390,9 @@ final class UniversalTranslatorConfigScreen extends Screen {
                     tr(isOffline()
                             ? "screen.universal_translator.info.offline"
                             : "screen.universal_translator.info.api"),
-                    width / 2, infoY, 0xFFAA55);
+                    width / 2, infoY, 0xFFFFAA55);
             drawCenteredString(renderer, tr("screen.universal_translator.info.keybind"),
-                    width / 2, infoY + 15, 0xA0A0A0);
+                    width / 2, infoY + 15, 0xFFA0A0A0);
         }
         super.render(mouseX, mouseY, partialTicks);
         if (animatedUi) {
@@ -421,7 +415,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         fill(list.panelLeft(), list.panelTop,
                 list.panelRight(), list.panelBottom, 0xF018202A);
         drawCenteredString(renderer, tr(selectionTitleKey()),
-                width / 2, list.panelTop + 9, 0xFFFFFF);
+                width / 2, list.panelTop + 9, 0xFFFFFFFF);
         for (int index = 0; index < values.length; index++) {
             int x = list.x(index);
             int y = list.y(index);
@@ -433,7 +427,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
             drawCenteredString(renderer,
                     SettingsSelectionList.displayName(openSelection, values[index]),
                     x + list.buttonWidth / 2, y + Math.max(1, (list.buttonHeight - 8) / 2),
-                    selected ? 0x55FF88 : 0xFFFFFF);
+                    selected ? 0xFF55FF88 : 0xFFFFFFFF);
         }
     }
 

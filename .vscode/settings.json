@@ -1,0 +1,18 @@
+{
+    "explorer.fileNesting.enabled": true,
+    "explorer.fileNesting.expand": false,
+    "explorer.fileNesting.patterns": {
+        "build.gradle": "gradle.properties, settings.gradle, gradlew, gradlew.bat",
+        "README.md": "CHANGELOG.md, LICENSE",
+        "package.json": "package-lock.json, tsconfig*.json, vite.config.*"
+    },
+    "files.exclude": {
+        "**/.git": true,
+        "**/.gradle": true,
+        "**/build": true,
+        "**/.DS_Store": true,
+        "**/__pycache__": true,
+        "**/*.iml": true,
+        "**/.idea": true
+    }
+}
