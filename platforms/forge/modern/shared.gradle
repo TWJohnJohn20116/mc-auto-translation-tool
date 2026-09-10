@@ -191,3 +191,14 @@ tasks.withType(JavaCompile).configureEach {
         options.release = project.ext.legacyJavaRelease as int
     }
 }
+
+tasks.named("compileJava", JavaCompile).configure {
+    outputs.cacheIf { false }
+    outputs.file(layout.buildDirectory.file("tmp/compileJava/compileJava-refmap.json"))
+            .withPropertyName("mixinRefmap")
+            .optional()
+    outputs.file(layout.buildDirectory.file("tmp/compileJava/compileJava-mappings.tsrg"))
+            .withPropertyName("mixinMappings")
+            .optional()
+}
+

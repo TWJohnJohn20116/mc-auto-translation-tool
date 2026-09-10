@@ -43,6 +43,20 @@ base {
     archivesName = "mc-auto-translation-tool-fabric-${archiveVersion}"
 }
 
+repositories {
+    mavenCentral {
+        url = uri("https://repo1.maven.org/maven2/")
+    }
+    maven {
+        name = "Minecraft libraries"
+        url = uri("https://libraries.minecraft.net/")
+    }
+    maven {
+        name = "Fabric"
+        url = uri("https://maven.fabricmc.net/")
+    }
+}
+
 dependencies {
     minecraft "com.mojang:minecraft:${project.ext.fabricMinecraftVersion}"
     mappings "net.fabricmc:yarn:${project.ext.fabricYarnMappings}:v2"
