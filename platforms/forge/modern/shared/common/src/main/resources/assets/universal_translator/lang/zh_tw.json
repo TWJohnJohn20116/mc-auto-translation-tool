@@ -115,18 +115,23 @@
   "message.universal_translator.toggle_failed": "MC 自動翻譯工具：切換失敗",
   "message.universal_translator.runtime_failed": "§c[MC 自動翻譯工具] %s",
   "message.universal_translator.runtime_status": "MC 自動翻譯工具：%s",
-  "message.universal_translator.memory_warning": "§c[MC 自動翻譯工具] 目前只配置 %s MiB 遊戲記憶體，可能停在載入頁面；請在啟動器中設定至少 2048 MiB。"
-  ,"message.universal_translator.outgoing_translating": "MC 自動翻譯工具：正在翻譯並傳送…"
-  ,"message.universal_translator.outgoing_disconnected": "§c[MC 自動翻譯工具] 已與伺服器中斷連線，訊息未傳送。"
-  ,"message.universal_translator.outgoing_failed": "§e[MC 自動翻譯工具] 傳送翻譯失敗，已傳送原文。"
- ,"message.universal_translator.outgoing_too_long": "§e[MC 自動翻譯工具] 譯文超過伺服器聊天長度限制，已傳送原文。"
-  ,"screen.universal_translator.option.vanilla": "原版介面翻譯：%s"
-  ,"screen.universal_translator.option.outgoing_target": "傳送目標語言：%s"
-  ,"screen.universal_translator.home.open": "翻譯設定"
-  ,"screen.universal_translator.home.enabled": "翻譯總開關：%s"
-  ,"screen.universal_translator.home.vanilla": "原版介面：%s"
-  ,"screen.universal_translator.home.target": "目標語言：%s"
-  ,"screen.universal_translator.option.player_names": "玩家名稱翻譯：%s"
-  ,"screen.universal_translator.blocked_keywords": "翻譯屏蔽關鍵詞"
-  ,"screen.universal_translator.blocked_keywords_hint": "屏蔽關鍵詞（逗號分隔）"
+  "message.universal_translator.memory_warning": "§c[MC 自動翻譯工具] 目前只配置 %s MiB 遊戲記憶體，可能停在載入頁面；請在啟動器中設定至少 2048 MiB。",
+  "message.universal_translator.outgoing_translating": "MC 自動翻譯工具：正在翻譯並傳送…",
+  "message.universal_translator.outgoing_disconnected": "§c[MC 自動翻譯工具] 已與伺服器中斷連線，訊息未傳送。",
+  "message.universal_translator.outgoing_failed": "§e[MC 自動翻譯工具] 傳送翻譯失敗，已傳送原文。",
+  "message.universal_translator.outgoing_too_long": "§e[MC 自動翻譯工具] 譯文超過伺服器聊天長度限制，已傳送原文。",
+  "screen.universal_translator.option.vanilla": "原版介面翻譯：%s",
+  "screen.universal_translator.option.outgoing_target": "傳送目標語言：%s",
+  "screen.universal_translator.home.open": "翻譯設定",
+  "screen.universal_translator.home.enabled": "翻譯總開關：%s",
+  "screen.universal_translator.home.vanilla": "原版介面：%s",
+  "screen.universal_translator.home.target": "目標語言：%s",
+  "screen.universal_translator.option.player_names": "玩家名稱翻譯：%s",
+  "screen.universal_translator.blocked_keywords": "翻譯屏蔽關鍵詞",
+  "screen.universal_translator.blocked_keywords_hint": "屏蔽關鍵詞（逗號分隔）",
+  "screen.universal_translator.tab.general": "常規",
+  "screen.universal_translator.tab.scopes": "範圍",
+  "screen.universal_translator.tab.engine": "引擎",
+  "screen.universal_translator.tab.outgoing": "傳送",
+  "screen.universal_translator.info.outgoing_hint": "在聊天欄發言時，自動翻譯為目標語言送出"
 }

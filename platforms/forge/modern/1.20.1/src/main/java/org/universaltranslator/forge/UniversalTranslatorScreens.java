@@ -19,7 +19,7 @@ import org.universaltranslator.core.TranslationTextColor;
 import java.util.Collections;
 import java.util.List;
 
-/** Shared state and layout for Forge/NeoForge 1.20.1 screens with a GuiGraphics render bridge. */
+/** Shared state and layout for Forge/NeoForge Forge/NeoForge 1.20.1 screens with version-specific render bridges. */
 abstract class UniversalTranslatorConfigScreenBase extends Screen {
     private final Screen parent;
     private final ForgeConfig original;
@@ -43,6 +43,20 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     private String llmModel;
     private String targetLanguage;
     private String outgoingTargetLanguage;
+    private enum Tab {
+        GENERAL,
+        SCOPES,
+        ENGINE,
+        OUTGOING
+    }
+    private Tab activeTab = Tab.GENERAL;
+    private Button tabGeneralButton;
+    private Button tabScopesButton;
+    private Button tabEngineButton;
+    private Button tabOutgoingButton;
+    private Button llmConfigButton;
+    private Button diagnosticsButton;
+
     private EditBox endpoint;
     private EditBox blockedKeywords;
     private Button enabledButton;
@@ -103,79 +117,104 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                 ? original.blockedKeywords : blockedKeywords.getValue();
         Layout layout = layout();
         int left = layout.left;
-        int styleWidth = Math.min(86, layout.buttonWidth);
-        uiStyleButton = addRenderableWidget(button(Math.max(4, width - styleWidth - 6), 6,
-                styleWidth, () -> {
-                    animatedUi = !animatedUi;
-                    animationStartedNanos = System.nanoTime();
-                }));
-        enabledButton = addRenderableWidget(button(left, layout.row(0), layout.buttonWidth,
+
+        // Navigation Tabs (positioned right below header at tabY)
+        tabGeneralButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+            activeTab = Tab.GENERAL;
+            updateTabVisibility();
+        }).bounds(layout.tabX(0), layout.tabY(), layout.tabWidth(), 20).build());
+
+        tabScopesButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+            activeTab = Tab.SCOPES;
+            updateTabVisibility();
+        }).bounds(layout.tabX(1), layout.tabY(), layout.tabWidth(), 20).build());
+
+        tabEngineButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+            activeTab = Tab.ENGINE;
+            updateTabVisibility();
+        }).bounds(layout.tabX(2), layout.tabY(), layout.tabWidth(), 20).build());
+
+        tabOutgoingButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+            activeTab = Tab.OUTGOING;
+            updateTabVisibility();
+        }).bounds(layout.tabX(3), layout.tabY(), layout.tabWidth(), 20).build());
+
+        // --- Tab 1: General (常規) ---
+        enabledButton = addRenderableWidget(button(left, layout.contentRow(0), layout.buttonWidth,
                 () -> enabled = !enabled));
-        cacheButton = addRenderableWidget(button(layout.right, layout.row(0), layout.buttonWidth,
-                () -> diskCache = !diskCache));
-        chatButton = addRenderableWidget(button(left, layout.row(1), layout.buttonWidth,
-                () -> translateChat = !translateChat));
-        otherButton = addRenderableWidget(button(layout.right, layout.row(1), layout.buttonWidth,
-                () -> translateOther = !translateOther));
-        providerButton = addRenderableWidget(button(left, layout.row(2), layout.buttonWidth,
-                () -> openSelection = SettingsSelectionList.Kind.PROVIDER));
-        displayButton = addRenderableWidget(button(layout.right, layout.row(2), layout.buttonWidth,
+        targetLanguageButton = addRenderableWidget(button(layout.right, layout.contentRow(0), layout.buttonWidth,
+                () -> openSelection = SettingsSelectionList.Kind.TARGET_LANGUAGE));
+        displayButton = addRenderableWidget(button(left, layout.contentRow(1), layout.buttonWidth,
                 () -> displayMode = displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED
                         ? TranslationDisplayMode.TRANSLATED_ONLY
                         : TranslationDisplayMode.ORIGINAL_AND_TRANSLATED));
-        mixedTextButton = addRenderableWidget(button(left, layout.row(3), layout.buttonWidth,
-                () -> translateEnglishOnly = !translateEnglishOnly));
-        colorButton = addRenderableWidget(button(layout.right, layout.row(3), layout.buttonWidth,
+        colorButton = addRenderableWidget(button(layout.right, layout.contentRow(1), layout.buttonWidth,
                 () -> translatedTextColor = translatedTextColor.next()));
-        downloadButton = addRenderableWidget(button(left, layout.row(4), layout.buttonWidth, () -> {
-            if (isLlm()) {
-                if (minecraft != null) {
-                    minecraft.setScreen(new UniversalTranslatorLlmConfigScreen(
-                            this, llmEndpoint, llmModel, !llmApiKey.isEmpty()));
-                }
-            } else {
-                offlineAutoDownload = !offlineAutoDownload;
-            }
+        cacheButton = addRenderableWidget(button(left, layout.contentRow(2), layout.buttonWidth,
+                () -> diskCache = !diskCache));
+        uiStyleButton = addRenderableWidget(button(layout.right, layout.contentRow(2), layout.buttonWidth, () -> {
+            animatedUi = !animatedUi;
+            animationStartedNanos = System.nanoTime();
         }));
-        fallbackButton = addRenderableWidget(button(layout.right, layout.row(4), layout.buttonWidth,
-                () -> apiFallback = !apiFallback));
-        modelButton = addRenderableWidget(button(left, layout.row(5), layout.buttonWidth,
-                () -> offlineModel = offlineModel.next()));
-        blockedKeywords = addRenderableWidget(new EditBox(font, layout.right, layout.row(5),
-                layout.buttonWidth, 20, Component.translatable("screen.universal_translator.blocked_keywords")));
-        blockedKeywords.setMaxLength(4096);
-        blockedKeywords.setValue(blockedKeywordsValue);
-
-        int compactGap = 4;
-        int compactWidth = (layout.totalWidth - compactGap * 2) / 3;
-        int compactMiddle = left + compactWidth + compactGap;
-        int compactRight = compactMiddle + compactWidth + compactGap;
-        vanillaButton = addRenderableWidget(button(left, layout.row(6), compactWidth,
-                () -> translateVanilla = !translateVanilla));
-        playerNamesButton = addRenderableWidget(button(compactMiddle, layout.row(6), compactWidth,
-                () -> translatePlayerNames = !translatePlayerNames));
-        addRenderableWidget(Button.builder(
+        diagnosticsButton = addRenderableWidget(Button.builder(
                 Component.translatable("screen.universal_translator.diagnostics.title"), button -> {
                     if (minecraft != null) {
                         minecraft.setScreen(new UniversalTranslatorDiagnosticsScreen(this, original));
                     }
-                }).bounds(compactRight, layout.row(6), compactWidth, 20).build());
+                }).bounds(left, layout.contentRow(3), layout.totalWidth, 20).build());
 
-        targetLanguageButton = addRenderableWidget(button(left, layout.targetY, layout.buttonWidth,
-                () -> openSelection = SettingsSelectionList.Kind.TARGET_LANGUAGE));
-        outgoingButton = addRenderableWidget(button(layout.right, layout.targetY, layout.buttonWidth,
-                () -> translateOutgoing = !translateOutgoing));
-        endpoint = addRenderableWidget(new EditBox(font, left, layout.endpointY, layout.buttonWidth,
+        // --- Tab 2: Scopes (範圍) ---
+        chatButton = addRenderableWidget(button(left, layout.contentRow(0), layout.buttonWidth,
+                () -> translateChat = !translateChat));
+        otherButton = addRenderableWidget(button(layout.right, layout.contentRow(0), layout.buttonWidth,
+                () -> translateOther = !translateOther));
+        vanillaButton = addRenderableWidget(button(left, layout.contentRow(1), layout.buttonWidth,
+                () -> translateVanilla = !translateVanilla));
+        playerNamesButton = addRenderableWidget(button(layout.right, layout.contentRow(1), layout.buttonWidth,
+                () -> translatePlayerNames = !translatePlayerNames));
+        mixedTextButton = addRenderableWidget(button(left, layout.contentRow(2), layout.totalWidth,
+                () -> translateEnglishOnly = !translateEnglishOnly));
+        blockedKeywords = addRenderableWidget(new EditBox(font, left, layout.contentRow(3),
+                layout.totalWidth, 20, Component.translatable("screen.universal_translator.blocked_keywords")));
+        blockedKeywords.setMaxLength(4096);
+        blockedKeywords.setValue(blockedKeywordsValue);
+        blockedKeywords.setHint(Component.translatable("screen.universal_translator.blocked_keywords_hint"));
+
+        // --- Tab 3: Engine (引擎) ---
+        providerButton = addRenderableWidget(button(left, layout.contentRow(0), layout.totalWidth,
+                () -> openSelection = SettingsSelectionList.Kind.PROVIDER));
+        modelButton = addRenderableWidget(button(left, layout.contentRow(1), layout.buttonWidth,
+                () -> offlineModel = offlineModel.next()));
+        downloadButton = addRenderableWidget(button(layout.right, layout.contentRow(1), layout.buttonWidth,
+                () -> offlineAutoDownload = !offlineAutoDownload));
+        endpoint = addRenderableWidget(new EditBox(font, left, layout.contentRow(1), layout.totalWidth,
                 20, Component.translatable("screen.universal_translator.endpoint")));
         endpoint.setMaxLength(512);
         endpoint.setValue(endpointValue);
-        outgoingTargetLanguageButton = addRenderableWidget(button(layout.right, layout.endpointY,
-                layout.buttonWidth, () -> openSelection = SettingsSelectionList.Kind.OUTGOING_LANGUAGE));
+        fallbackButton = addRenderableWidget(button(left, layout.contentRow(2), layout.totalWidth,
+                () -> apiFallback = !apiFallback));
+        llmConfigButton = addRenderableWidget(Button.builder(
+                Component.translatable("screen.universal_translator.option.llm_settings"), button -> {
+                    if (minecraft != null) {
+                        minecraft.setScreen(new UniversalTranslatorLlmConfigScreen(
+                                this, llmEndpoint, llmModel, !llmApiKey.isEmpty()));
+                    }
+                }).bounds(left, layout.contentRow(2), layout.totalWidth, 20).build());
+
+        // --- Tab 4: Outgoing (傳送) ---
+        outgoingButton = addRenderableWidget(button(left, layout.contentRow(0), layout.totalWidth,
+                () -> translateOutgoing = !translateOutgoing));
+        outgoingTargetLanguageButton = addRenderableWidget(button(left, layout.contentRow(1),
+                layout.totalWidth, () -> openSelection = SettingsSelectionList.Kind.OUTGOING_LANGUAGE));
+
+        // --- Bottom Action Row ---
         addRenderableWidget(Button.builder(Component.translatable("screen.universal_translator.save"),
                 button -> saveAndApply()).bounds(left, layout.saveY, layout.buttonWidth, 20).build());
         addRenderableWidget(Button.builder(Component.translatable("gui.cancel"), button -> onClose())
                 .bounds(layout.right, layout.saveY, layout.buttonWidth, 20).build());
+
         refreshLabels();
+        updateTabVisibility();
     }
 
     private Button button(int x, int y, int width, Runnable action) {
@@ -203,9 +242,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                 onOff(translateEnglishOnly)));
         colorButton.setMessage(Component.translatable("screen.universal_translator.option.color",
                 colorLabel(translatedTextColor)));
-        downloadButton.setMessage(isLlm()
-                ? Component.translatable("screen.universal_translator.option.llm_settings")
-                : Component.translatable("screen.universal_translator.option.download", onOff(offlineAutoDownload)));
+        downloadButton.setMessage(Component.translatable("screen.universal_translator.option.download", onOff(offlineAutoDownload)));
         modelButton.setMessage(Component.translatable("screen.universal_translator.option.model", offlineModel.displayName()));
         fallbackButton.setMessage(Component.translatable("screen.universal_translator.option.fallback", onOff(apiFallback)));
         vanillaButton.setMessage(Component.translatable("screen.universal_translator.option.vanilla", onOff(translateVanilla)));
@@ -218,9 +255,61 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         outgoingTargetLanguageButton.setMessage(Component.translatable(
                 "screen.universal_translator.option.outgoing_target",
                 TargetLanguage.displayName(outgoingTargetLanguage)));
-        downloadButton.active = isOffline() || isLlm();
-        modelButton.active = isOffline();
-        fallbackButton.active = isOffline();
+        outgoingTargetLanguageButton.active = translateOutgoing;
+        refreshTabButtons();
+    }
+
+    private void updateTabVisibility() {
+        boolean isGeneral = activeTab == Tab.GENERAL;
+        boolean isScopes = activeTab == Tab.SCOPES;
+        boolean isEngine = activeTab == Tab.ENGINE;
+        boolean isOutgoing = activeTab == Tab.OUTGOING;
+
+        // Tab 1: General
+        enabledButton.visible = isGeneral;
+        targetLanguageButton.visible = isGeneral;
+        displayButton.visible = isGeneral;
+        colorButton.visible = isGeneral;
+        cacheButton.visible = isGeneral;
+        uiStyleButton.visible = isGeneral;
+        diagnosticsButton.visible = isGeneral;
+
+        // Tab 2: Scopes
+        chatButton.visible = isScopes;
+        otherButton.visible = isScopes;
+        vanillaButton.visible = isScopes;
+        playerNamesButton.visible = isScopes;
+        mixedTextButton.visible = isScopes;
+        blockedKeywords.visible = isScopes;
+
+        // Tab 3: Engine
+        providerButton.visible = isEngine;
+        boolean offline = isOffline();
+        boolean llm = isLlm();
+        modelButton.visible = isEngine && offline;
+        downloadButton.visible = isEngine && offline;
+        fallbackButton.visible = isEngine && offline;
+        endpoint.visible = isEngine && !offline;
+        llmConfigButton.visible = isEngine && llm;
+
+        // Tab 4: Outgoing
+        outgoingButton.visible = isOutgoing;
+        outgoingTargetLanguageButton.visible = isOutgoing;
+
+        refreshTabButtons();
+    }
+
+    private void refreshTabButtons() {
+        if (tabGeneralButton == null) return;
+        tabGeneralButton.setMessage(tabTitle("screen.universal_translator.tab.general", activeTab == Tab.GENERAL));
+        tabScopesButton.setMessage(tabTitle("screen.universal_translator.tab.scopes", activeTab == Tab.SCOPES));
+        tabEngineButton.setMessage(tabTitle("screen.universal_translator.tab.engine", activeTab == Tab.ENGINE));
+        tabOutgoingButton.setMessage(tabTitle("screen.universal_translator.tab.outgoing", activeTab == Tab.OUTGOING));
+    }
+
+    private Component tabTitle(String key, boolean active) {
+        String label = tr(key);
+        return Component.literal(active ? "§b§l[ " + label + " ]" : "§7" + label);
     }
 
     private void saveAndApply() {
@@ -275,19 +364,37 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
             int sweep = SettingsUiAnimation.sweepX(panelLeft, Math.max(panelLeft, panelRight - 26), now);
             graphics.fill(sweep, 32, Math.min(panelRight, sweep + 26), 34,
                     SettingsUiAnimation.pulseColor(now));
+
+            // Glowing underline for active tab
+            int tabIndex = activeTab.ordinal();
+            int tabX = layout.tabX(tabIndex);
+            graphics.fill(tabX, layout.tabY() + 20, tabX + layout.tabWidth(), layout.tabY() + 22, 0xFF55D6FF);
         }
-        graphics.centered(title, width / 2, 18,
+        graphics.centered(title, width / 2, 16,
                 animatedUi ? SettingsUiAnimation.pulseColor(now) : 0xFFFFFFFF);
         String rawStatus = ForgeTranslationRuntime.status();
         String localized = TranslationStatusLocalizer.localize(rawStatus,
                 UniversalTranslatorConfigScreenBase::tr);
-        int belowSave = layout.saveY + 28;
+        int belowSave = layout.saveY + 24;
         int messageY = belowSave <= height - 10 ? belowSave : SettingsScreenLayout.COMPACT_STATUS_Y;
         if (!status.isEmpty()) {
             graphics.centered(Component.literal(status), width / 2, messageY, 0xFFFF5555);
         } else if (!localized.isEmpty()) {
             graphics.centered(Component.literal(localized), width / 2, messageY,
                     TranslationStatusLocalizer.isFailure(rawStatus) ? 0xFFFF5555 : 0xFF55FF55);
+        } else {
+            if (activeTab == Tab.OUTGOING) {
+                graphics.centered(Component.translatable("screen.universal_translator.info.outgoing_hint"),
+                        width / 2, layout.contentRow(2) + 6, 0xFFA0A0A0);
+            } else if (activeTab == Tab.GENERAL) {
+                graphics.centered(Component.translatable("screen.universal_translator.info.keybind"),
+                        width / 2, layout.contentRow(3) + 24, 0xFFA0A0A0);
+            } else if (activeTab == Tab.ENGINE) {
+                graphics.centered(Component.translatable(isOffline()
+                                ? "screen.universal_translator.info.offline"
+                                : "screen.universal_translator.info.api"),
+                        width / 2, layout.contentRow(3) + 6, 0xFFFFAA55);
+            }
         }
         return opening;
     }
@@ -343,6 +450,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
             else outgoingTargetLanguage = values[selected];
             openSelection = SettingsSelectionList.Kind.NONE;
             refreshLabels();
+            updateTabVisibility();
             return true;
         } else if (!list.contains(mouseX, mouseY)) {
             openSelection = SettingsSelectionList.Kind.NONE;
@@ -419,14 +527,17 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     private Layout layout() {
         SettingsScreenLayout.Geometry geometry = SettingsScreenLayout.calculate(width, height);
         return new Layout(geometry.left(), geometry.right(), geometry.totalWidth(), geometry.buttonWidth(),
-                geometry.top(), geometry.rowStep(), geometry.targetY(), geometry.endpointY(), geometry.saveY());
+                geometry.top(), geometry.rowStep(), geometry.targetY(), geometry.endpointY(), geometry.saveY(),
+                geometry.tabY(), geometry.tabWidth(), geometry.tabGap(), geometry.contentTop(), geometry.contentRowStep());
     }
 
     private static final class Layout {
         private final int left, right, totalWidth, buttonWidth, top, rowStep, targetY, endpointY, saveY;
+        private final int tabY, tabWidth, tabGap, contentTop, contentRowStep;
 
         private Layout(int left, int right, int totalWidth, int buttonWidth, int top,
-                       int rowStep, int targetY, int endpointY, int saveY) {
+                       int rowStep, int targetY, int endpointY, int saveY,
+                       int tabY, int tabWidth, int tabGap, int contentTop, int contentRowStep) {
             this.left = left;
             this.right = right;
             this.totalWidth = totalWidth;
@@ -436,6 +547,27 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
             this.targetY = targetY;
             this.endpointY = endpointY;
             this.saveY = saveY;
+            this.tabY = tabY;
+            this.tabWidth = tabWidth;
+            this.tabGap = tabGap;
+            this.contentTop = contentTop;
+            this.contentRowStep = contentRowStep;
+        }
+
+        private int tabX(int index) {
+            return left + index * (tabWidth + tabGap);
+        }
+
+        private int tabY() {
+            return tabY;
+        }
+
+        private int tabWidth() {
+            return tabWidth;
+        }
+
+        private int contentRow(int index) {
+            return contentTop + contentRowStep * index;
         }
 
         private int row(int index) {

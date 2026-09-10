@@ -19,6 +19,13 @@ import org.universaltranslator.core.SettingsSelectionList;
 
 /** Dependency-free settings UI shared by Forge 1.8.9 and 1.12.2. */
 final class LegacyConfigScreen extends GuiScreen {
+    private enum Tab {
+        GENERAL,
+        SCOPES,
+        ENGINE,
+        OUTGOING
+    }
+
     private static final int ENABLED = 1;
     private static final int CACHE = 2;
     private static final int CHAT = 3;
@@ -39,6 +46,11 @@ final class LegacyConfigScreen extends GuiScreen {
     private static final int OUTGOING_TARGET_LANGUAGE = 18;
     private static final int PLAYER_NAMES = 19;
     private static final int UI_STYLE = 20;
+    private static final int TAB_GENERAL = 101;
+    private static final int TAB_SCOPES = 102;
+    private static final int TAB_ENGINE = 103;
+    private static final int TAB_OUTGOING = 104;
+    private static final int LLM_SETTINGS = 105;
 
     private final GuiScreen parent;
     private final LegacyConfig original;
@@ -62,8 +74,41 @@ final class LegacyConfigScreen extends GuiScreen {
     private String llmModel;
     private String targetLanguage;
     private String outgoingTargetLanguage;
-    private GuiTextField endpoint;
+
+    private Tab activeTab = Tab.GENERAL;
+    private GuiButton tabGeneralButton;
+    private GuiButton tabScopesButton;
+    private GuiButton tabEngineButton;
+    private GuiButton tabOutgoingButton;
+
+    private GuiButton enabledButton;
+    private GuiButton targetLanguageButton;
+    private GuiButton displayButton;
+    private GuiButton colorButton;
+    private GuiButton cacheButton;
+    private GuiButton uiStyleButton;
+    private GuiButton diagnosticsButton;
+
+    private GuiButton chatButton;
+    private GuiButton otherButton;
+    private GuiButton vanillaButton;
+    private GuiButton playerNamesButton;
+    private GuiButton mixedTextButton;
     private GuiTextField blockedKeywords;
+
+    private GuiButton providerButton;
+    private GuiButton modelButton;
+    private GuiButton downloadButton;
+    private GuiButton fallbackButton;
+    private GuiButton llmSettingsButton;
+    private GuiTextField endpoint;
+
+    private GuiButton outgoingButton;
+    private GuiButton outgoingTargetButton;
+
+    private GuiButton saveButton;
+    private GuiButton cancelButton;
+
     private FontRenderer renderer;
     private String status = "";
     private long animationStartedNanos = System.nanoTime();
@@ -105,54 +150,160 @@ final class LegacyConfigScreen extends GuiScreen {
         }
         buttonList.clear();
         renderer = LegacyVersionAccess.fontRenderer();
-        Layout layout = layout();
-        int left = layout.left;
-        int styleWidth = Math.min(86, layout.buttonWidth);
-        buttonList.add(new GuiButton(UI_STYLE, Math.max(4, width - styleWidth - 6), 6,
-                styleWidth, 20, ""));
-        buttonList.add(new GuiButton(ENABLED, left, layout.row(0), layout.buttonWidth, 20, ""));
-        buttonList.add(new GuiButton(CACHE, layout.right, layout.row(0), layout.buttonWidth, 20, ""));
-        buttonList.add(new GuiButton(CHAT, left, layout.row(1), layout.buttonWidth, 20, ""));
-        buttonList.add(new GuiButton(OTHER, layout.right, layout.row(1), layout.buttonWidth, 20, ""));
-        buttonList.add(new GuiButton(PROVIDER, left, layout.row(2), layout.buttonWidth, 20, ""));
-        buttonList.add(new GuiButton(DISPLAY, layout.right, layout.row(2), layout.buttonWidth, 20, ""));
-        buttonList.add(new GuiButton(MIXED_TEXT, left, layout.row(3), layout.buttonWidth, 20, ""));
-        buttonList.add(new GuiButton(COLOR, layout.right, layout.row(3), layout.buttonWidth, 20, ""));
-        buttonList.add(new GuiButton(DOWNLOAD, left, layout.row(4), layout.buttonWidth, 20, ""));
-        buttonList.add(new GuiButton(FALLBACK, layout.right, layout.row(4), layout.buttonWidth, 20, ""));
-        buttonList.add(new GuiButton(MODEL, left, layout.row(5), layout.buttonWidth, 20, ""));
-        blockedKeywords = new GuiTextField(22, renderer, layout.right, layout.row(5),
-                layout.buttonWidth, 20);
+        SettingsScreenLayout.Geometry layout = SettingsScreenLayout.calculate(width, height);
+        int left = layout.left();
+        int right = layout.right();
+        int buttonWidth = layout.buttonWidth();
+        int totalWidth = layout.totalWidth();
+
+        // 4 Navigation Tabs
+        tabGeneralButton = new GuiButton(TAB_GENERAL, layout.tabX(0), layout.tabY(), layout.tabWidth(), 20,
+                tr("category.universal_translator.general"));
+        tabScopesButton = new GuiButton(TAB_SCOPES, layout.tabX(1), layout.tabY(), layout.tabWidth(), 20,
+                tr("category.universal_translator.scopes"));
+        tabEngineButton = new GuiButton(TAB_ENGINE, layout.tabX(2), layout.tabY(), layout.tabWidth(), 20,
+                tr("category.universal_translator.engine"));
+        tabOutgoingButton = new GuiButton(TAB_OUTGOING, layout.tabX(3), layout.tabY(), layout.tabWidth(), 20,
+                tr("category.universal_translator.outgoing"));
+
+        buttonList.add(tabGeneralButton);
+        buttonList.add(tabScopesButton);
+        buttonList.add(tabEngineButton);
+        buttonList.add(tabOutgoingButton);
+
+        // Tab 1: General (常規)
+        enabledButton = new GuiButton(ENABLED, left, layout.contentRow(0), buttonWidth, 20, "");
+        targetLanguageButton = new GuiButton(TARGET_LANGUAGE, right, layout.contentRow(0), buttonWidth, 20, "");
+        displayButton = new GuiButton(DISPLAY, left, layout.contentRow(1), buttonWidth, 20, "");
+        colorButton = new GuiButton(COLOR, right, layout.contentRow(1), buttonWidth, 20, "");
+        cacheButton = new GuiButton(CACHE, left, layout.contentRow(2), buttonWidth, 20, "");
+        uiStyleButton = new GuiButton(UI_STYLE, right, layout.contentRow(2), buttonWidth, 20, "");
+        diagnosticsButton = new GuiButton(DIAGNOSTICS, left, layout.contentRow(3), totalWidth, 20,
+                tr("screen.universal_translator.diagnostics.title"));
+
+        buttonList.add(enabledButton);
+        buttonList.add(targetLanguageButton);
+        buttonList.add(displayButton);
+        buttonList.add(colorButton);
+        buttonList.add(cacheButton);
+        buttonList.add(uiStyleButton);
+        buttonList.add(diagnosticsButton);
+
+        // Tab 2: Scopes (範圍)
+        chatButton = new GuiButton(CHAT, left, layout.contentRow(0), buttonWidth, 20, "");
+        otherButton = new GuiButton(OTHER, right, layout.contentRow(0), buttonWidth, 20, "");
+        vanillaButton = new GuiButton(VANILLA, left, layout.contentRow(1), buttonWidth, 20, "");
+        playerNamesButton = new GuiButton(PLAYER_NAMES, right, layout.contentRow(1), buttonWidth, 20, "");
+        mixedTextButton = new GuiButton(MIXED_TEXT, left, layout.contentRow(2), totalWidth, 20, "");
+        blockedKeywords = new GuiTextField(22, renderer, left, layout.contentRow(3), totalWidth, 20);
         blockedKeywords.setMaxStringLength(4096);
         blockedKeywords.setText(blockedKeywordsValue);
-        int compactGap = 4;
-        int compactWidth = (layout.totalWidth - compactGap * 2) / 3;
-        int compactMiddle = left + compactWidth + compactGap;
-        int compactRight = compactMiddle + compactWidth + compactGap;
-        buttonList.add(new GuiButton(VANILLA, left, layout.row(6), compactWidth, 20, ""));
-        buttonList.add(new GuiButton(PLAYER_NAMES, compactMiddle, layout.row(6),
-                compactWidth, 20, ""));
-        buttonList.add(new GuiButton(DIAGNOSTICS, compactRight, layout.row(6),
-                compactWidth, 20, tr("screen.universal_translator.diagnostics.title")));
-        buttonList.add(new GuiButton(TARGET_LANGUAGE, left, layout.targetY,
-                layout.buttonWidth, 20, ""));
-        buttonList.add(new GuiButton(OUTGOING, layout.right, layout.targetY,
-                layout.buttonWidth, 20, ""));
-        endpoint = new GuiTextField(21, renderer, left, layout.endpointY, layout.buttonWidth, 20);
+
+        buttonList.add(chatButton);
+        buttonList.add(otherButton);
+        buttonList.add(vanillaButton);
+        buttonList.add(playerNamesButton);
+        buttonList.add(mixedTextButton);
+
+        // Tab 3: Engine (引擎)
+        providerButton = new GuiButton(PROVIDER, left, layout.contentRow(0), totalWidth, 20, "");
+        modelButton = new GuiButton(MODEL, left, layout.contentRow(1), buttonWidth, 20, "");
+        downloadButton = new GuiButton(DOWNLOAD, right, layout.contentRow(1), buttonWidth, 20, "");
+        fallbackButton = new GuiButton(FALLBACK, left, layout.contentRow(2), totalWidth, 20, "");
+        llmSettingsButton = new GuiButton(LLM_SETTINGS, left, layout.contentRow(1), buttonWidth, 20,
+                tr("screen.universal_translator.option.llm_settings"));
+        endpoint = new GuiTextField(21, renderer, left, layout.contentRow(isLlm() ? 2 : 1), totalWidth, 20);
         endpoint.setMaxStringLength(512);
         endpoint.setText(endpointValue);
-        buttonList.add(new GuiButton(OUTGOING_TARGET_LANGUAGE, layout.right, layout.endpointY,
-                layout.buttonWidth, 20, ""));
-        buttonList.add(new GuiButton(SAVE, left, layout.saveY, layout.buttonWidth, 20,
-                tr("screen.universal_translator.save")));
-        buttonList.add(new GuiButton(CANCEL, layout.right, layout.saveY, layout.buttonWidth, 20,
-                tr("gui.cancel")));
+
+        buttonList.add(providerButton);
+        buttonList.add(modelButton);
+        buttonList.add(downloadButton);
+        buttonList.add(fallbackButton);
+        buttonList.add(llmSettingsButton);
+
+        // Tab 4: Outgoing (傳送)
+        outgoingButton = new GuiButton(OUTGOING, left, layout.contentRow(0), buttonWidth, 20, "");
+        outgoingTargetButton = new GuiButton(OUTGOING_TARGET_LANGUAGE, right, layout.contentRow(0), buttonWidth, 20, "");
+
+        buttonList.add(outgoingButton);
+        buttonList.add(outgoingTargetButton);
+
+        // Bottom Bar
+        saveButton = new GuiButton(SAVE, left, layout.saveY(), buttonWidth, 20,
+                tr("screen.universal_translator.save"));
+        cancelButton = new GuiButton(CANCEL, right, layout.saveY(), buttonWidth, 20,
+                tr("gui.cancel"));
+
+        buttonList.add(saveButton);
+        buttonList.add(cancelButton);
+
+        updateTabVisibility();
         refreshLabels();
+    }
+
+    private void updateTabVisibility() {
+        tabGeneralButton.enabled = activeTab != Tab.GENERAL;
+        tabScopesButton.enabled = activeTab != Tab.SCOPES;
+        tabEngineButton.enabled = activeTab != Tab.ENGINE;
+        tabOutgoingButton.enabled = activeTab != Tab.OUTGOING;
+
+        // General
+        boolean isGen = activeTab == Tab.GENERAL;
+        enabledButton.visible = isGen;
+        targetLanguageButton.visible = isGen;
+        displayButton.visible = isGen;
+        colorButton.visible = isGen;
+        cacheButton.visible = isGen;
+        uiStyleButton.visible = isGen;
+        diagnosticsButton.visible = isGen;
+
+        // Scopes
+        boolean isScope = activeTab == Tab.SCOPES;
+        chatButton.visible = isScope;
+        otherButton.visible = isScope;
+        vanillaButton.visible = isScope;
+        playerNamesButton.visible = isScope;
+        mixedTextButton.visible = isScope;
+        blockedKeywords.setVisible(isScope);
+
+        // Engine
+        boolean isEng = activeTab == Tab.ENGINE;
+        providerButton.visible = isEng;
+        boolean offline = isOffline();
+        boolean llm = isLlm();
+        modelButton.visible = isEng && offline;
+        downloadButton.visible = isEng && offline;
+        fallbackButton.visible = isEng && offline;
+        llmSettingsButton.visible = isEng && llm;
+        endpoint.setVisible(isEng && !offline);
+
+        // Outgoing
+        boolean isOut = activeTab == Tab.OUTGOING;
+        outgoingButton.visible = isOut;
+        outgoingTargetButton.visible = isOut;
+        outgoingTargetButton.enabled = translateOutgoing;
     }
 
     @Override
     protected void actionPerformed(GuiButton button) throws IOException {
-        if (button.id == ENABLED) {
+        if (button.id == TAB_GENERAL) {
+            activeTab = Tab.GENERAL;
+            updateTabVisibility();
+            return;
+        } else if (button.id == TAB_SCOPES) {
+            activeTab = Tab.SCOPES;
+            updateTabVisibility();
+            return;
+        } else if (button.id == TAB_ENGINE) {
+            activeTab = Tab.ENGINE;
+            updateTabVisibility();
+            return;
+        } else if (button.id == TAB_OUTGOING) {
+            activeTab = Tab.OUTGOING;
+            updateTabVisibility();
+            return;
+        } else if (button.id == ENABLED) {
             enabled = !enabled;
         } else if (button.id == CACHE) {
             diskCache = !diskCache;
@@ -173,16 +324,16 @@ final class LegacyConfigScreen extends GuiScreen {
         } else if (button.id == COLOR) {
             translatedTextColor = translatedTextColor.next();
         } else if (button.id == DOWNLOAD) {
-            if (isLlm()) {
-                mc.displayGuiScreen(new LegacyLlmConfigScreen(
-                        this, llmEndpoint, llmModel, !llmApiKey.isEmpty()));
-            } else {
-                offlineAutoDownload = !offlineAutoDownload;
-            }
+            offlineAutoDownload = !offlineAutoDownload;
+        } else if (button.id == LLM_SETTINGS) {
+            mc.displayGuiScreen(new LegacyLlmConfigScreen(
+                    this, llmEndpoint, llmModel, !llmApiKey.isEmpty()));
+            return;
         } else if (button.id == FALLBACK) {
             apiFallback = !apiFallback;
         } else if (button.id == OUTGOING) {
             translateOutgoing = !translateOutgoing;
+            outgoingTargetButton.enabled = translateOutgoing;
         } else if (button.id == PLAYER_NAMES) {
             translatePlayerNames = !translatePlayerNames;
         } else if (button.id == UI_STYLE) {
@@ -199,53 +350,79 @@ final class LegacyConfigScreen extends GuiScreen {
             openSelection = SettingsSelectionList.Kind.OUTGOING_LANGUAGE;
         } else if (button.id == SAVE) {
             saveAndApply();
+            return;
         } else if (button.id == CANCEL) {
             mc.displayGuiScreen(parent);
+            return;
         }
         refreshLabels();
     }
 
     private void refreshLabels() {
-        button(UI_STYLE).displayString = tr("screen.universal_translator.option.ui_style",
-                tr(animatedUi ? "value.universal_translator.ui_animated"
-                        : "value.universal_translator.ui_classic"));
-        button(ENABLED).displayString = tr("screen.universal_translator.option.automatic", onOff(enabled));
-        button(CHAT).displayString = tr("screen.universal_translator.option.chat", onOff(translateChat));
-        button(OTHER).displayString = tr("screen.universal_translator.option.other", onOff(translateOther));
-        button(VANILLA).displayString = tr("screen.universal_translator.option.vanilla", onOff(translateVanilla));
-        button(CACHE).displayString = tr("screen.universal_translator.option.cache", onOff(diskCache));
-        button(PROVIDER).displayString = tr("screen.universal_translator.option.provider", providerLabel());
-        button(DISPLAY).displayString = tr("screen.universal_translator.option.display",
-                tr(displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED
-                        ? "value.universal_translator.display_bilingual"
-                        : "value.universal_translator.display_translated"));
-        button(MIXED_TEXT).displayString = tr("screen.universal_translator.option.mixed", onOff(translateEnglishOnly));
-        button(COLOR).displayString = tr("screen.universal_translator.option.color", colorLabel(translatedTextColor));
-        button(DOWNLOAD).displayString = isLlm()
-                ? tr("screen.universal_translator.option.llm_settings")
-                : tr("screen.universal_translator.option.download", onOff(offlineAutoDownload));
-        button(MODEL).displayString = tr("screen.universal_translator.option.model", offlineModel.displayName());
-        button(FALLBACK).displayString = tr("screen.universal_translator.option.fallback", onOff(apiFallback));
-        button(OUTGOING).displayString = tr("screen.universal_translator.option.outgoing", onOff(translateOutgoing));
-        button(PLAYER_NAMES).displayString = tr(
-                "screen.universal_translator.option.player_names", onOff(translatePlayerNames));
-        button(TARGET_LANGUAGE).displayString = tr("screen.universal_translator.option.target_preset",
-                TargetLanguage.displayName(targetLanguage));
-        button(OUTGOING_TARGET_LANGUAGE).displayString = tr(
-                "screen.universal_translator.option.outgoing_target",
-                TargetLanguage.displayName(outgoingTargetLanguage));
-        button(DOWNLOAD).enabled = isOffline() || isLlm();
-        button(MODEL).enabled = isOffline();
-        button(FALLBACK).enabled = isOffline();
-    }
-
-    private GuiButton button(int id) {
-        for (GuiButton button : buttonList) {
-            if (button.id == id) {
-                return button;
-            }
+        if (uiStyleButton != null) {
+            uiStyleButton.displayString = tr("screen.universal_translator.option.ui_style",
+                    tr(animatedUi ? "value.universal_translator.ui_animated"
+                            : "value.universal_translator.ui_classic"));
         }
-        throw new IllegalStateException("Missing button " + id);
+        if (enabledButton != null) {
+            enabledButton.displayString = tr("screen.universal_translator.option.automatic", onOff(enabled));
+        }
+        if (targetLanguageButton != null) {
+            targetLanguageButton.displayString = tr("screen.universal_translator.option.target_preset",
+                    TargetLanguage.displayName(targetLanguage));
+        }
+        if (displayButton != null) {
+            displayButton.displayString = tr("screen.universal_translator.option.display",
+                    tr(displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED
+                            ? "value.universal_translator.display_bilingual"
+                            : "value.universal_translator.display_translated"));
+        }
+        if (colorButton != null) {
+            colorButton.displayString = tr("screen.universal_translator.option.color", colorLabel(translatedTextColor));
+        }
+        if (cacheButton != null) {
+            cacheButton.displayString = tr("screen.universal_translator.option.cache", onOff(diskCache));
+        }
+        if (chatButton != null) {
+            chatButton.displayString = tr("screen.universal_translator.option.chat", onOff(translateChat));
+        }
+        if (otherButton != null) {
+            otherButton.displayString = tr("screen.universal_translator.option.other", onOff(translateOther));
+        }
+        if (vanillaButton != null) {
+            vanillaButton.displayString = tr("screen.universal_translator.option.vanilla", onOff(translateVanilla));
+        }
+        if (playerNamesButton != null) {
+            playerNamesButton.displayString = tr(
+                    "screen.universal_translator.option.player_names", onOff(translatePlayerNames));
+        }
+        if (mixedTextButton != null) {
+            mixedTextButton.displayString = tr("screen.universal_translator.option.mixed", onOff(translateEnglishOnly));
+        }
+        if (providerButton != null) {
+            providerButton.displayString = tr("screen.universal_translator.option.provider", providerLabel());
+        }
+        if (modelButton != null) {
+            modelButton.displayString = tr("screen.universal_translator.option.model", offlineModel.displayName());
+            modelButton.enabled = isOffline();
+        }
+        if (downloadButton != null) {
+            downloadButton.displayString = tr("screen.universal_translator.option.download", onOff(offlineAutoDownload));
+            downloadButton.enabled = isOffline();
+        }
+        if (fallbackButton != null) {
+            fallbackButton.displayString = tr("screen.universal_translator.option.fallback", onOff(apiFallback));
+            fallbackButton.enabled = isOffline();
+        }
+        if (outgoingButton != null) {
+            outgoingButton.displayString = tr("screen.universal_translator.option.outgoing", onOff(translateOutgoing));
+        }
+        if (outgoingTargetButton != null) {
+            outgoingTargetButton.displayString = tr(
+                    "screen.universal_translator.option.outgoing_target",
+                    TargetLanguage.displayName(outgoingTargetLanguage));
+            outgoingTargetButton.enabled = translateOutgoing;
+        }
     }
 
     private static String onOff(boolean value) {
@@ -307,16 +484,20 @@ final class LegacyConfigScreen extends GuiScreen {
 
     @Override
     public void updateScreen() {
-        endpoint.updateCursorCounter();
-        blockedKeywords.updateCursorCounter();
+        if (activeTab == Tab.ENGINE && !isOffline() && endpoint != null) {
+            endpoint.updateCursorCounter();
+        }
+        if (activeTab == Tab.SCOPES && blockedKeywords != null) {
+            blockedKeywords.updateCursorCounter();
+        }
     }
 
     @Override
     protected void keyTyped(char typedChar, int keyCode) throws IOException {
-        if (endpoint.textboxKeyTyped(typedChar, keyCode)) {
+        if (activeTab == Tab.ENGINE && !isOffline() && endpoint != null && endpoint.textboxKeyTyped(typedChar, keyCode)) {
             return;
         }
-        if (blockedKeywords.textboxKeyTyped(typedChar, keyCode)) {
+        if (activeTab == Tab.SCOPES && blockedKeywords != null && blockedKeywords.textboxKeyTyped(typedChar, keyCode)) {
             return;
         }
         super.keyTyped(typedChar, keyCode);
@@ -329,24 +510,28 @@ final class LegacyConfigScreen extends GuiScreen {
             return;
         }
         super.mouseClicked(mouseX, mouseY, mouseButton);
-        endpoint.mouseClicked(mouseX, mouseY, mouseButton);
-        blockedKeywords.mouseClicked(mouseX, mouseY, mouseButton);
+        if (activeTab == Tab.ENGINE && !isOffline() && endpoint != null) {
+            endpoint.mouseClicked(mouseX, mouseY, mouseButton);
+        }
+        if (activeTab == Tab.SCOPES && blockedKeywords != null) {
+            blockedKeywords.mouseClicked(mouseX, mouseY, mouseButton);
+        }
     }
 
     @Override
     public void drawScreen(int mouseX, int mouseY, float partialTicks) {
         drawDefaultBackground();
-        Layout layout = layout();
+        SettingsScreenLayout.Geometry layout = SettingsScreenLayout.calculate(width, height);
         long now = System.nanoTime();
         float opening = 1.0F;
         if (animatedUi) {
             opening = SettingsUiAnimation.openProgress(animationStartedNanos, now);
             int center = width / 2;
             int half = SettingsUiAnimation.expandingHalfWidth(
-                    layout.totalWidth / 2 + 12, opening);
+                    layout.totalWidth() / 2 + 12, opening);
             int panelLeft = center - half;
             int panelRight = center + half;
-            int panelBottom = Math.min(height - 4, layout.saveY + 42);
+            int panelBottom = Math.min(height - 4, layout.saveY() + 42);
             drawRect(0, 0, width, height, 0x76070B10);
             drawRect(panelLeft - 2, 2, panelRight + 2, panelBottom + 2, 0x70101820);
             drawRect(panelLeft, 4, panelRight, panelBottom, 0xD41A232E);
@@ -356,32 +541,65 @@ final class LegacyConfigScreen extends GuiScreen {
                     panelLeft, Math.max(panelLeft, panelRight - 26), now);
             drawRect(sweep, 32, Math.min(panelRight, sweep + 26), 34,
                     SettingsUiAnimation.pulseColor(now));
+
+            // Animated Tab underline
+            int tabX = layout.tabX(activeTab.ordinal());
+            int tabW = layout.tabWidth();
+            drawRect(tabX, layout.tabY() + 20, tabX + tabW, layout.tabY() + 22, 0xFF55D6FF);
+        } else {
+            // Static active tab indicator
+            int tabX = layout.tabX(activeTab.ordinal());
+            int tabW = layout.tabWidth();
+            drawRect(tabX, layout.tabY() + 20, tabX + tabW, layout.tabY() + 22, 0xFF55D6FF);
         }
+
         drawCenteredString(renderer, tr("screen.universal_translator.settings.title"),
-                width / 2, 18,
+                width / 2, 10,
                 animatedUi ? SettingsUiAnimation.pulseColor(now) : 0xFFFFFFFF);
+
+        super.drawScreen(mouseX, mouseY, partialTicks);
+
+        // Tab-specific text and fields
+        if (activeTab == Tab.SCOPES) {
+            blockedKeywords.drawTextBox();
+            if (blockedKeywords.getText().isEmpty()) {
+                renderer.drawStringWithShadow(
+                        tr("screen.universal_translator.blocked_keywords_hint"),
+                        layout.left() + 4, layout.contentRow(3) + 6, 0x70A0A0A0);
+            }
+        } else if (activeTab == Tab.ENGINE) {
+            if (!isOffline()) {
+                endpoint.drawTextBox();
+                renderer.drawStringWithShadow(
+                        tr("screen.universal_translator.endpoint"),
+                        layout.left(), layout.contentRow(isLlm() ? 2 : 1) - 11, 0xFFAAAAAA);
+            }
+            int hintY = layout.contentRow(isOffline() ? 3 : (isLlm() ? 3 : 2)) + 6;
+            if (hintY < layout.saveY() - 12) {
+                drawCenteredString(renderer,
+                        tr(isOffline() ? "screen.universal_translator.info.offline" : "screen.universal_translator.info.api"),
+                        width / 2, hintY, 0xFFFFAA55);
+            }
+        } else if (activeTab == Tab.OUTGOING) {
+            int tipY = layout.contentRow(2);
+            drawCenteredString(renderer, tr("screen.universal_translator.outgoing_tip"), width / 2, tipY, 0xFFAAAAAA);
+        }
+
+        // Status & feedback
         String rawRuntimeStatus = LegacyTranslationRuntime.status();
         String runtimeStatus = TranslationStatusLocalizer.localize(rawRuntimeStatus,
                 LegacyConfigScreen::tr);
-        int belowSave = layout.saveY + 28;
-        int messageY = belowSave <= height - 10 ? belowSave : SettingsScreenLayout.COMPACT_STATUS_Y;
+        int messageY = layout.saveY() + 24;
+        if (messageY > height - 10) {
+            messageY = height - 10;
+        }
         if (!status.isEmpty()) {
             drawCenteredString(renderer, status, width / 2, messageY, 0xFFFF5555);
         } else if (!runtimeStatus.isEmpty()) {
             drawCenteredString(renderer, runtimeStatus, width / 2, messageY,
                     isFailureStatus(rawRuntimeStatus) ? 0xFFFF5555 : 0xFF55FF55);
-        } else if (layout.saveY - layout.endpointY >= 52) {
-            int infoY = layout.endpointY + 28;
-            drawCenteredString(
-                    renderer,
-                    tr(isOffline()
-                            ? "screen.universal_translator.info.offline"
-                            : "screen.universal_translator.info.api"),
-                    width / 2, infoY, 0xFFFFAA55);
-            drawCenteredString(renderer, tr("screen.universal_translator.info.keybind"),
-                    width / 2, infoY + 15, 0xFFA0A0A0);
         }
-        super.drawScreen(mouseX, mouseY, partialTicks);
+
         if (animatedUi) {
             int overlayAlpha = SettingsUiAnimation.openingOverlayAlpha(opening);
             if (overlayAlpha > 0) {
@@ -426,9 +644,14 @@ final class LegacyConfigScreen extends GuiScreen {
             if (openSelection == SettingsSelectionList.Kind.PROVIDER) {
                 provider = values[selected];
                 loadLlmSettings(provider);
+                openSelection = SettingsSelectionList.Kind.NONE;
+                initGui();
+                return true;
+            } else if (openSelection == SettingsSelectionList.Kind.TARGET_LANGUAGE) {
+                targetLanguage = values[selected];
+            } else {
+                outgoingTargetLanguage = values[selected];
             }
-            else if (openSelection == SettingsSelectionList.Kind.TARGET_LANGUAGE) targetLanguage = values[selected];
-            else outgoingTargetLanguage = values[selected];
             openSelection = SettingsSelectionList.Kind.NONE;
             refreshLabels();
             return true;
@@ -502,40 +725,5 @@ final class LegacyConfigScreen extends GuiScreen {
 
     private static String tr(String key, Object... arguments) {
         return I18n.format(key, arguments);
-    }
-
-    private Layout layout() {
-        SettingsScreenLayout.Geometry geometry = SettingsScreenLayout.calculate(width, height);
-        return new Layout(geometry.left(), geometry.right(), geometry.totalWidth(), geometry.buttonWidth(),
-                geometry.top(), geometry.rowStep(), geometry.targetY(), geometry.endpointY(), geometry.saveY());
-    }
-
-    private static final class Layout {
-        private final int left;
-        private final int right;
-        private final int totalWidth;
-        private final int buttonWidth;
-        private final int top;
-        private final int rowStep;
-        private final int targetY;
-        private final int endpointY;
-        private final int saveY;
-
-        private Layout(int left, int right, int totalWidth, int buttonWidth,
-                       int top, int rowStep, int targetY, int endpointY, int saveY) {
-            this.left = left;
-            this.right = right;
-            this.totalWidth = totalWidth;
-            this.buttonWidth = buttonWidth;
-            this.top = top;
-            this.rowStep = rowStep;
-            this.targetY = targetY;
-            this.endpointY = endpointY;
-            this.saveY = saveY;
-        }
-
-        private int row(int index) {
-            return top + rowStep * index;
-        }
     }
 }

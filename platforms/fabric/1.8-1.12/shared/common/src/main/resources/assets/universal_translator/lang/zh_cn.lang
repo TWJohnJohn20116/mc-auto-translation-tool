@@ -127,3 +127,8 @@ screen.universal_translator.option.player_names=玩家名称翻译：%s
 screen.universal_translator.blocked_keywords=翻译屏蔽关键词
 screen.universal_translator.blocked_keywords_hint=屏蔽关键词（逗号分隔）
 
+screen.universal_translator.tab.general=常规
+screen.universal_translator.tab.scopes=范围
+screen.universal_translator.tab.engine=引擎
+screen.universal_translator.tab.outgoing=发送
+screen.universal_translator.info.outgoing_hint=在聊天栏发言时，自动翻译为目标语言发送

@@ -728,6 +728,9 @@ public final class CoreSelfTest {
                 assertTrue(layout.saveY() >= 0);
                 assertTrue(layout.saveY() + SettingsScreenLayout.BUTTON_HEIGHT <= height);
                 assertTrue(layout.endpointY() + SettingsScreenLayout.BUTTON_HEIGHT <= layout.saveY());
+                assertTrue(layout.tabY() >= 0);
+                assertTrue(layout.tabX(3) + layout.tabWidth() <= width);
+                assertTrue(layout.contentTop() >= layout.tabY() + SettingsScreenLayout.BUTTON_HEIGHT);
                 if (height >= 252) {
                     assertTrue(layout.top() >= SettingsScreenLayout.HEADER_BOTTOM + 2);
                 }

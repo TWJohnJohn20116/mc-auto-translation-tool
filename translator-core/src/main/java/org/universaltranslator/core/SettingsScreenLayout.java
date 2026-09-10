@@ -44,8 +44,16 @@ public final class SettingsScreenLayout {
                     ? 296 : Math.max(endpointY + 22, screenHeight - 24);
         }
 
+        int tabY = Math.max(22, Math.min(HEADER_BOTTOM + 2, top - 2));
+        int tabCount = 4;
+        int tabGap = 3;
+        int tabWidth = Math.max(20, (totalWidth - tabGap * (tabCount - 1)) / tabCount);
+        int contentTop = tabY + BUTTON_HEIGHT + 4;
+        int contentRowStep = Math.max(22, Math.min(26, (saveY - contentTop) / 4));
+
         return new Geometry(left, left + buttonWidth + gap, totalWidth, buttonWidth,
-                top, rowStep, targetY, endpointY, saveY);
+                top, rowStep, targetY, endpointY, saveY,
+                tabY, tabWidth, tabGap, contentTop, contentRowStep);
     }
 
     public static final class Geometry {
@@ -58,9 +66,15 @@ public final class SettingsScreenLayout {
         private final int targetY;
         private final int endpointY;
         private final int saveY;
+        private final int tabY;
+        private final int tabWidth;
+        private final int tabGap;
+        private final int contentTop;
+        private final int contentRowStep;
 
         private Geometry(int left, int right, int totalWidth, int buttonWidth,
-                         int top, int rowStep, int targetY, int endpointY, int saveY) {
+                         int top, int rowStep, int targetY, int endpointY, int saveY,
+                         int tabY, int tabWidth, int tabGap, int contentTop, int contentRowStep) {
             this.left = left;
             this.right = right;
             this.totalWidth = totalWidth;
@@ -70,6 +84,11 @@ public final class SettingsScreenLayout {
             this.targetY = targetY;
             this.endpointY = endpointY;
             this.saveY = saveY;
+            this.tabY = tabY;
+            this.tabWidth = tabWidth;
+            this.tabGap = tabGap;
+            this.contentTop = contentTop;
+            this.contentRowStep = contentRowStep;
         }
 
         public int left() { return left; }
@@ -81,6 +100,13 @@ public final class SettingsScreenLayout {
         public int targetY() { return targetY; }
         public int endpointY() { return endpointY; }
         public int saveY() { return saveY; }
+        public int tabY() { return tabY; }
+        public int tabWidth() { return tabWidth; }
+        public int tabGap() { return tabGap; }
+        public int tabX(int index) { return left + index * (tabWidth + tabGap); }
+        public int contentTop() { return contentTop; }
+        public int contentRowStep() { return contentRowStep; }
+        public int contentRow(int index) { return contentTop + contentRowStep * index; }
 
         public int row(int index) {
             return top + rowStep * index;

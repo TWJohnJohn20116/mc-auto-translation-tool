@@ -1,7 +1,12 @@
 {
   "key.universal_translator.open_settings": "打开 MC 自动翻译工具设置",
   "key.universal_translator.toggle_translation": "一键开启/关闭翻译",
-  "screen.universal_translator.settings.title": "MC 自动翻译工具 设置",
+  "screen.universal_translator.settings.title": "MC 自动翻译工具设置",
+  "screen.universal_translator.tab.general": "常规",
+  "screen.universal_translator.tab.scopes": "范围",
+  "screen.universal_translator.tab.engine": "引擎",
+  "screen.universal_translator.tab.outgoing": "发送",
+  "screen.universal_translator.info.outgoing_hint": "在聊天栏发言时，自动翻译为目标语言发送",
   "screen.universal_translator.option.ui_style": "界面：%s",
   "value.universal_translator.ui_animated": "动态",
   "value.universal_translator.ui_classic": "经典",

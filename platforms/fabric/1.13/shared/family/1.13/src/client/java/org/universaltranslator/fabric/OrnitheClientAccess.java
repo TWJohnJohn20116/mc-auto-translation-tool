@@ -4,6 +4,7 @@ import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.client.resource.language.I18n;
 import net.minecraft.text.LiteralText;
 
@@ -21,6 +22,14 @@ public final class OrnitheClientAccess {
 
     public static void openScreen(Screen screen) {
         client().setScreen(screen);
+    }
+
+    public static void setScreen(Screen screen) {
+        openScreen(screen);
+    }
+
+    public static void renderTextField(TextFieldWidget field, int mouseX, int mouseY, float delta) {
+        field.method_18385(mouseX, mouseY, delta);
     }
 
     public static String tr(String key, Object... arguments) {

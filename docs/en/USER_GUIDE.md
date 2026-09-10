@@ -28,23 +28,28 @@ adjacent versions or interchange Fabric and Forge files.
 The graphical steps below apply to Fabric, Forge, and NeoForge. Open the same
 settings screen from the “Translation settings” button at the top-right of
 Minecraft's title screen, by pressing `U` in-game, or from Mod Menu's mods list
-when that mod is installed. A `config/universal-translator.properties` file is
-still created for advanced options such as Tencent credentials; `F8` toggles the
-master switch at any time.
+when that mod is installed.
+The newly redesigned interface features a clean, tabbed layout organized into four categories (🌐 General, 🎯 Scopes, ⚡ Engine, 💬 Outgoing):
 
-1. Click “Translation settings” on the title screen, or enter any world or server and press `U`.
-2. Click “Target language” and choose from the two-column list that opens directly on the current
-   settings screen. It does not navigate away and no language code needs to be typed.
-3. Click “Translation service” and choose “Offline,” a built-in online service, an
-   OpenAI-compatible endpoint, or a configurable HTTP JSON API from the same in-place list.
-4. Choose whether chat content and other interface text may be sent, and whether to use the local cache.
-5. The default display option is “Translated only.” Replacing the source directly prevents bilingual text from overflowing scoreboards and chest interfaces; switch to “Original + translation” when needed.
-6. “Translate only English in mixed text” is enabled by default, so existing Chinese is not translated again.
-7. Choose a translation color. Select “Keep original color” to disable color differentiation.
-8. New installations use the animated interface by default. Use the “UI: Animated/Classic” button
-   in the top-right corner to preview either style and return to the original classic interface.
-   “Save and apply” keeps the selected style for the next time you open settings.
-9. Read the privacy notice in the interface, enable automatic translation, and save.
+1. **🌐 General Tab**:
+   - Master toggle for automatic translation.
+   - Select “Target language” (Traditional Chinese, Simplified Chinese, English, Japanese, etc.) directly from the in-place picker.
+   - Select “Display mode” (Translated only, Original + translated, etc.).
+   - Configure “Translation color” (Aqua, Green, Yellow, etc., or keep original color).
+   - Toggle “Local cache” and “UI style” (Animated / Classic).
+   - Access full-width “Translation Diagnostics” button to verify status and engine connectivity.
+2. **🎯 Scopes Tab**:
+   - Granular translation scopes: Chat messages, other mod interfaces, vanilla UI, and player names.
+   - Enable “Translate only English in mixed text” to avoid duplicate translations.
+   - Configure “Ignored keywords” (comma-separated list skipped during translation).
+3. **⚡ Engine Tab**:
+   - Switch “Translation service”: Offline local model (llama.cpp), Google, Microsoft, Tencent, LLM (OpenAI/Ollama), or custom API.
+   - In Offline mode, select model tier (Lite / Quality), auto-download, and online fallback.
+   - In Online / Custom API / LLM modes, configure endpoints and advanced options.
+4. **💬 Outgoing Tab**:
+   - Enable or disable “Outgoing translation” (disabled by default).
+   - Select outgoing target language (automatically disabled/greyed out when outgoing translation is off).
+5. Click “Save and apply” at the bottom to commit your changes.
 
 “Outgoing translation” is disabled by default. Enable it separately to translate messages you send
 into the server's language, and choose the outgoing target from the in-place list. Commands are never

@@ -18,6 +18,13 @@ import org.universaltranslator.core.SettingsSelectionList;
 
 /** Minimal dependency-free settings screen, opened with U by default. */
 final class UniversalTranslatorConfigScreen extends Screen {
+    private enum Tab {
+        GENERAL,
+        SCOPES,
+        ENGINE,
+        OUTGOING
+    }
+
     private final Screen parent;
     private final ForgeConfig original;
     private boolean enabled;
@@ -40,6 +47,14 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private String llmModel;
     private String targetLanguage;
     private String outgoingTargetLanguage;
+
+    private Tab activeTab = Tab.GENERAL;
+    private Button tabGeneralButton;
+    private Button tabScopesButton;
+    private Button tabEngineButton;
+    private Button tabOutgoingButton;
+    private Button llmConfigButton;
+
     private EditBox endpoint;
     private EditBox blockedKeywords;
     private Button enabledButton;
@@ -101,111 +116,213 @@ final class UniversalTranslatorConfigScreen extends Screen {
         }
         Layout layout = layout();
         int left = layout.left;
-        int styleWidth = Math.min(86, layout.buttonWidth);
-        this.uiStyleButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
-            animatedUi = !animatedUi;
-            animationStartedNanos = System.nanoTime();
-            refreshLabels();
-        }).bounds(Math.max(4, this.width - styleWidth - 6), 6, styleWidth, 20).build());
-        this.enabledButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+
+        // Navigation Tabs (positioned right below header at tabY)
+        tabGeneralButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+            activeTab = Tab.GENERAL;
+            updateTabVisibility();
+        }).bounds(layout.tabX(0), layout.tabY, layout.tabWidth, 20).build());
+
+        tabScopesButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+            activeTab = Tab.SCOPES;
+            updateTabVisibility();
+        }).bounds(layout.tabX(1), layout.tabY, layout.tabWidth, 20).build());
+
+        tabEngineButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+            activeTab = Tab.ENGINE;
+            updateTabVisibility();
+        }).bounds(layout.tabX(2), layout.tabY, layout.tabWidth, 20).build());
+
+        tabOutgoingButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+            activeTab = Tab.OUTGOING;
+            updateTabVisibility();
+        }).bounds(layout.tabX(3), layout.tabY, layout.tabWidth, 20).build());
+
+        // --- Tab 1: General (常規) ---
+        enabledButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
             enabled = !enabled;
             refreshLabels();
-        }).bounds(left, layout.row(0), layout.buttonWidth, 20).build());
-        this.cacheButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
-            diskCache = !diskCache;
-            refreshLabels();
-        }).bounds(layout.right, layout.row(0), layout.buttonWidth, 20).build());
-        this.chatButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
-            translateChat = !translateChat;
-            refreshLabels();
-        }).bounds(left, layout.row(1), layout.buttonWidth, 20).build());
-        this.otherButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
-            translateOther = !translateOther;
-            refreshLabels();
-        }).bounds(layout.right, layout.row(1), layout.buttonWidth, 20).build());
-        this.providerButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
-            openSelection = SettingsSelectionList.Kind.PROVIDER;
-        }).bounds(left, layout.row(2), layout.buttonWidth, 20).build());
-        this.displayButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+        }).bounds(left, layout.contentRow(0), layout.buttonWidth, 20).build());
+
+        targetLanguageButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+            openSelection = SettingsSelectionList.Kind.TARGET_LANGUAGE;
+        }).bounds(layout.right, layout.contentRow(0), layout.buttonWidth, 20).build());
+
+        displayButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
             displayMode = displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED
                     ? TranslationDisplayMode.TRANSLATED_ONLY
                     : TranslationDisplayMode.ORIGINAL_AND_TRANSLATED;
             refreshLabels();
-        }).bounds(layout.right, layout.row(2), layout.buttonWidth, 20).build());
-        this.mixedTextButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
-            translateEnglishOnly = !translateEnglishOnly;
-            refreshLabels();
-        }).bounds(left, layout.row(3), layout.buttonWidth, 20).build());
-        this.colorButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+        }).bounds(left, layout.contentRow(1), layout.buttonWidth, 20).build());
+
+        colorButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
             translatedTextColor = translatedTextColor.next();
             refreshLabels();
-        }).bounds(layout.right, layout.row(3), layout.buttonWidth, 20).build());
-        this.downloadButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
-            if (isLlm()) {
-                if (this.minecraft != null) {
-                    this.minecraft.setScreen(new UniversalTranslatorLlmConfigScreen(
-                            this, llmEndpoint, llmModel, !llmApiKey.isEmpty()));
-                }
-            } else {
-                offlineAutoDownload = !offlineAutoDownload;
-            }
+        }).bounds(layout.right, layout.contentRow(1), layout.buttonWidth, 20).build());
+
+        cacheButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+            diskCache = !diskCache;
             refreshLabels();
-        }).bounds(left, layout.row(4), layout.buttonWidth, 20).build());
-        this.fallbackButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
-            apiFallback = !apiFallback;
+        }).bounds(left, layout.contentRow(2), layout.buttonWidth, 20).build());
+
+        uiStyleButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+            animatedUi = !animatedUi;
+            animationStartedNanos = System.nanoTime();
             refreshLabels();
-        }).bounds(layout.right, layout.row(4), layout.buttonWidth, 20).build());
-        this.modelButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
-            offlineModel = offlineModel.next();
-            refreshLabels();
-        }).bounds(left, layout.row(5), layout.buttonWidth, 20).build());
-        this.blockedKeywords = addRenderableWidget(new EditBox(
-                this.font, layout.right, layout.row(5), layout.buttonWidth, 20,
-                Component.translatable("screen.universal_translator.blocked_keywords")));
-        this.blockedKeywords.setMaxLength(4096);
-        this.blockedKeywords.setValue(blockedKeywordsValue);
-        this.blockedKeywords.setHint(Component.translatable(
-                "screen.universal_translator.blocked_keywords_hint"));
-        int compactGap = 4;
-        int compactWidth = (layout.totalWidth - compactGap * 2) / 3;
-        int compactMiddle = left + compactWidth + compactGap;
-        int compactRight = compactMiddle + compactWidth + compactGap;
-        this.diagnosticsButton = addRenderableWidget(Button.builder(
+        }).bounds(layout.right, layout.contentRow(2), layout.buttonWidth, 20).build());
+
+        diagnosticsButton = addRenderableWidget(Button.builder(
                 Component.translatable("screen.universal_translator.diagnostics.title"), button -> {
             if (minecraft != null) {
                 minecraft.setScreen(new UniversalTranslatorDiagnosticsScreen(this, original));
             }
-        }).bounds(compactRight, layout.row(6), compactWidth, 20).build());
-        this.vanillaButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+        }).bounds(left, layout.contentRow(3), layout.totalWidth, 20).build());
+
+        // --- Tab 2: Scopes (範圍) ---
+        chatButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+            translateChat = !translateChat;
+            refreshLabels();
+        }).bounds(left, layout.contentRow(0), layout.buttonWidth, 20).build());
+
+        otherButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+            translateOther = !translateOther;
+            refreshLabels();
+        }).bounds(layout.right, layout.contentRow(0), layout.buttonWidth, 20).build());
+
+        vanillaButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
             translateVanilla = !translateVanilla;
             refreshLabels();
-        }).bounds(left, layout.row(6), compactWidth, 20).build());
-        this.playerNamesButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+        }).bounds(left, layout.contentRow(1), layout.buttonWidth, 20).build());
+
+        playerNamesButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
             translatePlayerNames = !translatePlayerNames;
             refreshLabels();
-        }).bounds(compactMiddle, layout.row(6), compactWidth, 20).build());
+        }).bounds(layout.right, layout.contentRow(1), layout.buttonWidth, 20).build());
 
-        this.targetLanguageButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
-            openSelection = SettingsSelectionList.Kind.TARGET_LANGUAGE;
-        }).bounds(left, layout.targetY, layout.buttonWidth, 20).build());
-        this.outgoingButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+        mixedTextButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+            translateEnglishOnly = !translateEnglishOnly;
+            refreshLabels();
+        }).bounds(left, layout.contentRow(2), layout.totalWidth, 20).build());
+
+        blockedKeywords = addRenderableWidget(new EditBox(
+                this.font, left, layout.contentRow(3), layout.totalWidth, 20,
+                Component.translatable("screen.universal_translator.blocked_keywords")));
+        blockedKeywords.setMaxLength(4096);
+        blockedKeywords.setValue(blockedKeywordsValue);
+        blockedKeywords.setHint(Component.translatable(
+                "screen.universal_translator.blocked_keywords_hint"));
+
+        // --- Tab 3: Engine (引擎) ---
+        providerButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+            openSelection = SettingsSelectionList.Kind.PROVIDER;
+        }).bounds(left, layout.contentRow(0), layout.totalWidth, 20).build());
+
+        modelButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+            offlineModel = offlineModel.next();
+            refreshLabels();
+        }).bounds(left, layout.contentRow(1), layout.buttonWidth, 20).build());
+
+        downloadButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+            offlineAutoDownload = !offlineAutoDownload;
+            refreshLabels();
+        }).bounds(layout.right, layout.contentRow(1), layout.buttonWidth, 20).build());
+
+        fallbackButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+            apiFallback = !apiFallback;
+            refreshLabels();
+        }).bounds(left, layout.contentRow(2), layout.totalWidth, 20).build());
+
+        llmConfigButton = addRenderableWidget(Button.builder(
+                Component.translatable("screen.universal_translator.option.llm_settings"), button -> {
+            if (this.minecraft != null) {
+                this.minecraft.setScreen(new UniversalTranslatorLlmConfigScreen(
+                        this, llmEndpoint, llmModel, !llmApiKey.isEmpty()));
+            }
+        }).bounds(left, layout.contentRow(1), layout.totalWidth, 20).build());
+
+        endpoint = addRenderableWidget(new EditBox(
+                this.font, left, layout.contentRow(isLlm() ? 2 : 1), layout.totalWidth, 20,
+                Component.translatable("screen.universal_translator.endpoint")));
+        endpoint.setMaxLength(512);
+        endpoint.setValue(endpointValue);
+
+        // --- Tab 4: Outgoing (傳送) ---
+        outgoingButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
             translateOutgoing = !translateOutgoing;
             refreshLabels();
-        }).bounds(layout.right, layout.targetY, layout.buttonWidth, 20).build());
-        this.endpoint = addRenderableWidget(new EditBox(
-                this.font, left, layout.endpointY, layout.buttonWidth, 20,
-                Component.translatable("screen.universal_translator.endpoint")));
-        this.endpoint.setMaxLength(512);
-        this.endpoint.setValue(endpointValue);
-        this.outgoingTargetLanguageButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
-            openSelection = SettingsSelectionList.Kind.OUTGOING_LANGUAGE;
-        }).bounds(layout.right, layout.endpointY, layout.buttonWidth, 20).build());
+        }).bounds(left, layout.contentRow(0), layout.buttonWidth, 20).build());
 
+        outgoingTargetLanguageButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+            openSelection = SettingsSelectionList.Kind.OUTGOING_LANGUAGE;
+        }).bounds(layout.right, layout.contentRow(0), layout.buttonWidth, 20).build());
+
+        // --- Bottom Action Row ---
         addRenderableWidget(Button.builder(Component.translatable("screen.universal_translator.save"), button -> saveAndApply())
                 .bounds(left, layout.saveY, layout.buttonWidth, 20).build());
         addRenderableWidget(Button.builder(Component.translatable("gui.cancel"), button -> onClose())
                 .bounds(layout.right, layout.saveY, layout.buttonWidth, 20).build());
+
         refreshLabels();
+        updateTabVisibility();
+    }
+
+    private void updateTabVisibility() {
+        boolean isGeneral = activeTab == Tab.GENERAL;
+        boolean isScopes = activeTab == Tab.SCOPES;
+        boolean isEngine = activeTab == Tab.ENGINE;
+        boolean isOutgoing = activeTab == Tab.OUTGOING;
+
+        // Tab 1: General
+        enabledButton.visible = isGeneral;
+        targetLanguageButton.visible = isGeneral;
+        displayButton.visible = isGeneral;
+        colorButton.visible = isGeneral;
+        cacheButton.visible = isGeneral;
+        uiStyleButton.visible = isGeneral;
+        diagnosticsButton.visible = isGeneral;
+
+        // Tab 2: Scopes
+        chatButton.visible = isScopes;
+        otherButton.visible = isScopes;
+        vanillaButton.visible = isScopes;
+        playerNamesButton.visible = isScopes;
+        mixedTextButton.visible = isScopes;
+        blockedKeywords.visible = isScopes;
+
+        // Tab 3: Engine
+        providerButton.visible = isEngine;
+        boolean offline = isOffline();
+        boolean llm = isLlm();
+        modelButton.visible = isEngine && offline;
+        downloadButton.visible = isEngine && offline;
+        fallbackButton.visible = isEngine && offline;
+        llmConfigButton.visible = isEngine && llm;
+        endpoint.visible = isEngine && !offline;
+
+        if (endpoint != null) {
+            Layout layout = layout();
+            endpoint.setY(layout.contentRow(llm ? 2 : 1));
+        }
+
+        // Tab 4: Outgoing
+        outgoingButton.visible = isOutgoing;
+        outgoingTargetLanguageButton.visible = isOutgoing;
+        outgoingTargetLanguageButton.active = translateOutgoing;
+
+        refreshTabButtons();
+    }
+
+    private void refreshTabButtons() {
+        if (tabGeneralButton == null) return;
+        tabGeneralButton.setMessage(tabTitle("screen.universal_translator.tab.general", activeTab == Tab.GENERAL));
+        tabScopesButton.setMessage(tabTitle("screen.universal_translator.tab.scopes", activeTab == Tab.SCOPES));
+        tabEngineButton.setMessage(tabTitle("screen.universal_translator.tab.engine", activeTab == Tab.ENGINE));
+        tabOutgoingButton.setMessage(tabTitle("screen.universal_translator.tab.outgoing", activeTab == Tab.OUTGOING));
+    }
+
+    private Component tabTitle(String key, boolean active) {
+        String label = tr(key);
+        return Component.literal(active ? "§b§l[ " + label + " ]" : "§7" + label);
     }
 
     private void refreshLabels() {
@@ -226,9 +343,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
                         : "value.universal_translator.display_translated")));
         mixedTextButton.setMessage(Component.translatable("screen.universal_translator.option.mixed", onOff(translateEnglishOnly)));
         colorButton.setMessage(Component.translatable("screen.universal_translator.option.color", colorLabel(translatedTextColor)));
-        downloadButton.setMessage(isLlm()
-                ? Component.translatable("screen.universal_translator.option.llm_settings")
-                : Component.translatable("screen.universal_translator.option.download", onOff(offlineAutoDownload)));
+        downloadButton.setMessage(Component.translatable("screen.universal_translator.option.download", onOff(offlineAutoDownload)));
         modelButton.setMessage(Component.translatable("screen.universal_translator.option.model", offlineModel.displayName()));
         fallbackButton.setMessage(Component.translatable("screen.universal_translator.option.fallback", onOff(apiFallback)));
         outgoingButton.setMessage(Component.translatable("screen.universal_translator.option.outgoing", onOff(translateOutgoing)));
@@ -237,9 +352,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
         outgoingTargetLanguageButton.setMessage(Component.translatable(
                 "screen.universal_translator.option.outgoing_target",
                 TargetLanguage.displayName(outgoingTargetLanguage)));
-        downloadButton.active = isOffline() || isLlm();
-        modelButton.active = isOffline();
-        fallbackButton.active = isOffline();
+        outgoingTargetLanguageButton.active = translateOutgoing;
+        refreshTabButtons();
     }
 
     private static String onOff(boolean value) {
@@ -286,7 +400,6 @@ final class UniversalTranslatorConfigScreen extends Screen {
             runtimeChanged = true;
             ForgeTranslationRuntime.initialize(updated);
             updated.save();
-            status = tr("status.universal_translator.saved");
             onClose();
         } catch (Exception exception) {
             if (runtimeChanged) {
@@ -297,6 +410,13 @@ final class UniversalTranslatorConfigScreen extends Screen {
                 }
             }
             status = tr("status.universal_translator.save_failed", exception.getMessage());
+        }
+    }
+
+    @Override
+    public void onClose() {
+        if (minecraft != null) {
+            minecraft.setScreen(parent);
         }
     }
 
@@ -321,13 +441,23 @@ final class UniversalTranslatorConfigScreen extends Screen {
             int sweep = SettingsUiAnimation.sweepX(panelLeft, Math.max(panelLeft, panelRight - 26), now);
             graphics.fill(sweep, 32, Math.min(panelRight, sweep + 26), 34,
                     SettingsUiAnimation.pulseColor(now));
+
+            // Animated Tab underline
+            int tabIndex = activeTab.ordinal();
+            int tabX = layout.tabX(tabIndex);
+            graphics.fill(tabX, layout.tabY + 20, tabX + layout.tabWidth, layout.tabY + 22, 0xFF55D6FF);
+        } else {
+            // Static active tab indicator
+            int tabIndex = activeTab.ordinal();
+            int tabX = layout.tabX(tabIndex);
+            graphics.fill(tabX, layout.tabY + 20, tabX + layout.tabWidth, layout.tabY + 22, 0xFF55D6FF);
         }
-        graphics.centeredText(this.font, this.title, this.width / 2, 18,
+        graphics.centeredText(this.font, this.title, this.width / 2, 16,
                 animatedUi ? SettingsUiAnimation.pulseColor(now) : 0xFFFFFFFF);
         String rawRuntimeStatus = ForgeTranslationRuntime.status();
         String runtimeStatus = TranslationStatusLocalizer.localize(rawRuntimeStatus,
                 UniversalTranslatorConfigScreen::tr);
-        int belowSave = layout.saveY + 28;
+        int belowSave = layout.saveY + 24;
         int messageY = belowSave <= this.height - 10 ? belowSave : SettingsScreenLayout.COMPACT_STATUS_Y;
         if (!status.isEmpty()) {
             graphics.centeredText(this.font, Component.literal(status),
@@ -336,17 +466,19 @@ final class UniversalTranslatorConfigScreen extends Screen {
             graphics.centeredText(this.font, Component.literal(runtimeStatus),
                     this.width / 2, messageY,
                     isFailureStatus(rawRuntimeStatus) ? 0xFFFF5555 : 0xFF55FF55);
-        } else if (layout.saveY - layout.endpointY >= 52) {
-            int infoY = layout.endpointY + 28;
-            graphics.centeredText(
-                    this.font,
-                    Component.translatable(isOffline()
-                            ? "screen.universal_translator.info.offline"
-                            : "screen.universal_translator.info.api"),
-                    this.width / 2, infoY, 0xFFFFAA55);
-            graphics.centeredText(this.font,
-                    Component.translatable("screen.universal_translator.info.keybind"),
-                    this.width / 2, infoY + 15, 0xFFA0A0A0);
+        } else {
+            if (activeTab == Tab.OUTGOING) {
+                graphics.centeredText(this.font, Component.translatable("screen.universal_translator.info.outgoing_hint"),
+                        this.width / 2, layout.contentRow(2) + 6, 0xFFA0A0A0);
+            } else if (activeTab == Tab.GENERAL) {
+                graphics.centeredText(this.font, Component.translatable("screen.universal_translator.info.keybind"),
+                        this.width / 2, layout.contentRow(3) + 24, 0xFFA0A0A0);
+            } else if (activeTab == Tab.ENGINE) {
+                graphics.centeredText(this.font, Component.translatable(isOffline()
+                                ? "screen.universal_translator.info.offline"
+                                : "screen.universal_translator.info.api"),
+                        this.width / 2, layout.contentRow(3) + 6, 0xFFFFAA55);
+            }
         }
         super.extractRenderState(graphics, mouseX, mouseY, delta);
         if (animatedUi) {
@@ -385,13 +517,17 @@ final class UniversalTranslatorConfigScreen extends Screen {
             boolean hovered = mouseX >= x && mouseX < x + list.buttonWidth
                     && mouseY >= y && mouseY < y + list.buttonHeight;
             boolean selected = values[index].equalsIgnoreCase(selectionValue());
-            graphics.fill(x, y, x + list.buttonWidth, y + list.buttonHeight,
+            fill(graphics, x, y, x + list.buttonWidth, y + list.buttonHeight,
                     hovered ? 0xFF3B6178 : selected ? 0xFF28533D : 0xFF303844);
             graphics.centeredText(font,
                     Component.literal(SettingsSelectionList.displayName(openSelection, values[index])),
                     x + list.buttonWidth / 2, y + Math.max(1, (list.buttonHeight - 8) / 2),
                     selected ? 0xFF55FF88 : 0xFFFFFFFF);
         }
+    }
+
+    private static void fill(GuiGraphicsExtractor graphics, int minX, int minY, int maxX, int maxY, int color) {
+        graphics.fill(minX, minY, maxX, maxY, color);
     }
 
     private boolean selectFromList(double mouseX, double mouseY) {
@@ -402,9 +538,12 @@ final class UniversalTranslatorConfigScreen extends Screen {
             if (openSelection == SettingsSelectionList.Kind.PROVIDER) {
                 provider = values[selected];
                 loadLlmSettings(provider);
+                updateTabVisibility();
+            } else if (openSelection == SettingsSelectionList.Kind.TARGET_LANGUAGE) {
+                targetLanguage = values[selected];
+            } else {
+                outgoingTargetLanguage = values[selected];
             }
-            else if (openSelection == SettingsSelectionList.Kind.TARGET_LANGUAGE) targetLanguage = values[selected];
-            else outgoingTargetLanguage = values[selected];
             openSelection = SettingsSelectionList.Kind.NONE;
             refreshLabels();
             return true;
@@ -428,13 +567,6 @@ final class UniversalTranslatorConfigScreen extends Screen {
     }
 
     @Override
-    public void onClose() {
-        if (this.minecraft != null) {
-            this.minecraft.setScreen(parent);
-        }
-    }
-
-    @Override
     public boolean isPauseScreen() {
         return false;
     }
@@ -447,8 +579,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
         return TranslationProviderCatalog.usesLlmEditor(provider);
     }
 
-    private String providerLabel() {
-        return TranslationProviderCatalog.displayName(provider);
+    private Component providerLabel() {
+        return Component.translatable(TranslationProviderCatalog.displayName(provider));
     }
 
     private void loadLlmSettings(String selectedProvider) {
@@ -470,17 +602,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
         return llmApiKey;
     }
 
-    private static String colorLabel(TranslationTextColor color) {
-        switch (color) {
-            case ORIGINAL: return tr("value.universal_translator.color.original");
-            case GREEN: return tr("value.universal_translator.color.green");
-            case GOLD: return tr("value.universal_translator.color.gold");
-            case LIGHT_PURPLE: return tr("value.universal_translator.color.light_purple");
-            case YELLOW: return tr("value.universal_translator.color.yellow");
-            case WHITE: return tr("value.universal_translator.color.white");
-            case AQUA:
-            default: return tr("value.universal_translator.color.aqua");
-        }
+    private static Component colorLabel(TranslationTextColor color) {
+        return Component.translatable("value.universal_translator.color." + color.configName().replace('-', '_'));
     }
 
     private static String tr(String key, Object... arguments) {
@@ -488,24 +611,19 @@ final class UniversalTranslatorConfigScreen extends Screen {
     }
 
     private Layout layout() {
-        SettingsScreenLayout.Geometry geometry = SettingsScreenLayout.calculate(this.width, this.height);
+        SettingsScreenLayout.Geometry geometry = SettingsScreenLayout.calculate(width, height);
         return new Layout(geometry.left(), geometry.right(), geometry.totalWidth(), geometry.buttonWidth(),
-                geometry.top(), geometry.rowStep(), geometry.targetY(), geometry.endpointY(), geometry.saveY());
+                geometry.top(), geometry.rowStep(), geometry.targetY(), geometry.endpointY(), geometry.saveY(),
+                geometry.tabY(), geometry.tabWidth(), geometry.tabGap(), geometry.contentTop(), geometry.contentRowStep());
     }
 
     private static final class Layout {
-        private final int left;
-        private final int right;
-        private final int totalWidth;
-        private final int buttonWidth;
-        private final int top;
-        private final int rowStep;
-        private final int targetY;
-        private final int endpointY;
-        private final int saveY;
+        private final int left, right, totalWidth, buttonWidth, top, rowStep, targetY, endpointY, saveY;
+        private final int tabY, tabWidth, tabGap, contentTop, contentRowStep;
 
-        private Layout(int left, int right, int totalWidth, int buttonWidth,
-                       int top, int rowStep, int targetY, int endpointY, int saveY) {
+        private Layout(int left, int right, int totalWidth, int buttonWidth, int top,
+                       int rowStep, int targetY, int endpointY, int saveY,
+                       int tabY, int tabWidth, int tabGap, int contentTop, int contentRowStep) {
             this.left = left;
             this.right = right;
             this.totalWidth = totalWidth;
@@ -515,6 +633,19 @@ final class UniversalTranslatorConfigScreen extends Screen {
             this.targetY = targetY;
             this.endpointY = endpointY;
             this.saveY = saveY;
+            this.tabY = tabY;
+            this.tabWidth = tabWidth;
+            this.tabGap = tabGap;
+            this.contentTop = contentTop;
+            this.contentRowStep = contentRowStep;
+        }
+
+        private int tabX(int index) {
+            return left + index * (tabWidth + tabGap);
+        }
+
+        private int contentRow(int index) {
+            return contentTop + contentRowStep * index;
         }
 
         private int row(int index) {
