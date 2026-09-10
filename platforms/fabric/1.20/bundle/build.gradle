@@ -3,7 +3,9 @@ plugins {
 }
 
 repositories {
+    maven { url = "https://repo1.maven.org/maven2/" }
     maven { url = "https://maven.fabricmc.net/" }
+    maven { url = "https://libraries.minecraft.net/" }
     mavenCentral()
 }
 
@@ -27,6 +29,13 @@ base {
 def supportedVersions = ["1.20", "1.20.1", "1.20.2", "1.20.3", "1.20.4", "1.20.5", "1.20.6"]
 supportedVersions.each { gameVersion ->
     evaluationDependsOn(":platform-fabric-${gameVersion}")
+}
+for (int i = 1; i < supportedVersions.size(); i++) {
+    def prevVersion = supportedVersions[i - 1]
+    def currVersion = supportedVersions[i]
+    project(":platform-fabric-${currVersion}").tasks.matching { it.name.startsWith("compile") }.configureEach {
+        mustRunAfter(project(":platform-fabric-${prevVersion}").tasks.matching { it.name.startsWith("compile") })
+    }
 }
 def implementationJars = supportedVersions.collectEntries { gameVersion ->
     [(gameVersion): project(":platform-fabric-${gameVersion}").tasks.named("remapJar")]

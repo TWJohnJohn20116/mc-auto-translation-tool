@@ -44,7 +44,8 @@ base {
 }
 
 repositories {
-    mavenCentral {
+    maven {
+        name = "MavenCentralMirror"
         url = uri("https://repo1.maven.org/maven2/")
     }
     maven {
@@ -55,6 +56,7 @@ repositories {
         name = "Fabric"
         url = uri("https://maven.fabricmc.net/")
     }
+    mavenCentral()
 }
 
 dependencies {

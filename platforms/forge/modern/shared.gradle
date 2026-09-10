@@ -202,3 +202,8 @@ tasks.named("compileJava", JavaCompile).configure {
             .optional()
 }
 
+tasks.matching { it.name == "mergeMixinMappings" }.configureEach {
+    dependsOn(tasks.named("compileJava"))
+}
+
+
