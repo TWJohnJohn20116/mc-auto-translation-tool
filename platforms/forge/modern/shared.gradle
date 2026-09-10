@@ -64,6 +64,14 @@ repositories {
         }
     }
     maven {
+        name = "Minecraft libraries"
+        url = "https://libraries.minecraft.net/"
+        content {
+            includeGroup "com.mojang"
+            includeGroup "oshi-project"
+        }
+    }
+    maven {
         name = "bmclapiMinecraftLibraries"
         url = "https://bmclapi2.bangbang93.com/maven"
         content {
@@ -78,12 +86,8 @@ repositories {
     minecraft.mavenizer(it)
     maven fg.forgeMaven
     maven {
-        name = "Minecraft libraries"
-        url = "https://libraries.minecraft.net/"
-        content {
-            includeGroup "com.mojang"
-            includeGroup "oshi-project"
-        }
+        name = "MavenCentralMirror"
+        url = uri("https://repo1.maven.org/maven2/")
     }
     mavenCentral()
 }
