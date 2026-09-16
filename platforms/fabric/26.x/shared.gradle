@@ -13,7 +13,8 @@ def sourceLayers = [
         "26.1"  : "api/26.1-26.1.2",
         "26.1.1": "api/26.1-26.1.2",
         "26.1.2": "api/26.1-26.1.2",
-        "26.2"  : "api/26.2"
+        "26.2"  : "api/26.2",
+        "26.3"  : "api/26.3"
 ]
 
 def gameVersion = project.name - "platform-fabric-"

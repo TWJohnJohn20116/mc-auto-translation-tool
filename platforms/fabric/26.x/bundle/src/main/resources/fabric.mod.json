@@ -25,6 +25,9 @@
     },
     {
       "file": "META-INF/jars/universal-translator-26.2.jar"
+    },
+    {
+      "file": "META-INF/jars/universal-translator-26.3.jar"
     }
   ],
   "depends": {
@@ -33,7 +36,8 @@
       "26.1",
       "26.1.1",
       "26.1.2",
-      "26.2"
+      "26.2",
+      "26.3"
     ],
     "java": ">=25",
     "fabric-api": "*",

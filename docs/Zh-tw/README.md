@@ -19,8 +19,8 @@
 > 目前正式版與發佈日期以 [GitHub Releases](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest)
 > 為準。請只使用與你的 Minecraft 版本及模組載入器相符的 JAR。
 >
-> 測試版 **1.3.11-beta.3**（全新 4-Tab 現代設定介面、架構整潔化）見
-> [GitHub Pre-release](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/tag/v1.3.11-beta.3)，不取代 1.3.10 正式版。
+> 候選發佈版 **1.3.11-rc1**（支援 Minecraft 26.3、全新 4-Tab 現代設定介面、架構整潔化）見
+> [GitHub Pre-release](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/tag/v1.3.11-rc1)，不取代 1.3.10 正式版。
 
 ## 為什麼使用它
 

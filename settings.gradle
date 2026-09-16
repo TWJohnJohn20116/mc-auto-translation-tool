@@ -126,6 +126,7 @@ def platformProjects = [
         "platform-fabric-26.1.1"        : "platforms/fabric/26.x/26.1.1",
         "platform-fabric-26.1.2"        : "platforms/fabric/26.x/26.1.2",
         "platform-fabric-26.2"          : "platforms/fabric/26.x/26.2",
+        "platform-fabric-26.3"          : "platforms/fabric/26.x/26.3",
         "platform-fabric-26.x"          : "platforms/fabric/26.x/bundle",
         "platform-neoforge-1.20.1"      : "platforms/neoforge/1.20.1",
         "platform-neoforge-1.20.2"      : "platforms/neoforge/1.20/versions/1.20.2",
@@ -188,7 +189,7 @@ def platformDependencies = [
                 .collect { "platform-fabric-${it}".toString() },
         "platform-fabric-1.21.x": (['1.21'] + (1..11).collect { "1.21.${it}" })
                 .collect { "platform-fabric-${it}".toString() },
-        "platform-fabric-26.x": ["26.1", "26.1.1", "26.1.2", "26.2"]
+        "platform-fabric-26.x": ["26.1", "26.1.1", "26.1.2", "26.2", "26.3"]
                 .collect { "platform-fabric-${it}".toString() },
         "platform-neoforge-1.20.1": ["platform-forge-1.20.1"]
 ]

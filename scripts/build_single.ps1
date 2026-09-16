@@ -5,7 +5,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $env:GRADLE_USER_HOME = "D:\Gradle\cache"
-$manifest = "-Ploom_version_manifests=https://bmclapi2.bangbang93.com/mc/game/version_manifest_v2.json"
+$manifest = "-Ploom_version_manifests=https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 $root = "D:\Code\mc-auto-translation-tool"
 Set-Location $root
 

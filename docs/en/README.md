@@ -14,8 +14,8 @@ chat, quest books, mod menus, scoreboards, item descriptions, and signs.
 > See [GitHub Releases](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/latest) for the
 > current stable version and publication date. Use only the JAR matching your Minecraft version and mod loader.
 >
-> Testing build **1.3.11-beta.3** (all-new 4-tab modern settings UI, clean architecture) is on
-> [GitHub Pre-release](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/tag/v1.3.11-beta.3).
+> Release candidate **1.3.11-rc1** (supports Minecraft 26.3, all-new 4-tab modern settings UI, clean architecture) is on
+> [GitHub Pre-release](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/tag/v1.3.11-rc1).
 > It does not replace stable 1.3.10.
 
 ## Why use it

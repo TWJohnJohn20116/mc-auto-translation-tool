@@ -55,7 +55,7 @@ This document records only completed validation. “Builds successfully” is no
 | All 1.21 releases (1.21–1.21.11), single JAR | Fabric Loader 0.19.3 | 21 | Passed; Loader selection passed for all twelve versions | Pending | Pending |
 | 1.21, 1.21.1, 1.21.3–1.21.11 | Forge 51.0.33–61.2.0 | 21 | Compile passed for every published game target; exact metadata ranges | 1.21.11 client initialized and reloaded resources, audio, and atlases | Pending |
 | 26.1, 26.1.1, 26.1.2, 26.2 | Forge 62.0.9–65.1.1 | 25 | Compile passed for all four exact targets | Pending | Pending |
-| 26.1, 26.1.1, 26.1.2, 26.2, single JAR | Fabric Loader 0.19.3 | 25 | Passed; Loader selection passed for all four versions | 26.1 baseline passed | Pending |
+| 26.1, 26.1.1, 26.1.2, 26.2, 26.3, single JAR | Fabric Loader 0.19.3+ | 25 | Passed; Loader selection passed for all five versions | 26.1 baseline passed | Pending |
 
 The stable release starts from 33 formally shipped target JARs that share the same translation core
 and reduces them to 16 directly installable release JARs. Additional adjacent-version source targets
