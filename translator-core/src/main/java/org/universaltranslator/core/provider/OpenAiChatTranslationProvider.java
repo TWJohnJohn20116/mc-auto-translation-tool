@@ -65,11 +65,22 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
                 .toString();
         String authorization = apiKey.isEmpty() ? null : "Bearer " + apiKey;
         String response = http.post(endpoint, body, authorization);
-        String translated = JsonStrings.readStringField(response, "content");
+        String translated = extractContent(response);
         if (translated == null || translated.trim().isEmpty()) {
             throw new IllegalStateException("OpenAI-compatible response did not contain translated content");
         }
         return TranslationOutputValidator.requireValid(request.getText(), translated);
+    }
+
+    static String extractContent(String response) {
+        if (response == null || response.trim().isEmpty()) {
+            return null;
+        }
+        String translated = JsonStrings.readStringPath(response, "choices[0].message.content");
+        if (translated != null && !translated.trim().isEmpty()) {
+            return translated;
+        }
+        return JsonStrings.readStringField(response, "content");
     }
 
     private static String requireText(String name, String value) {

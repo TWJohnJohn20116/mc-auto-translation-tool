@@ -8,12 +8,9 @@ import org.universaltranslator.core.net.HttpJsonClient;
 import org.universaltranslator.core.net.JsonStrings;
 
 import java.net.URI;
-import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.LinkedHashMap;
-import java.util.Locale;
 import java.util.Map;
-import java.util.TimeZone;
 import java.util.UUID;
 
 /** Alibaba Cloud Machine Translation general REST edition with ROA HMAC-SHA1 signing. */
@@ -61,7 +58,7 @@ public final class AliyunMachineTranslationProvider implements TranslationProvid
                         ProviderLanguageCodes.aliyun(request.getTargetLanguage(), false)) + ','
                 + "\"SourceText\":" + JsonStrings.quote(request.getText()) + ','
                 + "\"Scene\":\"general\"}";
-        String date = rfc1123(new Date());
+        String date = CryptoSupport.rfc1123(new Date());
         String nonce = UUID.randomUUID().toString();
         String contentMd5 = CryptoSupport.md5Base64(payload);
         String path = endpoint.getRawPath();
@@ -92,11 +89,5 @@ public final class AliyunMachineTranslationProvider implements TranslationProvid
                     "Alibaba Cloud MT", response, "Code", "Message");
         }
         return translated;
-    }
-
-    private static String rfc1123(Date value) {
-        SimpleDateFormat format = new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss z", Locale.US);
-        format.setTimeZone(TimeZone.getTimeZone("GMT"));
-        return format.format(value);
     }
 }

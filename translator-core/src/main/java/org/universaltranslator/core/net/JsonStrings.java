@@ -33,6 +33,14 @@ public final class JsonStrings {
         return output.append('"').toString();
     }
 
+    /** Parses arbitrary valid JSON into Maps, Lists, Strings, Booleans, and null. */
+    public static Object parse(String json) {
+        if (json == null || json.trim().isEmpty()) {
+            throw new IllegalArgumentException("JSON string is empty");
+        }
+        return new Parser(json).parse();
+    }
+
     /** Reads a string through a small JSON path such as choices[0].message.content. */
     public static String readStringPath(String json, String path) {
         if (json == null || json.trim().isEmpty()) {
@@ -41,7 +49,7 @@ public final class JsonStrings {
         if (path == null || path.trim().isEmpty()) {
             throw new IllegalArgumentException("Response JSON path is required");
         }
-        Object current = new Parser(json).parse();
+        Object current = parse(json);
         String normalized = path.trim();
         if (normalized.startsWith("$.")) {
             normalized = normalized.substring(2);

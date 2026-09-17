@@ -10,6 +10,7 @@ import org.universaltranslator.core.net.JsonStrings;
 import java.net.URI;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -45,11 +46,43 @@ public final class BaiduTranslationProvider implements TranslationProvider {
         fields.put("sign", CryptoSupport.md5Hex(appId + request.getText() + salt + secret));
         String response = http.postForm(endpoint, CryptoSupport.formEncode(fields),
                 Collections.<String, String>emptyMap());
-        String translated = JsonStrings.readStringField(response, "dst");
+        String translated = parseTranslatedText(response);
         if (translated == null || translated.trim().isEmpty()) {
             throw providerError("Baidu", response, "error_code", "error_msg");
         }
         return translated;
+    }
+
+    static String parseTranslatedText(String response) {
+        if (response == null || response.trim().isEmpty()) {
+            return null;
+        }
+        try {
+            Object parsed = JsonStrings.parse(response);
+            if (parsed instanceof Map) {
+                Object transResult = ((Map<?, ?>) parsed).get("trans_result");
+                if (transResult instanceof List) {
+                    StringBuilder joined = new StringBuilder();
+                    for (Object item : (List<?>) transResult) {
+                        if (item instanceof Map) {
+                            Object dst = ((Map<?, ?>) item).get("dst");
+                            if (dst instanceof String) {
+                                if (joined.length() > 0) {
+                                    joined.append('\n');
+                                }
+                                joined.append((String) dst);
+                            }
+                        }
+                    }
+                    if (joined.length() > 0) {
+                        return joined.toString();
+                    }
+                }
+            }
+        } catch (RuntimeException ignored) {
+            // Fall back to reading single field if JSON structure is unexpected
+        }
+        return JsonStrings.readStringField(response, "dst");
     }
 
     static IllegalStateException providerError(

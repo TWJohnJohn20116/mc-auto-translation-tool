@@ -8,12 +8,9 @@ import org.universaltranslator.core.net.HttpJsonClient;
 import org.universaltranslator.core.net.JsonStrings;
 
 import java.net.URI;
-import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.LinkedHashMap;
-import java.util.Locale;
 import java.util.Map;
-import java.util.TimeZone;
 
 /** iFlytek NiuTrans 2.0 API using its host/date/request-line/digest HMAC signature. */
 public final class IflytekNiuTransProvider implements TranslationProvider {
@@ -57,8 +54,8 @@ public final class IflytekNiuTransProvider implements TranslationProvider {
                         ProviderLanguageCodes.iflytek(request.getTargetLanguage(), false)) + "},"
                 + "\"data\":{\"text\":" + JsonStrings.quote(
                         CryptoSupport.base64(request.getText())) + "}}";
-        String date = rfc1123(new Date());
-        String digest = "SHA-256=" + CryptoSupport.base64(CryptoSupport.sha256Hex(payload));
+        String date = CryptoSupport.rfc1123(new Date());
+        String digest = "SHA-256=" + CryptoSupport.sha256Base64(payload);
         String path = endpoint.getRawPath();
         if (path == null || path.isEmpty()) {
             path = "/";
@@ -82,11 +79,5 @@ public final class IflytekNiuTransProvider implements TranslationProvider {
                     "iFlytek NiuTrans", response, "code", "message");
         }
         return translated;
-    }
-
-    private static String rfc1123(Date value) {
-        SimpleDateFormat format = new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss z", Locale.US);
-        format.setTimeZone(TimeZone.getTimeZone("GMT"));
-        return format.format(value);
     }
 }

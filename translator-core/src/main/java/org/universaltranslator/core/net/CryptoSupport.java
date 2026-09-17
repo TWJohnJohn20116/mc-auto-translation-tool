@@ -7,7 +7,11 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.GeneralSecurityException;
 import java.util.Base64;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 import java.util.Map;
+import java.util.TimeZone;
 
 /** Dependency-free hashes, HMACs, and form encoding used by translation APIs. */
 public final class CryptoSupport {
@@ -24,6 +28,10 @@ public final class CryptoSupport {
 
     public static String sha256Hex(String value) {
         return hex(digest("SHA-256", utf8(value)));
+    }
+
+    public static String sha256Base64(String value) {
+        return Base64.getEncoder().encodeToString(digest("SHA-256", utf8(value)));
     }
 
     public static String sha256Hex(byte[] value) {
@@ -71,6 +79,12 @@ public final class CryptoSupport {
 
     public static String rfc3986Encode(String value) {
         return urlEncode(value).replace("+", "%20").replace("*", "%2A").replace("%7E", "~");
+    }
+
+    public static String rfc1123(Date value) {
+        SimpleDateFormat format = new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss z", Locale.US);
+        format.setTimeZone(TimeZone.getTimeZone("GMT"));
+        return format.format(value);
     }
 
     public static byte[] utf8(String value) {

@@ -19,6 +19,7 @@ import java.util.Properties;
  * Disk write failures never break translation and the in-memory value remains usable.
  */
 public final class PersistentTranslationCache implements TranslationStore {
+    private final Object diskLock = new Object();
     private final Path file;
     private final Map<String, String> entries;
 
@@ -42,15 +43,23 @@ public final class PersistentTranslationCache implements TranslationStore {
     }
 
     @Override
-    public synchronized void put(String key, String value) {
-        entries.put(hash(key), value);
-        persistBestEffort();
+    public void put(String key, String value) {
+        Map<String, String> snapshot;
+        synchronized (this) {
+            entries.put(hash(key), value);
+            snapshot = new LinkedHashMap<String, String>(entries);
+        }
+        persistBestEffort(snapshot);
     }
 
     @Override
-    public synchronized void clear() {
-        entries.clear();
-        persistBestEffort();
+    public void clear() {
+        Map<String, String> snapshot;
+        synchronized (this) {
+            entries.clear();
+            snapshot = new LinkedHashMap<String, String>(entries);
+        }
+        persistBestEffort(snapshot);
     }
 
     public synchronized int size() {
@@ -75,26 +84,28 @@ public final class PersistentTranslationCache implements TranslationStore {
         }
     }
 
-    private void persistBestEffort() {
-        try {
-            Path parent = file.getParent();
-            if (parent != null) {
-                Files.createDirectories(parent);
-            }
-            Path temporary = file.resolveSibling(file.getFileName().toString() + ".tmp");
-            Properties properties = new Properties();
-            properties.putAll(entries);
-            try (Writer writer = Files.newBufferedWriter(temporary, StandardCharsets.UTF_8)) {
-                properties.store(writer, "MC Auto Translation Tool cache; source keys are SHA-256 hashes");
-            }
+    private void persistBestEffort(Map<String, String> snapshot) {
+        synchronized (diskLock) {
             try {
-                Files.move(temporary, file,
-                        StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            } catch (AtomicMoveNotSupportedException exception) {
-                Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
+                Path parent = file.getParent();
+                if (parent != null) {
+                    Files.createDirectories(parent);
+                }
+                Path temporary = file.resolveSibling(file.getFileName().toString() + ".tmp");
+                Properties properties = new Properties();
+                properties.putAll(snapshot);
+                try (Writer writer = Files.newBufferedWriter(temporary, StandardCharsets.UTF_8)) {
+                    properties.store(writer, "MC Auto Translation Tool cache; source keys are SHA-256 hashes");
+                }
+                try {
+                    Files.move(temporary, file,
+                            StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                } catch (AtomicMoveNotSupportedException exception) {
+                    Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
+                }
+            } catch (IOException ignored) {
+                // Translation must remain available even when the cache directory is read-only.
             }
-        } catch (IOException ignored) {
-            // Translation must remain available even when the cache directory is read-only.
         }
     }
 

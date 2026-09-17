@@ -154,7 +154,11 @@ public final class ProtectedText {
             }
             int index = Integer.parseInt(
                     matcher.group().substring("__UT_".length(), matcher.group().length() - 2));
-            segments.add(new Segment(values.get(index), true));
+            if (index >= 0 && index < values.size()) {
+                segments.add(new Segment(values.get(index), true));
+            } else {
+                segments.add(new Segment(matcher.group(), false));
+            }
             cursor = matcher.end();
         }
         if (cursor < template.length()) {

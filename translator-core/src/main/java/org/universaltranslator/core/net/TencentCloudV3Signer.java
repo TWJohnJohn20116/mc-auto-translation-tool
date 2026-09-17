@@ -1,9 +1,6 @@
 package org.universaltranslator.core.net;
 
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.LinkedHashMap;
@@ -52,10 +49,10 @@ public final class TencentCloudV3Signer {
                 + credentialScope + "\n"
                 + sha256Hex(canonicalRequest);
 
-        byte[] secretDate = hmac(("TC3" + secretKey).getBytes(StandardCharsets.UTF_8), date);
-        byte[] secretService = hmac(secretDate, service);
-        byte[] secretSigning = hmac(secretService, "tc3_request");
-        String signature = hex(hmac(secretSigning, stringToSign));
+        byte[] secretDate = CryptoSupport.hmacSha256(("TC3" + secretKey).getBytes(StandardCharsets.UTF_8), date);
+        byte[] secretService = CryptoSupport.hmacSha256(secretDate, service);
+        byte[] secretSigning = CryptoSupport.hmacSha256(secretService, "tc3_request");
+        String signature = CryptoSupport.hex(CryptoSupport.hmacSha256(secretSigning, stringToSign));
         String authorization = ALGORITHM
                 + " Credential=" + secretId + "/" + credentialScope
                 + ", SignedHeaders=" + signedHeaders
@@ -70,32 +67,14 @@ public final class TencentCloudV3Signer {
         return headers;
     }
 
-    static String sha256Hex(String value) throws Exception {
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        return hex(digest.digest(value.getBytes(StandardCharsets.UTF_8)));
-    }
-
-    private static byte[] hmac(byte[] key, String value) throws Exception {
-        Mac mac = Mac.getInstance("HmacSHA256");
-        mac.init(new SecretKeySpec(key, "HmacSHA256"));
-        return mac.doFinal(value.getBytes(StandardCharsets.UTF_8));
+    static String sha256Hex(String value) {
+        return CryptoSupport.sha256Hex(value);
     }
 
     private static String utcDate(long timestampSeconds) {
         SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd", Locale.ROOT);
         format.setTimeZone(TimeZone.getTimeZone("UTC"));
         return format.format(new Date(timestampSeconds * 1000L));
-    }
-
-    private static String hex(byte[] bytes) {
-        char[] digits = "0123456789abcdef".toCharArray();
-        char[] output = new char[bytes.length * 2];
-        for (int index = 0; index < bytes.length; index++) {
-            int value = bytes[index] & 0xff;
-            output[index * 2] = digits[value >>> 4];
-            output[index * 2 + 1] = digits[value & 0x0f];
-        }
-        return new String(output);
     }
 
     private static void requireValue(String name, String value) {

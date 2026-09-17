@@ -42,6 +42,8 @@ public final class ProviderSelfTest {
         cyclesTheCompleteProviderCatalog();
         keepsLlmEditorCredentialsProviderSpecific();
         doesNotLeakVolcengineSecretsIntoHeaders();
+        parsesBaiduMultiLineTransResult();
+        parsesOpenAiResponseWithReasoningContent();
         System.out.println("ProviderSelfTest: all checks passed");
     }
 
@@ -55,11 +57,28 @@ public final class ProviderSelfTest {
         assertEquals(null, JsonStrings.readStringPath(json, "choices[1].message.content"));
     }
 
+    private static void parsesBaiduMultiLineTransResult() {
+        String json = "{\"from\":\"en\",\"to\":\"zh\",\"trans_result\":["
+                + "{\"src\":\"Hello\",\"dst\":\"你好\"},"
+                + "{\"src\":\"World\",\"dst\":\"世界\"}]}";
+        assertEquals("你好\n世界", BaiduTranslationProvider.parseTranslatedText(json));
+    }
+
+    private static void parsesOpenAiResponseWithReasoningContent() {
+        String json = "{\"choices\":[{\"message\":{"
+                + "\"role\":\"assistant\","
+                + "\"reasoning_content\":\"thinking about content\","
+                + "\"content\":\"你好世界\"}}]}";
+        assertEquals("你好世界", OpenAiChatTranslationProvider.extractContent(json));
+    }
+
     private static void computesKnownHashes() {
         assertEquals("5d41402abc4b2a76b9719d911017c592", CryptoSupport.md5Hex("hello"));
         assertEquals("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
                 CryptoSupport.sha256Hex("hello"));
         assertEquals("XUFAKrxLKna5cZ2REBfFkg==", CryptoSupport.md5Base64("hello"));
+        assertEquals("LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ=", CryptoSupport.sha256Base64("hello"));
+        assertEquals("Thu, 01 Jan 1970 00:00:00 GMT", CryptoSupport.rfc1123(new java.util.Date(0L)));
     }
 
     private static void truncatesYoudaoSignaturesByCodePoint() {

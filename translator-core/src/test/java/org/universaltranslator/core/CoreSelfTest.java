@@ -83,6 +83,7 @@ public final class CoreSelfTest {
         identifiesVanillaScreenContent();
         formatsSecretFreeDiagnostics();
         localizesDiagnosticsAndRuntimeStatus();
+        handlesMalformedPlaceholderTokensGracefully();
         System.out.println("CoreSelfTest: all checks passed");
     }
 
@@ -384,9 +385,19 @@ public final class CoreSelfTest {
 
     private static void enforcesSafeEndpoints() {
         assertEquals("http", EndpointPolicy.requireSafeEndpoint("http://127.0.0.1:5000/translate").getScheme());
+        assertEquals("http", EndpointPolicy.requireSafeEndpoint("http://192.168.1.100:11434/v1/chat/completions").getScheme());
+        assertEquals("http", EndpointPolicy.requireSafeEndpoint("http://10.0.0.2:5000/translate").getScheme());
         assertEquals("https", EndpointPolicy.requireSafeEndpoint("https://translate.example/translate").getScheme());
         assertThrows(() -> EndpointPolicy.requireSafeEndpoint("http://translate.example/translate"));
+        assertThrows(() -> EndpointPolicy.requireSafeEndpoint("http://8.8.8.8:5000/translate"));
         assertThrows(() -> EndpointPolicy.requireSafeEndpoint("https://user:secret@translate.example/translate"));
+    }
+
+    private static void handlesMalformedPlaceholderTokensGracefully() {
+        ProtectedText text = ProtectedText.parse("Hello __UT_999__ world");
+        assertEquals("Hello __UT_999__ world", text.getOriginal());
+        java.util.List<?> segments = text.getSegments();
+        assertFalse(segments.isEmpty());
     }
 
     private static void handlesJsonStrings() {
