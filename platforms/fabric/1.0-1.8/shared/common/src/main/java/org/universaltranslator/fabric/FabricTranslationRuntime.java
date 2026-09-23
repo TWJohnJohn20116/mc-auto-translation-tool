@@ -103,11 +103,11 @@ public final class FabricTranslationRuntime {
             protectedPlayerNames = Collections.emptyList();
         } else {
             List<String> names = new ArrayList<String>();
-            if (protectPlayerNames) {
-                addProtectedLiteral(names, OrnitheClientAccess.sessionUsername());
-            }
+            // The server address is always protected, even when player names are translated: it can
+            // still reach the endpoint through surfaces with no screen (for example the F3 overlay).
             addProtectedLiteral(names, OrnitheClientAccess.currentServerAddress());
             if (protectPlayerNames) {
+                addProtectedLiteral(names, OrnitheClientAccess.sessionUsername());
                 for (Object raw : client.getNetworkHandler().onlinePlayers) {
                     if (names.size() >= MAX_PROTECTED_PLAYER_NAMES) {
                         break;

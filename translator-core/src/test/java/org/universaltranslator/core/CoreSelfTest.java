@@ -171,6 +171,10 @@ public final class CoreSelfTest {
                 TranslationStatusLocalizer.localize("主翻译服务运行中", translator));
         assertTrue(TranslationStatusLocalizer.isFailure("离线翻译失败：timeout"));
         assertFalse(TranslationStatusLocalizer.isFailure("离线模型已就绪"));
+        // isFailure must normalize exactly like localize, or a padded status is drawn
+        // green and shown as an overlay instead of a red failure notification.
+        assertTrue(TranslationStatusLocalizer.isFailure("  翻译失败：x  "));
+        assertTrue(TranslationStatusLocalizer.isFailure("\t离线翻译失败：timeout\n"));
     }
 
     private static void normalizesOfflineModelSelections() throws Exception {
@@ -726,6 +730,27 @@ public final class CoreSelfTest {
         assertEquals(-1, layout.optionAt(0, 0, 16));
         assertTrue(layout.contains(layout.panelLeft(), layout.panelTop));
         assertFalse(layout.contains(0, 0));
+
+        // Mobile launchers, custom GUI scales and embedded windows can be narrower than
+        // 200px or shorter than 240px. The columns must stay on-screen and the panel
+        // background must still enclose every row it draws.
+        int[][] sizes = new int[][] {
+                {160, 240}, {320, 160}, {320, 240}, {854, 480}, {160, 160}, {180, 200}
+        };
+        for (int[] size : sizes) {
+            SettingsSelectionList.Layout compact =
+                    SettingsSelectionList.layout(size[0], size[1], 16);
+            assertTrue(compact.left >= 0);
+            assertTrue(compact.panelLeft() >= 0);
+            assertTrue(compact.panelRight() <= size[0]);
+            for (int index = 0; index < 16; index++) {
+                assertTrue(compact.x(index) >= 0);
+                assertTrue(compact.x(index) + compact.buttonWidth <= size[0]);
+            }
+            int lastRowBottom = compact.y(7 * 2) + compact.buttonHeight;
+            assertTrue(lastRowBottom <= compact.panelBottom);
+            assertTrue(compact.panelBottom <= size[1]);
+        }
     }
 
     private static void keepsSettingsActionsReachable() {
@@ -754,12 +779,17 @@ public final class CoreSelfTest {
         Path report = DiagnosticsLogExporter.export(directory, java.util.Arrays.asList(
                 "Runtime: failed https://secret.example/translate",
                 "api-key=abc123",
-                "authorization: Bearer private-token"));
+                "authorization: Bearer private-token",
+                "Authorization Bearer 9f8e7d6c5b4a3210",
+                "baidu-secret=9f8e7d6c",
+                "Translation service returned HTTP 401: Incorrect API key provided: 9f8e7d6c5b4a"));
         String output = new String(Files.readAllBytes(report), StandardCharsets.UTF_8);
         assertTrue(output.contains("MC Auto Translation Tool - Diagnostics"));
         assertFalse(output.contains("secret.example"));
         assertFalse(output.contains("abc123"));
         assertFalse(output.contains("private-token"));
+        assertFalse(output.contains("9f8e7d6c5b4a3210"));
+        assertFalse(output.contains("9f8e7d6c"));
         assertTrue(output.contains("[address hidden]"));
     }
 

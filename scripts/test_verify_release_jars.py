@@ -10,6 +10,8 @@ from pathlib import Path
 
 from verify_release_jars import (
     VerificationError,
+    _expected_release_version,
+    _validate_archive_paths,
     verify_checksums,
     verify_jar,
     verify_jar_bytes,
@@ -27,6 +29,18 @@ def make_jar(
         for name, value in entries.items():
             archive.writestr(name, value)
     return output.getvalue()
+
+
+def make_jar_with_raw_name(name: str, value: bytes = b"payload") -> bytes:
+    """Build a JAR whose entry name survives verbatim.
+
+    `zipfile.writestr` rewrites backslashes to forward slashes on Windows, so the
+    hostile name is patched into the serialized archive instead.
+    """
+    placeholder = "P" * len(name.encode("utf-8"))
+    return make_jar({placeholder: value}, include_legal_files=False).replace(
+        placeholder.encode("utf-8"), name.encode("utf-8")
+    )
 
 
 class JarVerifierTest(unittest.TestCase):
@@ -231,6 +245,123 @@ versionRange="[1.21.1,1.21.2)"
                 ),
                 "MCAutoTranslationTool-1.3.0-mc1.20.1-fabric.jar",
             )
+
+    def test_windows_drive_absolute_entry_is_rejected(self) -> None:
+        with zipfile.ZipFile(io.BytesIO(make_jar_with_raw_name("C:/Windows/Temp/evil.txt"))) as archive:
+            with self.assertRaisesRegex(VerificationError, "unsafe ZIP entry"):
+                _validate_archive_paths(archive)
+
+    def test_lowercase_drive_absolute_entry_is_rejected(self) -> None:
+        with zipfile.ZipFile(io.BytesIO(make_jar_with_raw_name("c:/users/x/evil.exe"))) as archive:
+            with self.assertRaisesRegex(VerificationError, "unsafe ZIP entry"):
+                _validate_archive_paths(archive)
+
+    def test_backslash_parent_traversal_entry_is_rejected(self) -> None:
+        with zipfile.ZipFile(
+            io.BytesIO(make_jar_with_raw_name("..\\evil.txt"))
+        ) as archive:
+            with self.assertRaisesRegex(VerificationError, "unsafe ZIP entry"):
+                _validate_archive_paths(archive)
+
+    def test_backslash_entry_is_rejected_independently_of_platform(self) -> None:
+        # `zipfile` rewrites `\` to `/` while reading on Windows, which would hide the
+        # rule; a duck-typed archive keeps the raw name so the check is exercised on
+        # every platform.
+        class Archive:
+            @staticmethod
+            def namelist() -> list[str]:
+                return ["org\\universaltranslator\\Example.class"]
+
+        with self.assertRaisesRegex(VerificationError, "unsafe ZIP entry"):
+            _validate_archive_paths(Archive())
+
+    def test_posix_parent_traversal_entry_is_rejected(self) -> None:
+        with zipfile.ZipFile(io.BytesIO(make_jar_with_raw_name("../evil.txt"))) as archive:
+            with self.assertRaisesRegex(VerificationError, "unsafe ZIP entry"):
+                _validate_archive_paths(archive)
+
+    def test_absolute_posix_entry_is_rejected(self) -> None:
+        with zipfile.ZipFile(io.BytesIO(make_jar_with_raw_name("/abs/evil.txt"))) as archive:
+            with self.assertRaisesRegex(VerificationError, "unsafe ZIP entry"):
+                _validate_archive_paths(archive)
+
+    def test_normal_relative_entries_are_accepted(self) -> None:
+        with zipfile.ZipFile(
+            io.BytesIO(
+                make_jar(
+                    {
+                        "META-INF/MANIFEST.MF": "Manifest-Version: 1.0\n",
+                        "org/universaltranslator/Example.class": b"class",
+                    }
+                )
+            )
+        ) as archive:
+            _validate_archive_paths(archive)
+
+    def test_windows_style_label_yields_expected_release_version(self) -> None:
+        label = (
+            r"C:\build\libs\MCAutoTranslationTool-1.3.11-rc1-mc1.20.1-forge.jar"
+        )
+        self.assertEqual("1.3.11-rc1", _expected_release_version(label))
+
+    def test_windows_style_label_still_cross_checks_mod_version(self) -> None:
+        metadata = '''
+modLoader="javafml"
+loaderVersion="[47,)"
+[[mods]]
+modId="universal_translator"
+version="1.2.1"
+[[dependencies.universal_translator]]
+modId="minecraft"
+versionRange="[1.20.1,1.20.2)"
+'''
+        with self.assertRaisesRegex(VerificationError, "version mismatch"):
+            verify_jar_bytes(
+                make_jar({"META-INF/mods.toml": metadata}),
+                r"C:\build\libs\MCAutoTranslationTool-1.3.11-rc1-mc1.20.1-forge.jar",
+            )
+
+    def test_empty_required_mixin_config_is_rejected(self) -> None:
+        metadata = {
+            "schemaVersion": 1,
+            "id": "universal_translator",
+            "version": "1.0",
+            "depends": {"minecraft": "1.20.1"},
+            "mixins": ["example.mixins.json"],
+        }
+        with self.assertRaisesRegex(VerificationError, "declares no mixins"):
+            verify_jar_bytes(
+                make_jar(
+                    {
+                        "fabric.mod.json": json.dumps(metadata),
+                        "example.mixins.json": json.dumps(
+                            {"package": "example.mixin", "client": []}
+                        ),
+                    }
+                ),
+                "fabric.jar",
+            )
+
+    def test_empty_optional_mixin_config_is_accepted(self) -> None:
+        metadata = {
+            "schemaVersion": 1,
+            "id": "universal_translator",
+            "version": "1.0",
+            "depends": {"minecraft": "1.20.1"},
+            "mixins": ["example.mixins.json"],
+        }
+        result = verify_jar_bytes(
+            make_jar(
+                {
+                    "fabric.mod.json": json.dumps(metadata),
+                    "example.mixins.json": json.dumps(
+                        {"package": "example.mixin", "required": False, "client": []}
+                    ),
+                }
+            ),
+            "fabric.jar",
+        )
+        self.assertEqual(0, result.mixins)
 
     def test_too_new_class_file_is_rejected(self) -> None:
         metadata = {

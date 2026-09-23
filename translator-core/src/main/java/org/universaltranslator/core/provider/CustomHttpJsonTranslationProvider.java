@@ -2,6 +2,7 @@ package org.universaltranslator.core.provider;
 
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationRequest;
+import org.universaltranslator.core.net.CryptoSupport;
 import org.universaltranslator.core.net.EndpointPolicy;
 import org.universaltranslator.core.net.HttpJsonClient;
 import org.universaltranslator.core.net.JsonStrings;
@@ -47,7 +48,12 @@ public final class CustomHttpJsonTranslationProvider implements TranslationProvi
 
     @Override
     public String id() {
-        return "custom-http-json:" + endpoint.getHost();
+        // The coordinator keys both its in-flight map and the disk cache on this id, so two
+        // configurations that share a host but differ in request/response semantics must not
+        // collide. Hash the raw path and the templates, never the credentials or header values.
+        String fingerprint = endpoint.getRawPath()
+                + "\n" + method + "\n" + responsePath + "\n" + requestTemplate;
+        return "custom-http-json:" + endpoint.getHost() + ":" + CryptoSupport.sha256Hex(fingerprint);
     }
 
     @Override
@@ -75,12 +81,12 @@ public final class CustomHttpJsonTranslationProvider implements TranslationProvi
     static String expand(String template, String text, String source, String target, String apiKey) {
         String[] names = {
                 "${textJson}", "${sourceJson}", "${targetJson}", "${apiKeyJson}",
-                "${text}", "${source}", "${target}", "${apiKey}"
+                "${text}", "${source}", "${target}", "${apiKey}", "${apiKeyRaw}"
         };
         String[] replacements = {
                 JsonStrings.quote(text), JsonStrings.quote(source), JsonStrings.quote(target),
                 JsonStrings.quote(apiKey), jsonStringContent(text), jsonStringContent(source),
-                jsonStringContent(target), apiKey
+                jsonStringContent(target), jsonStringContent(apiKey), apiKey
         };
         StringBuilder expanded = new StringBuilder(template.length() + text.length() + 32);
         for (int cursor = 0; cursor < template.length();) {

@@ -158,13 +158,13 @@ final class LegacyConfigScreen extends GuiScreen {
 
         // 4 Navigation Tabs
         tabGeneralButton = new GuiButton(TAB_GENERAL, layout.tabX(0), layout.tabY(), layout.tabWidth(), 20,
-                tr("category.universal_translator.general"));
+                tr("screen.universal_translator.tab.general"));
         tabScopesButton = new GuiButton(TAB_SCOPES, layout.tabX(1), layout.tabY(), layout.tabWidth(), 20,
-                tr("category.universal_translator.scopes"));
+                tr("screen.universal_translator.tab.scopes"));
         tabEngineButton = new GuiButton(TAB_ENGINE, layout.tabX(2), layout.tabY(), layout.tabWidth(), 20,
-                tr("category.universal_translator.engine"));
+                tr("screen.universal_translator.tab.engine"));
         tabOutgoingButton = new GuiButton(TAB_OUTGOING, layout.tabX(3), layout.tabY(), layout.tabWidth(), 20,
-                tr("category.universal_translator.outgoing"));
+                tr("screen.universal_translator.tab.outgoing"));
 
         buttonList.add(tabGeneralButton);
         buttonList.add(tabScopesButton);
@@ -582,7 +582,7 @@ final class LegacyConfigScreen extends GuiScreen {
             }
         } else if (activeTab == Tab.OUTGOING) {
             int tipY = layout.contentRow(2);
-            drawCenteredString(renderer, tr("screen.universal_translator.outgoing_tip"), width / 2, tipY, 0xFFAAAAAA);
+            drawCenteredString(renderer, tr("screen.universal_translator.info.outgoing_hint"), width / 2, tipY, 0xFFAAAAAA);
         }
 
         // Status & feedback

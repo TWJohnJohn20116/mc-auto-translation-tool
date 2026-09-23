@@ -178,6 +178,45 @@ class PrepareReleaseAssetsTest(unittest.TestCase):
             with self.assertRaisesRegex(PreparationError, "does not match version"):
                 prepare_release(release, root / "assets", "1.2.3")
 
+    def test_rejects_output_directory_equal_to_release_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            release = root / "release"
+            release.mkdir()
+            self._fixture(release)
+            with self.assertRaisesRegex(PreparationError, "must differ"):
+                prepare_release(release, release, "1.2.3")
+            self.assertTrue((release / "MCAutoTranslationTool-1.2.3-mc1.20.1-forge.jar").is_file())
+
+    def test_rejects_output_directory_containing_release_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            release = root / "downloads" / "1.2.3"
+            release.mkdir(parents=True)
+            self._fixture(release)
+            with self.assertRaisesRegex(PreparationError, "must not contain"):
+                prepare_release(release, root / "downloads", "1.2.3")
+            self.assertTrue((release / "MCAutoTranslationTool-1.2.3-mc1.20.1-forge.jar").is_file())
+
+    def test_rejects_output_directory_inside_release_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            release = root / "release"
+            release.mkdir()
+            self._fixture(release)
+            with self.assertRaisesRegex(PreparationError, "must not be inside"):
+                prepare_release(release, release / "assets", "1.2.3")
+
+    def test_allows_sibling_output_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            release = root / "release"
+            release.mkdir()
+            self._fixture(release)
+            assets = prepare_release(release, root / "assets", "1.2.3")
+            self.assertTrue(assets)
+            self.assertTrue((root / "assets" / "SHA256SUMS.txt").is_file())
+
     def test_preserves_loader_specific_1201_payloads(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

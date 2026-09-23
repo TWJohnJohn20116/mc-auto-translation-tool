@@ -6,8 +6,11 @@ import net.minecraft.client.render.TextRenderer;
 
 import java.lang.reflect.Method;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 public final class OrnitheClientAccess {
+    private static final Logger LOGGER = Logger.getLogger(UniversalTranslatorFabricClient.MOD_ID);
     private static final ConcurrentLinkedQueue<Runnable> CLIENT_TASKS =
             new ConcurrentLinkedQueue<Runnable>();
 
@@ -58,7 +61,11 @@ public final class OrnitheClientAccess {
         try {
             gui.getClass().getMethod("setOverlayMessage", String.class, boolean.class)
                     .invoke(gui, message, false);
-        } catch (NoSuchMethodException ignored) {
+        } catch (NoSuchMethodException exception) {
+            // This Minecraft version exposes no overlay method under this name/signature; the
+            // status message is dropped, so leave a trace instead of failing silently.
+            LOGGER.log(Level.WARNING,
+                    "Overlay message unavailable on this Minecraft version; dropping: " + message, exception);
         } catch (ReflectiveOperationException exception) {
             throw new RuntimeException(exception);
         }

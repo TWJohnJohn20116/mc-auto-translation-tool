@@ -4,6 +4,8 @@ import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationRequest;
 import org.universaltranslator.core.TranslationProviderStatus;
 
+import java.io.InterruptedIOException;
+
 /** Tries a privacy-preserving primary provider before an optional online fallback. */
 public final class FallbackTranslationProvider
         implements TranslationProvider, TranslationProviderStatus, AutoCloseable {
@@ -43,6 +45,13 @@ public final class FallbackTranslationProvider
                     : "主翻译服务运行中";
             return translated;
         } catch (Exception primaryFailure) {
+            if (isInterruption(primaryFailure)) {
+                // The session is being cancelled (TranslationCoordinator.close() interrupts its
+                // workers). Never hand the pending text to the online fallback after that: restore
+                // the interrupt flag and let the caller unwind instead of transmitting off-device.
+                Thread.currentThread().interrupt();
+                throw primaryFailure;
+            }
             try {
                 String translated = fallback.translate(request);
                 lastStatus = "主翻译服务失败，已使用 API 回退";
@@ -53,6 +62,15 @@ public final class FallbackTranslationProvider
                 throw fallbackFailure;
             }
         }
+    }
+
+    private static boolean isInterruption(Throwable failure) {
+        for (Throwable current = failure; current != null; current = current.getCause()) {
+            if (current instanceof InterruptedException || current instanceof InterruptedIOException) {
+                return true;
+            }
+        }
+        return Thread.currentThread().isInterrupted();
     }
 
     @Override

@@ -46,6 +46,9 @@ public final class TranslationOutputValidator {
             throw new IllegalArgumentException("Translation output is empty");
         }
         String output = unwrapQuotes(translated.trim());
+        if (output.isEmpty()) {
+            throw new IllegalArgumentException("Translation output is empty");
+        }
         int maximumLength = Math.max(48, source.length() * 3 + 24);
         if (output.length() > maximumLength) {
             throw new IllegalArgumentException("Translation output is unexpectedly long");

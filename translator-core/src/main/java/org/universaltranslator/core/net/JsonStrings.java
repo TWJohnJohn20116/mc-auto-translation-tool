@@ -101,7 +101,14 @@ public final class JsonStrings {
         return current instanceof String ? (String) current : null;
     }
 
+    /**
+     * Best-effort lookup of a string field. Returns null instead of throwing for any malformed or
+     * truncated body, and only accepts matches at an object-key position.
+     */
     public static String readStringField(String json, String fieldName) {
+        if (json == null || fieldName == null) {
+            return null;
+        }
         String needle = quote(fieldName);
         int searchFrom = 0;
         while (true) {
@@ -109,16 +116,37 @@ public final class JsonStrings {
             if (field < 0) {
                 return null;
             }
+            searchFrom = field + needle.length();
+            if (!isKeyPosition(json, field)) {
+                continue;
+            }
             int colon = skipWhitespaceTo(json, field + needle.length(), ':');
             if (colon < 0) {
-                return null;
+                continue;
             }
             int valueStart = skipWhitespace(json, colon + 1);
-            if (valueStart < json.length() && json.charAt(valueStart) == '"') {
-                return readQuoted(json, valueStart + 1);
+            if (valueStart >= json.length() || json.charAt(valueStart) != '"') {
+                continue;
             }
-            searchFrom = field + needle.length();
+            try {
+                return readQuoted(json, valueStart + 1);
+            } catch (IllegalArgumentException malformed) {
+                return null;
+            }
         }
+    }
+
+    /** A quoted token is an object key only when the preceding non-space char opens a container. */
+    private static boolean isKeyPosition(String json, int quoteIndex) {
+        int previous = quoteIndex - 1;
+        while (previous >= 0 && isJsonWhitespace(json.charAt(previous))) {
+            previous--;
+        }
+        if (previous < 0) {
+            return false;
+        }
+        char opener = json.charAt(previous);
+        return opener == '{' || opener == ',' || opener == '[';
     }
 
     private static int skipWhitespaceTo(String value, int index, char expected) {
@@ -127,10 +155,32 @@ public final class JsonStrings {
     }
 
     private static int skipWhitespace(String value, int index) {
-        while (index < value.length() && Character.isWhitespace(value.charAt(index))) {
+        while (index < value.length() && isJsonWhitespace(value.charAt(index))) {
             index++;
         }
         return index;
+    }
+
+    /** JSON allows only space, tab, line feed, and carriage return as insignificant whitespace. */
+    private static boolean isJsonWhitespace(char character) {
+        return character == ' ' || character == '\t' || character == '\n' || character == '\r';
+    }
+
+    /** Parses exactly four hex digits, rejecting signs and any other non-hex character. */
+    private static int parseHex4(String json, int index) {
+        if (index + 4 > json.length()) {
+            throw new IllegalArgumentException("Invalid JSON unicode escape");
+        }
+        for (int offset = 0; offset < 4; offset++) {
+            char digit = json.charAt(index + offset);
+            boolean hex = (digit >= '0' && digit <= '9')
+                    || (digit >= 'a' && digit <= 'f')
+                    || (digit >= 'A' && digit <= 'F');
+            if (!hex) {
+                throw new IllegalArgumentException("Invalid JSON unicode escape");
+            }
+        }
+        return Integer.parseInt(json.substring(index, index + 4), 16);
     }
 
     private static String readQuoted(String json, int index) {
@@ -158,10 +208,7 @@ public final class JsonStrings {
                 case 'r': output.append('\r'); break;
                 case 't': output.append('\t'); break;
                 case 'u':
-                    if (index + 4 > json.length()) {
-                        throw new IllegalArgumentException("Invalid JSON unicode escape");
-                    }
-                    output.append((char) Integer.parseInt(json.substring(index, index + 4), 16));
+                    output.append((char) parseHex4(json, index));
                     index += 4;
                     break;
                 default: throw new IllegalArgumentException("Invalid JSON escape: " + escaped);
@@ -294,14 +341,7 @@ public final class JsonStrings {
                     case 'r': output.append('\r'); break;
                     case 't': output.append('\t'); break;
                     case 'u':
-                        if (cursor + 4 > json.length()) {
-                            throw new IllegalArgumentException("Invalid JSON unicode escape");
-                        }
-                        try {
-                            output.append((char) Integer.parseInt(json.substring(cursor, cursor + 4), 16));
-                        } catch (NumberFormatException exception) {
-                            throw new IllegalArgumentException("Invalid JSON unicode escape", exception);
-                        }
+                        output.append((char) parseHex4(json, cursor));
                         cursor += 4;
                         break;
                     default: throw new IllegalArgumentException("Invalid JSON escape");
@@ -343,7 +383,7 @@ public final class JsonStrings {
         }
 
         private void skipWhitespace() {
-            while (cursor < json.length() && Character.isWhitespace(json.charAt(cursor))) {
+            while (cursor < json.length() && isJsonWhitespace(json.charAt(cursor))) {
                 cursor++;
             }
         }

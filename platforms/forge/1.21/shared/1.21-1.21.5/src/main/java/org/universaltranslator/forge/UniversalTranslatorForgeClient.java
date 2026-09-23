@@ -77,6 +77,7 @@ public final class UniversalTranslatorForgeClient {
 
         @SubscribeEvent
         public static void clientTick(TickEvent.ClientTickEvent event) {
+            TranslationRenderContext.beginFrame();
             Minecraft client = Minecraft.getInstance();
             boolean connected = client.level != null && client.getConnection() != null;
             if (connected && !connectedLastTick) {
@@ -98,20 +99,20 @@ public final class UniversalTranslatorForgeClient {
         }
 
         @SubscribeEvent
-        public static boolean outgoingChat(ClientChatEvent event) {
+        public static void outgoingChat(ClientChatEvent event) {
             String message = event.getMessage();
             if (resendingTranslatedMessage
                 || !ForgeTranslationRuntime.shouldTranslateOutgoing(message)) {
                 ForgeTranslationRuntime.protectOutgoingMessage(message);
-                return false;
+                return;
             }
+            event.setCanceled(true);
             Minecraft client = Minecraft.getInstance();
             client.gui.setOverlayMessage(
                     Component.translatable("message.universal_translator.outgoing_translating"),
                     false);
             ForgeTranslationRuntime.translateOutgoing(message).whenComplete((result, error) ->
                     client.execute(() -> sendCompletedMessage(client, message, result, error)));
-            return true;
         }
     }
 

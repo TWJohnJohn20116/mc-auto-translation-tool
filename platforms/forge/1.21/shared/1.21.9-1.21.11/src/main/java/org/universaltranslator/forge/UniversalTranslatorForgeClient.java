@@ -80,6 +80,7 @@ public final class UniversalTranslatorForgeClient {
 
         @SubscribeEvent
         public static void clientTick(TickEvent.ClientTickEvent.Post event) {
+            TranslationRenderContext.beginFrame();
             Minecraft client = Minecraft.getInstance();
             boolean connected = client.level != null && client.getConnection() != null;
             if (connected && !connectedLastTick) {

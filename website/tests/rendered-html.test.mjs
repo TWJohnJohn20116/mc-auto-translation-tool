@@ -52,6 +52,25 @@ test("server-renders the public-benefit project home page", async () => {
   assert.match(html, /og-card\.png/);
   assert.match(html, /summary_large_image/);
   assert.doesNotMatch(html, /Your site is taking shape|Building your site/);
+
+  // Link previews must not point at the viewer's own machine. Without a
+  // `metadataBase`, vinext falls back to `http://localhost:3000`, which makes
+  // every Discord/Twitter/QQ preview render a broken localhost image.
+  for (const [, content] of html.matchAll(
+    /<meta[^>]+(?:property="og:image"|name="twitter:image")[^>]+content="([^"]+)"/g,
+  )) {
+    assert.doesNotMatch(content, /localhost|127\.0\.0\.1/i);
+    assert.match(content, /^https?:\/\//);
+  }
+  const socialImages = [
+    ...html.matchAll(
+      /<meta[^>]+(?:property="og:image"|name="twitter:image")[^>]+content="([^"]+)"/g,
+    ),
+  ].map((match) => match[1]);
+  assert.ok(socialImages.length > 0, "expected social image meta tags");
+  for (const content of socialImages) {
+    assert.match(content, /\/og-card\.png$/, content);
+  }
 });
 
 test("keeps privacy and public-benefit claims in source", async () => {

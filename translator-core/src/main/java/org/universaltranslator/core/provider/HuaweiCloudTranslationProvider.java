@@ -8,6 +8,7 @@ import org.universaltranslator.core.net.JsonStrings;
 
 import java.net.URI;
 import java.util.Collections;
+import java.util.Locale;
 
 /** Huawei Cloud NLP text translation using a user-supplied IAM X-Auth-Token. */
 public final class HuaweiCloudTranslationProvider implements TranslationProvider {
@@ -47,9 +48,9 @@ public final class HuaweiCloudTranslationProvider implements TranslationProvider
         String payload = "{"
                 + "\"text\":" + JsonStrings.quote(request.getText()) + ','
                 + "\"from\":" + JsonStrings.quote(
-                        ProviderLanguageCodes.common(request.getSourceLanguage(), true)) + ','
+                        huaweiCode(request.getSourceLanguage(), true)) + ','
                 + "\"to\":" + JsonStrings.quote(
-                        ProviderLanguageCodes.common(request.getTargetLanguage(), false)) + "}";
+                        huaweiCode(request.getTargetLanguage(), false)) + "}";
         String response = http.post(endpoint, payload,
                 Collections.singletonMap("X-Auth-Token", authToken));
         String translated = JsonStrings.readStringField(response, "translated_text");
@@ -58,6 +59,15 @@ public final class HuaweiCloudTranslationProvider implements TranslationProvider
                     "Huawei Cloud", response, "error_code", "error_msg");
         }
         return translated;
+    }
+
+    /**
+     * Huawei Cloud NLP language codes are lowercase ({@code zh}, {@code zh-tw}, {@code en}, ...),
+     * while the shared mapping special-cases Traditional Chinese as {@code zh-TW}. Lowercase the
+     * common code so the API receives {@code zh-tw} instead of an unknown enum value.
+     */
+    private static String huaweiCode(String language, boolean allowAuto) {
+        return ProviderLanguageCodes.common(language, allowAuto).toLowerCase(Locale.ROOT);
     }
 
     private static String trimSlash(String value) {

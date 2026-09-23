@@ -15,27 +15,53 @@ import java.util.Set;
  */
 public final class ProtectedText {
     private static final String IPV4_OCTET = "(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)";
-    private static final String IPV4_SOURCE =
-            "(?<![A-Za-z0-9_.-])" + IPV4_OCTET + "(?:\\." + IPV4_OCTET + "){3}"
-                    + "(?::\\d{1,5})?(?![A-Za-z0-9_.-])";
+    /**
+     * A Minecraft legacy formatting code: {@code §} followed by a hex colour or style character.
+     * The code character is itself a letter or digit, so a value that directly follows a code
+     * (for example {@code "§aplay.example.cn"}) would look glued to a word and every
+     * word-boundary lookbehind below would reject it.
+     */
+    private static final String FORMAT_CODE = "\\u00a7[0-9A-FK-ORa-fk-or]";
+    /** Fails when the position is preceded by a formatting code. */
+    private static final String NOT_AFTER_FORMAT_CODE = "(?<!" + FORMAT_CODE + ")";
+    private static final String NOT_AFTER_WORD = "(?<![A-Za-z0-9_.-])";
+    private static final String NOT_AFTER_IDENTIFIER = "(?<![A-Za-z0-9_])";
+    private static final String IPV4_CORE =
+            IPV4_OCTET + "(?:\\." + IPV4_OCTET + "){3}(?::\\d{1,5})?(?![A-Za-z0-9_.-])";
+    private static final String IPV4_SOURCE = NOT_AFTER_FORMAT_CODE + NOT_AFTER_WORD + IPV4_CORE;
     private static final String BRACKETED_IPV6_SOURCE =
             "\\[(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}\\](?::\\d{1,5})?";
+    private static final String RAW_IPV6_CORE =
+            "(?:[0-9A-Fa-f]{1,4}:){2,7}[0-9A-Fa-f]{0,4}(?:%[A-Za-z0-9_.-]+)?(?![A-Za-z0-9_])";
     private static final String RAW_IPV6_SOURCE =
-            "(?<![A-Za-z0-9_])(?:[0-9A-Fa-f]{1,4}:){2,7}[0-9A-Fa-f]{0,4}"
-                    + "(?:%[A-Za-z0-9_.-]+)?(?![A-Za-z0-9_])";
+            NOT_AFTER_FORMAT_CODE + NOT_AFTER_IDENTIFIER + RAW_IPV6_CORE;
     private static final String DOMAIN_LABEL =
             "(?:_?[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)";
-    private static final String DOMAIN_SOURCE =
-            "(?<![A-Za-z0-9_.-])(?:" + DOMAIN_LABEL + "\\.)+[A-Za-z]{2,63}"
-                    + "(?::\\d{1,5})?(?![A-Za-z0-9_.-])";
+    private static final String DOMAIN_CORE =
+            "(?:" + DOMAIN_LABEL + "\\.)+[A-Za-z]{2,63}(?::\\d{1,5})?(?![A-Za-z0-9_.-])";
+    private static final String DOMAIN_SOURCE = NOT_AFTER_FORMAT_CODE + NOT_AFTER_WORD + DOMAIN_CORE;
+    private static final String LOCALHOST_CORE = "localhost(?::\\d{1,5})?(?![A-Za-z0-9_.-])";
     private static final String LOCALHOST_SOURCE =
-            "(?<![A-Za-z0-9_.-])localhost(?::\\d{1,5})?(?![A-Za-z0-9_.-])";
+            NOT_AFTER_FORMAT_CODE + NOT_AFTER_WORD + LOCALHOST_CORE;
+    private static final String NUMBER_CORE =
+            "(?:\\d{1,3}(?:[.,]\\d{3})+|\\d+(?:[.,]\\d+)?)(?:%|ms|s|m|h|d)?(?![A-Za-z0-9_])";
+    private static final String NUMBER_SOURCE =
+            NOT_AFTER_FORMAT_CODE + NOT_AFTER_IDENTIFIER + NUMBER_CORE;
+    /**
+     * A formatting code directly in front of a protected value is kept inside the match. The value
+     * then starts at a real boundary instead of hiding behind the code character, which is what
+     * lets {@code "§aplay.example.cn"} or {@code "§e1000 coins"} stay protected.
+     */
+    private static final String FORMATTED_VALUE_SOURCE =
+            FORMAT_CODE + "(?:" + BRACKETED_IPV6_SOURCE + "|" + IPV4_CORE + "|" + RAW_IPV6_CORE
+                    + "|" + DOMAIN_CORE + "|" + LOCALHOST_CORE + "|" + NUMBER_CORE + ")";
     private static final String PROTECTED_SOURCE =
-            "(?:\\u00a7[0-9A-FK-ORa-fk-or])" +
+            "(?:" + FORMATTED_VALUE_SOURCE + ")" +
+            "|(?:" + FORMAT_CODE + ")" +
             "|(?:https?://\\S+|www\\.\\S+)" +
             "|(?:" + BRACKETED_IPV6_SOURCE + "|" + IPV4_SOURCE + "|" + RAW_IPV6_SOURCE
                     + "|" + DOMAIN_SOURCE + "|" + LOCALHOST_SOURCE + ")" +
-            "|(?:(?<![A-Za-z0-9_])(?:\\d{1,3}(?:[.,]\\d{3})+|\\d+(?:[.,]\\d+)?)(?:%|ms|s|m|h|d)?(?![A-Za-z0-9_]))" +
+            "|(?:" + NUMBER_SOURCE + ")" +
             "|(?:%[A-Za-z0-9_.:-]+%)" +
             "|(?:\\{[A-Za-z0-9_.:-]+})";
     private static final String HAN_SOURCE =
@@ -98,7 +124,8 @@ public final class ProtectedText {
                 return Integer.compare(second.length(), first.length());
             }
         });
-        StringBuilder source = new StringBuilder("(?:(?<![A-Za-z0-9_])(?:");
+        StringBuilder source = new StringBuilder(
+                "(?:" + NOT_AFTER_FORMAT_CODE + "(?<![A-Za-z0-9_])(?:" + FORMAT_CODE + ")*(?:");
         for (int index = 0; index < literals.size(); index++) {
             if (index > 0) {
                 source.append('|');
@@ -152,8 +179,7 @@ public final class ProtectedText {
             if (matcher.start() > cursor) {
                 segments.add(new Segment(template.substring(cursor, matcher.start()), false));
             }
-            int index = Integer.parseInt(
-                    matcher.group().substring("__UT_".length(), matcher.group().length() - 2));
+            int index = tokenIndex(matcher.group());
             if (index >= 0 && index < values.size()) {
                 segments.add(new Segment(values.get(index), true));
             } else {
@@ -171,15 +197,39 @@ public final class ProtectedText {
     }
 
     public String restore(String translatedTemplate) {
-        String restored = translatedTemplate;
-        for (int i = 0; i < values.size(); i++) {
-            restored = restored.replace(token(i), values.get(i));
+        // Single pass: copy template text verbatim and splice in the original values, so a value
+        // that happens to contain a token literal (e.g. "__UT_1__") is never re-scanned.
+        Matcher matcher = INTERNAL_TOKEN.matcher(translatedTemplate);
+        StringBuilder output = new StringBuilder(translatedTemplate.length());
+        int cursor = 0;
+        while (matcher.find()) {
+            output.append(translatedTemplate, cursor, matcher.start());
+            int index = tokenIndex(matcher.group());
+            if (index >= 0 && index < values.size()) {
+                output.append(values.get(index));
+            } else {
+                output.append(matcher.group());
+            }
+            cursor = matcher.end();
         }
-        return restored;
+        output.append(translatedTemplate, cursor, translatedTemplate.length());
+        return output.toString();
     }
 
     private static String token(int index) {
         return "__UT_" + index + "__";
+    }
+
+    /**
+     * Extracts the index from an internal token. Returns {@code -1} for indexes that do not fit in
+     * an {@code int}, so an unexpected token is treated as literal text instead of failing.
+     */
+    private static int tokenIndex(String token) {
+        try {
+            return Integer.parseInt(token.substring("__UT_".length(), token.length() - 2));
+        } catch (NumberFormatException overflow) {
+            return -1;
+        }
     }
 
     static final class Segment {

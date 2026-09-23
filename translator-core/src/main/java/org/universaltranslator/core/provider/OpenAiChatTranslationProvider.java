@@ -12,6 +12,13 @@ import java.net.URI;
 
 /** Small OpenAI-compatible chat provider used by local llama.cpp and optional hosted APIs. */
 public final class OpenAiChatTranslationProvider implements TranslationProvider {
+    /** Matches the loopback llama.cpp server's {@code --ctx-size} argument. */
+    private static final int OFFLINE_CONTEXT_TOKENS = 1024;
+    /** System prompt plus chat-template tokens charged against the offline context. */
+    private static final int OFFLINE_PROMPT_OVERHEAD_TOKENS = 128;
+    /** Upper bound for the completion budget of a hosted OpenAI-compatible endpoint. */
+    private static final int MAXIMUM_TOKENS_LIMIT = 2048;
+
     private final URI endpoint;
     private final String apiKey;
     private final String model;
@@ -50,8 +57,21 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
                 + "Preserve punctuation, whitespace, URLs, usernames, placeholders, and Minecraft formatting markers."
                 + (request.getText().indexOf('\n') >= 0
                 ? " Keep exactly the same number and order of lines." : "");
-        int maximumTokens = Math.max(32, Math.min(512, request.getText().length() * 2 + 32));
         boolean offline = providerId.startsWith("offline-loopback");
+        // Budget the completion from the input length. A fixed 512-token cap truncated
+        // long lines mid-sentence, and the clipped result was still short enough to pass
+        // TranslationOutputValidator, so it entered the persistent cache.
+        int inputLength = request.getText().length();
+        int maximumTokens = Math.max(64,
+                Math.min(inputLength * 2 + 32, MAXIMUM_TOKENS_LIMIT));
+        if (offline) {
+            // The loopback llama.cpp server runs --ctx-size 1024 and shares that window
+            // between prompt and completion. Cap the completion to what is left after a
+            // conservative prompt estimate, with no floor that could overflow the context.
+            int remaining = OFFLINE_CONTEXT_TOKENS - OFFLINE_PROMPT_OVERHEAD_TOKENS
+                    - estimatePromptTokens(request.getText());
+            maximumTokens = Math.max(1, Math.min(maximumTokens, remaining));
+        }
         String body = new StringBuilder(request.getText().length() + 320)
                 .append('{')
                 .append("\"model\":").append(JsonStrings.quote(model)).append(',')
@@ -81,6 +101,24 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             return translated;
         }
         return JsonStrings.readStringField(response, "content");
+    }
+
+    /**
+     * Conservative prompt-token estimate for the offline context. ASCII text averages about
+     * one token per four characters while non-ASCII text such as Chinese tokenizes near one
+     * token per character, so both are rounded up to avoid overflowing the context window.
+     */
+    static int estimatePromptTokens(String text) {
+        int ascii = 0;
+        int nonAscii = 0;
+        for (int index = 0; index < text.length(); index++) {
+            if (text.charAt(index) < 0x80) {
+                ascii++;
+            } else {
+                nonAscii++;
+            }
+        }
+        return (ascii + 3) / 4 + nonAscii + 1;
     }
 
     private static String requireText(String name, String value) {

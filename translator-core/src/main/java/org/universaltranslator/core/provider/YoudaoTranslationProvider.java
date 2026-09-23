@@ -10,6 +10,7 @@ import org.universaltranslator.core.net.JsonStrings;
 import java.net.URI;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -42,6 +43,9 @@ public final class YoudaoTranslationProvider implements TranslationProvider {
 
     @Override
     public String translate(TranslationRequest request) throws Exception {
+        if (request.getText().length() > 5000) {
+            throw new IllegalArgumentException("Youdao source text exceeds 5000 characters");
+        }
         String salt = UUID.randomUUID().toString();
         String currentTime = Long.toString(System.currentTimeMillis() / 1000L);
         String input = signatureInput(request.getText());
@@ -59,12 +63,42 @@ public final class YoudaoTranslationProvider implements TranslationProvider {
         }
         String response = http.postForm(endpoint, CryptoSupport.formEncode(fields),
                 Collections.<String, String>emptyMap());
-        String translated = JsonStrings.readStringPath(response, "translation[0]");
+        String translated = parseTranslatedText(response);
         if (translated == null || translated.trim().isEmpty()) {
             throw BaiduTranslationProvider.providerError(
                     "Youdao", response, "errorCode", "msg");
         }
         return translated;
+    }
+
+    /** Joins one {@code translation[]} element per requested line, in order. */
+    static String parseTranslatedText(String response) {
+        if (response == null || response.trim().isEmpty()) {
+            return null;
+        }
+        try {
+            Object parsed = JsonStrings.parse(response);
+            if (parsed instanceof Map) {
+                Object translation = ((Map<?, ?>) parsed).get("translation");
+                if (translation instanceof List) {
+                    StringBuilder joined = new StringBuilder();
+                    for (Object item : (List<?>) translation) {
+                        if (item instanceof String) {
+                            if (joined.length() > 0) {
+                                joined.append('\n');
+                            }
+                            joined.append((String) item);
+                        }
+                    }
+                    if (joined.length() > 0) {
+                        return joined.toString();
+                    }
+                }
+            }
+        } catch (RuntimeException ignored) {
+            // Fall back to reading single field if JSON structure is unexpected
+        }
+        return JsonStrings.readStringPath(response, "translation[0]");
     }
 
     static String signatureInput(String text) {

@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "MC 自动翻译工具｜1.3.10 正式版",
   description:
-    "MC 自动翻译工具 1.3.10 正式版，下载按 Fabric／Forge／NeoForge 分组；Fabric 覆盖 1.13–1.21.11 与 26.x，并新增 Forge 1.18.2。",
+    "MC 自动翻译工具 1.3.10 正式版，下载按 Fabric／Forge／NeoForge 分组；Fabric 覆盖 1.13–1.21.11 与 26.x（不含 1.16.0–1.16.4），并新增 Forge 1.18.2。",
 };
 
 const features = [
@@ -50,7 +50,7 @@ const releaseFile = (target: string) =>
 const downloadGroups = [
   {
     title: "Fabric",
-    note: "一个 JAR 覆盖 1.13–1.21.11 与 26.1–26.2。Loader 按游戏版本选择内嵌实现。1.14–1.14.2 为引导实现。",
+    note: "一个 JAR 覆盖 1.13–1.21.11 与 26.1–26.2，但不含 1.16.0–1.16.4：这些版本没有可用的适配实现，加载时会提示缺少依赖。Loader 按游戏版本选择内嵌实现。1.14–1.14.2 为引导实现。",
     featured: true,
     items: [
       {

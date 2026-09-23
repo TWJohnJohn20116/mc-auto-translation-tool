@@ -24,6 +24,7 @@ RELEASE_JAR = re.compile(
     r"^MCAutoTranslationTool-(?P<version>.+)"
     r"(?:-mc.+-(?:fabric|forge|neoforge|forge-neoforge)|-fabric-all)\.jar$"
 )
+WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:")  # `C:` / `c:` drive prefix
 
 
 class VerificationError(RuntimeError):
@@ -50,9 +51,19 @@ def _reject_placeholders(value: object, label: str) -> None:
         raise VerificationError(f"unexpanded template placeholder in {label}")
 
 
-def _expected_release_version(label: str) -> str | None:
+def _archive_basename(label: str) -> str:
+    """Return the archive name for a label that may be a Windows or POSIX path.
+
+    `PurePosixPath` treats `\\` as an ordinary character, so a Windows label such as
+    `C:\\build\\MCAutoTranslationTool-1.3.11-rc1-mc1.20.1-forge.jar` would otherwise
+    keep its directory prefix and silently disable the filename version cross-check.
+    """
     outer_label = label.split("!/", 1)[0]
-    match = RELEASE_JAR.fullmatch(PurePosixPath(outer_label).name)
+    return PurePosixPath(outer_label.replace("\\", "/")).name
+
+
+def _expected_release_version(label: str) -> str | None:
+    match = RELEASE_JAR.fullmatch(_archive_basename(label))
     return match.group("version") if match else None
 
 
@@ -71,7 +82,7 @@ def _class_major_for_minecraft(minecraft: str) -> int | None:
 
 
 def _expected_class_major(label: str) -> int | None:
-    outer_name = PurePosixPath(label.split("!/", 1)[0]).name
+    outer_name = _archive_basename(label)
     match = re.search(
         r"-mc(.+)-(?:fabric|forge|neoforge|forge-neoforge)\.jar$", outer_name
     )
@@ -113,6 +124,11 @@ def _validate_archive_paths(archive: zipfile.ZipFile) -> None:
     for name in names:
         path = PurePosixPath(name)
         if path.is_absolute() or ".." in path.parts:
+            raise VerificationError(f"unsafe ZIP entry: {name}")
+        if "\\" in name:
+            raise VerificationError(f"unsafe ZIP entry: {name}")
+        first_part = path.parts[0] if path.parts else ""
+        if first_part.endswith(":") or WINDOWS_DRIVE.match(first_part):
             raise VerificationError(f"unsafe ZIP entry: {name}")
 
 
@@ -163,6 +179,7 @@ def _validate_mixins(archive: zipfile.ZipFile, configs: Iterable[str]) -> int:
         refmap = config.get("refmap")
         if refmap and str(refmap) not in archive.namelist():
             raise VerificationError(f"missing refmap {refmap} declared by {config_name}")
+        declared = 0
         for section in ("mixins", "client", "server"):
             entries = config.get(section, [])
             if not isinstance(entries, list):
@@ -176,7 +193,16 @@ def _validate_mixins(archive: zipfile.ZipFile, configs: Iterable[str]) -> int:
                     raise VerificationError(
                         f"missing Mixin class {class_entry} declared by {config_name}"
                     )
-                count += 1
+                declared += 1
+        # Mixin defaults `required` to true. A required config that declares no mixin at
+        # all is a silently-empty config: the mod would load with no transformations and
+        # still verify. Configs that opt out (`required: false`) may legitimately be
+        # empty, as the shipped 1.14-1.15 Fabric bundle does.
+        if declared == 0 and config.get("required", True):
+            raise VerificationError(
+                f"Mixin config {config_name} declares no mixins"
+            )
+        count += declared
     return count
 
 

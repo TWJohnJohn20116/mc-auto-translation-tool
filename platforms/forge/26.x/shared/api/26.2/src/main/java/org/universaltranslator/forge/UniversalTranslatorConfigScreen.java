@@ -580,7 +580,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
     }
 
     private Component providerLabel() {
-        return Component.translatable(TranslationProviderCatalog.displayName(provider));
+        return Component.translatable("screen.universal_translator.option.provider",
+                TranslationProviderCatalog.displayName(provider));
     }
 
     private void loadLlmSettings(String selectedProvider) {

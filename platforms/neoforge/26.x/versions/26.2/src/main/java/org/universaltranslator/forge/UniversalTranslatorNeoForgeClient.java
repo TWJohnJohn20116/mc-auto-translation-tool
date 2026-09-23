@@ -82,7 +82,7 @@ public final class UniversalTranslatorNeoForgeClient {
             }
             connectedLastTick = connected;
             if (connected && joinHintTicks > 0 && --joinHintTicks == 0) {
-                client.gui.getChat().addClientSystemMessage(
+                client.gui.hud.getChat().addClientSystemMessage(
                         Component.translatable("message.universal_translator.join_hint"));
             }
             while (RELOAD_SETTINGS.consumeClick()) {
@@ -103,7 +103,7 @@ public final class UniversalTranslatorNeoForgeClient {
             }
             Minecraft client = Minecraft.getInstance();
             event.setCanceled(true);
-            client.gui.setOverlayMessage(
+            client.gui.hud.setOverlayMessage(
                     Component.translatable("message.universal_translator.outgoing_translating"),
                     false);
             ForgeTranslationRuntime.translateOutgoing(message).whenComplete((result, error) ->
@@ -118,7 +118,8 @@ public final class UniversalTranslatorNeoForgeClient {
         }
         try {
             ForgeConfig config = ForgeConfig.load(FMLPaths.CONFIGDIR.get());
-            client.setScreen(new UniversalTranslatorConfigScreen((net.minecraft.client.gui.screens.Screen) parent, config));
+            client.gui.setScreen(new UniversalTranslatorConfigScreen(
+                    (net.minecraft.client.gui.screens.Screen) parent, config));
         } catch (Exception exception) {
             UniversalTranslatorNeoForgeMod.LOGGER.error("Could not open MC Auto Translation Tool settings", exception);
         }
@@ -127,10 +128,10 @@ public final class UniversalTranslatorNeoForgeClient {
     private static void openSettings(Minecraft client) {
         try {
             ForgeConfig config = ForgeConfig.load(FMLPaths.CONFIGDIR.get());
-            client.setScreen(new UniversalTranslatorConfigScreen(client.screen, config));
+            client.gui.setScreen(new UniversalTranslatorConfigScreen(client.gui.screen(), config));
         } catch (Exception exception) {
             UniversalTranslatorNeoForgeMod.LOGGER.error("Could not open MC Auto Translation Tool settings", exception);
-            client.gui.setOverlayMessage(
+            client.gui.hud.setOverlayMessage(
                     Component.translatable("message.universal_translator.settings_open_failed"), false);
         }
     }
@@ -144,7 +145,7 @@ public final class UniversalTranslatorNeoForgeClient {
             }
             ForgeTranslationRuntime.initialize(updated);
             updated.save();
-            client.gui.setOverlayMessage(
+            client.gui.hud.setOverlayMessage(
                     Component.translatable(
                             "message.universal_translator.toggle",
                             Component.translatable(updated.enabled
@@ -154,7 +155,7 @@ public final class UniversalTranslatorNeoForgeClient {
         } catch (Exception exception) {
             UniversalTranslatorNeoForgeMod.LOGGER.error(
                     "Could not toggle MC Auto Translation Tool", exception);
-            client.gui.setOverlayMessage(
+            client.gui.hud.setOverlayMessage(
                     Component.translatable("message.universal_translator.toggle_failed"), false);
         }
     }
@@ -166,7 +167,7 @@ public final class UniversalTranslatorNeoForgeClient {
             Throwable error
     ) {
         if (client.getConnection() == null) {
-            client.gui.getChat().addClientSystemMessage(
+            client.gui.hud.getChat().addClientSystemMessage(
                     Component.translatable("message.universal_translator.outgoing_disconnected"));
             return;
         }
@@ -185,10 +186,10 @@ public final class UniversalTranslatorNeoForgeClient {
             resendingTranslatedMessage = false;
         }
         if (failed) {
-            client.gui.getChat().addClientSystemMessage(
+            client.gui.hud.getChat().addClientSystemMessage(
                     Component.translatable("message.universal_translator.outgoing_failed"));
         } else if (tooLong) {
-            client.gui.getChat().addClientSystemMessage(
+            client.gui.hud.getChat().addClientSystemMessage(
                     Component.translatable("message.universal_translator.outgoing_too_long"));
         }
     }

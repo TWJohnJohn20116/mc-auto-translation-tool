@@ -34,10 +34,17 @@ final class FabricLocalTextGuard {
         if (!searched) {
             synchronized (FabricLocalTextGuard.class) {
                 if (!searched) {
-                    chatField = findTextField(screen.getClass());
-                    searched = true;
+                    Field found = findTextField(screen.getClass());
+                    // Only latch the cache once the lookup actually succeeded, otherwise a
+                    // transient failure would disable the local-chat guard for the session.
+                    if (found != null) {
+                        chatField = found;
+                        searched = true;
+                    }
+                    known = found;
+                } else {
+                    known = chatField;
                 }
-                known = chatField;
             }
         }
         if (known == null) {

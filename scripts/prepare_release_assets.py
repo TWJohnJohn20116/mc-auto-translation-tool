@@ -323,6 +323,16 @@ def unmerged_forge_groups(
     ]
 
 
+def _is_within(path: Path, parent: Path) -> bool:
+    """Return True when `path` is `parent` itself or nested inside it.
+
+    Uses `Path.parents` rather than `Path.is_relative_to` so the guard also holds on
+    interpreters older than 3.9; both operands are already resolved, so a cross-drive
+    comparison can never occur here.
+    """
+    return path == parent or parent in path.parents
+
+
 def prepare_release(
     release_dir: Path, output_dir: Path, version: str
 ) -> list[Path]:
@@ -332,6 +342,16 @@ def prepare_release(
         raise PreparationError(f"release directory is missing: {release_dir}")
     if release_dir == output_dir:
         raise PreparationError("output directory must differ from release directory")
+    if _is_within(release_dir, output_dir):
+        raise PreparationError(
+            "output directory must not contain the release directory: "
+            f"{output_dir} contains {release_dir}"
+        )
+    if _is_within(output_dir, release_dir):
+        raise PreparationError(
+            "output directory must not be inside the release directory: "
+            f"{output_dir} is inside {release_dir}"
+        )
     jars = discover_jars(release_dir)
     expected_prefix = f"MCAutoTranslationTool-{version}-"
     mismatched = sorted(name for name in jars if not name.startswith(expected_prefix))

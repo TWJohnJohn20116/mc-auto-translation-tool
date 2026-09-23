@@ -19,6 +19,9 @@ abstract class MinecraftMixin {
     @Inject(method = "tick()V", at = @At("RETURN"), require = 0)
     private void universalTranslator$pollKeys(CallbackInfo callback) {
         Minecraft client = (Minecraft) (Object) this;
+        if (client.window == null) {
+            return;
+        }
         long window = client.window.getWindow();
         boolean u = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_U) == GLFW.GLFW_PRESS;
         boolean f8 = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_F8) == GLFW.GLFW_PRESS;

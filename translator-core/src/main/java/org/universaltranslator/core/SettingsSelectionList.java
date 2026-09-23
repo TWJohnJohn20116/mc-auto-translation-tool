@@ -29,17 +29,27 @@ public final class SettingsSelectionList {
     }
 
     public static Layout layout(int screenWidth, int screenHeight, int optionCount) {
-        int panelWidth = Math.max(180, Math.min(340, screenWidth - 20));
+        // Mirrors SettingsScreenLayout.calculate: below 200px the 180px floor would push
+        // the columns off both edges, so fall back to the available width instead.
+        int safeWidth = Math.max(40, screenWidth);
+        int availableWidth = Math.max(40, safeWidth - 8);
+        int panelWidth = safeWidth >= 200
+                ? Math.max(180, Math.min(340, safeWidth - 20))
+                : Math.min(340, availableWidth);
         int gap = 4;
         int buttonWidth = (panelWidth - 16 - gap) / 2;
-        int left = (screenWidth - (buttonWidth * 2 + gap)) / 2;
+        int left = Math.max(0, (safeWidth - (buttonWidth * 2 + gap)) / 2);
         int rows = Math.max(1, (optionCount + 1) / 2);
         int top = 42;
         int bottomLimit = Math.max(top + rows * 12, screenHeight - 38);
         int rowStep = Math.max(12, Math.min(22, (bottomLimit - top) / rows));
         int buttonHeight = Math.max(11, Math.min(20, rowStep - 2));
         int panelTop = Math.max(8, top - 28);
-        int panelBottom = Math.min(screenHeight - 32, top + rows * rowStep + 4);
+        // Derive the panel bottom from the rows actually drawn so the background always
+        // encloses the buttons, even at sub-240 heights where the rows overflow.
+        int lastRowBottom = top + (rows - 1) * rowStep + buttonHeight;
+        int panelBottom = Math.min(screenHeight,
+                Math.max(panelTop + 8, lastRowBottom + 4));
         return new Layout(left, buttonWidth, gap, top, rowStep, buttonHeight,
                 panelTop, panelBottom);
     }

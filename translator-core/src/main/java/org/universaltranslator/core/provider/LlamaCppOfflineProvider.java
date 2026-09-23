@@ -21,6 +21,8 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /** Fully local provider using a loopback-only llama.cpp child process. */
 public final class LlamaCppOfflineProvider
@@ -66,6 +68,31 @@ public final class LlamaCppOfflineProvider
     private volatile long nextStartupAttemptAt;
     private volatile String startupFailureMessage = "";
     private boolean engineRepairAttempted;
+    /**
+     * Guards the {@link #process} and {@link #shutdownHook} fields and the two
+     * request/cancel state flags. It is deliberately separate from the instance
+     * monitor: a request on the Minecraft render thread (F8 toggle or saving
+     * settings) must never wait for a startup that is downloading a model or
+     * polling the health endpoint for up to 90 seconds. No blocking wait may ever
+     * be performed while this lock is held.
+     */
+    private final Object lifecycleLock = new Object();
+    /**
+     * Current request generation. Claiming a startup increments it, so every claim
+     * gets a value that is never reused, and {@link #close()} invalidates the claim
+     * in progress by incrementing it again. Because a token is never handed out
+     * twice, a retiring startup can only ever clear its own claim.
+     */
+    private final AtomicLong requestGeneration = new AtomicLong();
+    /** Token of the startup currently in progress, or -1L when none is. */
+    private final AtomicLong activeStartupToken = new AtomicLong(-1L);
+    /**
+     * Set while a request must be abandoned and its child process reaped, either
+     * because {@link #close()} cancelled the startup or because another start
+     * replaced it. It is an atomic instead of a plain field because it is read by
+     * the startup thread, the close thread and the shutdown hook.
+     */
+    private final AtomicBoolean stopRequested = new AtomicBoolean();
 
     public LlamaCppOfflineProvider(Path root, boolean autoDownload) {
         this(root, autoDownload, DEFAULT_MODEL_ID, DEFAULT_MODEL_FILE,
@@ -150,51 +177,125 @@ public final class LlamaCppOfflineProvider
         }
     }
 
-    private synchronized void ensureRunning() throws Exception {
-        if (process != null && process.isAlive() && localApi != null) {
+    private void ensureRunning() throws Exception {
+        if (isRunning()) {
             return;
         }
-        long now = System.currentTimeMillis();
-        if (nextStartupAttemptAt > now && !startupFailureMessage.isEmpty()) {
-            throw new IOException(startupFailureMessage);
+        final long token;
+        Process stale;
+        synchronized (lifecycleLock) {
+            // A close() may have completed while this thread waited for the lock.
+            // Observe it before starting another process.
+            if (stopRequested.get()) {
+                throw new IOException("离线模型已停止");
+            }
+            // Claim the startup so close() and the shutdown hook can interrupt it.
+            // Two workers of one session must never run two servers at once, and a
+            // second claim while one is in progress must not block the caller.
+            if (activeStartupToken.get() >= 0L) {
+                throw new IOException("离线模型正在启动中");
+            }
+            long now = System.currentTimeMillis();
+            if (nextStartupAttemptAt > now && !startupFailureMessage.isEmpty()) {
+                throw new IOException(startupFailureMessage);
+            }
+            // Claiming the startup starts a new generation, so a previous startup
+            // that is still winding down can never clear this claim.
+            token = requestGeneration.incrementAndGet();
+            activeStartupToken.set(token);
+            stale = dropProcess();
         }
-        closeProcess();
+        if (stale != null) {
+            // Handing the child to the reaper starts a thread; keep it off the lock.
+            stopProcessInBackground(stale);
+        }
+        try {
+            startServer(token);
+        } catch (Exception failure) {
+            // Every failure path must stop whatever startServer left behind, including
+            // the child process when the failure is an interrupt.
+            stopProcessInBackgroundIfAny();
+            if (failure instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+                throw failure;
+            }
+            throw failure instanceof IOException
+                    ? (IOException) failure
+                    : new IOException(safeMessage(failure), failure);
+        } finally {
+            synchronized (lifecycleLock) {
+                // Retire this claim. The token is unique per startup, so this can only
+                // ever clear the claim this call installed and never a newer one.
+                activeStartupToken.compareAndSet(token, -1L);
+            }
+        }
+    }
+
+    private boolean isRunning() {
+        synchronized (lifecycleLock) {
+            Process child = process;
+            return child != null && child.isAlive() && localApi != null;
+        }
+    }
+
+    /** Starts the server once. Never holds {@link #lifecycleLock} across a blocking wait. */
+    private void startServer(long token) throws Exception {
+        requireCurrentStartup(token);
         Files.createDirectories(root);
         Path server = ensureEngine();
         Path model = ensureModel();
+        // A close() during a multi-hundred-megabyte download must not be turned into
+        // an automatic engine repair or into a five-minute retry backoff.
+        requireCurrentStartup(token);
         try {
-            startServer(server, model, false);
+            startServer(server, model, false, token);
         } catch (OfflineProcessExitedException firstFailure) {
-            closeProcess();
+            stopProcessInBackgroundIfAny();
             status = "离线引擎启动失败，正在使用兼容模式重试";
             try {
-                startServer(server, model, true);
+                startServer(server, model, true, token);
                 return;
             } catch (Exception compatibilityFailure) {
-                closeProcess();
+                stopProcessInBackgroundIfAny();
+                if (isCancelledStartup(compatibilityFailure, token)) {
+                    throw compatibilityFailure;
+                }
                 if (autoDownload && !engineRepairAttempted) {
                     engineRepairAttempted = true;
                     status = "离线引擎启动失败，正在自动修复";
                     deleteTree(engineInstallDirectory());
                     server = ensureEngine();
                     try {
-                        startServer(server, model, true);
+                        startServer(server, model, true, token);
                         return;
                     } catch (Exception repairFailure) {
-                        closeProcess();
+                        stopProcessInBackgroundIfAny();
+                        if (isCancelledStartup(repairFailure, token)) {
+                            throw repairFailure;
+                        }
                         throw delayStartupRetries(repairFailure);
                     }
                 }
                 throw delayStartupRetries(compatibilityFailure);
             }
         } catch (Exception startupFailure) {
-            closeProcess();
+            stopProcessInBackgroundIfAny();
+            if (isCancelledStartup(startupFailure, token)) {
+                throw startupFailure;
+            }
             throw delayStartupRetries(startupFailure);
         }
     }
 
-    private void startServer(Path server, Path model, boolean conservativeFileAccess)
+    /** True when a startup failed because it was cancelled rather than because of a real fault. */
+    private boolean isCancelledStartup(Exception failure, long token) {
+        return failure instanceof InterruptedException || !isCurrentStartup(token);
+    }
+
+    private void startServer(Path server, Path model, boolean conservativeFileAccess, long token)
             throws Exception {
+        // A close() or a replaced startup may have landed between two attempts.
+        requireCurrentStartup(token);
         int port = reserveLoopbackPort();
         Path log = root.resolve("llama-server.log");
         long logStart = Files.isRegularFile(log) ? Files.size(log) : 0L;
@@ -222,26 +323,53 @@ public final class LlamaCppOfflineProvider
         OfflineProcessSupport.configureLibraryPath(builder, server.getParent());
         builder.redirectErrorStream(true);
         builder.redirectOutput(ProcessBuilder.Redirect.appendTo(log.toFile()));
-        try {
-            process = builder.start();
-        } catch (IOException startFailure) {
-            throw new IOException(
-                    OfflineProcessSupport.describeProcessStartFailure(startFailure), startFailure);
+        Process child;
+        synchronized (lifecycleLock) {
+            // Closing the window between the check above and the assignment means a
+            // close() that already handed the old process off must win the race: the
+            // freshly started child is handed straight back to the reaper instead.
+            requireCurrentStartup(token);
+            try {
+                child = builder.start();
+            } catch (IOException startFailure) {
+                throw new IOException(
+                        OfflineProcessSupport.describeProcessStartFailure(startFailure), startFailure);
+            }
+            process = child;
+            registerShutdownHook();
         }
-        registerShutdownHook();
         try {
-            waitUntilHealthy(port, process, 90_000L, log, logStart);
+            waitUntilHealthy(port, child, 90_000L, log, logStart);
         } catch (Exception startupFailure) {
-            closeProcess();
+            stopProcessInBackgroundIfAny();
             throw startupFailure;
         }
-        localApi = new OpenAiChatTranslationProvider(
+        OpenAiChatTranslationProvider api = new OpenAiChatTranslationProvider(
                 "http://127.0.0.1:" + port + "/v1/chat/completions",
                 "", "universal-translator-local", "offline-loopback",
                 new org.universaltranslator.core.net.HttpJsonClient(1_000, 15_000));
-        nextStartupAttemptAt = 0L;
-        startupFailureMessage = "";
-        status = "离线模型已就绪";
+        synchronized (lifecycleLock) {
+            // Same race for the ready hand-off. A close() may have happened while the
+            // model was loading, in which case the child is reaped instead of adopted.
+            if (!isCurrentStartup(token) || process != child || !child.isAlive()) {
+                throw new IOException("离线模型启动已被取消");
+            }
+            localApi = api;
+            nextStartupAttemptAt = 0L;
+            startupFailureMessage = "";
+            status = "离线模型已就绪";
+        }
+    }
+
+    private boolean isCurrentStartup(long token) {
+        return requestGeneration.get() == token && activeStartupToken.get() == token;
+    }
+
+    /** Fails an obsolete startup as soon as it notices that it was cancelled. */
+    private void requireCurrentStartup(long token) throws IOException {
+        if (!isCurrentStartup(token) || stopRequested.get()) {
+            throw new IOException("离线模型启动已被取消");
+        }
     }
 
     private IOException delayStartupRetries(Exception failure) {
@@ -360,6 +488,11 @@ public final class LlamaCppOfflineProvider
         long deadline = System.currentTimeMillis() + timeoutMillis;
         IOException lastFailure = null;
         while (System.currentTimeMillis() < deadline) {
+            // A close() or a replaced startup interrupts this poll so the wait can
+            // never hold a closing render thread hostage for the full timeout.
+            if (Thread.interrupted()) {
+                throw new InterruptedException("Offline model startup was cancelled");
+            }
             if (!child.isAlive()) {
                 int exitCode = child.exitValue();
                 String detail = OfflineProcessSupport.readNewLogTail(log, logStart);
@@ -424,24 +557,58 @@ public final class LlamaCppOfflineProvider
         return singleLine.length() <= 160 ? singleLine : singleLine.substring(0, 157) + "...";
     }
 
+    /**
+     * Stops the model without ever waiting for a startup to finish. It is called
+     * from the Minecraft render/tick thread, so it must not block on a download or
+     * on the 90-second health poll. Only short state mutations happen here; the
+     * child process is handed to the background reaper.
+     */
     @Override
-    public synchronized void close() {
-        localApi = null;
-        Process child = detachProcess(true);
+    public void close() {
+        Process child;
+        synchronized (lifecycleLock) {
+            // Bump the request generation and clear the claim so the startup in
+            // progress sees itself as obsolete, then free the slot so a later start
+            // is not blocked by a startup that is still winding down. Everything
+            // before its next wait is already abandoned by the generation bump; the
+            // wait itself is interrupted below. stopRequested keeps the provider
+            // stopped until a session explicitly starts it again.
+            requestGeneration.incrementAndGet();
+            stopRequested.set(true);
+            activeStartupToken.set(-1L);
+            child = dropProcess();
+        }
         if (child != null) {
             stopProcessInBackground(child);
         }
         status = "离线模型已停止";
     }
 
-    private synchronized void registerShutdownHook() {
+    /** Stops the child process in the background. Never blocks on the lifecycle lock. */
+    private void stopProcessInBackgroundIfAny() {
+        Process child;
+        synchronized (lifecycleLock) {
+            child = dropProcess();
+        }
+        if (child != null) {
+            stopProcessInBackground(child);
+        }
+    }
+
+    /** Must be called while holding {@link #lifecycleLock}; never blocks. */
+    private Process dropProcess() {
+        localApi = null;
+        return detachProcess(true);
+    }
+
+    private void registerShutdownHook() {
         if (shutdownHook != null) {
             return;
         }
         Thread hook = new Thread(new Runnable() {
             @Override
             public void run() {
-                closeProcess(false);
+                closeProcessForShutdown();
             }
         }, "universal-translator-offline-shutdown");
         try {
@@ -450,19 +617,27 @@ public final class LlamaCppOfflineProvider
         } catch (IllegalStateException | SecurityException shuttingDown) {
             // The JVM is already stopping. Do not allow a newly-started model
             // process to survive after Minecraft exits.
-            closeProcess(false);
+            closeProcessForShutdown();
         }
     }
 
-    private synchronized void closeProcess() {
-        closeProcess(true);
-    }
-
-    private synchronized void closeProcess(boolean unregisterHook) {
-        localApi = null;
-        Process child = detachProcess(unregisterHook);
+    /**
+     * Quitting the game must not stall JVM shutdown behind a startup that is still
+     * downloading or polling. The child is terminated without any wait, so the hook
+     * returns immediately and the child still cannot survive Minecraft's exit. Only
+     * the short state mutation runs on the lifecycle lock, so the hook can never
+     * deadlock against a startup that is holding it.
+     */
+    private void closeProcessForShutdown() {
+        Process child;
+        synchronized (lifecycleLock) {
+            child = dropProcess();
+        }
         if (child != null) {
-            stopProcess(child);
+            // The JVM may halt before a background reaper could escalate, so the
+            // forced termination is issued here instead of being waited for.
+            child.destroy();
+            child.destroyForcibly();
         }
     }
 

@@ -156,13 +156,13 @@ final class UniversalTranslatorConfigScreen extends Screen {
 
         // 4 Navigation Tabs
         tabGeneralButton = new ButtonWidget(TAB_GENERAL, layout.tabX(0), layout.tabY(), layout.tabWidth(), 20,
-                tr("category.universal_translator.general"));
+                tr("screen.universal_translator.tab.general"));
         tabScopesButton = new ButtonWidget(TAB_SCOPES, layout.tabX(1), layout.tabY(), layout.tabWidth(), 20,
-                tr("category.universal_translator.scopes"));
+                tr("screen.universal_translator.tab.scopes"));
         tabEngineButton = new ButtonWidget(TAB_ENGINE, layout.tabX(2), layout.tabY(), layout.tabWidth(), 20,
-                tr("category.universal_translator.engine"));
+                tr("screen.universal_translator.tab.engine"));
         tabOutgoingButton = new ButtonWidget(TAB_OUTGOING, layout.tabX(3), layout.tabY(), layout.tabWidth(), 20,
-                tr("category.universal_translator.outgoing"));
+                tr("screen.universal_translator.tab.outgoing"));
 
         buttons.add(tabGeneralButton);
         buttons.add(tabScopesButton);
@@ -592,7 +592,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
             }
         } else if (activeTab == Tab.OUTGOING) {
             int tipY = layout.contentRow(2);
-            drawCenteredString(renderer, tr("screen.universal_translator.outgoing_tip"), width / 2, tipY, 0xFFAAAAAA);
+            drawCenteredString(renderer, tr("screen.universal_translator.info.outgoing_hint"), width / 2, tipY, 0xFFAAAAAA);
         }
 
         // Status & feedback

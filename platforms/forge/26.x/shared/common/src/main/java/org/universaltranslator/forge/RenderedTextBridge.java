@@ -12,7 +12,6 @@ import org.universaltranslator.core.TextKind;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class RenderedTextBridge {
@@ -48,20 +47,28 @@ public final class RenderedTextBridge {
             return null;
         }
         StringBuilder original = new StringBuilder();
-        AtomicReference<Style> firstStyle = new AtomicReference<Style>(Style.EMPTY);
+        final Style[] firstStyle = new Style[]{Style.EMPTY};
+        final boolean[] multiStyle = new boolean[]{false};
         text.accept((index, style, codePoint) -> {
             if (original.length() == 0) {
-                firstStyle.set(style);
+                firstStyle[0] = style;
+            } else if (!multiStyle[0] && !style.equals(firstStyle[0])) {
+                multiStyle[0] = true;
             }
             original.appendCodePoint(codePoint);
             return true;
         });
+        if (multiStyle[0]) {
+            // Flattening would keep only the first segment's colour and drop bold,
+            // italic and click events from later segments, so leave the line intact.
+            return text;
+        }
         String translated = translateRaw(original.toString());
         if (original.toString().equals(translated)) {
             return text;
         }
         MutableComponent replacement = Component.literal(translated)
-                .setStyle(translatedStyle(firstStyle.get()));
+                .setStyle(translatedStyle(firstStyle[0]));
         return replacement.getVisualOrderText();
     }
 

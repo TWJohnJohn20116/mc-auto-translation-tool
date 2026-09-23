@@ -6,12 +6,16 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.attribute.PosixFilePermission;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.ZipEntry;
@@ -21,6 +25,8 @@ import java.util.zip.ZipInputStream;
 public final class SafeArchiveExtractor {
     private static final int MAX_ENTRIES = 10_000;
     private static final long MAX_EXPANDED_BYTES = 1_073_741_824L;
+    /** Upper bound on how many links may be chained before a link target is treated as broken. */
+    private static final int MAX_LINK_HOPS = 16;
 
     private SafeArchiveExtractor() {
     }
@@ -82,7 +88,7 @@ public final class SafeArchiveExtractor {
                 } else if (type == '2') {
                     String target = tarString(header, 157, 100);
                     validateLinkTarget(root, output, target);
-                    links.add(new PendingLink(output, target));
+                    links.add(new PendingLink(output, target, name));
                     skipFully(input, size);
                 } else if (type == 0 || type == '0') {
                     Files.createDirectories(output.getParent());
@@ -95,7 +101,7 @@ public final class SafeArchiveExtractor {
             }
         }
         for (PendingLink link : links) {
-            createLinkOrCopy(root, link, budget);
+            createLinkOrCopy(root, link, linksByOutput(links), budget);
         }
     }
 
@@ -114,8 +120,17 @@ public final class SafeArchiveExtractor {
         }
     }
 
+    private static Map<Path, PendingLink> linksByOutput(List<PendingLink> links) {
+        Map<Path, PendingLink> index = new HashMap<Path, PendingLink>();
+        for (PendingLink link : links) {
+            index.put(link.output, link);
+        }
+        return index;
+    }
+
     private static void createLinkOrCopy(
-            Path root, PendingLink link, ExtractionBudget budget) throws IOException {
+            Path root, PendingLink link, Map<Path, PendingLink> pending, ExtractionBudget budget)
+            throws IOException {
         Files.createDirectories(link.output.getParent());
         Path target = link.output.getParent().resolve(link.target).normalize();
         if (!target.startsWith(root.toAbsolutePath().normalize())) {
@@ -124,34 +139,121 @@ public final class SafeArchiveExtractor {
         try {
             Files.createSymbolicLink(link.output, Paths.get(link.target));
         } catch (UnsupportedOperationException | IOException exception) {
-            if (!Files.isRegularFile(target)) {
+            // Windows commonly denies symlink creation without developer mode or elevated
+            // privileges. Official engine archives chain symlinks (for example
+            // libggml.dylib -> libggml.0.dylib -> libggml.0.15.1.dylib), so the immediate
+            // target may itself be a symlink that cannot be created on this platform.
+            // Resolve the chain down to the regular file it ultimately names.
+            Path resolved = resolveChainToRegularFile(
+                    root, target, link.output, link.linkName, pending);
+            if (resolved == null) {
                 throw new IOException("Could not safely materialize archive symlink", exception);
             }
-            // Windows commonly denies symlink creation without developer mode or elevated
-            // privileges. Its safe copy fallback still expands data and must share the same
-            // anti-archive-bomb budget as ordinary entries.
-            budget.reserve(Files.size(target));
-            Files.copy(target, link.output, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            // The copy fallback still expands data and must share the same anti-archive-bomb
+            // budget as ordinary entries.
+            budget.reserve(Files.size(resolved));
+            Files.copy(resolved, link.output, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
         }
     }
 
+    /**
+     * Follows a chain of archive symlinks from {@code start} until a regular file is reached.
+     * Links that the archive declared but that could not be created on this platform (because
+     * symbolic links are unsupported here) are followed through {@code pending} as well.
+     *
+     * @return the regular file the chain ultimately names, or {@code null} when the chain is
+     *         broken, cyclic, too long, or is not a symlink chain at all (for example a hard
+     *         link into a directory).
+     */
+    private static Path resolveChainToRegularFile(
+            Path root, Path start, Path linkOutput, String linkName, Map<Path, PendingLink> pending)
+            throws IOException {
+        Path normalizedRoot = root.toAbsolutePath().normalize();
+        Path current = start;
+        Set<Path> visited = new HashSet<Path>();
+        for (int hop = 0; hop < MAX_LINK_HOPS; hop++) {
+            if (!current.startsWith(normalizedRoot)) {
+                throw new IOException("Archive symlink escaped extraction directory");
+            }
+            if (Files.isRegularFile(current)) {
+                return current;
+            }
+            if (!visited.add(current)) {
+                return null;
+            }
+            Path linkTarget = null;
+            if (Files.isSymbolicLink(current)) {
+                linkTarget = Files.readSymbolicLink(current);
+            } else {
+                PendingLink deferred = pending.get(current);
+                if (deferred != null) {
+                    linkTarget = Paths.get(deferred.target);
+                }
+            }
+            if (linkTarget == null) {
+                return null;
+            }
+            Path next = linkTarget.isAbsolute()
+                    ? linkTarget.normalize()
+                    : current.getParent().resolve(linkTarget).normalize();
+            if (!next.startsWith(normalizedRoot)) {
+                throw new IOException("Archive symlink escaped extraction directory");
+            }
+            current = next;
+        }
+        throw new IOException("Archive symlink chain is too deep to resolve: " + linkName);
+    }
+
     private static void validateLinkTarget(Path root, Path output, String target) throws IOException {
-        if (target.isEmpty() || Paths.get(target).isAbsolute()
-                || !output.getParent().resolve(target).normalize().startsWith(root.toAbsolutePath().normalize())) {
+        if (target.isEmpty() || target.indexOf('\0') >= 0) {
+            throw new IOException("Unsafe symlink in offline engine archive");
+        }
+        Path resolved;
+        try {
+            Path targetPath = Paths.get(target);
+            if (targetPath.isAbsolute()) {
+                throw new IOException("Unsafe symlink in offline engine archive");
+            }
+            resolved = output.getParent().resolve(targetPath).normalize();
+        } catch (InvalidPathException exception) {
+            throw new IOException("Unsafe symlink target in offline engine archive", exception);
+        }
+        if (!resolved.startsWith(root.toAbsolutePath().normalize())) {
             throw new IOException("Unsafe symlink in offline engine archive");
         }
     }
 
     private static Path safePath(Path root, String entryName) throws IOException {
-        if (entryName == null || entryName.isEmpty() || entryName.indexOf('\0') >= 0) {
+        if (entryName == null || entryName.isEmpty() || entryName.indexOf('\0') >= 0
+                || containsWindowsIllegalCharacters(entryName)) {
             throw new IOException("Invalid archive entry name");
         }
         Path normalizedRoot = root.toAbsolutePath().normalize();
-        Path output = normalizedRoot.resolve(entryName).normalize();
+        Path output;
+        try {
+            output = normalizedRoot.resolve(entryName).normalize();
+        } catch (InvalidPathException exception) {
+            throw new IOException("Invalid archive entry name: " + entryName, exception);
+        }
         if (!output.startsWith(normalizedRoot)) {
             throw new IOException("Archive entry escaped extraction directory: " + entryName);
         }
         return output;
+    }
+
+    /**
+     * Rejects names Windows cannot represent so extraction behaviour is consistent on every
+     * platform instead of surfacing as a platform-specific {@link InvalidPathException}.
+     */
+    private static boolean containsWindowsIllegalCharacters(String entryName) {
+        for (int index = 0; index < entryName.length(); index++) {
+            char character = entryName.charAt(index);
+            if (character < 0x20 || character == '<' || character == '>' || character == ':'
+                    || character == '"' || character == '|' || character == '?' || character == '*') {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void copy(
@@ -260,10 +362,12 @@ public final class SafeArchiveExtractor {
     private static final class PendingLink {
         private final Path output;
         private final String target;
+        private final String linkName;
 
-        private PendingLink(Path output, String target) {
+        private PendingLink(Path output, String target, String linkName) {
             this.output = output;
             this.target = target;
+            this.linkName = linkName;
         }
     }
 

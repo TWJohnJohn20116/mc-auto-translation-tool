@@ -59,7 +59,16 @@ export function chatGPTSignOutPath(returnTo = "/"): string {
 }
 
 function safeRelativeReturnPath(value: string): string {
-  if (!value.startsWith("/") || value.startsWith("//")) return "/";
+  // Reject absolute and protocol-relative inputs, plus any backslash: browsers
+  // treat `\` as a path separator, so `/a/..\evil.com` would otherwise be
+  // normalized into a protocol-relative URL that resolves off-origin.
+  if (
+    !value.startsWith("/") ||
+    value.startsWith("//") ||
+    value.includes("\\")
+  ) {
+    return "/";
+  }
 
   let url: URL;
   try {
@@ -68,9 +77,30 @@ function safeRelativeReturnPath(value: string): string {
     return "/";
   }
   if (url.origin !== "https://app.local") return "/";
+  // Dot-segment removal happens during parsing, so the *normalized* pathname must
+  // be re-validated: `/a/..//evil.com` collapses to `//evil.com`, which a browser
+  // resolves as an absolute cross-origin URL when used in a Location header.
+  if (url.pathname.startsWith("//") || url.pathname.startsWith("/\\")) return "/";
   if (isReservedAuthPath(url.pathname)) return "/";
+  // Percent-encoded separators (`%2F`) survive `new URL`, so a consumer that
+  // decodes `return_to` before redirecting would still see a protocol-relative
+  // path. Reject any pathname that escapes the origin once decoded.
+  if (isProtocolRelativeAfterDecoding(url.pathname)) return "/";
 
   return `${url.pathname}${url.search}${url.hash}`;
+}
+
+function isProtocolRelativeAfterDecoding(pathname: string): boolean {
+  // Percent-encoding can be applied more than once, so decode until the value
+  // stops changing (bounded to avoid pathological input) and check each step.
+  let candidate = pathname;
+  for (let pass = 0; pass < 4; pass += 1) {
+    if (candidate.startsWith("//") || candidate.startsWith("/\\")) return true;
+    const decoded = safeDecodeURIComponent(candidate);
+    if (decoded === null || decoded === candidate) return false;
+    candidate = decoded;
+  }
+  return false;
 }
 
 function isReservedAuthPath(pathname: string): boolean {

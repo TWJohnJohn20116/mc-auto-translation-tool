@@ -58,4 +58,13 @@ public final class TranslationRenderContext {
         Integer depth = TEXT_INPUT_DEPTH.get();
         return depth != null && depth > 0;
     }
+
+    /**
+     * Marks the start of a render frame. Any text-input depth left behind by a widget
+     * whose render method threw before its pop runs is discarded here, so the guard
+     * cannot latch permanently.
+     */
+    public static void beginFrame() {
+        TEXT_INPUT_DEPTH.remove();
+    }
 }

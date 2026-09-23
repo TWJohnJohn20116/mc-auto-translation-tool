@@ -34,6 +34,19 @@ public final class TranslationRenderContext {
         }
     }
 
+    /**
+     * Clears the classification latched on the current thread. Mixin 0.8.x has no exception exit
+     * injection point, so a render method that throws before its RETURN injection would otherwise
+     * leave a stale {@link TextKind} and a text-input depth above zero forever: every later string
+     * would be misclassified and {@code RenderedTextBridge.translate} would return it unchanged,
+     * silently disabling translation for the rest of the session. Called once per client tick,
+     * before the frame is rendered.
+     */
+    public static void reset() {
+        KINDS.remove();
+        TEXT_INPUT_DEPTH.remove();
+    }
+
     public static TextKind current() {
         Deque<TextKind> kinds = KINDS.get();
         return kinds.isEmpty() ? TextKind.OTHER : kinds.peek();

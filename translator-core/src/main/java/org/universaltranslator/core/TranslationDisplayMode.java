@@ -6,7 +6,7 @@ public enum TranslationDisplayMode {
     ORIGINAL_AND_TRANSLATED;
 
     public static TranslationDisplayMode fromConfig(String value) {
-        if (value == null) {
+        if (value == null || value.trim().isEmpty()) {
             return TRANSLATED_ONLY;
         }
         String normalized = value.trim().toLowerCase(java.util.Locale.ROOT);

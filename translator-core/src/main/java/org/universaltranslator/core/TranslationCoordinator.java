@@ -19,6 +19,7 @@ import java.util.Collections;
  */
 public final class TranslationCoordinator implements AutoCloseable {
     private static final int MAX_QUEUED_TRANSLATIONS = 128;
+    private static final long WORKER_SHUTDOWN_TIMEOUT_MILLIS = 5_000L;
     private static final String CACHE_FORMAT_VERSION = "translation-v6";
 
     private final TranslationProvider provider;
@@ -115,7 +116,14 @@ public final class TranslationCoordinator implements AutoCloseable {
                         created.complete(TranslationResult.success(
                                 text, restored));
                     } catch (Exception exception) {
-                        created.complete(TranslationResult.failure(text, exception.getMessage()));
+                        created.complete(TranslationResult.failure(text, failureMessage(exception)));
+                    } catch (Throwable fatal) {
+                        // LinkageError/UnsatisfiedLinkError from the offline native library,
+                        // OutOfMemoryError and StackOverflowError are not Exception subtypes.
+                        // Complete the future first so callers never leak an in-flight entry,
+                        // then let the fatal error propagate and kill the worker thread.
+                        created.complete(TranslationResult.failure(text, failureMessage(fatal)));
+                        throw fatal;
                     } finally {
                         inFlight.remove(requestKey, created);
                     }
@@ -202,6 +210,21 @@ public final class TranslationCoordinator implements AutoCloseable {
         }
         inFlight.clear();
         executor.shutdownNow();
+        // Wait for interrupted workers to leave provider.translate(...) before the provider
+        // is torn down. Otherwise a worker can loop back into a retrying provider (for
+        // example ResilientTranslationProvider retrying an IOException) against an
+        // already-closed endpoint, the offline provider kills its child process under a
+        // live loopback call, and a replacement session races this one on the same
+        // cache .tmp file. Proceed after the bounded wait so a stuck provider cannot
+        // hang Minecraft shutdown.
+        try {
+            if (!executor.awaitTermination(WORKER_SHUTDOWN_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
+                System.err.println("[MC Auto Translation Tool] translation workers did not stop within "
+                        + WORKER_SHUTDOWN_TIMEOUT_MILLIS + "ms; closing provider anyway");
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        }
         if (provider instanceof AutoCloseable) {
             try {
                 ((AutoCloseable) provider).close();
@@ -209,6 +232,19 @@ public final class TranslationCoordinator implements AutoCloseable {
                 // Minecraft is shutting down or applying a replacement configuration.
             }
         }
+    }
+
+    /**
+     * Failure text for a worker-side throwable. {@link Error} types such as
+     * {@link NoClassDefFoundError} frequently carry no message, so fall back to the class name
+     * instead of letting {@link TranslationResult#failure} report the generic "Translation failed".
+     */
+    private static String failureMessage(Throwable throwable) {
+        String message = throwable == null ? null : throwable.getMessage();
+        if (message == null || message.trim().isEmpty()) {
+            return throwable == null ? "Translation failed" : throwable.getClass().getSimpleName();
+        }
+        return message;
     }
 
     private static final class TranslationThreadFactory implements ThreadFactory {

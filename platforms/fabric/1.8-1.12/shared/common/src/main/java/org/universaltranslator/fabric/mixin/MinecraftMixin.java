@@ -7,6 +7,7 @@ import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.universaltranslator.fabric.TranslationRenderContext;
 import org.universaltranslator.fabric.UniversalTranslatorFabricClient;
 
 @Mixin(Minecraft.class)
@@ -18,6 +19,9 @@ abstract class MinecraftMixin {
 
     @Inject(method = "tick()V", at = @At("RETURN"), require = 0)
     private void universalTranslator$pollKeys(CallbackInfo callback) {
+        // Drop any render context left latched by a render method that threw before its RETURN
+        // injection could pop it (Mixin 0.8.x has no exception exit injection point).
+        TranslationRenderContext.reset();
         boolean u = Keyboard.isKeyDown(Keyboard.KEY_U);
         boolean f8 = Keyboard.isKeyDown(Keyboard.KEY_F8);
         if (u && !universalTranslator$uHeld) {

@@ -213,12 +213,9 @@ public final class TranslationDiagnosticsSnapshot {
     }
 
     private static String sanitizeStatus(String value) {
-        String clean = clean(value).replace('\r', ' ').replace('\n', ' ');
-        clean = clean.replaceAll("(?i)https?://\\S+", "[地址已隐藏]");
-        clean = clean.replaceAll(
-                "(?i)(api[-_ ]?key|secret[-_ ]?(id|key)|token)\\s*[=:]\\s*\\S+",
-                "$1=[已隐藏]");
-        return clean;
+        // Delegate to the shared exporter logic so the two redaction implementations cannot
+        // drift apart again. The placeholders stay localized for the in-game screen.
+        return DiagnosticsLogExporter.sanitize(clean(value), "[地址已隐藏]", "[已隐藏]", "[密钥已隐藏]");
     }
 
     private static final class LocaleHolder {

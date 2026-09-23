@@ -81,7 +81,7 @@ $job89 = Start-Job -ScriptBlock {
     $c = $LASTEXITCODE
     Pop-Location
     return $c
-} -ArgumentList "$root\legacy\forge-1.8.9", $j8, (Join-Path $logDir "legacy-1.8.9.log")
+} -ArgumentList "$root\platforms\forge\legacy\1.8.9", $j8, (Join-Path $logDir "legacy-1.8.9.log")
 
 $job112 = Start-Job -ScriptBlock {
     param($path, $j8, $logFile)
@@ -91,7 +91,7 @@ $job112 = Start-Job -ScriptBlock {
     $c = $LASTEXITCODE
     Pop-Location
     return $c
-} -ArgumentList "$root\legacy\forge-1.12.2", $j8, (Join-Path $logDir "legacy-1.12.2.log")
+} -ArgumentList "$root\platforms\forge\legacy\1.12.2", $j8, (Join-Path $logDir "legacy-1.12.2.log")
 
 $null = Wait-Job $job89, $job112
 $code89 = Receive-Job $job89

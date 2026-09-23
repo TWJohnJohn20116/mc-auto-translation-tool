@@ -27,6 +27,7 @@ public final class LanguageHeuristics {
                 letters++;
                 Character.UnicodeBlock block = Character.UnicodeBlock.of(value);
                 if (block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
+                        || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
                         || block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) {
                     han++;
                 }

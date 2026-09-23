@@ -72,7 +72,7 @@ public final class TranslationStatusLocalizer {
     }
 
     public static boolean isFailure(String status) {
-        String value = status == null ? "" : status;
+        String value = status == null ? "" : status.trim();
         return value.startsWith("翻译失败：")
                 || value.startsWith("离线翻译失败：")
                 || value.contains("均失败");

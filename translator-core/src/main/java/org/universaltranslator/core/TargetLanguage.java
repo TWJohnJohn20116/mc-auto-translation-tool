@@ -34,12 +34,13 @@ public final class TargetLanguage {
         String value = language.trim();
         String normalized = value.toLowerCase(Locale.ROOT).replace('_', '-');
         if ("zh".equals(normalized) || "zh-cn".equals(normalized)
-                || "zh-sg".equals(normalized) || "zh-hans".equals(normalized)) {
+                || "zh-sg".equals(normalized) || "zh-hans".equals(normalized)
+                || normalized.startsWith("zh-hans-")) {
             return SIMPLIFIED_CHINESE;
         }
         if ("zh-tw".equals(normalized) || "zh-hk".equals(normalized)
                 || "zh-mo".equals(normalized) || "zh-tr".equals(normalized)
-                || "zh-hant".equals(normalized)) {
+                || "zh-hant".equals(normalized) || normalized.startsWith("zh-hant-")) {
             return TRADITIONAL_CHINESE;
         }
         for (String preset : PRESETS) {

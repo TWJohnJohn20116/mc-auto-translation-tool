@@ -1,10 +1,12 @@
 package org.universaltranslator.core;
 
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.Collections;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
 
@@ -16,7 +18,15 @@ public final class RenderTranslationSession implements AutoCloseable {
     private static final long FAILURE_RETRY_MILLIS = 30_000L;
     private static final int MAX_PENDING_TRANSLATIONS = 128;
     private static final int MAX_RENDERED_TRANSLATIONS = 4_096;
+    // The re-entry guard is bounded separately from the translation map: it has to outlive
+    // the translation it guards, otherwise evicted outputs are translated all over again.
+    private static final int MAX_RENDERED_OUTPUTS = 8_192;
     private static final int MAX_FAILED_TRANSLATIONS = 1_024;
+    // A request whose future is never completed (for example an Error escaping the coordinator's
+    // worker, which only catches Exception) would otherwise hold a pending slot forever. This is
+    // longer than the slowest provider read timeout (120s), so a genuinely in-flight request is
+    // never reclaimed and the ordinary backpressure behaviour is preserved.
+    private static final long PENDING_EXPIRY_MILLIS = 180_000L;
     private static final int MAX_BACKGROUND_SUBMISSIONS_PER_SECOND = 4;
     private static final int MAX_PRIORITY_SUBMISSIONS_PER_SECOND = 12;
 
@@ -29,8 +39,16 @@ public final class RenderTranslationSession implements AutoCloseable {
     private final ConcurrentHashMap<RenderKey, String> translated = new ConcurrentHashMap<RenderKey, String>();
     private final ConcurrentHashMap<String, Boolean> translatedOutputs =
             new ConcurrentHashMap<String, Boolean>();
-    private final ConcurrentHashMap<RenderKey, Boolean> pending = new ConcurrentHashMap<RenderKey, Boolean>();
+    // Maps an in-flight lookup to the time it was submitted, so an abandoned future can be
+    // reclaimed instead of permanently consuming one of the MAX_PENDING_TRANSLATIONS slots.
+    private final ConcurrentHashMap<RenderKey, Long> pending = new ConcurrentHashMap<RenderKey, Long>();
     private final ConcurrentHashMap<RenderKey, Long> retryAfter = new ConcurrentHashMap<RenderKey, Long>();
+    // Insertion order for the bounded eviction of translatedOutputs and retryAfter. Keys that
+    // were already evicted stay in the queue harmlessly; the remove is simply a no-op.
+    private final ConcurrentLinkedQueue<String> renderedOutputOrder =
+            new ConcurrentLinkedQueue<String>();
+    private final ConcurrentLinkedQueue<RenderKey> retryOrder =
+            new ConcurrentLinkedQueue<RenderKey>();
     private final SubmissionWindow backgroundSubmissions =
             new SubmissionWindow(MAX_BACKGROUND_SUBMISSIONS_PER_SECOND);
     private final SubmissionWindow prioritySubmissions =
@@ -135,7 +153,13 @@ public final class RenderTranslationSession implements AutoCloseable {
         // strings in a few frames. Drop excess render-time work and try again on
         // a later frame instead of growing an unbounded queue and freezing MC.
         if (pending.size() >= MAX_PENDING_TRANSLATIONS) {
-            return original;
+            // Reclaim work whose future was never completed before giving up. Without this an
+            // Error escaping the coordinator's worker would fill the map to the cap and
+            // permanently short-circuit every lookup, disabling all render translation.
+            reclaimExpiredPending(now);
+            if (pending.size() >= MAX_PENDING_TRANSLATIONS) {
+                return original;
+            }
         }
         if (pending.containsKey(key)) {
             return original;
@@ -143,23 +167,159 @@ public final class RenderTranslationSession implements AutoCloseable {
         // A global font hook can see hundreds of unique labels per second in a lobby.
         // Keep the local model from running at 100% continuously. Interactive and HUD
         // surfaces use a separate allowance so tooltips and chat are not starved by
-        // world-space labels.
-        if (!submissionWindow(effectiveKind).tryAcquire()) {
+        // world-space labels. The token is acquired only when this frame actually hands
+        // work to the coordinator, so frames that reuse an in-flight lookup do not spend it.
+        final SubmissionWindow window = submissionWindow(effectiveKind);
+        if (!window.tryAcquire()) {
             return original;
         }
-        if (pending.putIfAbsent(key, Boolean.TRUE) == null) {
-            Iterable<String> literals;
-            try {
-                literals = protectedLiterals.get();
-            } catch (RuntimeException ignored) {
-                literals = Collections.emptyList();
-            }
-            coordinator.translate(original, sourceLanguage, targetLanguage, effectiveKind,
-                            literals, preserveHanText)
-                    .whenComplete((result, error) -> completeLookup(
-                            key, original, result, error));
+        final Long submittedAt = Long.valueOf(now);
+        if (pending.putIfAbsent(key, submittedAt) != null) {
+            // Another frame already submitted this exact key; the budget was not spent.
+            window.refund();
+            return original;
         }
+        Iterable<String> literals;
+        try {
+            literals = protectedLiterals.get();
+        } catch (RuntimeException ignored) {
+            literals = Collections.emptyList();
+        }
+        CompletableFuture<TranslationResult> request;
+        try {
+            request = coordinator.translate(original, sourceLanguage, targetLanguage, effectiveKind,
+                    literals, preserveHanText);
+        } catch (Throwable failure) {
+            // A provider can fail with an Error (for example an UnsatisfiedLinkError from the
+            // offline native library) before a future exists at all. Release both the pending
+            // entry and the token so one failure cannot disable render translation.
+            pending.remove(key, submittedAt);
+            window.refund();
+            throw failure;
+        }
+        // The pending entry must be released on every outcome, including a future that is only
+        // completed on shutdown or one that completes exceptionally. whenComplete covers the
+        // success and error paths; a future that is never completed at all is reclaimed by
+        // reclaimExpiredPending, so the entry can never leak permanently.
+        request.whenComplete((result, error) -> {
+            boolean published = completeLookup(key, submittedAt, original, result, error);
+            if (!published && error == null && result != null
+                    && !result.isFailure() && !result.isTranslated()) {
+                // The text held nothing translatable (for example a scoreboard line that is
+                // entirely a protected value such as a server address). No provider work was
+                // done, so give the token back instead of starving genuinely translatable text.
+                // Failures are deliberately excluded: their retry backoff already throttles
+                // them, and refunding would remove that protection during an outage.
+                window.refund();
+            }
+        });
         return original;
+    }
+
+    /**
+     * Releases the pending entry for {@code key} and records the outcome.
+     *
+     * @return true when a translated result was published, false when the submission produced no
+     *         translation (unchanged, failure, blocked or closed).
+     */
+    private synchronized boolean completeLookup(
+            RenderKey key,
+            Long submittedAt,
+            String original,
+            TranslationResult result,
+            Throwable error
+    ) {
+        // Always run, even when the session is closing: a pending entry that is never
+        // removed permanently consumes one of the MAX_PENDING_TRANSLATIONS slots. The value
+        // check keeps a late completion from clearing a newer submission of the same key.
+        pending.remove(key, submittedAt);
+        if (closed) {
+            return false;
+        }
+        // The filter can be replaced while an older request is still completing.
+        // Never publish a result that is blocked by the current configuration.
+        if (blockedKeywords.matches(original)) {
+            retryAfter.remove(key);
+            return false;
+        }
+        if (error != null || result == null || result.isFailure()) {
+            // Bound the insertion order queue rather than the map: keys can leave the map on a
+            // later success, so only the queue length reflects the true retained history.
+            if (retryOrder.size() >= MAX_FAILED_TRANSLATIONS) {
+                // Evict the oldest entries instead of clearing every key: a full clear makes
+                // all failed strings retryable at the same moment and produces a retry burst.
+                evictOldestFailedTranslations(MAX_FAILED_TRANSLATIONS / 8);
+            }
+            if (retryAfter.put(key, System.currentTimeMillis() + FAILURE_RETRY_MILLIS) == null) {
+                retryOrder.add(key);
+            }
+            lastFailureStatus = safeFailureStatus(error, result);
+            reportFailureIfChanged(lastFailureStatus);
+            return false;
+        }
+        lastFailureStatus = "";
+        retryAfter.remove(key);
+        if (result.isTranslated()) {
+            if (translated.size() >= MAX_RENDERED_TRANSLATIONS) {
+                // Only the translation map is evicted. translatedOutputs is the re-entry
+                // guard that stops the mod from translating its own rendered output; losing
+                // it would re-submit every evicted line (and compound the bilingual prefix).
+                translated.clear();
+            }
+            if (translatedOutputs.size() >= MAX_RENDERED_OUTPUTS) {
+                evictOldestRenderedOutputs(MAX_RENDERED_OUTPUTS / 8);
+            }
+            String output = formatOutput(original, result.getTranslatedText());
+            translated.put(key, output);
+            rememberRenderedOutput(output);
+            rememberRenderedOutput(TranslationTextStyling.stripLegacyFormatting(output));
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Drops pending entries whose future was never completed, so the map cannot stay wedged at
+     * its cap. Only runs when the map is full, so the scan is rare and never on the common path.
+     */
+    private void reclaimExpiredPending(long now) {
+        long cutoff = now - PENDING_EXPIRY_MILLIS;
+        for (Map.Entry<RenderKey, Long> entry : pending.entrySet()) {
+            Long submittedAt = entry.getValue();
+            if (submittedAt != null && submittedAt.longValue() <= cutoff) {
+                pending.remove(entry.getKey(), submittedAt);
+            }
+        }
+    }
+
+    private void rememberRenderedOutput(String output) {
+        if (translatedOutputs.putIfAbsent(output, Boolean.TRUE) == null) {
+            renderedOutputOrder.add(output);
+        }
+    }
+
+    /** Removes roughly {@code count} of the oldest re-entry guard entries. */
+    private void evictOldestRenderedOutputs(int count) {
+        evictOldest(renderedOutputOrder, translatedOutputs, count);
+    }
+
+    /** Removes roughly {@code count} of the oldest retry entries. */
+    private void evictOldestFailedTranslations(int count) {
+        evictOldest(retryOrder, retryAfter, count);
+    }
+
+    private static <K, V> void evictOldest(
+            ConcurrentLinkedQueue<K> order,
+            ConcurrentHashMap<K, V> values,
+            int count
+    ) {
+        for (int index = 0; index < count; index++) {
+            K oldest = order.poll();
+            if (oldest == null) {
+                return;
+            }
+            values.remove(oldest);
+        }
     }
 
     /**
@@ -241,45 +401,6 @@ public final class RenderTranslationSession implements AutoCloseable {
                 kind == null ? TextKind.CHAT : kind,
                 literals,
                 preserveHanText);
-    }
-    private synchronized void completeLookup(
-            RenderKey key,
-            String original,
-            TranslationResult result,
-            Throwable error
-    ) {
-        pending.remove(key);
-        if (closed) {
-            return;
-        }
-        // The filter can be replaced while an older request is still completing.
-        // Never publish a result that is blocked by the current configuration.
-        if (blockedKeywords.matches(original)) {
-            retryAfter.remove(key);
-            return;
-        }
-        if (error != null || result == null || result.isFailure()) {
-            if (retryAfter.size() >= MAX_FAILED_TRANSLATIONS) {
-                retryAfter.clear();
-            }
-            retryAfter.put(key, System.currentTimeMillis() + FAILURE_RETRY_MILLIS);
-            lastFailureStatus = safeFailureStatus(error, result);
-            reportFailureIfChanged(lastFailureStatus);
-            return;
-        }
-        lastFailureStatus = "";
-        retryAfter.remove(key);
-        if (result.isTranslated()) {
-            if (translated.size() >= MAX_RENDERED_TRANSLATIONS) {
-                translated.clear();
-                translatedOutputs.clear();
-            }
-            String output = formatOutput(original, result.getTranslatedText());
-            translated.put(key, output);
-            translatedOutputs.put(output, Boolean.TRUE);
-            translatedOutputs.put(
-                    TranslationTextStyling.stripLegacyFormatting(output), Boolean.TRUE);
-        }
     }
 
     private boolean isCompletedOutput(String text) {
@@ -366,8 +487,10 @@ public final class RenderTranslationSession implements AutoCloseable {
     public synchronized void clearRenderedTranslations() {
         translated.clear();
         translatedOutputs.clear();
+        renderedOutputOrder.clear();
         pending.clear();
         retryAfter.clear();
+        retryOrder.clear();
         lastFailureStatus = "";
         lastReportedFailureStatus = "";
         backgroundSubmissions.reset();
@@ -419,6 +542,18 @@ public final class RenderTranslationSession implements AutoCloseable {
             }
             used++;
             return true;
+        }
+
+        /**
+         * Gives a previously acquired slot back when a submission turns out not to produce a
+         * translation (the key was already in flight, or the text held nothing translatable),
+         * so the per-second budget is not spent on work that yields no output and cannot starve
+         * genuinely translatable text. Never drops below zero.
+         */
+        private synchronized void refund() {
+            if (used > 0) {
+                used--;
+            }
         }
 
         private synchronized void reset() {

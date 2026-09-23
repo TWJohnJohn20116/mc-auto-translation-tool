@@ -7,12 +7,13 @@ import org.apache.logging.log4j.Logger;
 @Mod(
         modid = UniversalTranslatorForgeMod.MOD_ID,
         name = "MC Auto Translation Tool",
-        version = UniversalTranslatorForgeMod.VERSION,
+        // Left empty so FML resolves the version from the mcmod.info metadata that the
+        // build stamps with gradle.properties mod_version, instead of a stale constant.
+        version = "",
         clientSideOnly = true,
         acceptableRemoteVersions = "*")
 public final class UniversalTranslatorForgeMod {
     public static final String MOD_ID = "universal_translator";
-    public static final String VERSION = "1.3.8";
 
     @Mod.EventHandler
     public void preInitialize(FMLPreInitializationEvent event) {

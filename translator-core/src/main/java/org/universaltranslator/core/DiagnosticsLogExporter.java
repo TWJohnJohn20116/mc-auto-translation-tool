@@ -9,11 +9,28 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
+import java.util.regex.Matcher;
 
 /** Writes a deliberately small, secret-free diagnostics report for issue attachments. */
 public final class DiagnosticsLogExporter {
     private static final DateTimeFormatter FILE_TIME =
             DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss", Locale.ROOT);
+
+    /**
+     * Credential-ish names. The suffix of {@code secret} is optional so that provider specific
+     * names such as {@code baidu-secret}, {@code youdao-secret} or {@code iflytek-api-secret}
+     * are covered too.
+     */
+    private static final String SECRET_NAMES =
+            "(authorization|bearer|api[-_ ]?key|secret[-_ ]?(?:id|key)?"
+                    + "|access[-_ ]?key|token|password|credential)";
+
+    /**
+     * A run that looks like a credential rather than prose: either long enough to be a key, or
+     * shorter but containing a digit. Plain words such as "provided" or "incorrect" never match.
+     */
+    private static final String TOKEN_RUN =
+            "(?:[A-Za-z0-9._~+/=-]{16,}|(?=[A-Za-z0-9._~+/=-]*[0-9])[A-Za-z0-9._~+/=-]{8,})";
 
     private DiagnosticsLogExporter() {
     }
@@ -43,13 +60,38 @@ public final class DiagnosticsLogExporter {
     }
 
     static String sanitize(String value) {
+        return sanitize(value, "[address hidden]", "[hidden]", "[key hidden]");
+    }
+
+    /**
+     * Shared redaction used by both the exported report and the in-game diagnostics screen. The
+     * placeholders are parameters so each caller can keep its own localized wording.
+     */
+    static String sanitize(
+            String value,
+            String addressPlaceholder,
+            String secretPlaceholder,
+            String keyPlaceholder
+    ) {
         String clean = value == null ? "" : value.replace('\r', ' ').replace('\n', ' ').trim();
-        clean = clean.replaceAll("(?i)https?://\\S+", "[address hidden]");
+        clean = clean.replaceAll("(?i)https?://\\S+", Matcher.quoteReplacement(addressPlaceholder));
+        // "name=value" / "name: value" / "name: Bearer value" / "Authorization Bearer value".
+        // An explicit assignment to a credential-ish name is always redacted, whatever the shape.
         clean = clean.replaceAll(
-                "(?i)(authorization|api[-_ ]?key|secret[-_ ]?(id|key)|access[-_ ]?key|token|password)"
-                        + "\\s*[=:]\\s*(bearer\\s+)?\\S+",
-                "$1=[hidden]");
-        clean = clean.replaceAll("(?i)\\bsk-[a-z0-9_-]{8,}", "[key hidden]");
+                "(?i)(?<![A-Za-z0-9_])" + SECRET_NAMES
+                        + "\\s*[=:]\\s*(?:bearer\\s+)?\\S+",
+                "$1=" + Matcher.quoteReplacement(secretPlaceholder));
+        // "Authorization Bearer value" (no separator at all).
+        clean = clean.replaceAll("(?i)(?<![A-Za-z0-9_])bearer\\s+" + TOKEN_RUN,
+                "bearer=" + Matcher.quoteReplacement(secretPlaceholder));
+        // Space separated shapes such as "API key provided: value" or "key is value".
+        clean = clean.replaceAll(
+                "(?i)(?<![A-Za-z0-9_])" + SECRET_NAMES
+                        + "[\\s_]+(?:provided|supplied|used|set|is|was|returned|"
+                        + "rejected|invalid|incorrect|expired)?[\\s_:]*" + TOKEN_RUN,
+                "$1=" + Matcher.quoteReplacement(secretPlaceholder));
+        clean = clean.replaceAll("(?i)\\bsk-[a-z0-9_-]{8,}",
+                Matcher.quoteReplacement(keyPlaceholder));
         return clean;
     }
 

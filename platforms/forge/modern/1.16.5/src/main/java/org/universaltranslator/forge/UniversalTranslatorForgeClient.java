@@ -61,6 +61,7 @@ public final class UniversalTranslatorForgeClient {
             if (event.phase != TickEvent.Phase.END) {
                 return;
             }
+            TranslationRenderContext.beginFrame();
             Minecraft client = Minecraft.getInstance();
             boolean connected = client.level != null && client.getConnection() != null;
             if (connected && !connectedLastTick) {

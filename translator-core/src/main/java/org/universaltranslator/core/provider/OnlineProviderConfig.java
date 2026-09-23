@@ -1,6 +1,7 @@
 package org.universaltranslator.core.provider;
 
 import org.universaltranslator.core.TranslationProvider;
+import org.universaltranslator.core.TranslationProviderCatalog;
 import org.universaltranslator.core.net.HttpJsonClient;
 
 import java.util.LinkedHashMap;
@@ -166,7 +167,14 @@ public final class OnlineProviderConfig {
         return new LlmEditorSettings(value(keys[0]), value(keys[1]), value(keys[2]));
     }
 
-    /** Writes only the selected provider's LLM editor values, preserving every other credential. */
+    /**
+     * Writes only the selected provider's LLM editor values, preserving every other credential.
+     *
+     * <p>Providers that do not use the LLM editor (Baidu, Youdao, offline, custom HTTP JSON, ...) are
+     * skipped entirely: the settings screen keeps the last loaded editor values in its fields when such a
+     * provider is selected, so writing them here would clobber the generic {@code llm-api-*} keys that
+     * back {@code openai-compatible} / local llama.cpp with another provider's endpoint, key and model.</p>
+     */
     public static void applyLlmEditorSettings(
             Properties target,
             String provider,
@@ -176,6 +184,9 @@ public final class OnlineProviderConfig {
     ) {
         if (target == null) {
             throw new IllegalArgumentException("Target properties are required");
+        }
+        if (!TranslationProviderCatalog.usesLlmEditor(provider)) {
+            return;
         }
         String[] keys = llmEditorKeys(provider);
         target.setProperty(keys[0], clean(endpoint));
