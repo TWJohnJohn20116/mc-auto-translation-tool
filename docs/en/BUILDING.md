@@ -347,8 +347,8 @@ To validate arbitrary build outputs directly, pass them to the standalone verifi
 ```bash
 python3 scripts/verify_release_jars.py path/to/mod.jar
 python3 scripts/verify_release_jars.py \
-  --checksum-file downloads/1.3.10/SHA256SUMS.txt \
-  --require-complete-checksums downloads/1.3.10/*.jar
+  --checksum-file downloads/1.3.11/SHA256SUMS.txt \
+  --require-complete-checksums downloads/1.3.11/*.jar
 ```
 
 It checks ZIP structure, expanded metadata, entrypoints, declared Mixin classes and refmaps, nested
@@ -363,9 +363,9 @@ the publish set with:
 
 ```bash
 python3 scripts/prepare_release_assets.py \
-  --release-dir downloads/1.3.10 \
+  --release-dir downloads/1.3.11 \
   --output-dir build/release-assets \
-  --version 1.3.10
+  --version 1.3.11
 python3 scripts/verify_release_jars.py \
   --checksum-file build/release-assets/SHA256SUMS.txt \
   --require-complete-checksums build/release-assets/*.jar

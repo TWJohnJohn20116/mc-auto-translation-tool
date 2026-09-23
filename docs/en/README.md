@@ -52,7 +52,7 @@ not packed into the current GitHub stable download.
 
 ### Fabric: one JAR
 
-Covers **1.13–1.21.11** and **26.1–26.2**. The JAR embeds an exact implementation per game version,
+Covers **1.13–1.21.11** and **26.1–26.3**. The JAR embeds an exact implementation per game version,
 and Fabric Loader selects the matching one. Java is 8, 17, 21, or 25 depending on the game.
 1.14–1.14.2 only ship a bootstrap implementation because Yarn cannot remap those snapshots; the
 full settings UI starts at 1.14.3.
@@ -130,7 +130,7 @@ See [online API configuration](ONLINE_APIS.md) for built-in services and custom 
 
 Every target in the current stable release passes a clean build, shared-core self-tests, Mixin/refmap checks,
 runtime mapping checks, release-structure validation, and SHA-256 verification. The all-version Fabric JAR
-contains 19 exact implementations and passes real Loader selection tests for every target. NeoForge 1.20.1
+contains 46 exact implementations and passes real Loader selection tests for every target. NeoForge 1.20.1
 has also completed a real client launch and mod initialization.
 
 “Builds successfully” does not mean “completed an in-server manual regression.” Build, launch, and manual

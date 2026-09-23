@@ -54,7 +54,7 @@ Fabric、Forge 与 NeoForge 均可按 `U` 打开图形设置，直接编辑屏�
 
 ### Fabric：一个 JAR 即可
 
-覆盖 **1.13–1.21.11** 与 **26.1–26.2**。JAR 内含各版本精确实现，由 Fabric Loader 按当前游戏版本自动选择。Java 随游戏为 8、17、21 或 25。1.14–1.14.2 因 Yarn 无法 remap，仅提供引导实现；完整设置页从 1.14.3 起。
+覆盖 **1.13–1.21.11** 与 **26.1–26.3**。JAR 内含各版本精确实现，由 Fabric Loader 按当前游戏版本自动选择。Java 随游戏为 8、17、21 或 25。1.14–1.14.2 因 Yarn 无法 remap，仅提供引导实现；完整设置页从 1.14.3 起。
 
 [下载 Fabric JAR](https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v1.3.11/MCAutoTranslationTool-1.3.11-fabric-all.jar)
 
@@ -122,7 +122,7 @@ NeoForge / FML **不能**像 Fabric Loader 那样，在同一个 JAR 里嵌套�
 ## 当前验证状态
 
 当前正式版的全部目标均通过干净构建、共享核心自测、Mixin/refmap、运行时映射、发布结构与
-SHA-256 校验。Fabric 全版本 JAR 内含 39 个精确实现，并已通过各目标版本的真实 Loader
+SHA-256 校验。Fabric 全版本 JAR 内含 46 个精确实现，并已通过各目标版本的真实 Loader
 选择测试；NeoForge 1.20.1 已完成实际客户端启动与模组初始化。
 
 “能够编译”不等同于“完成服务器内人工回归”。各版本的构建、启动和人工验证层级会分别记录，
