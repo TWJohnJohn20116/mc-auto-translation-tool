@@ -107,6 +107,19 @@ jobs:
           )"
           export TARGETS_JSON
 
+          # -PtargetPlatform 吃的是平台名稱（forge-1.21.7、fabric-1.13.x），不是發布資產名稱
+          # （mc1.21.7-forge）。這裡從目標名稱推導；推錯會在 settings 評估階段就失敗。
+          TARGETS_JSON="$(printf '%s' "$TARGETS_JSON" | python3 -c '
+          import json, re, sys
+          targets = json.load(sys.stdin)
+          for entry in targets:
+              if not entry.get("standalone"):
+                  game, loader = re.match(r"mc(.+)-(forge|neoforge|fabric)$", entry["target"]).groups()
+                  entry["platform"] = f"{loader}-{game}"
+          print(json.dumps(targets))
+          ')"
+          export TARGETS_JSON
+
           if [[ -z "$requested" ]]; then
             python3 - >> "$GITHUB_OUTPUT" <<'PY'
           import json, os
@@ -158,7 +171,7 @@ jobs:
       - name: 建置目標
         uses: ./.github/actions/gradle-build
         with:
-          args: ${{ matrix.standalone && '--no-daemon build' || format('--no-daemon --max-workers=2 -PtargetPlatform={0} :{1}:build', matrix.target, matrix.project) }}
+          args: ${{ matrix.standalone && '--no-daemon build' || format('--no-daemon --max-workers=2 -PtargetPlatform={0} :{1}:build', matrix.platform, matrix.project) }}
           working-directory: ${{ matrix.standalone && matrix.jar_dir || '.' }}
 
       - name: 用標準檔名收集

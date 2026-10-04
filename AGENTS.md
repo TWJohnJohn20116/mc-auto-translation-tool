@@ -202,6 +202,10 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
 - 建置一律透過 `./.github/actions/gradle-build` 這個 composite action 執行，不要直接寫 `./gradlew`：
   它負責在疑似網路／依賴解析失敗時自動重試（`neoforge-1.20.1` 曾因暫時性 Maven 故障假紅燈一次），
   並讓所有建置的日誌格式一致。要調整重試條件時只改那個檔案，六個呼叫端不用動。
+- `-PtargetPlatform` 吃的是**平台名稱**（`forge-1.21.7`、`fabric-1.13.x`、`neoforge-1.20.1`），
+  不是發布資產名稱（`mc1.21.7-forge`）。傳錯會在 settings 評估階段立刻失敗
+  （`Unknown targetPlatform 'platform-...'`，並列出所有可用值）。`prepare-release.yml` 的 `plan`
+  job 會從目標名稱推導平台名稱，不要改成直接用 `matrix.target`。
 - `lint` job 用 actionlint 檢查所有 workflow，runner 內建的 shellcheck 會一併檢查每個 `run:` 區塊。
   actionlint 的版本與 sha256 都寫死在 job 裡，升級時要一起改，不要改成「抓最新版」。
 - `pull_request` 觸發**不可以**加 `paths` 或 `paths-ignore`：只要有一個 PR 不觸發 workflow，必要的
