@@ -279,7 +279,7 @@ jobs:
           (target / "SHA256SUMS.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
           print(f"寫入 {len(lines)} 顆邏輯 JAR 的 checksum")
           PY
-          ls -l "$target_dir" | head -40
+          find "$target_dir" -maxdepth 1 -type f -printf '%10s  %f\n' | sort -k2
 
       - name: 用專案的驗證器檢查
         env:
