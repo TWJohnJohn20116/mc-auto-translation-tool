@@ -40,7 +40,8 @@
 
 | Workflow | 檔案 | 觸發條件 | 用途 |
 | --- | --- | --- | --- |
-| Build | `.github/workflows/build.yml` | PR、push `main`、`workflow_dispatch` | 核心檢查、17 個平台目標、舊版 Fabric／Forge、發布資產驗證 |
+| Build | `.github/workflows/build.yml` | PR、push `main`、`workflow_dispatch` | 核心檢查、17 個平台目標、7 個舊版目標（各自獨立 job 平行跑）、發布資產驗證，最後由 `CI status` 彙總。這是 PR 必經路徑，牆鐘約 8–10 分 |
+| Legacy targets | `.github/workflows/legacy-targets.yml` | 每週排程（週一 03:17 UTC）、`workflow_dispatch` | 4 個 Ornithe／舊版 Fabric bundle（1.0–1.15）與 2 個獨立 Forge 1.8.9／1.12.2 建置。這些要 remap／decompile 多個舊版 Minecraft，刻意不放在 PR 路徑 |
 | Publish release downloads | `.github/workflows/publish-release.yml` | push `main`（限特定路徑）、`workflow_dispatch` | 驗證 `downloads/<version>` 並建立或更新 GitHub Release |
 
 Git 遠端：
@@ -85,37 +86,78 @@ git -c 'credential.helper=' -c 'credential.helper=!gh auth git-credential' push 
    gh run download <run-id> -n platform-fabric-1.21.x -D build/ci-artifacts
    ```
 
-   - 平台目標 → artifact 名稱 `platform-<target>`，內容為 `platforms/**/build/libs/*.jar`
-   - 舊版目標 → artifact 名稱 `legacy-platforms`
+   - 平台目標 → artifact 名稱 `platform-<target>`（內容 `platforms/**/build/libs/*.jar`）
+   - 舊版目標 1.16.5–1.20.1 → artifact 名稱 `legacy-<target>`（同時涵蓋 Fabric 的 `build/libs` 與
+     Forge 的 `build/release`）
+   - 舊版 Fabric bundle 1.0–1.15 → artifact 名稱 `legacy-fabric-<target>`
+   - 獨立 Forge 1.8.9／1.12.2 → artifact 名稱 `forge-legacy-1.8.9`、`forge-legacy-1.12.2`
    - 可直接安裝的正式版 JAR → artifact 名稱 `release-assets`（`build/release-assets/*.jar` 與 `SHA256SUMS.txt`）
 
 6. 確認你要的 job 真的有跑，而不是被略過：`gh run view <run-id> --json jobs` 中該 job 的
-   `conclusion` 不能是 `skipped`。
+   `conclusion` 不能是 `skipped`。分支保護要求的檢查是單一的 **`CI status`**（彙總 job）：只有全部
+   job 都 `success` 或刻意 `skipped` 才會通過。
 
 ### `workflow_dispatch` 的 `targets` 輸入
 
-- 留空 → 執行完整矩陣，等同 push `main`。
-- 逗號分隔的平台目標 → 只執行符合的 `platform-build` 項目，例如 `fabric-1.21.x,forge-1.21.11`。
-- 額外關鍵字：`legacy`（舊版 Fabric／Forge 建置）、`release`（發布資產驗證）。
-- 目標名稱必須與 `build.yml` 的 matrix 完全一致。名稱打錯時該項目會被略過，而整體仍顯示成功，
-  因此一定要用上一步的 `--json jobs` 確認。
+`Build` 與 `Legacy targets` 兩個 workflow 都接受 `targets`：
 
-### 平台目標名稱（`build.yml` matrix 的值）
+- 留空 → 執行該 workflow 的全部目標（排程觸發亦然）。
+- 逗號分隔的目標名稱 → 只執行符合的 job，例如 `fabric-1.21.x,forge-1.21.11`。
+- `Build` 額外關鍵字：`legacy`（7 個 1.16.5–1.20.1 舊版目標）、`release`（發布資產驗證）。
+- 目標名稱必須與該 workflow 的 matrix 完全一致。名稱打錯時該項目會被略過，而整體仍顯示成功，
+  因此一定要用 `gh run view <run-id> --json jobs` 確認 `conclusion` 不是 `skipped`。
+
+### 目標名稱
+
+`build.yml` → `platform-build`（17 個，PR 必經）：
 
 `fabric-1.16.x`、`fabric-1.17-1.18.x`、`fabric-1.19.x`、`fabric-1.20.x`、`fabric-1.21.x`、
 `fabric-1.21.4-1.21.5`、`fabric-26.x`、`neoforge-1.20.1`、`forge-1.21.1`、`forge-1.21.7`、
 `forge-1.21.9`、`forge-1.21.11`、`forge-26.1.1`、`forge-26.2`、`neoforge-1.21.1`、`neoforge-1.21.3`、
 `neoforge-1.21.11`
 
-`legacy-build` 另外涵蓋：`fabric-1.16.5`、`fabric-1.19.2`、`fabric-1.20.1`、`forge-1.16.5`、
-`forge-1.18.2`、`forge-1.19.2`、`forge-1.20.1`。
+`build.yml` → `legacy-build`（7 個，各自獨立平行 job；關鍵字 `legacy` 可全選）：
+
+`fabric-1.16.5`、`fabric-1.19.2`、`fabric-1.20.1`、`forge-1.16.5`、`forge-1.18.2`、`forge-1.19.2`、
+`forge-1.20.1`
+
+`legacy-targets.yml`（排程／手動，不擋 PR）：
+
+`fabric-1.0-1.8.x`、`fabric-1.8-1.12.x`、`fabric-1.13.x`、`fabric-1.14-1.15.x`、`forge-legacy-1.8.9`、
+`forge-legacy-1.12.2`（後兩者位於 `platforms/forge/legacy/<版本>/`，是獨立 Gradle 建置，需要 JDK 8）
+
+## 發布（Release）流程
+
+Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手動上傳資產或手動開 Release**。
+
+1. 更新 `gradle.properties` 的 `mod_version`。
+2. 準備 `downloads/<mod_version>/`：**33 個**目標 JAR 加 `SHA256SUMS.txt`。過大的 JAR 可用
+   `.jar.part-aa`、`.jar.part-ab`… 分片，workflow 會自動合併；但同一顆 JAR 同時存在完整檔與分片
+   會被視為錯誤。
+3. 在 `CHANGELOG.md` 加上 `## <mod_version> - <日期>` 區段，workflow 會把它當成 release notes；
+   缺少這個區段會讓發布失敗。
+4. 推送到 `origin/main`。workflow 只在這些路徑變動時觸發：`downloads/**`、`gradle.properties`、
+   `CHANGELOG.md`、`scripts/prepare_release_assets.py`、`scripts/verify_release_jars.py`、
+   `publish-release.yml` 自己。
+5. workflow 會驗證 33 顆 JAR 與 checksum、縮減成 **16 顆可直接安裝 JAR**（加 `SHA256SUMS.txt` 共
+   17 個資產），再建立或更新 `v<mod_version>` Release；版本號含 `-` 者視為 prerelease。
+
+發布前務必先讓 Build 的 `CI status` 變綠，且 `downloads/` 內容必須與 `mod_version` 一致，否則
+`verify_release_jars.py` 會失敗。
 
 ## 修改 CI 的規則
 
 - 不要降低既有檢查強度：`check`、`verifyBundle`、`verifyLoaderSelection`、`verifyPreparedReleaseAssets`
   與 `scripts/verify_release_jars.py` 的驗證都必須保留。
-- 新增或調整平台目標時，必須同步三處：`settings.gradle` 的 `platformProjects`、`build.yml` 的 matrix、
-  `gradle.properties` 的版本變數。
+- 新增或調整平台目標時，必須同步四處：`settings.gradle` 的 `platformProjects`、對應 workflow 的 matrix
+  （`build.yml` 或 `legacy-targets.yml`）、`gradle.properties` 的版本變數，以及本檔的目標名稱清單。
+- 慢的目標不要放進 PR 必經的 `build.yml`：需要 ForgeGradle decompile 或大量舊版 remap 的目標放
+  `legacy-targets.yml`。PR 的牆鐘時間由最慢的 job 決定——曾經有一個 job 序列跑 7 個舊版目標，
+  讓整體變成 15.9 分；拆成各自獨立的 matrix job 平行跑之後瓶頸才回到單一目標。
+  同類目標一律拆成獨立 job，不要串在同一條 Gradle 指令裡。
+- 新增 job 時，必須把它加進 `ci-status` 的 `needs`（`build.yml`），否則它不會被彙總、分支保護也擋不住失敗。
+- runner 固定為 `ubuntu-24.04`，不要改回 `ubuntu-latest`：`ubuntu-latest` 將於 2026-10-19 遷移到
+  Ubuntu 26，會讓 23 個建置目標同時面對環境突變。要升級時應一次性改版號並用 CI 驗證。
 - 不要為了讓 CI 變綠而刪除測試或放寬驗證；要修的是程式碼。
 - GitHub 運算式**沒有** `replace`、`trim` 這類字串函式；可用的只有 `contains`、`startsWith`、
   `endsWith`、`format`、`join`、`toJSON`、`fromJSON`、`hashFiles` 與狀態函式。需要字串正規化時，

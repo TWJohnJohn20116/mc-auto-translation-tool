@@ -27,7 +27,7 @@ concurrency:
 jobs:
   check:
     name: Core checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Check out repository
@@ -63,7 +63,7 @@ jobs:
 
   plan:
     name: Plan requested targets
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       targets: ${{ steps.resolve.outputs.targets }}
     steps:
@@ -87,8 +87,8 @@ jobs:
   platform-build:
     name: Build ${{ matrix.target }}
     needs: plan
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -156,10 +156,24 @@ jobs:
           retention-days: 14
 
   legacy-build:
-    name: Build legacy Fabric and Forge
+    name: Build legacy ${{ matrix.target }}
     needs: plan
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # One job per target. These ForgeGradle builds decompile Minecraft, so
+        # running all seven in a single Gradle invocation made every run wait
+        # for the sum of the targets instead of the slowest one.
+        include:
+          - target: fabric-1.16.5
+          - target: fabric-1.19.2
+          - target: fabric-1.20.1
+          - target: forge-1.16.5
+          - target: forge-1.18.2
+          - target: forge-1.19.2
+          - target: forge-1.20.1
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -178,34 +192,33 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build legacy platforms
-        if: needs.plan.outputs.targets == '' || contains(needs.plan.outputs.targets, ',legacy,')
-        run: >-
-          ./gradlew --no-daemon --max-workers=2
-          -PtargetPlatform=fabric-1.16.5,fabric-1.19.2,fabric-1.20.1,forge-1.16.5,forge-1.18.2,forge-1.19.2,forge-1.20.1
-          :platform-fabric-1.16.5:build
-          :platform-fabric-1.19.2:build
-          :platform-fabric-1.20.1:build
-          :platform-forge-1.16.5:build
-          :platform-forge-1.18.2:build
-          :platform-forge-1.19.2:build
-          :platform-forge-1.20.1:build
+      - name: Build legacy platform
+        if: >-
+          needs.plan.outputs.targets == '' ||
+          contains(needs.plan.outputs.targets, format(',{0},', matrix.target)) ||
+          contains(needs.plan.outputs.targets, ',legacy,')
+        run: ./gradlew --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
 
       - name: Upload legacy JARs
         if: >-
           success() && (needs.plan.outputs.targets == '' ||
+          contains(needs.plan.outputs.targets, format(',{0},', matrix.target)) ||
           contains(needs.plan.outputs.targets, ',legacy,'))
         uses: actions/upload-artifact@v4
         with:
-          name: legacy-platforms
-          path: platforms/**/build/libs/*.jar
+          name: legacy-${{ matrix.target }}
+          # Forge 1.16.5-1.20.1 emit their distributable JAR to build/release;
+          # Fabric targets and the other loaders use build/libs.
+          path: |
+            platforms/**/build/libs/*.jar
+            platforms/**/build/release/*.jar
           if-no-files-found: warn
           retention-days: 14
 
   release-assets:
     name: Verify reduced release JARs
     needs: plan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Check out repository
@@ -245,3 +258,33 @@ jobs:
             build/release-assets/SHA256SUMS.txt
           if-no-files-found: warn
           retention-days: 30
+
+  # Single stable check for branch protection: every other job is aggregated
+  # here, so required status checks do not have to list every matrix target.
+  ci-status:
+    name: CI status
+    needs:
+      - check
+      - plan
+      - platform-build
+      - legacy-build
+      - release-assets
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Verify every job succeeded or was intentionally skipped
+        shell: bash
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$NEEDS"
+          printf '%s' "$NEEDS" | python3 -c '
+          import json, sys
+          needs = json.load(sys.stdin)
+          bad = {k: v["result"] for k, v in needs.items() if v["result"] not in ("success", "skipped")}
+          if bad:
+              print("::error::Jobs that did not succeed: " + ", ".join("%s=%s" % (k, v) for k, v in bad.items()))
+              sys.exit(1)
+          print("All jobs succeeded; skipped targets are allowed.")
+          '
