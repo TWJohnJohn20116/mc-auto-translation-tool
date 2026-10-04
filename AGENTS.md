@@ -219,6 +219,8 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   讓底下的重試邏輯變成死碼——上線後真的發生過一次，log 裡只看得到
   `Process completed with exit code 1`、沒有任何重試訊息。驗證這類 script 要用 `bash -e script.sh`
   模擬 runner，用 `bash script.sh` 測會測不出來。
+  重試的 grep 必須用 `-i`：Gradle 的訊息大小寫不一致，ForgeGradle 外掛解析失敗吐的是小寫的
+  `could not resolve plugin artifact`，區分大小寫會漏掉而直接放棄（2026-10-04 三個 job 同時中）。
 - `-PtargetPlatform` 吃的是**平台名稱**（`forge-1.21.7`、`fabric-1.13.x`、`neoforge-1.20.1`），
   不是發布資產名稱（`mc1.21.7-forge`）。傳錯會在 settings 評估階段立刻失敗
   （`Unknown targetPlatform 'platform-...'`，並列出所有可用值）。`prepare-release.yml` 的 `plan`
