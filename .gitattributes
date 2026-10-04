@@ -3,4 +3,7 @@
 *.bat text eol=crlf
 gradlew text eol=lf
 *.sh text eol=lf
+# workflow 與 action 的 YAML 一律 LF，避免在 Windows 上被 checkout 成 CRLF。
+*.yml text eol=lf
+*.yaml text eol=lf
 *.jar binary

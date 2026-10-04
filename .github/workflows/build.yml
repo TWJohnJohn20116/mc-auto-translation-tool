@@ -53,7 +53,9 @@ jobs:
 
       - name: 執行檢查
         id: checks
-        run: ./gradlew --no-daemon check
+        uses: ./.github/actions/gradle-build
+        with:
+          args: --no-daemon check
 
       - name: 上傳檢查報告
         if: failure()
@@ -90,6 +92,34 @@ jobs:
             echo "| 結果 | ${result} |"
             echo "| artifact | ${ARTIFACT:-無} |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  lint:
+    name: 檢查 workflow
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: 取出原始碼
+        uses: actions/checkout@v4
+
+      # runner 映像已內建 shellcheck，actionlint 會自動用它檢查每個 run: 區塊。
+      # 版本與 sha256 都寫死，避免上游被竄改時執行到別的東西。
+      - name: 安裝 actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          set -euo pipefail
+          archive="/tmp/actionlint.tar.gz"
+          curl -fsSLo "$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum --check --strict
+          tar -xzf "$archive" -C /tmp actionlint
+          sudo install -m 0755 /tmp/actionlint /usr/local/bin/actionlint
+          actionlint --version
+          shellcheck --version | sed -n '2,3p'
+
+      - name: 檢查所有 workflow
+        run: actionlint -color
 
   plan:
     name: 解析建置目標
@@ -177,7 +207,9 @@ jobs:
       - name: 建置平台
         id: build
         if: needs.plan.outputs.targets == '' || contains(needs.plan.outputs.targets, format(',{0},', matrix.target))
-        run: ./gradlew --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
+        uses: ./.github/actions/gradle-build
+        with:
+          args: --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
 
       - name: 上傳平台 JAR
         if: >-
@@ -262,7 +294,9 @@ jobs:
           needs.plan.outputs.targets == '' ||
           contains(needs.plan.outputs.targets, format(',{0},', matrix.target)) ||
           contains(needs.plan.outputs.targets, ',legacy,')
-        run: ./gradlew --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
+        uses: ./.github/actions/gradle-build
+        with:
+          args: --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
 
       - name: 上傳舊版 JAR
         if: >-
@@ -335,11 +369,13 @@ jobs:
       - name: 驗證所有發布 JAR 與 Fabric 選版
         id: build
         if: needs.plan.outputs.targets == '' || contains(needs.plan.outputs.targets, ',release,')
-        run: >-
-          ./gradlew --no-daemon --max-workers=2
-          -PtargetPlatform=fabric-1.21.x
-          verifyPreparedReleaseAssets
-          :platform-fabric-1.21.x:verifyPreparedReleaseBundle
+        uses: ./.github/actions/gradle-build
+        with:
+          args: >-
+            --no-daemon --max-workers=2
+            -PtargetPlatform=fabric-1.21.x
+            verifyPreparedReleaseAssets
+            :platform-fabric-1.21.x:verifyPreparedReleaseBundle
 
       - name: 上傳縮減後的發布 JAR
         if: >-
@@ -385,6 +421,7 @@ jobs:
     name: CI 總結
     needs:
       - check
+      - lint
       - plan
       - platform-build
       - legacy-build
@@ -403,6 +440,7 @@ jobs:
           import json, os, sys
           labels = {
               "check": "核心檢查",
+              "lint": "Workflow 檢查",
               "plan": "解析建置目標",
               "platform-build": "平台建置",
               "legacy-build": "舊版建置",

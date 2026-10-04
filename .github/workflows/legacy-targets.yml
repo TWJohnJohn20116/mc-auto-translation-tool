@@ -88,7 +88,9 @@ jobs:
       - name: 建置舊版 Fabric 整合包
         id: build
         if: needs.plan.outputs.targets == '' || contains(needs.plan.outputs.targets, format(',{0},', matrix.target))
-        run: ./gradlew --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
+        uses: ./.github/actions/gradle-build
+        with:
+          args: --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
 
       - name: 上傳舊版 Fabric JAR
         if: >-
@@ -154,8 +156,10 @@ jobs:
       - name: 建置舊版 Forge
         id: build
         if: needs.plan.outputs.targets == '' || contains(needs.plan.outputs.targets, format(',{0},', matrix.target))
-        working-directory: ${{ matrix.dir }}
-        run: ./gradlew --no-daemon build
+        uses: ./.github/actions/gradle-build
+        with:
+          args: --no-daemon build
+          working-directory: ${{ matrix.dir }}
 
       - name: 上傳舊版 Forge JAR
         if: >-

@@ -40,7 +40,7 @@
 
 | Workflow | 檔案 | 觸發條件 | 用途 |
 | --- | --- | --- | --- |
-| 主要建置 | `.github/workflows/build.yml` | PR、push `main`、`workflow_dispatch` | 核心檢查、17 個平台目標、7 個舊版目標（各自獨立 job 平行跑）、發布資產驗證，最後由 `CI 總結` 彙總。這是 PR 必經路徑，牆鐘約 7 分 |
+| 主要建置 | `.github/workflows/build.yml` | PR、push `main`、`workflow_dispatch` | workflow 靜態檢查（actionlint + shellcheck）、核心檢查、17 個平台目標、7 個舊版目標（各自獨立 job 平行跑）、發布資產驗證，最後由 `CI 總結` 彙總。這是 PR 必經路徑，牆鐘約 8 分 |
 | 舊版目標 | `.github/workflows/legacy-targets.yml` | 每週排程（週一 03:17 UTC）、`workflow_dispatch` | 4 個 Ornithe／舊版 Fabric bundle（1.0–1.15）與 2 個獨立 Forge 1.8.9／1.12.2 建置。這些要 remap／decompile 多個舊版 Minecraft，刻意不放在 PR 路徑 |
 | 發布下載資產 | `.github/workflows/publish-release.yml` | push `main`（限特定路徑）、`workflow_dispatch` | 驗證 `downloads/<version>` 並建立或更新 GitHub Release |
 
@@ -173,6 +173,15 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
 - 新增 job 時，必須把它加進 `ci-status` 的 `needs`（`build.yml`），否則它不會被彙總、分支保護也擋不住失敗。
 - 顯示名稱一律用繁體中文（workflow 名稱、job 名稱、step 名稱），但 **artifact 名稱維持 ASCII**
   （`platform-<target>`、`release-assets` 等），因為 `gh run download -n` 與腳本會用到。
+- 建置一律透過 `./.github/actions/gradle-build` 這個 composite action 執行，不要直接寫 `./gradlew`：
+  它負責在疑似網路／依賴解析失敗時自動重試（`neoforge-1.20.1` 曾因暫時性 Maven 故障假紅燈一次），
+  並讓所有建置的日誌格式一致。要調整重試條件時只改那個檔案，六個呼叫端不用動。
+- `lint` job 用 actionlint 檢查所有 workflow，runner 內建的 shellcheck 會一併檢查每個 `run:` 區塊。
+  actionlint 的版本與 sha256 都寫死在 job 裡，升級時要一起改，不要改成「抓最新版」。
+- `pull_request` 觸發**不可以**加 `paths` 或 `paths-ignore`：只要有一個 PR 不觸發 workflow，必要的
+  `CI 總結` 檢查就會永遠停在 waiting，那個 PR 就無法合併。
+- action 版本交給 `.github/dependabot.yml` 每週檢查，並用 `groups` 把所有 action 更新合成一個 PR，
+  避免五個 PR 各跑一輪 25 個 job 的建置。Dependabot 開的 PR 同樣要等 `CI 總結` 綠燈。
 - Job summary 有兩層：`gradle/actions/setup-gradle` 的英文摘要設為 `add-job-summary: on-failure`
   （它沒有語系參數，無法翻譯，只能在失敗時顯示）；成功時的繁中摘要由每個建置 job 最後的
   「寫入建置摘要」步驟用 `$GITHUB_STEP_SUMMARY` 產生，`ci-status` 另外寫一張彙總表。

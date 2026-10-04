@@ -1,5 +1,7 @@
 # MC Auto Translation Tool
 
+[![主要建置](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/actions/workflows/build.yml/badge.svg)](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/actions/workflows/build.yml)
+
 **MC Auto Translation Tool** is a charity-driven, open-source, client-only full-interface translation mod
 for Minecraft Java Edition. The server does not need the mod; it translates player-visible text such as
 chat, quest books, mod menus, scoreboards, item descriptions, and signs.
