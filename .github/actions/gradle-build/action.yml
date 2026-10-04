@@ -47,7 +47,10 @@ runs:
             echo "::error::Gradle 建置連續失敗 $attempt 次，放棄"
             exit "$status"
           fi
-          if grep -qE 'Could not resolve|Could not GET|Could not HEAD|Connection reset|Read timed out|Temporary failure in name resolution|502 Bad Gateway|503 Service Unavailable|Received status code 5' "$log"; then
+          # -i 很重要：Gradle 的訊息大小寫不一致。實際案例是 ForgeGradle 外掛解析失敗
+          # 時吐的是小寫的 "could not resolve plugin artifact"，用區分大小寫的 grep
+          # 會漏掉，於是明明該重試卻直接放棄（2026-10-04 三個 job 同時中）。
+          if grep -qiE 'Could not resolve|Could not GET|Could not HEAD|Connection reset|Read timed out|Temporary failure in name resolution|502 Bad Gateway|503 Service Unavailable|Received status code 5' "$log"; then
             attempt=$((attempt + 1))
             echo "::warning::疑似網路或依賴解析失敗，10 秒後重試（第 $attempt 次，最多 $MAX_ATTEMPTS 次）"
             sleep 10
