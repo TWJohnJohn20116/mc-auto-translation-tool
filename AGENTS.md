@@ -40,9 +40,9 @@
 
 | Workflow | 檔案 | 觸發條件 | 用途 |
 | --- | --- | --- | --- |
-| Build | `.github/workflows/build.yml` | PR、push `main`、`workflow_dispatch` | 核心檢查、17 個平台目標、7 個舊版目標（各自獨立 job 平行跑）、發布資產驗證，最後由 `CI status` 彙總。這是 PR 必經路徑，牆鐘約 8–10 分 |
-| Legacy targets | `.github/workflows/legacy-targets.yml` | 每週排程（週一 03:17 UTC）、`workflow_dispatch` | 4 個 Ornithe／舊版 Fabric bundle（1.0–1.15）與 2 個獨立 Forge 1.8.9／1.12.2 建置。這些要 remap／decompile 多個舊版 Minecraft，刻意不放在 PR 路徑 |
-| Publish release downloads | `.github/workflows/publish-release.yml` | push `main`（限特定路徑）、`workflow_dispatch` | 驗證 `downloads/<version>` 並建立或更新 GitHub Release |
+| 主要建置 | `.github/workflows/build.yml` | PR、push `main`、`workflow_dispatch` | 核心檢查、17 個平台目標、7 個舊版目標（各自獨立 job 平行跑）、發布資產驗證，最後由 `CI 總結` 彙總。這是 PR 必經路徑，牆鐘約 7 分 |
+| 舊版目標 | `.github/workflows/legacy-targets.yml` | 每週排程（週一 03:17 UTC）、`workflow_dispatch` | 4 個 Ornithe／舊版 Fabric bundle（1.0–1.15）與 2 個獨立 Forge 1.8.9／1.12.2 建置。這些要 remap／decompile 多個舊版 Minecraft，刻意不放在 PR 路徑 |
+| 發布下載資產 | `.github/workflows/publish-release.yml` | push `main`（限特定路徑）、`workflow_dispatch` | 驗證 `downloads/<version>` 並建立或更新 GitHub Release |
 
 Git 遠端：
 
@@ -72,7 +72,7 @@ git -c 'credential.helper=' -c 'credential.helper=!gh auth git-credential' push 
 ### 驗證一個變更的標準流程
 
 1. 建立分支並提交：`git switch -c fix/xxx`、`git add -A`、`git commit`。
-2. 推送並開 PR（PR 會自動觸發 Build）：`git push -u origin fix/xxx`、`gh pr create --fill`。
+2. 推送並開 PR（PR 會自動觸發主要建置）：`git push -u origin fix/xxx`、`gh pr create --fill`。
 3. 或針對分支手動觸發（`workflow_dispatch` 需要該 workflow 已存在於預設分支 `main`）：
 
    ```bash
@@ -94,16 +94,16 @@ git -c 'credential.helper=' -c 'credential.helper=!gh auth git-credential' push 
    - 可直接安裝的正式版 JAR → artifact 名稱 `release-assets`（`build/release-assets/*.jar` 與 `SHA256SUMS.txt`）
 
 6. 確認你要的 job 真的有跑，而不是被略過：`gh run view <run-id> --json jobs` 中該 job 的
-   `conclusion` 不能是 `skipped`。分支保護要求的檢查是單一的 **`CI status`**（彙總 job）：只有全部
+   `conclusion` 不能是 `skipped`。分支保護要求的檢查是單一的 **`CI 總結`**（彙總 job）：只有全部
    job 都 `success` 或刻意 `skipped` 才會通過。
 
 ### `workflow_dispatch` 的 `targets` 輸入
 
-`Build` 與 `Legacy targets` 兩個 workflow 都接受 `targets`：
+`主要建置` 與 `舊版目標` 兩個 workflow 都接受 `targets`：
 
 - 留空 → 執行該 workflow 的全部目標（排程觸發亦然）。
 - 逗號分隔的目標名稱 → 只執行符合的 job，例如 `fabric-1.21.x,forge-1.21.11`。
-- `Build` 額外關鍵字：`legacy`（7 個 1.16.5–1.20.1 舊版目標）、`release`（發布資產驗證）。
+- `主要建置` 額外關鍵字：`legacy`（7 個 1.16.5–1.20.1 舊版目標）、`release`（發布資產驗證）。
 - 目標名稱必須與該 workflow 的 matrix 完全一致。名稱打錯時該項目會被略過，而整體仍顯示成功，
   因此一定要用 `gh run view <run-id> --json jobs` 確認 `conclusion` 不是 `skipped`。
 
@@ -142,7 +142,7 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
 5. workflow 會驗證 33 顆 JAR 與 checksum、縮減成 **16 顆可直接安裝 JAR**（加 `SHA256SUMS.txt` 共
    17 個資產），再建立或更新 `v<mod_version>` Release；版本號含 `-` 者視為 prerelease。
 
-發布前務必先讓 Build 的 `CI status` 變綠，且 `downloads/` 內容必須與 `mod_version` 一致，否則
+發布前務必先讓主要建置的 `CI 總結` 變綠，且 `downloads/` 內容必須與 `mod_version` 一致，否則
 `verify_release_jars.py` 會失敗。
 
 ## 修改 CI 的規則

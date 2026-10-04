@@ -1,4 +1,4 @@
-name: Build
+name: 主要建置
 
 on:
   pull_request:
@@ -26,31 +26,31 @@ concurrency:
 
 jobs:
   check:
-    name: Core checks
+    name: 核心檢查
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - name: Check out repository
+      - name: 取出原始碼
         uses: actions/checkout@v4
 
-      - name: Set up Java 21
+      - name: 設定 Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
 
-      - name: Set up Python
+      - name: 設定 Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Set up Gradle
+      - name: 設定 Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Run checks
+      - name: 執行檢查
         run: ./gradlew --no-daemon check
 
-      - name: Upload check reports
+      - name: 上傳檢查報告
         if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -62,12 +62,12 @@ jobs:
           retention-days: 7
 
   plan:
-    name: Plan requested targets
+    name: 解析建置目標
     runs-on: ubuntu-24.04
     outputs:
       targets: ${{ steps.resolve.outputs.targets }}
     steps:
-      - name: Resolve requested targets
+      - name: 解析要建置的目標
         id: resolve
         shell: bash
         env:
@@ -85,7 +85,7 @@ jobs:
           fi
 
   platform-build:
-    name: Build ${{ matrix.target }}
+    name: 建置 ${{ matrix.target }}
     needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -128,23 +128,23 @@ jobs:
           - target: neoforge-1.21.11
             java: "21"
     steps:
-      - name: Check out repository
+      - name: 取出原始碼
         uses: actions/checkout@v4
 
-      - name: Set up Java
+      - name: 設定 Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: ${{ matrix.java }}
 
-      - name: Set up Gradle
+      - name: 設定 Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build platform
+      - name: 建置平台
         if: needs.plan.outputs.targets == '' || contains(needs.plan.outputs.targets, format(',{0},', matrix.target))
         run: ./gradlew --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
 
-      - name: Upload platform JARs
+      - name: 上傳平台 JAR
         if: >-
           success() && (needs.plan.outputs.targets == '' ||
           contains(needs.plan.outputs.targets, format(',{0},', matrix.target)))
@@ -156,7 +156,7 @@ jobs:
           retention-days: 14
 
   legacy-build:
-    name: Build legacy ${{ matrix.target }}
+    name: 建置舊版 ${{ matrix.target }}
     needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -175,31 +175,31 @@ jobs:
           - target: forge-1.19.2
           - target: forge-1.20.1
     steps:
-      - name: Check out repository
+      - name: 取出原始碼
         uses: actions/checkout@v4
 
-      - name: Set up Java 21
+      - name: 設定 Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
 
-      - name: Set up Python
+      - name: 設定 Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Set up Gradle
+      - name: 設定 Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build legacy platform
+      - name: 建置舊版平台
         if: >-
           needs.plan.outputs.targets == '' ||
           contains(needs.plan.outputs.targets, format(',{0},', matrix.target)) ||
           contains(needs.plan.outputs.targets, ',legacy,')
         run: ./gradlew --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
 
-      - name: Upload legacy JARs
+      - name: 上傳舊版 JAR
         if: >-
           success() && (needs.plan.outputs.targets == '' ||
           contains(needs.plan.outputs.targets, format(',{0},', matrix.target)) ||
@@ -216,29 +216,29 @@ jobs:
           retention-days: 14
 
   release-assets:
-    name: Verify reduced release JARs
+    name: 驗證縮減後的發布 JAR
     needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - name: Check out repository
+      - name: 取出原始碼
         uses: actions/checkout@v4
 
-      - name: Set up Java 25
+      - name: 設定 Java 25
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "25"
 
-      - name: Set up Python
+      - name: 設定 Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Set up Gradle
+      - name: 設定 Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Verify every prepared release JAR and Fabric selection
+      - name: 驗證所有發布 JAR 與 Fabric 選版
         if: needs.plan.outputs.targets == '' || contains(needs.plan.outputs.targets, ',release,')
         run: >-
           ./gradlew --no-daemon --max-workers=2
@@ -246,7 +246,7 @@ jobs:
           verifyPreparedReleaseAssets
           :platform-fabric-1.21.x:verifyPreparedReleaseBundle
 
-      - name: Upload reduced release JARs
+      - name: 上傳縮減後的發布 JAR
         if: >-
           success() && (needs.plan.outputs.targets == '' ||
           contains(needs.plan.outputs.targets, ',release,'))
@@ -262,7 +262,7 @@ jobs:
   # Single stable check for branch protection: every other job is aggregated
   # here, so required status checks do not have to list every matrix target.
   ci-status:
-    name: CI status
+    name: CI 總結
     needs:
       - check
       - plan
@@ -272,7 +272,7 @@ jobs:
     if: always()
     runs-on: ubuntu-24.04
     steps:
-      - name: Verify every job succeeded or was intentionally skipped
+      - name: 確認每個 job 都成功或被刻意略過
         shell: bash
         env:
           NEEDS: ${{ toJSON(needs) }}
