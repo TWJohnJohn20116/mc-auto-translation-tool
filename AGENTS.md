@@ -42,6 +42,7 @@
 | --- | --- | --- | --- |
 | 主要建置 | `.github/workflows/build.yml` | PR、push `main`、`workflow_dispatch` | workflow 靜態檢查（actionlint + shellcheck）、核心檢查、17 個平台目標、7 個舊版目標（各自獨立 job 平行跑）、發布資產驗證，最後由 `CI 總結` 彙總。這是 PR 必經路徑，牆鐘約 8 分 |
 | 舊版目標 | `.github/workflows/legacy-targets.yml` | 每週排程（週一 03:17 UTC）、`workflow_dispatch` | 4 個 Ornithe／舊版 Fabric bundle（1.0–1.15）與 2 個獨立 Forge 1.8.9／1.12.2 建置。這些要 remap／decompile 多個舊版 Minecraft，刻意不放在 PR 路徑 |
+| 準備發布資產 | `.github/workflows/prepare-release.yml` | 只有 `workflow_dispatch` | 一鍵準備 `downloads/<mod_version>`：建置 33 個目標、用標準檔名收集、產生 `SHA256SUMS.txt`、跑 `verify_release_jars.py` 驗證，再開 PR。手動觸發，不在 PR 路徑上（一次約 10 分鐘牆鐘時間） |
 | 發布下載資產 | `.github/workflows/publish-release.yml` | push `main`（限特定路徑）、`workflow_dispatch` | 驗證 `downloads/<version>` 並建立或更新 GitHub Release |
 
 Git 遠端：
@@ -146,9 +147,21 @@ git -c 'credential.helper=' -c 'credential.helper=!gh auth git-credential' push 
 Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手動上傳資產或手動開 Release**。
 
 1. 更新 `gradle.properties` 的 `mod_version`。
-2. 準備 `downloads/<mod_version>/`：**33 個**目標 JAR 加 `SHA256SUMS.txt`。過大的 JAR 可用
-   `.jar.part-aa`、`.jar.part-ab`… 分片，workflow 會自動合併；但同一顆 JAR 同時存在完整檔與分片
-   會被視為錯誤。
+2. 準備 `downloads/<mod_version>/`：**33 個**目標 JAR 加 `SHA256SUMS.txt`。這一步現在由
+   `.github/workflows/prepare-release.yml` 自動完成：
+
+   ```bash
+   gh workflow run prepare-release.yml -R TWJohnJohn20116/mc-auto-translation-tool
+   ```
+
+   它會建置 33 個目標、用標準檔名 `MCAutoTranslationTool-<version>-mc<版本>-<載入器>.jar` 收集、
+   產生 `SHA256SUMS.txt`、跑 `verify_release_jars.py`，然後開一個 `release/prepare-<version>` PR。
+   因為用 `GITHUB_TOKEN` 開的 PR 不會觸發其他 workflow，它會順便手動觸發該分支的建置，讓分支保護
+   要求的 `CI 總結` 能產生。只想煙霧測試時用 `-f targets=mc1.21.7-forge,mc1.13.x-fabric`：只指定
+   部分目標時不會開 PR、也不會檢查數量是否為 33。
+
+   過大的 JAR 仍可用 `.jar.part-aa`、`.jar.part-ab`… 分片，workflow 會自動合併（自動流程產生的是
+   完整 JAR）；但同一顆 JAR 同時存在完整檔與分片會被視為錯誤。
 3. 在 `CHANGELOG.md` 加上 `## <mod_version> - <日期>` 區段，workflow 會把它當成 release notes；
    缺少這個區段會讓發布失敗。
 4. 推送到 `origin/main`。workflow 只在這些路徑變動時觸發：`downloads/**`、`gradle.properties`、
@@ -162,6 +175,11 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
 
 ## 修改 CI 的規則
 
+- `prepare-release.yml` 的 33 個目標必須與 `publish-release.yml` 的 `expected` 陣列完全一致，
+  新增或移除目標時兩邊要一起改；每個目標的 `project` 與 `jar_dir` 也要對得上 `settings.gradle`
+  （`jar_dir` 是專案目錄，JAR 會在它的 `build/release-assets`、`build/release` 或 `build/libs` 下）。
+  收集時是用**版本號精確比對** `*-<version>.jar`，不要改成「目錄裡唯一的 JAR」：本機與快取目錄
+  常留有舊版本的 JAR。
 - 不要降低既有檢查強度：`check`、`verifyBundle`、`verifyLoaderSelection`、`verifyPreparedReleaseAssets`
   與 `scripts/verify_release_jars.py` 的驗證都必須保留。
 - 新增或調整平台目標時，必須同步四處：`settings.gradle` 的 `platformProjects`、對應 workflow 的 matrix
