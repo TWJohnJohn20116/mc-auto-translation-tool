@@ -49,8 +49,9 @@ Pick the loader first, then the matching JAR. The stable release turns 33 build 
 **16 directly installable JARs**. These links are updated with the README whenever a new stable
 version is published.
 
-The source tree also contains Ornithe / early Fabric targets for 1.0.0–1.12.2. Those targets are
-not packed into the current GitHub stable download.
+The source tree also contains Ornithe / early Fabric targets for 1.3.1–1.12.2 (the older
+1.0.0–1.2.5 are not wired up, because upstream only publishes side-suffixed mappings for them).
+Those targets are not packed into the current GitHub stable download.
 
 ### Fabric: one JAR
 
