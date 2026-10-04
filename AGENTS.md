@@ -47,13 +47,16 @@
 
 Git 遠端：
 
-- `origin` = `TWJohnJohn20116/mc-auto-translation-tool`（本機推送目標）
-- `upstream` = `wuxiangdan96-byte/mc-auto-translation-tool`（原作者，**唯讀，永不推送**）
+- `origin` = `TWJohnJohn20116/mc-auto-translation-tool`（推送目標）
+- `upstream` = `wuxiangdan96-byte/mc-auto-translation-tool`：**這不是另一個 repo**，而是同一個 repo
+  的舊名稱（GitHub 會把舊 URL 轉址到新名稱）。用
+  `git ls-remote origin refs/heads/main` 與 `git ls-remote upstream refs/heads/main` 比對即可驗證：
+  兩者回報同一個 commit。所以**不要**用它做任何同步判斷——`git rev-list --count origin/main
+  ^upstream/main` 這種算法沒有意義，只會反映本機那個 remote-tracking ref 有多舊。
 
-**推送安全（務必遵守）**：本機 `main` 的 fetch／pull 來源是 `upstream/main`（原作者），但
-`branch.main.pushremote=origin`，所以 push 會到 `origin`。儘管如此，一律明確指定遠端：
-`git push origin <branch>` 或 `git push -u origin <branch>`；永遠不要 `git push upstream`、
-不要對 upstream 開 PR、不要 force push。
+**推送安全**：一律明確指定遠端 `git push origin <branch>`；不要 force push、不要刪除 `main`。
+本機 `branch.main.remote` 指向 `upstream`，但因為兩者是同一個 repo，`git pull` 結果相同；
+為了讓指令一看就懂，一律寫 `git pull --ff-only origin main`。
 
 若 push 出現 `could not read Username for 'https://github.com'`，代表 git 沒有可用的憑證 helper。
 本機全域設定指向 Git Credential Manager，它在這裡會先被呼叫並崩潰，讓 git 直接中止（stderr 會出現
@@ -66,8 +69,8 @@ git -c 'credential.helper=' -c 'credential.helper=!gh auth git-credential' push 
 不要用 `git config --local credential.helper ""` 這種寫法：PowerShell 會把空字串參數吃掉，指令
 實際上只會讀取設定而不會寫入。
 
-`gh` 目前解析到的倉庫是 `TWJohnJohn20116/mc-auto-translation-tool`，但這個解析不是保證。為了避免
-誤操作原作者倉庫，`gh` 指令一律加上 `-R TWJohnJohn20116/mc-auto-translation-tool`，或先執行一次
+`gh` 目前解析到的倉庫是 `TWJohnJohn20116/mc-auto-translation-tool`，但這個解析不是保證。`gh` 指令
+一律加上 `-R TWJohnJohn20116/mc-auto-translation-tool`，或先執行一次
 `gh repo set-default TWJohnJohn20116/mc-auto-translation-tool` 再繼續。
 
 ### 驗證一個變更的標準流程
