@@ -30,9 +30,15 @@ updates:
     commit-message:
       prefix: chore
     groups:
+      # 只把 minor／patch 合成一個 PR。major 會個別開 PR：它們會改變行為、需要單獨審查與
+      # 測試，混在一起會讓整個 PR 無法合併。2026-10-04 的 #69 就是 23 個更新裡夾了
+      # eslint 9→10、typescript 5→7、@types/node 22→26，網站檢查（lint + build）直接紅燈。
       website:
         patterns:
           - "*"
+        update-types:
+          - minor
+          - patch
 
   # 刻意沒有加 gradle 生態：這個專案的 Loom／ForgeGradle 版本與各 Minecraft 版本綁死
   # （例如 loom_version 必須配合 Gradle 9），自動開的升級 PR 大多是壞的，而每個 PR 都會

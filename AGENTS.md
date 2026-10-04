@@ -229,6 +229,8 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   `CI 總結` 檢查就會永遠停在 waiting，那個 PR 就無法合併。
 - action 版本交給 `.github/dependabot.yml` 每週檢查，並用 `groups` 把所有 action 更新合成一個 PR，
   避免五個 PR 各跑一輪 25 個 job 的建置。Dependabot 開的 PR 同樣要等 `CI 總結` 綠燈。
+  npm（`website/`）那組只群組 **minor／patch**，major 會個別開 PR：major 會改變行為、
+  需要單獨審查，跟二十個小更新混在一起會讓整個 PR 無法合併（#69 就是這樣，網站檢查直接紅燈）。
 - Job summary 有兩層：`gradle/actions/setup-gradle` 的英文摘要設為 `add-job-summary: on-failure`
   （它沒有語系參數，無法翻譯，只能在失敗時顯示）；成功時的繁中摘要由每個建置 job 最後的
   「寫入建置摘要」步驟用 `$GITHUB_STEP_SUMMARY` 產生，`ci-status` 另外寫一張彙總表。
