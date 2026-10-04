@@ -40,7 +40,7 @@
 
 | Workflow | 檔案 | 觸發條件 | 用途 |
 | --- | --- | --- | --- |
-| 主要建置 | `.github/workflows/build.yml` | PR、push `main`、`workflow_dispatch` | workflow 靜態檢查（actionlint + shellcheck）、核心檢查、網站檢查（只在 PR 動到 `website/` 時才真的跑）、17 個平台目標、7 個舊版目標（各自獨立 job 平行跑）、發布資產驗證，最後由 `CI 總結` 彙總。這是 PR 必經路徑，牆鐘約 8 分 |
+| 主要建置 | `.github/workflows/build.yml` | PR、push `main`、`workflow_dispatch` | workflow 靜態檢查（actionlint + shellcheck）、核心檢查、網站檢查（只在 PR 動到 `website/` 時才真的跑）、17 個平台目標、7 個舊版目標（各自獨立 job 平行跑）、發布資產驗證，最後由 `CI 總結` 彙總。這是 PR 必經路徑，牆鐘由最慢的 job 決定（2026-10-04 把 neoforge-1.20.1 從 7.3 分修到 2.7 分之後約 5 分） |
 | 舊版目標 | `.github/workflows/legacy-targets.yml` | 每週排程（週一 03:17 UTC）、`workflow_dispatch` | 4 個 Ornithe／舊版 Fabric bundle（1.3.1–1.15）與 2 個獨立 Forge 1.8.9／1.12.2 建置。這些要 remap／decompile 多個舊版 Minecraft，刻意不放在 PR 路徑 |
 | 準備發布資產 | `.github/workflows/prepare-release.yml` | 只有 `workflow_dispatch` | 一鍵準備 `downloads/<mod_version>`：建置 33 個目標、用標準檔名收集、產生 `SHA256SUMS.txt`、跑 `verify_release_jars.py` 驗證，再開 PR。手動觸發，不在 PR 路徑上（一次約 10 分鐘牆鐘時間） |
 | 發布下載資產 | `.github/workflows/publish-release.yml` | push `main`（限特定路徑）、`workflow_dispatch` | 驗證 `downloads/<version>` 並建立或更新 GitHub Release |
@@ -193,6 +193,16 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   上限是 10 GB，讓每個 PR 各寫一份快取會把 `main` 的快取擠掉（LRU），反而讓每次合併後的建置變慢。
   單一 PR 內重複推送所省下的時間不值得這個代價。若確定要開，就在 `setup-gradle` 加
   `cache-read-only: false`，並先確認快取用量沒有逼近上限。
+- `cache-provider: basic` 的 key 是 `setup-java-{RUNNER_OS}-{arch}-gradle-{hash}`（官方文件明載），
+  **不含 job 名稱**，而且 basic 不支援 restore keys 與覆寫。所以 30 個 job 搶同一把 key，第一個存
+  進去的就決定內容（實際上是「核心檢查」的 134 MB），其他 job 永遠存不進去。受害最重的是
+  ForgeGradle 的 Minecraft Mavenizer：它在**配置階段**就跑，`forge-1.21.11` 的 Gradle 建置
+  4m44s 裡有 **3m57s** 是它，而它的快取 `~/.gradle/caches/minecraftforge` 因為上述原因一直是冷的。
+  因此 `gradle-build` composite action 另外用 `actions/cache` 以**每目標一把 key** 快取
+  `~/.gradle/caches/minecraftforge` 與 `**/.gradle/mavenizer`（`cache-key` 輸入含 `forge` 才啟用）。
+  那把 key 刻意**不**雜湊 Gradle 檔案的內容：`gradle.properties` 裡有 `mod_version`，雜湊進去會讓
+  每次發版都把所有 Mavenizer 快取清掉。不要為了省事把 `cache-provider` 改成 enhanced——那是 Gradle
+  的商業服務，本專案刻意維持開源實作。
 - 不要降低既有檢查強度：`check`、`verifyBundle`、`verifyLoaderSelection`、`verifyPreparedReleaseAssets`
   與 `scripts/verify_release_jars.py` 的驗證都必須保留。
 - 新增或調整平台目標時，必須同步四處：`settings.gradle` 的 `platformProjects`、對應 workflow 的 matrix
@@ -201,6 +211,11 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   `legacy-targets.yml`。PR 的牆鐘時間由最慢的 job 決定——曾經有一個 job 序列跑 7 個舊版目標，
   讓整體變成 15.9 分；拆成各自獨立的 matrix job 平行跑之後瓶頸才回到單一目標。
   同類目標一律拆成獨立 job，不要串在同一條 Gradle 指令裡。
+- `platformDependencies` 只在「那個專案真的必須被評估」時才列。`platform-neoforge-1.20.1` 曾經為了
+  取用 `platform-forge-1.20.1` 的原始碼而被列進去，結果 ForgeGradle 的 Mavenizer 連帶在配置階段
+  跑了 3 分半，讓它成為 PR 裡最慢的 job（7.33 分）；改成
+  `rootProject.file("platforms/forge/modern/1.20.1/src/main/java")` 這種路徑引用之後降到 2.7 分。
+  共用原始碼要用路徑，不要用 `project(":...")`——後者會把整個專案拉進配置階段。
 - 新增 job 時，必須把它加進 `ci-status` 的 `needs`（`build.yml`），否則它不會被彙總、分支保護也擋不住失敗。
 - `website/` 由 `website` job 檢查（`pnpm install --frozen-lockfile`、`pnpm run lint`、`pnpm test`）：
   它用 `git diff` 判斷這個 PR 有沒有動到 `website/`，沒動就整條略過，所以一般 PR 幾乎零成本，

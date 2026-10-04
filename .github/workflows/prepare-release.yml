@@ -173,6 +173,7 @@ jobs:
         with:
           args: ${{ matrix.standalone && '--no-daemon build' || format('--no-daemon --max-workers=2 -PtargetPlatform={0} :{1}:build', matrix.platform, matrix.project) }}
           working-directory: ${{ matrix.standalone && matrix.jar_dir || '.' }}
+          cache-key: ${{ matrix.target }}
 
       - name: 用標準檔名收集
         env:

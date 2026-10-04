@@ -166,6 +166,7 @@ jobs:
         with:
           args: --no-daemon build
           working-directory: ${{ matrix.dir }}
+          cache-key: ${{ matrix.target }}
 
       - name: 上傳舊版 Forge JAR
         if: >-

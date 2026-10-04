@@ -216,6 +216,7 @@ jobs:
         uses: ./.github/actions/gradle-build
         with:
           args: --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
+          cache-key: ${{ matrix.target }}
 
       - name: 上傳平台 JAR
         if: >-
@@ -306,6 +307,7 @@ jobs:
         uses: ./.github/actions/gradle-build
         with:
           args: --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
+          cache-key: ${{ matrix.target }}
 
       - name: 上傳舊版 JAR
         if: >-

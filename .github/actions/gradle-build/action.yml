@@ -15,10 +15,39 @@ inputs:
     description: 最多嘗試次數。
     required: false
     default: "3"
+  cache-key:
+    description: >-
+      這個建置的快取識別，通常傳目標名稱。只有名稱含 forge 的目標會真的用到：ForgeGradle 的
+      Minecraft Mavenizer 在**配置階段**就要跑 3～4 分鐘（2026-10-04 實測 forge-1.21.11 的
+      Gradle 建置 4m44s 裡有 3m57s 是它），而 setup-gradle 的 basic 快取模式所有 job 共用同一把
+      key（官方文件：`setup-java-{RUNNER_OS}-{arch}-gradle-{hash}`，不含 job 名稱，且不支援
+      restore keys 與覆寫），所以第一個存進去的 job 就決定了內容，Mavenizer 的快取永遠是冷的。
+      這裡改用每目標一把 key 的 actions/cache 補上。留空則完全略過。
+    required: false
+    default: ""
 
 runs:
   using: composite
   steps:
+    - name: 快取 ForgeGradle Mavenizer
+      if: contains(inputs.cache-key, 'forge')
+      uses: actions/cache@v6
+      with:
+        # Mavenizer 的快取目錄在 Gradle User Home 裡；它的輸出（轉換後的 Maven repo）
+        # 則在工作區的 .gradle/mavenizer。舊版 Forge 是獨立 Gradle 建置，輸出會在它自己的
+        # 工作目錄下，所以用 ** 比對。
+        path: |
+          ~/.gradle/caches/minecraftforge
+          **/.gradle/mavenizer
+        # key 刻意不雜湊 Gradle 檔案的內容：gradle.properties 裡有 mod_version，每次發布都會變，
+        # 雜湊進去的話每次發版都會讓所有 Mavenizer 快取失效。Mavenizer 的快取本身是以 Minecraft
+        # 版本為單位、內容有校驗，留著舊版本只會多佔一點空間，不會用錯。
+        # restore-keys 只認 OS 是刻意的：新目標可以沿用別的目標已經抓好的 ForgeGradle 工具
+        # （installertools／mergetool／ForgeAutoRenamingTool／forgeflower）。
+        key: mavenizer-${{ runner.os }}-${{ inputs.cache-key }}
+        restore-keys: |
+          mavenizer-${{ runner.os }}-
+
     - name: 執行 Gradle
       shell: bash
       working-directory: ${{ inputs.working-directory }}
