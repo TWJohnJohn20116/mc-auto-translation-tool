@@ -1,4 +1,4 @@
-name: Publish release downloads
+name: 發布下載資產
 
 on:
   push:
@@ -22,24 +22,24 @@ concurrency:
 
 jobs:
   publish:
-    name: Publish GitHub Release
-    runs-on: ubuntu-latest
+    name: 發布 GitHub Release
+    runs-on: ubuntu-24.04
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - name: 取出原始碼
+        uses: actions/checkout@v7
 
-      - name: Set up Java 21
-        uses: actions/setup-java@v4
+      - name: 設定 Java 21
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "21"
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: 設定 Python
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
-      - name: Read and validate release version
+      - name: 讀取並驗證發布版本
         id: version
         shell: bash
         run: |
@@ -119,12 +119,14 @@ jobs:
           if [[ "$version" == *-* ]]; then
             prerelease=true
           fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=v$version" >> "$GITHUB_OUTPUT"
-          echo "release_dir=$release_dir" >> "$GITHUB_OUTPUT"
-          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=$version"
+            echo "tag=v$version"
+            echo "release_dir=$release_dir"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Verify release JARs and checksums
+      - name: 驗證發布 JAR 與 checksum
         shell: bash
         env:
           RELEASE_DIR: ${{ steps.version.outputs.release_dir }}
@@ -136,7 +138,7 @@ jobs:
             --require-complete-checksums \
             "${jars[@]}"
 
-      - name: Prepare and verify fewer directly installable JARs
+      - name: 產生並驗證可直接安裝的 JAR
         shell: bash
         env:
           RELEASE_DIR: ${{ steps.version.outputs.release_dir }}
@@ -154,7 +156,7 @@ jobs:
             --require-complete-checksums \
             "${jars[@]}"
 
-      - name: Create or refresh GitHub Release
+      - name: 建立或更新 GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}

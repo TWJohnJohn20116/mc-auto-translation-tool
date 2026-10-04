@@ -1,4 +1,4 @@
-name: Build
+name: 主要建置
 
 on:
   pull_request:
@@ -6,6 +6,16 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      targets:
+        description: >-
+          Comma-separated platform targets to build, for example
+          "fabric-1.21.x,forge-1.21.11". Add the keywords "legacy" and/or
+          "release" for the legacy and release-asset jobs. Leave empty to run
+          every job.
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -16,34 +26,132 @@ concurrency:
 
 jobs:
   check:
-    name: Core checks
-    runs-on: ubuntu-latest
+    name: 核心檢查
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - name: 取出原始碼
+        uses: actions/checkout@v7
 
-      - name: Set up Java 21
-        uses: actions/setup-java@v4
+      - name: 設定 Java 21
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "21"
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: 設定 Python
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - name: 設定 Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          # v6 的預設快取是 Gradle 的商業服務（gradle-actions-caching），這裡明確
+          # 用回開源的 GitHub Actions 快取實作，維持原本的行為與相依性。
+          cache-provider: basic
+          # 這個 action 的摘要只有英文且無法翻譯，成功時改由下面「寫入建置摘要」
+          # 提供繁中摘要，失敗時才顯示它的英文面板方便對照 log。
+          add-job-summary: on-failure
 
-      - name: Run checks
-        run: ./gradlew --no-daemon check
+      - name: 執行檢查
+        id: checks
+        uses: ./.github/actions/gradle-build
+        with:
+          args: --no-daemon check
+
+      - name: 上傳檢查報告
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: check-reports
+          path: |
+            **/build/reports/**
+            **/build/test-results/**
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: 寫入建置摘要
+        if: always()
+        env:
+          TARGET: 核心檢查
+          OUTCOME: ${{ steps.checks.outcome }}
+          ARTIFACT: check-reports
+        run: |
+          case "${OUTCOME:-}" in
+            success) result="成功" ;;
+            failure) result="失敗" ;;
+            skipped) result="略過（本次未要求）" ;;
+            *) result="未知（${OUTCOME:-未執行}）" ;;
+          esac
+          version="$(sed -n 's|.*gradle-\([0-9][0-9.]*\)-.*|\1|p' gradle/wrapper/gradle-wrapper.properties | head -n 1 || true)"
+          {
+            echo "## 建置摘要"
+            echo
+            echo "| 項目 | 內容 |"
+            echo "| --- | --- |"
+            echo "| 目標 | ${TARGET:-未指定} |"
+            echo "| Gradle 版本 | ${version:-未知} |"
+            echo "| 結果 | ${result} |"
+            echo "| artifact | ${ARTIFACT:-無} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  lint:
+    name: 檢查 workflow
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: 取出原始碼
+        uses: actions/checkout@v7
+
+      # runner 映像已內建 shellcheck，actionlint 會自動用它檢查每個 run: 區塊。
+      # 版本與 sha256 都寫死，避免上游被竄改時執行到別的東西。
+      - name: 安裝 actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          set -euo pipefail
+          archive="/tmp/actionlint.tar.gz"
+          curl -fsSLo "$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum --check --strict
+          tar -xzf "$archive" -C /tmp actionlint
+          sudo install -m 0755 /tmp/actionlint /usr/local/bin/actionlint
+          actionlint --version
+          shellcheck --version | sed -n '2,3p'
+
+      - name: 檢查所有 workflow
+        run: actionlint -color
+
+  plan:
+    name: 解析建置目標
+    runs-on: ubuntu-24.04
+    outputs:
+      targets: ${{ steps.resolve.outputs.targets }}
+    steps:
+      - name: 解析要建置的目標
+        id: resolve
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED: ${{ github.event.inputs.targets }}
+        run: |
+          set -euo pipefail
+          # Whitespace is stripped here because GitHub expressions provide no
+          # replace()/trim(); the jobs below match comma-wrapped target names.
+          requested="$(printf '%s' "${REQUESTED:-}" | tr -d '[:space:]')"
+          if [[ "${EVENT_NAME:-}" != "workflow_dispatch" || -z "$requested" ]]; then
+            echo "targets=" >> "$GITHUB_OUTPUT"
+          else
+            echo "targets=,$requested," >> "$GITHUB_OUTPUT"
+          fi
 
   platform-build:
-    name: Build ${{ matrix.target }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    name: 建置 ${{ matrix.target }}
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -83,80 +191,283 @@ jobs:
           - target: neoforge-1.21.11
             java: "21"
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - name: 取出原始碼
+        uses: actions/checkout@v7
 
-      - name: Set up Java
-        uses: actions/setup-java@v4
+      - name: 設定 Java
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: ${{ matrix.java }}
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - name: 設定 Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          # v6 的預設快取是 Gradle 的商業服務（gradle-actions-caching），這裡明確
+          # 用回開源的 GitHub Actions 快取實作，維持原本的行為與相依性。
+          cache-provider: basic
+          # 這個 action 的摘要只有英文且無法翻譯，成功時改由下面「寫入建置摘要」
+          # 提供繁中摘要，失敗時才顯示它的英文面板方便對照 log。
+          add-job-summary: on-failure
 
-      - name: Build platform
-        run: ./gradlew --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
+      - name: 建置平台
+        id: build
+        if: needs.plan.outputs.targets == '' || contains(needs.plan.outputs.targets, format(',{0},', matrix.target))
+        uses: ./.github/actions/gradle-build
+        with:
+          args: --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
+
+      - name: 上傳平台 JAR
+        if: >-
+          success() && (needs.plan.outputs.targets == '' ||
+          contains(needs.plan.outputs.targets, format(',{0},', matrix.target)))
+        uses: actions/upload-artifact@v7
+        with:
+          name: platform-${{ matrix.target }}
+          path: platforms/**/build/libs/*.jar
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: 寫入建置摘要
+        if: always()
+        env:
+          TARGET: ${{ matrix.target }}
+          OUTCOME: ${{ steps.build.outcome }}
+          ARTIFACT: platform-${{ matrix.target }}
+        run: |
+          case "${OUTCOME:-}" in
+            success) result="成功" ;;
+            failure) result="失敗" ;;
+            skipped) result="略過（本次未要求）" ;;
+            *) result="未知（${OUTCOME:-未執行}）" ;;
+          esac
+          version="$(sed -n 's|.*gradle-\([0-9][0-9.]*\)-.*|\1|p' gradle/wrapper/gradle-wrapper.properties | head -n 1 || true)"
+          {
+            echo "## 建置摘要"
+            echo
+            echo "| 項目 | 內容 |"
+            echo "| --- | --- |"
+            echo "| 目標 | ${TARGET:-未指定} |"
+            echo "| Gradle 版本 | ${version:-未知} |"
+            echo "| 結果 | ${result} |"
+            echo "| artifact | ${ARTIFACT:-無} |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   legacy-build:
-    name: Build legacy Fabric and Forge
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    name: 建置舊版 ${{ matrix.target }}
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # One job per target. These ForgeGradle builds decompile Minecraft, so
+        # running all seven in a single Gradle invocation made every run wait
+        # for the sum of the targets instead of the slowest one.
+        include:
+          - target: fabric-1.16.5
+          - target: fabric-1.19.2
+          - target: fabric-1.20.1
+          - target: forge-1.16.5
+          - target: forge-1.18.2
+          - target: forge-1.19.2
+          - target: forge-1.20.1
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - name: 取出原始碼
+        uses: actions/checkout@v7
 
-      - name: Set up Java 21
-        uses: actions/setup-java@v4
+      - name: 設定 Java 21
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "21"
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: 設定 Python
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - name: 設定 Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          # v6 的預設快取是 Gradle 的商業服務（gradle-actions-caching），這裡明確
+          # 用回開源的 GitHub Actions 快取實作，維持原本的行為與相依性。
+          cache-provider: basic
+          # 這個 action 的摘要只有英文且無法翻譯，成功時改由下面「寫入建置摘要」
+          # 提供繁中摘要，失敗時才顯示它的英文面板方便對照 log。
+          add-job-summary: on-failure
 
-      - name: Build legacy platforms
-        run: >-
-          ./gradlew --no-daemon --max-workers=2
-          -PtargetPlatform=fabric-1.16.5,fabric-1.19.2,fabric-1.20.1,forge-1.16.5,forge-1.18.2,forge-1.19.2,forge-1.20.1
-          :platform-fabric-1.16.5:build
-          :platform-fabric-1.19.2:build
-          :platform-fabric-1.20.1:build
-          :platform-forge-1.16.5:build
-          :platform-forge-1.18.2:build
-          :platform-forge-1.19.2:build
-          :platform-forge-1.20.1:build
+      - name: 建置舊版平台
+        id: build
+        if: >-
+          needs.plan.outputs.targets == '' ||
+          contains(needs.plan.outputs.targets, format(',{0},', matrix.target)) ||
+          contains(needs.plan.outputs.targets, ',legacy,')
+        uses: ./.github/actions/gradle-build
+        with:
+          args: --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
+
+      - name: 上傳舊版 JAR
+        if: >-
+          success() && (needs.plan.outputs.targets == '' ||
+          contains(needs.plan.outputs.targets, format(',{0},', matrix.target)) ||
+          contains(needs.plan.outputs.targets, ',legacy,'))
+        uses: actions/upload-artifact@v7
+        with:
+          name: legacy-${{ matrix.target }}
+          # Forge 1.16.5-1.20.1 emit their distributable JAR to build/release;
+          # Fabric targets and the other loaders use build/libs.
+          path: |
+            platforms/**/build/libs/*.jar
+            platforms/**/build/release/*.jar
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: 寫入建置摘要
+        if: always()
+        env:
+          TARGET: ${{ matrix.target }}
+          OUTCOME: ${{ steps.build.outcome }}
+          ARTIFACT: legacy-${{ matrix.target }}
+        run: |
+          case "${OUTCOME:-}" in
+            success) result="成功" ;;
+            failure) result="失敗" ;;
+            skipped) result="略過（本次未要求）" ;;
+            *) result="未知（${OUTCOME:-未執行}）" ;;
+          esac
+          version="$(sed -n 's|.*gradle-\([0-9][0-9.]*\)-.*|\1|p' gradle/wrapper/gradle-wrapper.properties | head -n 1 || true)"
+          {
+            echo "## 建置摘要"
+            echo
+            echo "| 項目 | 內容 |"
+            echo "| --- | --- |"
+            echo "| 目標 | ${TARGET:-未指定} |"
+            echo "| Gradle 版本 | ${version:-未知} |"
+            echo "| 結果 | ${result} |"
+            echo "| artifact | ${ARTIFACT:-無} |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   release-assets:
-    name: Verify reduced release JARs
-    runs-on: ubuntu-latest
+    name: 驗證縮減後的發布 JAR
+    needs: plan
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - name: 取出原始碼
+        uses: actions/checkout@v7
 
-      - name: Set up Java 25
-        uses: actions/setup-java@v4
+      - name: 設定 Java 25
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "25"
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: 設定 Python
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - name: 設定 Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          # v6 的預設快取是 Gradle 的商業服務（gradle-actions-caching），這裡明確
+          # 用回開源的 GitHub Actions 快取實作，維持原本的行為與相依性。
+          cache-provider: basic
+          # 這個 action 的摘要只有英文且無法翻譯，成功時改由下面「寫入建置摘要」
+          # 提供繁中摘要，失敗時才顯示它的英文面板方便對照 log。
+          add-job-summary: on-failure
 
-      - name: Verify every prepared release JAR and Fabric selection
-        run: >-
-          ./gradlew --no-daemon --max-workers=2
-          -PtargetPlatform=fabric-1.21.x
-          verifyPreparedReleaseAssets
-          :platform-fabric-1.21.x:verifyPreparedReleaseBundle
+      - name: 驗證所有發布 JAR 與 Fabric 選版
+        id: build
+        if: needs.plan.outputs.targets == '' || contains(needs.plan.outputs.targets, ',release,')
+        uses: ./.github/actions/gradle-build
+        with:
+          args: >-
+            --no-daemon --max-workers=2
+            -PtargetPlatform=fabric-1.21.x
+            verifyPreparedReleaseAssets
+            :platform-fabric-1.21.x:verifyPreparedReleaseBundle
+
+      - name: 上傳縮減後的發布 JAR
+        if: >-
+          success() && (needs.plan.outputs.targets == '' ||
+          contains(needs.plan.outputs.targets, ',release,'))
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-assets
+          path: |
+            build/release-assets/*.jar
+            build/release-assets/SHA256SUMS.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: 寫入建置摘要
+        if: always()
+        env:
+          TARGET: 發布資產
+          OUTCOME: ${{ steps.build.outcome }}
+          ARTIFACT: release-assets
+        run: |
+          case "${OUTCOME:-}" in
+            success) result="成功" ;;
+            failure) result="失敗" ;;
+            skipped) result="略過（本次未要求）" ;;
+            *) result="未知（${OUTCOME:-未執行}）" ;;
+          esac
+          version="$(sed -n 's|.*gradle-\([0-9][0-9.]*\)-.*|\1|p' gradle/wrapper/gradle-wrapper.properties | head -n 1 || true)"
+          {
+            echo "## 建置摘要"
+            echo
+            echo "| 項目 | 內容 |"
+            echo "| --- | --- |"
+            echo "| 目標 | ${TARGET:-未指定} |"
+            echo "| Gradle 版本 | ${version:-未知} |"
+            echo "| 結果 | ${result} |"
+            echo "| artifact | ${ARTIFACT:-無} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Single stable check for branch protection: every other job is aggregated
+  # here, so required status checks do not have to list every matrix target.
+  ci-status:
+    name: CI 總結
+    needs:
+      - check
+      - lint
+      - plan
+      - platform-build
+      - legacy-build
+      - release-assets
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 確認每個 job 都成功或被刻意略過
+        shell: bash
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$NEEDS"
+          printf '%s' "$NEEDS" | python3 -c '
+          import json, os, sys
+          labels = {
+              "check": "核心檢查",
+              "lint": "Workflow 檢查",
+              "plan": "解析建置目標",
+              "platform-build": "平台建置",
+              "legacy-build": "舊版建置",
+              "release-assets": "發布資產",
+          }
+          results = {"success": "成功", "failure": "失敗", "skipped": "略過", "cancelled": "已取消"}
+          needs = json.load(sys.stdin)
+          lines = ["## CI 總結", "", "| Job | 結果 |", "| --- | --- |"]
+          for name, info in needs.items():
+              lines.append("| %s | %s |" % (labels.get(name, name), results.get(info["result"], info["result"])))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
+              handle.write("\n".join(lines) + "\n")
+          bad = {k: v["result"] for k, v in needs.items() if v["result"] not in ("success", "skipped")}
+          if bad:
+              print("::error::以下 job 沒有成功：" + "、".join("%s=%s" % (k, v) for k, v in bad.items()))
+              sys.exit(1)
+          print("所有 job 都成功；被略過的目標視為正常。")
+          '

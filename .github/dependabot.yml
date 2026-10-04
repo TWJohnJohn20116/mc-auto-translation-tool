@@ -1,0 +1,19 @@
+version: 2
+
+updates:
+  # workflow 內用到的 action 版本。本倉庫沒有 pip／npm 依賴，所以只設這一項。
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:40"
+      timezone: UTC
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci
+    groups:
+      # 一次開一個 PR 更新所有 action，避免五個 PR 各跑一輪 25 個 job 的建置。
+      actions:
+        patterns:
+          - "*"

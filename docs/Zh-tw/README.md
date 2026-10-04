@@ -1,5 +1,7 @@
 # MC 自動翻譯工具
 
+[![主要建置](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/actions/workflows/build.yml/badge.svg)](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/actions/workflows/build.yml)
+
 **模組權限已轉給瓜瓜，有事不要問我（小張）了**
 
 **模組原作者：https://space.bilibili.com/3546631091783712**

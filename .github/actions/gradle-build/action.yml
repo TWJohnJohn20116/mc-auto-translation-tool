@@ -1,0 +1,52 @@
+name: 帶重試的 Gradle 建置
+description: >-
+  執行 Gradle 建置。只有在失敗原因看起來是網路或依賴解析問題時才自動重試，
+  避免暫時性的 Maven 故障讓整個 run 變成假紅燈（neoforge-1.20.1 曾因此失敗過一次）。
+
+inputs:
+  args:
+    description: 傳給 Gradle 的參數與任務。
+    required: true
+  working-directory:
+    description: 執行目錄；獨立 Gradle 建置（舊版 Forge 1.8.9／1.12.2）使用。
+    required: false
+    default: .
+  attempts:
+    description: 最多嘗試次數。
+    required: false
+    default: "3"
+
+runs:
+  using: composite
+  steps:
+    - name: 執行 Gradle
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GRADLE_ARGS: ${{ inputs.args }}
+        MAX_ATTEMPTS: ${{ inputs.attempts }}
+      run: |
+        set -uo pipefail
+        read -r -a gradle_args <<< "$GRADLE_ARGS"
+        log="$(mktemp)"
+        attempt=1
+        while true; do
+          # tee 會覆寫 log，所以底下的 grep 只看得到本次嘗試的輸出。
+          ./gradlew "${gradle_args[@]}" 2>&1 | tee "$log"
+          status="${PIPESTATUS[0]}"
+          if [[ "$status" -eq 0 ]]; then
+            exit 0
+          fi
+          if [[ "$attempt" -ge "$MAX_ATTEMPTS" ]]; then
+            echo "::error::Gradle 建置連續失敗 $attempt 次，放棄"
+            exit "$status"
+          fi
+          if grep -qE 'Could not resolve|Could not GET|Could not HEAD|Connection reset|Read timed out|Temporary failure in name resolution|502 Bad Gateway|503 Service Unavailable|Received status code 5' "$log"; then
+            attempt=$((attempt + 1))
+            echo "::warning::疑似網路或依賴解析失敗，10 秒後重試（第 $attempt 次，最多 $MAX_ATTEMPTS 次）"
+            sleep 10
+            continue
+          fi
+          echo "::error::建置失敗，且原因不像網路問題，不重試"
+          exit "$status"
+        done
