@@ -160,8 +160,10 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
    要求的 `CI 總結` 能產生。只想煙霧測試時用 `-f targets=mc1.21.7-forge,mc1.13.x-fabric`：只指定
    部分目標時不會開 PR、也不會檢查數量是否為 33。
 
-   過大的 JAR 仍可用 `.jar.part-aa`、`.jar.part-ab`… 分片，workflow 會自動合併（自動流程產生的是
-   完整 JAR）；但同一顆 JAR 同時存在完整檔與分片會被視為錯誤。
+   `downloads/<version>` 會**整個重新產生**（舊檔案與舊分片都不留），而且 fabric 的 JAR 超過
+   614400 bytes（600 KiB）會切成 `.jar.part-aa`、`.jar.part-ab`…；`SHA256SUMS.txt` 記的是
+   **完整 JAR** 的雜湊，不是分片的雜湊。這段邏輯的參考實作是 `scripts/tools/_assemble_*.py`
+   （它同時是手動版的流程）。同一顆 JAR 同時存在完整檔與分片會被驗證器視為錯誤。
 3. 在 `CHANGELOG.md` 加上 `## <mod_version> - <日期>` 區段，workflow 會把它當成 release notes；
    缺少這個區段會讓發布失敗。
 4. 推送到 `origin/main`。workflow 只在這些路徑變動時觸發：`downloads/**`、`gradle.properties`、

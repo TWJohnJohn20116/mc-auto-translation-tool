@@ -249,6 +249,8 @@ jobs:
         run: |
           set -euo pipefail
           target_dir="downloads/$VERSION"
+          # 整個目錄重新產生，避免舊版本殘留的檔案或分片（沿用 scripts/tools/_assemble_*.py）。
+          rm -rf "$target_dir"
           mkdir -p "$target_dir"
           find dist -type f -name '*.jar' -exec cp {} "$target_dir/" \;
           count="$(find "$target_dir" -maxdepth 1 -type f -name '*.jar' | wc -l)"
@@ -257,8 +259,27 @@ jobs:
             echo "沒有收集到任何 JAR" >&2
             exit 1
           fi
-          ( cd "$target_dir" && sha256sum -- *.jar > SHA256SUMS.txt )
-          ls -l "$target_dir"
+          # checksum 記的是「完整 JAR」的雜湊，而 fabric 的 JAR 超過 600 KiB 要切成
+          # .part-aa／.part-ab…（沿用專案既有慣例，見 scripts/tools/_assemble_*.py），
+          # 所以先算雜湊再切。分片之後就沒有完整檔了。
+          python3 - "$target_dir" <<'PY'
+          import hashlib, pathlib, sys
+          part_size = 614400
+          target = pathlib.Path(sys.argv[1])
+          lines = []
+          for jar in sorted(target.glob("*.jar")):
+              data = jar.read_bytes()
+              lines.append(f"{hashlib.sha256(data).hexdigest()}  {jar.name}")
+              if jar.name.endswith("-fabric.jar") and len(data) > part_size:
+                  for index in range(0, len(data), part_size):
+                      part = index // part_size
+                      suffix = chr(ord("a") + part // 26) + chr(ord("a") + part % 26)
+                      (jar.parent / f"{jar.name}.part-{suffix}").write_bytes(data[index:index + part_size])
+                  jar.unlink()
+          (target / "SHA256SUMS.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+          print(f"寫入 {len(lines)} 顆邏輯 JAR 的 checksum")
+          PY
+          ls -l "$target_dir" | head -40
 
       - name: 用專案的驗證器檢查
         env:
@@ -266,7 +287,14 @@ jobs:
         run: |
           set -euo pipefail
           target_dir="downloads/$VERSION"
-          mapfile -t jars < <(find "$target_dir" -maxdepth 1 -type f -name '*.jar' | sort)
+          # 被分片的 JAR 要用邏輯名稱餵給驗證器，它自己會把分片接回來（同 build.gradle 的作法）。
+          mapfile -t jars < <(
+            {
+              find "$target_dir" -maxdepth 1 -type f -name '*.jar'
+              find "$target_dir" -maxdepth 1 -type f -name '*.jar.part-aa' | sed 's/\.part-aa$//'
+            } | sort
+          )
+          echo "驗證 ${#jars[@]} 顆邏輯 JAR"
           python3 scripts/verify_release_jars.py \
             --checksum-file "$target_dir/SHA256SUMS.txt" \
             --require-complete-checksums \
@@ -278,7 +306,13 @@ jobs:
           VERSION: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
-          count="$(find "downloads/$VERSION" -maxdepth 1 -type f -name '*.jar' | wc -l)"
+          target_dir="downloads/$VERSION"
+          count="$(
+            {
+              find "$target_dir" -maxdepth 1 -type f -name '*.jar'
+              find "$target_dir" -maxdepth 1 -type f -name '*.jar.part-aa'
+            } | wc -l
+          )"
           if [[ "$count" -ne 33 ]]; then
             echo "發布目錄必須剛好有 33 顆目標 JAR，實際 $count 顆" >&2
             exit 1
