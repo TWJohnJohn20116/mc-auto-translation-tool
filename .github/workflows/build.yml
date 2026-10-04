@@ -61,14 +61,34 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  plan:
+    name: Plan requested targets
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.resolve.outputs.targets }}
+    steps:
+      - name: Resolve requested targets
+        id: resolve
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED: ${{ github.event.inputs.targets }}
+        run: |
+          set -euo pipefail
+          # Whitespace is stripped here because GitHub expressions provide no
+          # replace()/trim(); the jobs below match comma-wrapped target names.
+          requested="$(printf '%s' "${REQUESTED:-}" | tr -d '[:space:]')"
+          if [[ "${EVENT_NAME:-}" != "workflow_dispatch" || -z "$requested" ]]; then
+            echo "targets=" >> "$GITHUB_OUTPUT"
+          else
+            echo "targets=,$requested," >> "$GITHUB_OUTPUT"
+          fi
+
   platform-build:
     name: Build ${{ matrix.target }}
+    needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      # Empty for pull_request, for push, and for a full workflow_dispatch.
-      # Otherwise a comma-wrapped target list such as ",fabric-1.21.x,".
-      REQUESTED_TARGETS: "${{ github.event_name == 'workflow_dispatch' && github.event.inputs.targets != '' && format(',{0},', replace(github.event.inputs.targets, ' ', '')) || '' }}"
     strategy:
       fail-fast: false
       matrix:
@@ -121,13 +141,13 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build platform
-        if: env.REQUESTED_TARGETS == '' || contains(env.REQUESTED_TARGETS, format(',{0},', matrix.target))
+        if: needs.plan.outputs.targets == '' || contains(needs.plan.outputs.targets, format(',{0},', matrix.target))
         run: ./gradlew --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
 
       - name: Upload platform JARs
         if: >-
-          success() && (env.REQUESTED_TARGETS == '' ||
-          contains(env.REQUESTED_TARGETS, format(',{0},', matrix.target)))
+          success() && (needs.plan.outputs.targets == '' ||
+          contains(needs.plan.outputs.targets, format(',{0},', matrix.target)))
         uses: actions/upload-artifact@v4
         with:
           name: platform-${{ matrix.target }}
@@ -137,10 +157,9 @@ jobs:
 
   legacy-build:
     name: Build legacy Fabric and Forge
+    needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      REQUESTED_TARGETS: "${{ github.event_name == 'workflow_dispatch' && github.event.inputs.targets != '' && format(',{0},', replace(github.event.inputs.targets, ' ', '')) || '' }}"
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -160,7 +179,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build legacy platforms
-        if: env.REQUESTED_TARGETS == '' || contains(env.REQUESTED_TARGETS, ',legacy,')
+        if: needs.plan.outputs.targets == '' || contains(needs.plan.outputs.targets, ',legacy,')
         run: >-
           ./gradlew --no-daemon --max-workers=2
           -PtargetPlatform=fabric-1.16.5,fabric-1.19.2,fabric-1.20.1,forge-1.16.5,forge-1.18.2,forge-1.19.2,forge-1.20.1
@@ -174,8 +193,8 @@ jobs:
 
       - name: Upload legacy JARs
         if: >-
-          success() && (env.REQUESTED_TARGETS == '' ||
-          contains(env.REQUESTED_TARGETS, ',legacy,'))
+          success() && (needs.plan.outputs.targets == '' ||
+          contains(needs.plan.outputs.targets, ',legacy,'))
         uses: actions/upload-artifact@v4
         with:
           name: legacy-platforms
@@ -185,10 +204,9 @@ jobs:
 
   release-assets:
     name: Verify reduced release JARs
+    needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      REQUESTED_TARGETS: "${{ github.event_name == 'workflow_dispatch' && github.event.inputs.targets != '' && format(',{0},', replace(github.event.inputs.targets, ' ', '')) || '' }}"
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -208,7 +226,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Verify every prepared release JAR and Fabric selection
-        if: env.REQUESTED_TARGETS == '' || contains(env.REQUESTED_TARGETS, ',release,')
+        if: needs.plan.outputs.targets == '' || contains(needs.plan.outputs.targets, ',release,')
         run: >-
           ./gradlew --no-daemon --max-workers=2
           -PtargetPlatform=fabric-1.21.x
@@ -217,8 +235,8 @@ jobs:
 
       - name: Upload reduced release JARs
         if: >-
-          success() && (env.REQUESTED_TARGETS == '' ||
-          contains(env.REQUESTED_TARGETS, ',release,'))
+          success() && (needs.plan.outputs.targets == '' ||
+          contains(needs.plan.outputs.targets, ',release,'))
         uses: actions/upload-artifact@v4
         with:
           name: release-assets
