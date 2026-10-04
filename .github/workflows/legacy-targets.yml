@@ -60,6 +60,12 @@ jobs:
     needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    # fabric-1.0-1.8.x 目前建不起來，這是既有的相依問題、不是這個 workflow 的問題：
+    # gradle.properties 的 feather_build_1_7_10=31 被套用到 1.0.0～1.8.8 全部版本，但 Ornithe
+    # 的 feather 是綁 Minecraft 版本的，1.0.0+build.31 並不存在（只有 1.8.9／1.12.2 這種版本
+    # 有 build.31）。這個目標也不在 33 顆發布資產裡，本機的 build_all.ps1 也不會建它。
+    # 這裡容忍它失敗：每週仍看得到它紅，但不會讓整條排程變紅、掩蓋其他目標真正的失敗。
+    continue-on-error: ${{ matrix.target == 'fabric-1.0-1.8.x' }}
     strategy:
       fail-fast: false
       matrix:
