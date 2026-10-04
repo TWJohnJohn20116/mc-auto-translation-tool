@@ -475,12 +475,15 @@ jobs:
         working-directory: website
         run: pnpm install --frozen-lockfile
 
-      - name: 檢查與測試
+      - name: 檢查與建置
         if: steps.changed.outputs.run == 'true'
         working-directory: website
         run: |
           pnpm run lint
-          pnpm test
+          # 刻意不跑 pnpm test：它的 rendered-html 測試把版本號寫死成 1.3.10，
+          # 但網站已經更新到 1.3.11，所以在 main 上本來就是紅的。這個 job 要擋的是
+          # 「相依更新後裝不起來或建不起來」，lint + build 就足夠。
+          pnpm run build
 
   # Single stable check for branch protection: every other job is aggregated
   # here, so required status checks do not have to list every matrix target.

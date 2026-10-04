@@ -26,6 +26,12 @@ runs:
         GRADLE_ARGS: ${{ inputs.args }}
         MAX_ATTEMPTS: ${{ inputs.attempts }}
       run: |
+        # GitHub 是用 `bash -e` 執行 run:（log 裡的 shell 就是 /usr/bin/bash -e），
+        # errexit 預設是開的。那會讓失敗的 `./gradlew | tee` 直接結束整個 script
+        # （pipefail 把 gradle 的狀態傳出來），底下的重試邏輯永遠跑不到——這個 bug
+        # 讓這個 action 上線後其實一次都沒重試過。這裡明確關掉 errexit，改用自己的
+        # 狀態判斷。要驗證時必須用 `bash -e script.sh` 模擬 runner，否則測不出來。
+        set +e
         set -uo pipefail
         read -r -a gradle_args <<< "$GRADLE_ARGS"
         log="$(mktemp)"
