@@ -26,16 +26,16 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: 取出原始碼
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: 設定 Java 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "21"
 
       - name: 設定 Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -119,10 +119,12 @@ jobs:
           if [[ "$version" == *-* ]]; then
             prerelease=true
           fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=v$version" >> "$GITHUB_OUTPUT"
-          echo "release_dir=$release_dir" >> "$GITHUB_OUTPUT"
-          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=$version"
+            echo "tag=v$version"
+            echo "release_dir=$release_dir"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
 
       - name: 驗證發布 JAR 與 checksum
         shell: bash
