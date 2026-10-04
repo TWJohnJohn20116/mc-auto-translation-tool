@@ -97,6 +97,21 @@ git -c 'credential.helper=' -c 'credential.helper=!gh auth git-credential' push 
    `conclusion` 不能是 `skipped`。分支保護要求的檢查是單一的 **`CI 總結`**（彙總 job）：只有全部
    job 都 `success` 或刻意 `skipped` 才會通過。
 
+### 分支保護（`main`）
+
+`main` 已設定分支保護，唯一必要的檢查是 **`CI 總結`**（彙總 job）。目前設定：
+
+- 不要求 review（單人維護，無法核准自己的 PR）、不要求分支先與 `main` 同步（`strict: false`）。
+- `enforce_admins: false`：倉庫擁有者仍可直接推送 `main` 做緊急修正，但其他人的 PR 會被擋下。
+- 禁止 force push、禁止刪除 `main`。
+
+要調整時用
+`gh api -X PUT repos/<owner>/<repo>/branches/main/protection --input <json 檔>`。在 Windows PowerShell
+5.1 產生那個 JSON 檔必須用
+`[System.IO.File]::WriteAllText($path, $body, [System.Text.UTF8Encoding]::new($false))`：`Set-Content -Encoding utf8`
+會寫入 BOM，GitHub 會回 `400 Problems parsing JSON`。檢查名稱含中文時尤其要用這個寫法，
+避免命令列參數被主控台編碼轉壞。
+
 ### `workflow_dispatch` 的 `targets` 輸入
 
 `主要建置` 與 `舊版目標` 兩個 workflow 都接受 `targets`：
