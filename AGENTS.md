@@ -199,12 +199,12 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   讓整體變成 15.9 分；拆成各自獨立的 matrix job 平行跑之後瓶頸才回到單一目標。
   同類目標一律拆成獨立 job，不要串在同一條 Gradle 指令裡。
 - 新增 job 時，必須把它加進 `ci-status` 的 `needs`（`build.yml`），否則它不會被彙總、分支保護也擋不住失敗。
-- `website/` 由 `website` job 檢查（`pnpm install --frozen-lockfile`、`pnpm run lint`、`pnpm run build`）：
+- `website/` 由 `website` job 檢查（`pnpm install --frozen-lockfile`、`pnpm run lint`、`pnpm test`）：
   它用 `git diff` 判斷這個 PR 有沒有動到 `website/`，沒動就整條略過，所以一般 PR 幾乎零成本，
   而 Dependabot 的 npm 更新 PR 會被真的驗證。非 PR 觸發（push `main`、手動）一律執行。
-  刻意**不跑** `pnpm test`：`website/tests/rendered-html.test.mjs` 把版本號寫死成 1.3.10
-  （標題、17 個下載連結、JAR 檔名），網站早已更新到 1.3.11，所以它在 `main` 上本來就是紅的。
-  要恢復跑測試，得先讓那個測試不要寫死版本號（或每次發布時一起更新）。
+  `website/tests/rendered-html.test.mjs` 的版本號與標題是**從 `app/page.tsx` 原始碼取**的
+  （`releaseVersion` 與 `metadata.title`），不要改回寫死版本號——寫死的話每次發布都會讓它變紅
+  （2026-10-04 就發生過：測試還停在 1.3.10，網站已經是 1.3.11）。
 - `legacy-targets.yml` 的 `fabric-1.0-1.8.x` 帶 `continue-on-error`，這是刻意的：`gradle.properties`
   的 `feather_build_1_7_10=31` 被套用到 1.0.0～1.8.8 全部版本，但 Ornithe 的 feather 綁 Minecraft
   版本、`1.0.0+build.31` 不存在，而且這個目標不在 33 顆發布資產裡。要修的是 `gradle.properties`
