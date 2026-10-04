@@ -195,14 +195,20 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   `cache-read-only: false`，並先確認快取用量沒有逼近上限。
 - `cache-provider: basic` 的 key 是 `setup-java-{RUNNER_OS}-{arch}-gradle-{hash}`（官方文件明載），
   **不含 job 名稱**，而且 basic 不支援 restore keys 與覆寫。所以 30 個 job 搶同一把 key，第一個存
-  進去的就決定內容（實際上是「核心檢查」的 134 MB），其他 job 永遠存不進去。受害最重的是
-  ForgeGradle 的 Minecraft Mavenizer：它在**配置階段**就跑，`forge-1.21.11` 的 Gradle 建置
-  4m44s 裡有 **3m57s** 是它，而它的快取 `~/.gradle/caches/minecraftforge` 因為上述原因一直是冷的。
+  進去的就決定內容（實際上是「核心檢查」的 134 MB），各工具鏈自己的快取永遠進不去。
   因此 `gradle-build` composite action 另外用 `actions/cache` 以**每目標一把 key** 快取
-  `~/.gradle/caches/minecraftforge` 與 `**/.gradle/mavenizer`（`cache-key` 輸入含 `forge` 才啟用）。
+  `~/.gradle/caches/fabric-loom`。`fabric-1.21.x` 涵蓋 1.21～1.21.11 共 12 個版本，配置階段要
+  4.5 分鐘（每個版本約 19 秒），是 PR 裡最慢的 job（6.08 分），這個快取就是為了它。
   那把 key 刻意**不**雜湊 Gradle 檔案的內容：`gradle.properties` 裡有 `mod_version`，雜湊進去會讓
-  每次發版都把所有 Mavenizer 快取清掉。不要為了省事把 `cache-provider` 改成 enhanced——那是 Gradle
-  的商業服務，本專案刻意維持開源實作。
+  每次發版都把所有快取清掉。不要為了省事把 `cache-provider` 改成 enhanced——那是 Gradle 的商業
+  服務，本專案刻意維持開源實作。
+- ForgeGradle 的 Minecraft Mavenizer 在**配置階段**就跑，每個 Forge 目標固定花 3～4 分鐘
+  （2026-10-04 實測：forge-1.21.11 的 Gradle 建置 4m44s 裡有 3m57s、舊版 forge-1.18.2 是 4m33s 裡
+  3m40s、forge-26.2 是 3m59s 裡 3m16s）。這是**固有成本，快取救不了**：實測把
+  `~/.gradle/caches/minecraftforge` 與 `**/.gradle/mavenizer` 用每目標一把 key 快取起來之後，
+  暖快取只讓它從 3:57 變成 3:52（它每次都重跑整個轉換流程，快取只省下載），所以那個做法已經拿掉。
+  結論：PR 牆鐘的下限就是「一個 Forge 目標」；要再快只能把 Forge 目標移出 PR 路徑
+  （`legacy-targets.yml`），代價是 PR 不再驗證它們。
 - 不要降低既有檢查強度：`check`、`verifyBundle`、`verifyLoaderSelection`、`verifyPreparedReleaseAssets`
   與 `scripts/verify_release_jars.py` 的驗證都必須保留。
 - 新增或調整平台目標時，必須同步四處：`settings.gradle` 的 `platformProjects`、對應 workflow 的 matrix
