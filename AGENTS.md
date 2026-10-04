@@ -180,6 +180,14 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   （`jar_dir` 是專案目錄，JAR 會在它的 `build/release-assets`、`build/release` 或 `build/libs` 下）。
   收集時是用**版本號精確比對** `*-<version>.jar`，不要改成「目錄裡唯一的 JAR」：本機與快取目錄
   常留有舊版本的 JAR。
+- `prepare-release.yml` 用動態 matrix（`fromJSON`）：33 個目標的清單在 `plan` job 裡，只有被要求的
+  目標才會開 runner，打錯名稱會直接以 `::error::` 失敗（`build.yml` 的靜態 matrix 遇到打錯的名稱
+  只會靜默略過，所以那邊仍要用 `gh run view --json jobs` 確認）。`build.yml` 維持靜態 matrix：它是
+  PR 必經路徑、目標也少，不值得為偶爾的手動篩選去改動那條路徑。
+- **沒有**對 PR 開啟 Gradle 快取寫入（`cache-read-only: false`），這是刻意的：GitHub 每個倉庫的快取
+  上限是 10 GB，讓每個 PR 各寫一份快取會把 `main` 的快取擠掉（LRU），反而讓每次合併後的建置變慢。
+  單一 PR 內重複推送所省下的時間不值得這個代價。若確定要開，就在 `setup-gradle` 加
+  `cache-read-only: false`，並先確認快取用量沒有逼近上限。
 - 不要降低既有檢查強度：`check`、`verifyBundle`、`verifyLoaderSelection`、`verifyPreparedReleaseAssets`
   與 `scripts/verify_release_jars.py` 的驗證都必須保留。
 - 新增或調整平台目標時，必須同步四處：`settings.gradle` 的 `platformProjects`、對應 workflow 的 matrix
