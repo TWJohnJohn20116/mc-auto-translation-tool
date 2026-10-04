@@ -7,9 +7,9 @@ For complete architectural details, see [ARCHITECTURE.md](../docs/Zh-tw/ARCHITEC
 ```text
 platforms/
 ├─ fabric/
-│  ├─ 1.0-1.8/            # Ornithe Fabric (Minecraft 1.0.0 through 1.8.8, 28 versions)
+│  ├─ 1.0-1.8/            # Ornithe Fabric (Minecraft 1.3.1 through 1.8.8, 26 versions)
 │  │  ├─ versions/
-│  │  └─ bundle/          # Aggregates 1.0.0~1.8.8
+│  │  └─ bundle/          # Aggregates 1.3.1~1.8.8
 │  ├─ 1.8-1.12/           # Ornithe Fabric (Minecraft 1.8.9 through 1.12.2, 12 versions)
 │  │  ├─ versions/
 │  │  └─ bundle/          # Aggregates 1.8.9~1.12.2

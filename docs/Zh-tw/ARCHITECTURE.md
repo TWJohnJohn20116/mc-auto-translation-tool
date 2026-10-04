@@ -6,7 +6,7 @@
 
 ## 1. 核心設計理念與架構分層
 
-本專案支援 **Minecraft 1.0.0 至 26.2（跨度長達 15 年、涵蓋 60+ 個 Minecraft 版本）**，並支援 **Fabric、Forge、NeoForge** 三大載入器與 **4 種 Java Runtime（Java 8, 17, 21, 25）**。
+本專案支援 **Minecraft 1.3.1 至 26.2（跨度超過 14 年、涵蓋 50+ 個 Minecraft 版本）**，並支援 **Fabric、Forge、NeoForge** 三大載入器與 **4 種 Java Runtime（Java 8, 17, 21, 25）**。
 
 為了避免在 60+ 個版本間複製貼上重複代碼，專案採用**五層架構**：
 
@@ -23,7 +23,7 @@ flowchart TD
     end
 
     subgraph Layer3 [第 3 層：版本轉接層 Version Adapters]
-        V_FabOrnithe["Fabric 1.0 ~ 1.13.2<br/>(Ornithe Calamus / Feather / LegacyFabric)"]
+        V_FabOrnithe["Fabric 1.3.1 ~ 1.13.2<br/>(Ornithe Calamus / Feather / LegacyFabric)"]
         V_FabModern["Fabric 1.14 ~ 26.2<br/>(官方 Loom, Yarn 映射)"]
         V_ForgeLegacy["Legacy Forge 1.8.9 / 1.12.2<br/>(ForgeGradle 2, 專屬專案)"]
         V_ForgeModern["Modern Forge 1.16.5 ~ 26.2<br/>(ForgeGradle 5 / NeoDev)"]
@@ -57,7 +57,7 @@ flowchart TD
 | `translator-core/` | 翻譯核心引擎 | 全版本通用 | 無（純 Java） | **Java 8** | Gradle (java-library) |
 | `platforms/forge/legacy/1.8.9/` | 舊版 Forge | 1.8.9 | Forge | **Java 8** | Gradle 4.9 (FG 2.1) |
 | `platforms/forge/legacy/1.12.2/` | 舊版 Forge | 1.12.2 | Forge | **Java 8** | Gradle 4.9 (FG 2.3) |
-| `platforms/fabric/1.0-1.8/` | 古早 Fabric | 1.0.0 ~ 1.8.8 (28 個版本) | Ornithe Fabric | **Java 8** | Loom Ornithe |
+| `platforms/fabric/1.0-1.8/` | 古早 Fabric | 1.3.1 ~ 1.8.8 (26 個版本) | Ornithe Fabric | **Java 8** | Loom Ornithe |
 | `platforms/fabric/1.8-1.12/` | 中期 Fabric | 1.8.9 ~ 1.12.2 (12 個版本) | Ornithe Fabric | **Java 8** | Loom Ornithe |
 | `platforms/fabric/1.13/` | 扁平化轉折 | 1.13, 1.13.1, 1.13.2 | Ornithe / LegacyFabric | **Java 8** | Loom Ornithe |
 | `platforms/fabric/1.14-1.15/` | 官方早期 Loom | 1.14.0 ~ 1.15.2 (8 個版本) | Fabric Loom | **Java 8** | Fabric Loom 1.17 |

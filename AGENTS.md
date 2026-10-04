@@ -41,7 +41,7 @@
 | Workflow | 檔案 | 觸發條件 | 用途 |
 | --- | --- | --- | --- |
 | 主要建置 | `.github/workflows/build.yml` | PR、push `main`、`workflow_dispatch` | workflow 靜態檢查（actionlint + shellcheck）、核心檢查、網站檢查（只在 PR 動到 `website/` 時才真的跑）、17 個平台目標、7 個舊版目標（各自獨立 job 平行跑）、發布資產驗證，最後由 `CI 總結` 彙總。這是 PR 必經路徑，牆鐘約 8 分 |
-| 舊版目標 | `.github/workflows/legacy-targets.yml` | 每週排程（週一 03:17 UTC）、`workflow_dispatch` | 4 個 Ornithe／舊版 Fabric bundle（1.0–1.15）與 2 個獨立 Forge 1.8.9／1.12.2 建置。這些要 remap／decompile 多個舊版 Minecraft，刻意不放在 PR 路徑 |
+| 舊版目標 | `.github/workflows/legacy-targets.yml` | 每週排程（週一 03:17 UTC）、`workflow_dispatch` | 4 個 Ornithe／舊版 Fabric bundle（1.3.1–1.15）與 2 個獨立 Forge 1.8.9／1.12.2 建置。這些要 remap／decompile 多個舊版 Minecraft，刻意不放在 PR 路徑 |
 | 準備發布資產 | `.github/workflows/prepare-release.yml` | 只有 `workflow_dispatch` | 一鍵準備 `downloads/<mod_version>`：建置 33 個目標、用標準檔名收集、產生 `SHA256SUMS.txt`、跑 `verify_release_jars.py` 驗證，再開 PR。手動觸發，不在 PR 路徑上（一次約 10 分鐘牆鐘時間） |
 | 發布下載資產 | `.github/workflows/publish-release.yml` | push `main`（限特定路徑）、`workflow_dispatch` | 驗證 `downloads/<version>` 並建立或更新 GitHub Release |
 
@@ -93,7 +93,7 @@ git -c 'credential.helper=' -c 'credential.helper=!gh auth git-credential' push 
    - 平台目標 → artifact 名稱 `platform-<target>`（內容 `platforms/**/build/libs/*.jar`）
    - 舊版目標 1.16.5–1.20.1 → artifact 名稱 `legacy-<target>`（同時涵蓋 Fabric 的 `build/libs` 與
      Forge 的 `build/release`）
-   - 舊版 Fabric bundle 1.0–1.15 → artifact 名稱 `legacy-fabric-<target>`
+   - 舊版 Fabric bundle 1.3.1–1.15 → artifact 名稱 `legacy-fabric-<target>`
    - 獨立 Forge 1.8.9／1.12.2 → artifact 名稱 `forge-legacy-1.8.9`、`forge-legacy-1.12.2`
    - 可直接安裝的正式版 JAR → artifact 名稱 `release-assets`（`build/release-assets/*.jar` 與 `SHA256SUMS.txt`）
 
@@ -208,10 +208,19 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   `website/tests/rendered-html.test.mjs` 的版本號與標題是**從 `app/page.tsx` 原始碼取**的
   （`releaseVersion` 與 `metadata.title`），不要改回寫死版本號——寫死的話每次發布都會讓它變紅
   （2026-10-04 就發生過：測試還停在 1.3.10，網站已經是 1.3.11）。
-- `legacy-targets.yml` 的 `fabric-1.0-1.8.x` 帶 `continue-on-error`，這是刻意的：`gradle.properties`
-  的 `feather_build_1_7_10=31` 被套用到 1.0.0～1.8.8 全部版本，但 Ornithe 的 feather 綁 Minecraft
-  版本、`1.0.0+build.31` 不存在，而且這個目標不在 33 顆發布資產裡。要修的是 `gradle.properties`
-  的版本對應，不是拿掉那行（拿掉會讓每週排程永遠紅燈，掩蓋其他目標真正的失敗）。
+- `fabric-1.0-1.8.x` 這個 bundle 覆蓋 **1.3.1～1.8.8 當中的 26 個版本**，排除 12 個上游 mappings
+  有問題的版本：1.0.0～1.2.5 上游只發佈帶側別後綴的 feather（`1.0.0-client+build.3`），而
+  `ploceus.featherMappings` 只會組出一般命名（`1.0.0+build.31`）；1.6.2／1.7.3／1.7.5／1.7.7 雖然
+  有部分 build 的成品，但 ploceus 的 version manifest 對不上（`unable to read version details`，
+  來自 `manifest/VersionDetails.java` 的解析）。目錄仍在 `platforms/fabric/1.0-1.8/versions/`，
+  要恢復就把版本加回 `settings.gradle` 的 `platformProjects`、`platformDependencies` 與 bundle 的
+  `supportedVersions` 這三處。這個 bundle 不在 33 顆發布資產裡，所以它紅燈時對使用者沒有影響，
+  但排程紅燈會掩蓋其他目標真正的失敗。
+- 判斷「某個版本的 mappings 能不能用」**不能只看 artifact 有沒有回 200**：`1.6.2+build.5` 的 `.pom`
+  與 `.jar` 都存在，ploceus 仍然建不起來。反過來說，**`maven-metadata.xml` 是過期不完整的**
+  （它沒有列出 `1.3.1+build.31`，但那個檔案確實存在），用它判斷會得到完全錯誤的結論
+  （2026-10-04 就因此誤判成「整個平台都建不起來」，實際上只有 12 個版本有問題）。
+  唯一可靠的判斷方式是實際跑 CI。
 - 顯示名稱一律用繁體中文（workflow 名稱、job 名稱、step 名稱），但 **artifact 名稱維持 ASCII**
   （`platform-<target>`、`release-assets` 等），因為 `gh run download -n` 與腳本會用到。
 - 建置一律透過 `./.github/actions/gradle-build` 這個 composite action 執行，不要直接寫 `./gradlew`：
