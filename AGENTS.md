@@ -156,6 +156,14 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   讓整體變成 15.9 分；拆成各自獨立的 matrix job 平行跑之後瓶頸才回到單一目標。
   同類目標一律拆成獨立 job，不要串在同一條 Gradle 指令裡。
 - 新增 job 時，必須把它加進 `ci-status` 的 `needs`（`build.yml`），否則它不會被彙總、分支保護也擋不住失敗。
+- 顯示名稱一律用繁體中文（workflow 名稱、job 名稱、step 名稱），但 **artifact 名稱維持 ASCII**
+  （`platform-<target>`、`release-assets` 等），因為 `gh run download -n` 與腳本會用到。
+- Job summary 有兩層：`gradle/actions/setup-gradle` 的英文摘要設為 `add-job-summary: on-failure`
+  （它沒有語系參數，無法翻譯，只能在失敗時顯示）；成功時的繁中摘要由每個建置 job 最後的
+  「寫入建置摘要」步驟用 `$GITHUB_STEP_SUMMARY` 產生，`ci-status` 另外寫一張彙總表。
+  該步驟必須是 `if: always()`，且不得讓 job 因此變紅（取值一律加 `|| true`，缺值時顯示「未知」）。
+  那段 bash 在每個建置 job 各有一份（GitHub 運算式不支援共用、YAML 錨點在此不建議使用），
+  修改時要一起改。
 - runner 固定為 `ubuntu-24.04`，不要改回 `ubuntu-latest`：`ubuntu-latest` 將於 2026-10-19 遷移到
   Ubuntu 26，會讓 23 個建置目標同時面對環境突變。要升級時應一次性改版號並用 CI 驗證。
 - 不要為了讓 CI 變綠而刪除測試或放寬驗證；要修的是程式碼。

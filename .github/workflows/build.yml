@@ -46,8 +46,13 @@ jobs:
 
       - name: 設定 Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          # 這個 action 的摘要只有英文且無法翻譯，成功時改由下面「寫入建置摘要」
+          # 提供繁中摘要，失敗時才顯示它的英文面板方便對照 log。
+          add-job-summary: on-failure
 
       - name: 執行檢查
+        id: checks
         run: ./gradlew --no-daemon check
 
       - name: 上傳檢查報告
@@ -60,6 +65,31 @@ jobs:
             **/build/test-results/**
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: 寫入建置摘要
+        if: always()
+        env:
+          TARGET: 核心檢查
+          OUTCOME: ${{ steps.checks.outcome }}
+          ARTIFACT: check-reports
+        run: |
+          case "${OUTCOME:-}" in
+            success) result="成功" ;;
+            failure) result="失敗" ;;
+            skipped) result="略過（本次未要求）" ;;
+            *) result="未知（${OUTCOME:-未執行}）" ;;
+          esac
+          version="$(sed -n 's|.*gradle-\([0-9][0-9.]*\)-.*|\1|p' gradle/wrapper/gradle-wrapper.properties | head -n 1 || true)"
+          {
+            echo "## 建置摘要"
+            echo
+            echo "| 項目 | 內容 |"
+            echo "| --- | --- |"
+            echo "| 目標 | ${TARGET:-未指定} |"
+            echo "| Gradle 版本 | ${version:-未知} |"
+            echo "| 結果 | ${result} |"
+            echo "| artifact | ${ARTIFACT:-無} |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   plan:
     name: 解析建置目標
@@ -139,8 +169,13 @@ jobs:
 
       - name: 設定 Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          # 這個 action 的摘要只有英文且無法翻譯，成功時改由下面「寫入建置摘要」
+          # 提供繁中摘要，失敗時才顯示它的英文面板方便對照 log。
+          add-job-summary: on-failure
 
       - name: 建置平台
+        id: build
         if: needs.plan.outputs.targets == '' || contains(needs.plan.outputs.targets, format(',{0},', matrix.target))
         run: ./gradlew --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
 
@@ -154,6 +189,31 @@ jobs:
           path: platforms/**/build/libs/*.jar
           if-no-files-found: warn
           retention-days: 14
+
+      - name: 寫入建置摘要
+        if: always()
+        env:
+          TARGET: ${{ matrix.target }}
+          OUTCOME: ${{ steps.build.outcome }}
+          ARTIFACT: platform-${{ matrix.target }}
+        run: |
+          case "${OUTCOME:-}" in
+            success) result="成功" ;;
+            failure) result="失敗" ;;
+            skipped) result="略過（本次未要求）" ;;
+            *) result="未知（${OUTCOME:-未執行}）" ;;
+          esac
+          version="$(sed -n 's|.*gradle-\([0-9][0-9.]*\)-.*|\1|p' gradle/wrapper/gradle-wrapper.properties | head -n 1 || true)"
+          {
+            echo "## 建置摘要"
+            echo
+            echo "| 項目 | 內容 |"
+            echo "| --- | --- |"
+            echo "| 目標 | ${TARGET:-未指定} |"
+            echo "| Gradle 版本 | ${version:-未知} |"
+            echo "| 結果 | ${result} |"
+            echo "| artifact | ${ARTIFACT:-無} |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   legacy-build:
     name: 建置舊版 ${{ matrix.target }}
@@ -191,8 +251,13 @@ jobs:
 
       - name: 設定 Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          # 這個 action 的摘要只有英文且無法翻譯，成功時改由下面「寫入建置摘要」
+          # 提供繁中摘要，失敗時才顯示它的英文面板方便對照 log。
+          add-job-summary: on-failure
 
       - name: 建置舊版平台
+        id: build
         if: >-
           needs.plan.outputs.targets == '' ||
           contains(needs.plan.outputs.targets, format(',{0},', matrix.target)) ||
@@ -214,6 +279,31 @@ jobs:
             platforms/**/build/release/*.jar
           if-no-files-found: warn
           retention-days: 14
+
+      - name: 寫入建置摘要
+        if: always()
+        env:
+          TARGET: ${{ matrix.target }}
+          OUTCOME: ${{ steps.build.outcome }}
+          ARTIFACT: legacy-${{ matrix.target }}
+        run: |
+          case "${OUTCOME:-}" in
+            success) result="成功" ;;
+            failure) result="失敗" ;;
+            skipped) result="略過（本次未要求）" ;;
+            *) result="未知（${OUTCOME:-未執行}）" ;;
+          esac
+          version="$(sed -n 's|.*gradle-\([0-9][0-9.]*\)-.*|\1|p' gradle/wrapper/gradle-wrapper.properties | head -n 1 || true)"
+          {
+            echo "## 建置摘要"
+            echo
+            echo "| 項目 | 內容 |"
+            echo "| --- | --- |"
+            echo "| 目標 | ${TARGET:-未指定} |"
+            echo "| Gradle 版本 | ${version:-未知} |"
+            echo "| 結果 | ${result} |"
+            echo "| artifact | ${ARTIFACT:-無} |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   release-assets:
     name: 驗證縮減後的發布 JAR
@@ -237,8 +327,13 @@ jobs:
 
       - name: 設定 Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          # 這個 action 的摘要只有英文且無法翻譯，成功時改由下面「寫入建置摘要」
+          # 提供繁中摘要，失敗時才顯示它的英文面板方便對照 log。
+          add-job-summary: on-failure
 
       - name: 驗證所有發布 JAR 與 Fabric 選版
+        id: build
         if: needs.plan.outputs.targets == '' || contains(needs.plan.outputs.targets, ',release,')
         run: >-
           ./gradlew --no-daemon --max-workers=2
@@ -258,6 +353,31 @@ jobs:
             build/release-assets/SHA256SUMS.txt
           if-no-files-found: warn
           retention-days: 30
+
+      - name: 寫入建置摘要
+        if: always()
+        env:
+          TARGET: 發布資產
+          OUTCOME: ${{ steps.build.outcome }}
+          ARTIFACT: release-assets
+        run: |
+          case "${OUTCOME:-}" in
+            success) result="成功" ;;
+            failure) result="失敗" ;;
+            skipped) result="略過（本次未要求）" ;;
+            *) result="未知（${OUTCOME:-未執行}）" ;;
+          esac
+          version="$(sed -n 's|.*gradle-\([0-9][0-9.]*\)-.*|\1|p' gradle/wrapper/gradle-wrapper.properties | head -n 1 || true)"
+          {
+            echo "## 建置摘要"
+            echo
+            echo "| 項目 | 內容 |"
+            echo "| --- | --- |"
+            echo "| 目標 | ${TARGET:-未指定} |"
+            echo "| Gradle 版本 | ${version:-未知} |"
+            echo "| 結果 | ${result} |"
+            echo "| artifact | ${ARTIFACT:-無} |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # Single stable check for branch protection: every other job is aggregated
   # here, so required status checks do not have to list every matrix target.
@@ -280,11 +400,24 @@ jobs:
           set -euo pipefail
           echo "$NEEDS"
           printf '%s' "$NEEDS" | python3 -c '
-          import json, sys
+          import json, os, sys
+          labels = {
+              "check": "核心檢查",
+              "plan": "解析建置目標",
+              "platform-build": "平台建置",
+              "legacy-build": "舊版建置",
+              "release-assets": "發布資產",
+          }
+          results = {"success": "成功", "failure": "失敗", "skipped": "略過", "cancelled": "已取消"}
           needs = json.load(sys.stdin)
+          lines = ["## CI 總結", "", "| Job | 結果 |", "| --- | --- |"]
+          for name, info in needs.items():
+              lines.append("| %s | %s |" % (labels.get(name, name), results.get(info["result"], info["result"])))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
+              handle.write("\n".join(lines) + "\n")
           bad = {k: v["result"] for k, v in needs.items() if v["result"] not in ("success", "skipped")}
           if bad:
-              print("::error::Jobs that did not succeed: " + ", ".join("%s=%s" % (k, v) for k, v in bad.items()))
+              print("::error::以下 job 沒有成功：" + "、".join("%s=%s" % (k, v) for k, v in bad.items()))
               sys.exit(1)
-          print("All jobs succeeded; skipped targets are allowed.")
+          print("所有 job 都成功；被略過的目標視為正常。")
           '

@@ -80,8 +80,13 @@ jobs:
 
       - name: 設定 Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          # 這個 action 的摘要只有英文且無法翻譯，成功時改由下面「寫入建置摘要」
+          # 提供繁中摘要，失敗時才顯示它的英文面板方便對照 log。
+          add-job-summary: on-failure
 
       - name: 建置舊版 Fabric 整合包
+        id: build
         if: needs.plan.outputs.targets == '' || contains(needs.plan.outputs.targets, format(',{0},', matrix.target))
         run: ./gradlew --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
 
@@ -95,6 +100,31 @@ jobs:
           path: platforms/**/build/libs/*.jar
           if-no-files-found: warn
           retention-days: 30
+
+      - name: 寫入建置摘要
+        if: always()
+        env:
+          TARGET: ${{ matrix.target }}
+          OUTCOME: ${{ steps.build.outcome }}
+          ARTIFACT: legacy-fabric-${{ matrix.target }}
+        run: |
+          case "${OUTCOME:-}" in
+            success) result="成功" ;;
+            failure) result="失敗" ;;
+            skipped) result="略過（本次未要求）" ;;
+            *) result="未知（${OUTCOME:-未執行}）" ;;
+          esac
+          version="$(sed -n 's|.*gradle-\([0-9][0-9.]*\)-.*|\1|p' gradle/wrapper/gradle-wrapper.properties | head -n 1 || true)"
+          {
+            echo "## 建置摘要"
+            echo
+            echo "| 項目 | 內容 |"
+            echo "| --- | --- |"
+            echo "| 目標 | ${TARGET:-未指定} |"
+            echo "| Gradle 版本 | ${version:-未知} |"
+            echo "| 結果 | ${result} |"
+            echo "| artifact | ${ARTIFACT:-無} |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   legacy-forge:
     name: 建置舊版 Forge ${{ matrix.target }}
@@ -122,6 +152,7 @@ jobs:
           java-version: "8"
 
       - name: 建置舊版 Forge
+        id: build
         if: needs.plan.outputs.targets == '' || contains(needs.plan.outputs.targets, format(',{0},', matrix.target))
         working-directory: ${{ matrix.dir }}
         run: ./gradlew --no-daemon build
@@ -136,3 +167,28 @@ jobs:
           path: ${{ matrix.dir }}/build/libs/*.jar
           if-no-files-found: warn
           retention-days: 30
+
+      - name: 寫入建置摘要
+        if: always()
+        env:
+          TARGET: ${{ matrix.target }}
+          OUTCOME: ${{ steps.build.outcome }}
+          ARTIFACT: ${{ matrix.target }}
+        run: |
+          case "${OUTCOME:-}" in
+            success) result="成功" ;;
+            failure) result="失敗" ;;
+            skipped) result="略過（本次未要求）" ;;
+            *) result="未知（${OUTCOME:-未執行}）" ;;
+          esac
+          version="$(sed -n 's|.*gradle-\([0-9][0-9.]*\)-.*|\1|p' gradle/wrapper/gradle-wrapper.properties | head -n 1 || true)"
+          {
+            echo "## 建置摘要"
+            echo
+            echo "| 項目 | 內容 |"
+            echo "| --- | --- |"
+            echo "| 目標 | ${TARGET:-未指定} |"
+            echo "| Gradle 版本 | ${version:-未知} |"
+            echo "| 結果 | ${result} |"
+            echo "| artifact | ${ARTIFACT:-無} |"
+          } >> "$GITHUB_STEP_SUMMARY"
