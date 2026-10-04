@@ -6,6 +6,16 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      targets:
+        description: >-
+          Comma-separated platform targets to build, for example
+          "fabric-1.21.x,forge-1.21.11". Add the keywords "legacy" and/or
+          "release" for the legacy and release-asset jobs. Leave empty to run
+          every job.
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -40,10 +50,25 @@ jobs:
       - name: Run checks
         run: ./gradlew --no-daemon check
 
+      - name: Upload check reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: check-reports
+          path: |
+            **/build/reports/**
+            **/build/test-results/**
+          if-no-files-found: ignore
+          retention-days: 7
+
   platform-build:
     name: Build ${{ matrix.target }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # Empty for pull_request, for push, and for a full workflow_dispatch.
+      # Otherwise a comma-wrapped target list such as ",fabric-1.21.x,".
+      REQUESTED_TARGETS: "${{ github.event_name == 'workflow_dispatch' && github.event.inputs.targets != '' && format(',{0},', replace(github.event.inputs.targets, ' ', '')) || '' }}"
     strategy:
       fail-fast: false
       matrix:
@@ -96,12 +121,26 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build platform
+        if: env.REQUESTED_TARGETS == '' || contains(env.REQUESTED_TARGETS, format(',{0},', matrix.target))
         run: ./gradlew --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
+
+      - name: Upload platform JARs
+        if: >-
+          success() && (env.REQUESTED_TARGETS == '' ||
+          contains(env.REQUESTED_TARGETS, format(',{0},', matrix.target)))
+        uses: actions/upload-artifact@v4
+        with:
+          name: platform-${{ matrix.target }}
+          path: platforms/**/build/libs/*.jar
+          if-no-files-found: warn
+          retention-days: 14
 
   legacy-build:
     name: Build legacy Fabric and Forge
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      REQUESTED_TARGETS: "${{ github.event_name == 'workflow_dispatch' && github.event.inputs.targets != '' && format(',{0},', replace(github.event.inputs.targets, ' ', '')) || '' }}"
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -121,6 +160,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build legacy platforms
+        if: env.REQUESTED_TARGETS == '' || contains(env.REQUESTED_TARGETS, ',legacy,')
         run: >-
           ./gradlew --no-daemon --max-workers=2
           -PtargetPlatform=fabric-1.16.5,fabric-1.19.2,fabric-1.20.1,forge-1.16.5,forge-1.18.2,forge-1.19.2,forge-1.20.1
@@ -132,10 +172,23 @@ jobs:
           :platform-forge-1.19.2:build
           :platform-forge-1.20.1:build
 
+      - name: Upload legacy JARs
+        if: >-
+          success() && (env.REQUESTED_TARGETS == '' ||
+          contains(env.REQUESTED_TARGETS, ',legacy,'))
+        uses: actions/upload-artifact@v4
+        with:
+          name: legacy-platforms
+          path: platforms/**/build/libs/*.jar
+          if-no-files-found: warn
+          retention-days: 14
+
   release-assets:
     name: Verify reduced release JARs
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      REQUESTED_TARGETS: "${{ github.event_name == 'workflow_dispatch' && github.event.inputs.targets != '' && format(',{0},', replace(github.event.inputs.targets, ' ', '')) || '' }}"
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -155,8 +208,22 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Verify every prepared release JAR and Fabric selection
+        if: env.REQUESTED_TARGETS == '' || contains(env.REQUESTED_TARGETS, ',release,')
         run: >-
           ./gradlew --no-daemon --max-workers=2
           -PtargetPlatform=fabric-1.21.x
           verifyPreparedReleaseAssets
           :platform-fabric-1.21.x:verifyPreparedReleaseBundle
+
+      - name: Upload reduced release JARs
+        if: >-
+          success() && (env.REQUESTED_TARGETS == '' ||
+          contains(env.REQUESTED_TARGETS, ',release,'))
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: |
+            build/release-assets/*.jar
+            build/release-assets/SHA256SUMS.txt
+          if-no-files-found: warn
+          retention-days: 30
