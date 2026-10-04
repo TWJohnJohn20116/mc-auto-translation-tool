@@ -183,8 +183,11 @@ def platformDependencies = [
         "platform-fabric-1.21.x": (['1.21'] + (1..11).collect { "1.21.${it}" })
                 .collect { "platform-fabric-${it}".toString() },
         "platform-fabric-26.x": ["26.1", "26.1.1", "26.1.2", "26.2", "26.3"]
-                .collect { "platform-fabric-${it}".toString() },
-        "platform-neoforge-1.20.1": ["platform-forge-1.20.1"]
+                .collect { "platform-fabric-${it}".toString() }
+        // platform-neoforge-1.20.1 沒有列在這裡：它只是共用 platform-forge-1.20.1 的原始碼，
+        // 而它的 build.gradle 已改用路徑引用。把那個專案 include 進來會讓 ForgeGradle 的
+        // Minecraft Mavenizer 在配置階段多跑 3 分半（2026-10-04 實測 3:29.246），
+        // 這是 neoforge-1.20.1 曾經是 PR 裡最慢 job 的主因。
 ]
 
 def normalizePlatform = { String value ->

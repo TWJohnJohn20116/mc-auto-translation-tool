@@ -37,7 +37,11 @@ def forgeLegacyShared = rootProject.file("platforms/forge/modern/shared")
 sourceSets {
     main {
         java.srcDirs = [
-                project(":platform-forge-1.20.1").file("src/main/java"),
+                // 用路徑而不是 project(":platform-forge-1.20.1")：後者會讓 settings.gradle 必須把
+                // 整個 Forge 專案 include 進來，於是 ForgeGradle 的 Minecraft Mavenizer 會在配置階段
+                // 跑 3 分半（2026-10-04 實測 3:29.246），讓這個 job 變成 PR 裡最慢的一個。這裡只需要
+                // 檔案路徑，不需要那個專案被評估。
+                rootProject.file("platforms/forge/modern/1.20.1/src/main/java"),
                 new File(forgeLegacyShared, "common/src/main/java"),
                 new File(forgeLegacyShared, "family/1.19.2-plus/src/main/java"),
                 project(":translator-core").file("src/main/java")
@@ -58,7 +62,7 @@ mixin {
 tasks.named("processResources", ProcessResources).configure {
     inputs.properties("version": project.version, "packFormat": 15)
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    from(project(":platform-forge-1.20.1").file("src/main/resources")) {
+    from(rootProject.file("platforms/forge/modern/1.20.1/src/main/resources")) {
         exclude "META-INF/mods.toml", "universal-translator.forge.mixins.json"
     }
     from(new File(forgeLegacyShared, "common/src/main/resources")) {
