@@ -117,6 +117,11 @@ git -c 'credential.helper=' -c 'credential.helper=!gh auth git-credential' push 
 - 新增或調整平台目標時，必須同步三處：`settings.gradle` 的 `platformProjects`、`build.yml` 的 matrix、
   `gradle.properties` 的版本變數。
 - 不要為了讓 CI 變綠而刪除測試或放寬驗證；要修的是程式碼。
+- GitHub 運算式**沒有** `replace`、`trim` 這類字串函式；可用的只有 `contains`、`startsWith`、
+  `endsWith`、`format`、`join`、`toJSON`、`fromJSON`、`hashFiles` 與狀態函式。需要字串正規化時，
+  放到 `run:` 步驟用 bash 做（例如 `plan` job 用 `tr -d '[:space:]'` 剝除空白）。用到不存在的函式會讓
+  整份 workflow 解析失敗：run 名稱會變成檔案路徑 `.github/workflows/build.yml`、`jobs` 數為 0。
+  遇到這種症狀時，去 run 頁面的 HTML 找 `Invalid workflow file` 的訊息，裡面有行號與原因。
 - 修改 workflow 後，仍需以 GitHub Actions 的實際執行結果為準，不得以「看起來沒問題」結案。
 
 ## 其他專案慣例
