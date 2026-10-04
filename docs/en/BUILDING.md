@@ -269,7 +269,7 @@ Outputs are written to `platforms/fabric/1.13/versions/1.13.0/build/libs/` and
 
 ## Fabric 1.3.1 through 1.8.8 (Ornithe bundle)
 
-Ornithe currently publishes Fabric Loader Gen2 profiles for 30 stable releases in this range. The
+Ornithe currently publishes Fabric Loader Gen2 profiles for 26 stable releases in this range. The
 bundle selects the exact nested implementation and keeps these legacy releases in one installable
 JAR:
 

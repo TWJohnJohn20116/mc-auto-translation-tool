@@ -60,9 +60,9 @@ jobs:
     needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 90
-    # fabric-1.0-1.8.x 曾經長期紅燈（feather 版本對應錯誤），2026-10-04 已修好：1.0.0～1.2.5
-    # 從 bundle 移除（Ornithe 對它們只發佈帶側別後綴的 feather），1.6.2／1.7.3／1.7.7 改用確實
-    # 存在的 build（5），所以不再需要 continue-on-error。
+    # fabric-1.0-1.8.x 曾經長期紅燈（feather 版本對應錯誤），2026-10-04 已修好：12 個上游 mappings
+    # 有問題的版本（1.0.0～1.2.5 與 1.6.2／1.7.3／1.7.5／1.7.7）從 bundle 移除，保留的 26 個版本
+    # 都用 feather build.31，所以不再需要 continue-on-error。
     strategy:
       fail-fast: false
       matrix:

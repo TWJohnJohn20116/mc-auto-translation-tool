@@ -208,17 +208,19 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   `website/tests/rendered-html.test.mjs` 的版本號與標題是**從 `app/page.tsx` 原始碼取**的
   （`releaseVersion` 與 `metadata.title`），不要改回寫死版本號——寫死的話每次發布都會讓它變紅
   （2026-10-04 就發生過：測試還停在 1.3.10，網站已經是 1.3.11）。
-- `fabric-1.0-1.8.x` 這個 bundle 覆蓋 **1.3.1～1.8.8（30 個版本）**，不含更早的 1.0.0～1.2.5：Ornithe
-  對那 8 個版本只發佈帶側別後綴的 feather（`1.0.0-client+build.3`），而 `ploceus.featherMappings`
-  只會組出一般命名（`1.0.0+build.31`），所以建不起來。它們的目錄仍在
-  `platforms/fabric/1.0-1.8/versions/`，要恢復就把版本加回 `settings.gradle` 的 `platformProjects`、
-  `platformDependencies` 與 bundle 的 `supportedVersions` 這三處。這個 bundle 不在 33 顆發布資產裡，
-  所以它長期紅燈時對使用者沒有影響，但排程紅燈會掩蓋其他目標真正的失敗。
-- feather 的 build 號**逐版本不同**，不要假設 `feather_build_1_7_10=31` 適用全部：1.6.2／1.7.3／1.7.7
-  只到 build.5、1.7.5 只到 build.30，所以 `gradle.properties` 有 `feather_build_1_6_2` 等個別設定。
-  改動前務必逐一探測 Maven（`https://maven.ornithemc.net/releases/net/ornithemc/feather/<版本>+build.<n>/`
-  的 `.pom` 與 `.jar`）：**`maven-metadata.xml` 是過期不完整的**，用它判斷會得到錯誤結論
-  （2026-10-04 就因此誤判成「整個平台都建不起來」，實際上只有 11 個版本有問題）。
+- `fabric-1.0-1.8.x` 這個 bundle 覆蓋 **1.3.1～1.8.8 當中的 26 個版本**，排除 12 個上游 mappings
+  有問題的版本：1.0.0～1.2.5 上游只發佈帶側別後綴的 feather（`1.0.0-client+build.3`），而
+  `ploceus.featherMappings` 只會組出一般命名（`1.0.0+build.31`）；1.6.2／1.7.3／1.7.5／1.7.7 雖然
+  有部分 build 的成品，但 ploceus 的 version manifest 對不上（`unable to read version details`，
+  來自 `manifest/VersionDetails.java` 的解析）。目錄仍在 `platforms/fabric/1.0-1.8/versions/`，
+  要恢復就把版本加回 `settings.gradle` 的 `platformProjects`、`platformDependencies` 與 bundle 的
+  `supportedVersions` 這三處。這個 bundle 不在 33 顆發布資產裡，所以它紅燈時對使用者沒有影響，
+  但排程紅燈會掩蓋其他目標真正的失敗。
+- 判斷「某個版本的 mappings 能不能用」**不能只看 artifact 有沒有回 200**：`1.6.2+build.5` 的 `.pom`
+  與 `.jar` 都存在，ploceus 仍然建不起來。反過來說，**`maven-metadata.xml` 是過期不完整的**
+  （它沒有列出 `1.3.1+build.31`，但那個檔案確實存在），用它判斷會得到完全錯誤的結論
+  （2026-10-04 就因此誤判成「整個平台都建不起來」，實際上只有 12 個版本有問題）。
+  唯一可靠的判斷方式是實際跑 CI。
 - 顯示名稱一律用繁體中文（workflow 名稱、job 名稱、step 名稱），但 **artifact 名稱維持 ASCII**
   （`platform-<target>`、`release-assets` 等），因為 `gh run download -n` 與腳本會用到。
 - 建置一律透過 `./.github/actions/gradle-build` 這個 composite action 執行，不要直接寫 `./gradlew`：

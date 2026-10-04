@@ -13,13 +13,11 @@ rootProject.name = "mc-auto-translation-tool"
 include("translator-core")
 
 def platformProjects = [
-        // 1.0.0～1.2.5 沒有納入：Ornithe 對這 8 個版本只發佈帶側別後綴的 feather（例如
-        // 1.0.0-client+build.3），而 ploceus.featherMappings 只會組出一般命名（1.0.0+build.31），
-        // 所以它們無法建置。目錄仍留在版本庫裡，要恢復就把它們加回這裡、下面的
-        // platformDependencies，以及 bundle 的 supportedVersions。
-        "platform-fabric-1.6.2"         : "platforms/fabric/1.0-1.8/versions/1.6.2",
-        "platform-fabric-1.7.3"         : "platforms/fabric/1.0-1.8/versions/1.7.3",
-        "platform-fabric-1.7.7"         : "platforms/fabric/1.0-1.8/versions/1.7.7",
+        // 這 12 個版本沒有納入：1.0.0～1.2.5 上游只發佈帶側別後綴的 feather（1.0.0-client+build.3），
+        // ploceus 只會組出一般命名（1.0.0+build.31）；1.6.2／1.7.3／1.7.5／1.7.7 的一般命名只到
+        // build.5／6，ploceus 的 version manifest 對不上（unable to read version details）。
+        // 目錄仍留在版本庫裡，要恢復就把它們加回這裡、下面的 platformDependencies，以及 bundle 的
+        // supportedVersions。
         "platform-fabric-1.0-1.8.x"    : "platforms/fabric/1.0-1.8/bundle",
         "platform-fabric-1.3.1"         : "platforms/fabric/1.0-1.8/versions/1.3.1",
         "platform-fabric-1.3.2"         : "platforms/fabric/1.0-1.8/versions/1.3.2",
@@ -34,7 +32,6 @@ def platformProjects = [
         "platform-fabric-1.6.4"         : "platforms/fabric/1.0-1.8/versions/1.6.4",
         "platform-fabric-1.7.2"         : "platforms/fabric/1.0-1.8/versions/1.7.2",
         "platform-fabric-1.7.4"         : "platforms/fabric/1.0-1.8/versions/1.7.4",
-        "platform-fabric-1.7.5"         : "platforms/fabric/1.0-1.8/versions/1.7.5",
         "platform-fabric-1.7.6"         : "platforms/fabric/1.0-1.8/versions/1.7.6",
         "platform-fabric-1.7.8"         : "platforms/fabric/1.0-1.8/versions/1.7.8",
         "platform-fabric-1.7.9"         : "platforms/fabric/1.0-1.8/versions/1.7.9",
@@ -167,7 +164,7 @@ def platformProjects = [
 
 // Aggregate modules need their implementation projects available during configuration.
 def platformDependencies = [
-        "platform-fabric-1.0-1.8.x": ["1.3.1", "1.3.2", "1.4.2", "1.4.4", "1.4.5", "1.4.6", "1.4.7", "1.5.1", "1.5.2", "1.6.1", "1.6.2", "1.6.4", "1.7.2", "1.7.3", "1.7.4", "1.7.5", "1.7.6", "1.7.7", "1.7.8", "1.7.9", "1.7.10", "1.8", "1.8.1", "1.8.2", "1.8.3", "1.8.4", "1.8.5", "1.8.6", "1.8.7", "1.8.8"]
+        "platform-fabric-1.0-1.8.x": ["1.3.1", "1.3.2", "1.4.2", "1.4.4", "1.4.5", "1.4.6", "1.4.7", "1.5.1", "1.5.2", "1.6.1", "1.6.4", "1.7.2", "1.7.4", "1.7.6", "1.7.8", "1.7.9", "1.7.10", "1.8", "1.8.1", "1.8.2", "1.8.3", "1.8.4", "1.8.5", "1.8.6", "1.8.7", "1.8.8"]
                 .collect { "platform-fabric-${it}".toString() },
         "platform-fabric-1.8-1.12.x": ["1.8.9", "1.9", "1.9.1", "1.9.2", "1.9.3", "1.9.4", "1.10", "1.10.1", "1.10.2", "1.11", "1.11.1", "1.11.2", "1.12", "1.12.1", "1.12.2"]
                 .collect { "platform-fabric-${it}".toString() },
