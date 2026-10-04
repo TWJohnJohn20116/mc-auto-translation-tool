@@ -54,12 +54,15 @@ Git 遠端：
 不要對 upstream 開 PR、不要 force push。
 
 若 push 出現 `could not read Username for 'https://github.com'`，代表 git 沒有可用的憑證 helper。
-用只影響本倉庫的方式接上已登入的 `gh`（不要動全域 git 設定）：
+本機全域設定指向 Git Credential Manager，它在這裡會先被呼叫並崩潰，讓 git 直接中止（stderr 會出現
+一串 `*.dll` 位址）。用單次命令把 helper 換成已登入的 `gh`，不要改動全域 git 設定：
 
 ```bash
-git config --local credential.helper ""
-git config --local --add credential.https://github.com.helper "!gh auth git-credential"
+git -c 'credential.helper=' -c 'credential.helper=!gh auth git-credential' push -u origin <branch>
 ```
+
+不要用 `git config --local credential.helper ""` 這種寫法：PowerShell 會把空字串參數吃掉，指令
+實際上只會讀取設定而不會寫入。
 
 `gh` 目前解析到的倉庫是 `TWJohnJohn20116/mc-auto-translation-tool`，但這個解析不是保證。為了避免
 誤操作原作者倉庫，`gh` 指令一律加上 `-R TWJohnJohn20116/mc-auto-translation-tool`，或先執行一次
