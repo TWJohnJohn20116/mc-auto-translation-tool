@@ -75,14 +75,24 @@ public final class TencentHunyuanProvider implements TranslationProvider {
         return translated;
     }
 
-    private synchronized void awaitRateLimit() throws InterruptedException {
-        long now = System.currentTimeMillis();
-        long delay = nextRequestAtMillis - now;
-        if (delay > 0L) {
-            Thread.sleep(delay);
-            now = System.currentTimeMillis();
+    private void awaitRateLimit() throws InterruptedException {
+        while (true) {
+            long wait;
+            synchronized (this) {
+                long now = System.currentTimeMillis();
+                if (nextRequestAtMillis <= now) {
+                    // Claim this instant and move the next slot one interval ahead. Claiming is
+                    // atomic, so two callers can never pass the gate for the same slot.
+                    nextRequestAtMillis = now + MIN_REQUEST_INTERVAL_MILLIS;
+                    return;
+                }
+                wait = nextRequestAtMillis - now;
+            }
+            // Sleep outside the lock: a caller that has to wait must not block the other callers
+            // from reserving their own (later) slots. Re-check on wake-up so a late wake still
+            // pushes the following slot, exactly like the previous lock-held implementation.
+            Thread.sleep(wait);
         }
-        nextRequestAtMillis = now + MIN_REQUEST_INTERVAL_MILLIS;
     }
 
     private static String normalizeSource(String language) {

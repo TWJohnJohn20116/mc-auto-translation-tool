@@ -9,6 +9,15 @@ import java.io.IOException;
 
 /** Adds a configurable global request interval and bounded transient-error retries. */
 final class ResilientTranslationProvider implements TranslationProvider, AutoCloseable {
+    /**
+     * Ceiling for a server-advertised {@code Retry-After} delay. A server is free to answer
+     * {@code Retry-After: 86400}, and honouring that verbatim would park the translation worker for
+     * a day; 30 seconds still respects a real rate limit while keeping the request queue
+     * responsive. It is deliberately far above the plain exponential backoff ceiling (2000 ms) so
+     * adopting {@code Retry-After} can only ever lengthen a wait, never shorten one.
+     */
+    private static final long MAX_RETRY_AFTER_MILLIS = 30000L;
+
     private final TranslationProvider delegate;
     private final int maximumAttempts;
     private final long minimumIntervalMillis;
@@ -41,7 +50,7 @@ final class ResilientTranslationProvider implements TranslationProvider, AutoClo
                 if (attempt == maximumAttempts || !isRetryable(exception)) {
                     throw exception;
                 }
-                Thread.sleep(Math.min(2000L, 200L << (attempt - 1)));
+                Thread.sleep(retryDelayMillis(exception, attempt));
             }
         }
         throw last == null ? new IllegalStateException("Translation failed") : last;
@@ -65,6 +74,34 @@ final class ResilientTranslationProvider implements TranslationProvider, AutoClo
             // pushes the following slot, exactly like the previous lock-held implementation.
             Thread.sleep(wait);
         }
+    }
+
+    /**
+     * Delay before the next attempt: the exponential backoff, extended to the {@code Retry-After}
+     * delay the server asked for when the failure carries one.
+     *
+     * <p>Rule: {@code wait = min(max(backoff, retryAfter), MAX_RETRY_AFTER_MILLIS)}, where
+     * {@code backoff = min(2000 ms, 200 ms << (attempt - 1))}. {@code max} keeps the plain backoff
+     * as the floor so a small advertised value cannot make retries faster than before, and the
+     * clamp bounds a hostile or misconfigured header. Because the header is untrusted input, the
+     * seconds-to-milliseconds conversion is clamped before multiplying so it cannot overflow.
+     * Anything that is not an {@link HttpStatusException} without a usable header keeps exactly
+     * the previous backoff.
+     */
+    private static long retryDelayMillis(Exception exception, int attempt) {
+        long backoffMillis = Math.min(2000L, 200L << (attempt - 1));
+        if (!(exception instanceof HttpStatusException)) {
+            return backoffMillis;
+        }
+        Long retryAfterSeconds = ((HttpStatusException) exception).getRetryAfterSeconds();
+        if (retryAfterSeconds == null) {
+            return backoffMillis;
+        }
+        long seconds = retryAfterSeconds.longValue();
+        long retryAfterMillis = seconds >= MAX_RETRY_AFTER_MILLIS / 1000L
+                ? MAX_RETRY_AFTER_MILLIS
+                : seconds * 1000L;
+        return Math.min(MAX_RETRY_AFTER_MILLIS, Math.max(backoffMillis, retryAfterMillis));
     }
 
     private static boolean isRetryable(Exception exception) {
