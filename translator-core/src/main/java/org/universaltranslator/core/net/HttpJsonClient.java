@@ -10,6 +10,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.Map;
+import org.universaltranslator.core.UserAgent;
 
 /** Bounded Java 8 HTTP client used to avoid shipping a large networking dependency. */
 public final class HttpJsonClient {
@@ -66,7 +67,7 @@ public final class HttpJsonClient {
             connection.setRequestProperty("Accept", "application/json");
             connection.setRequestProperty("Content-Type", contentType == null || contentType.trim().isEmpty()
                     ? "application/json; charset=utf-8" : contentType.trim());
-            connection.setRequestProperty("User-Agent", "MCAutoTranslationTool/1.3.11");
+            connection.setRequestProperty("User-Agent", UserAgent.VALUE);
             if (headers != null) {
                 for (Map.Entry<String, String> header : headers.entrySet()) {
                     if (header.getKey() != null && header.getValue() != null) {

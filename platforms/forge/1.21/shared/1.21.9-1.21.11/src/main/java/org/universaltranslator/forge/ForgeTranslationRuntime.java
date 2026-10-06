@@ -96,16 +96,35 @@ public final class ForgeTranslationRuntime {
         RenderTranslationSession created = null;
         if (config.enabled) {
             TranslationProvider provider = config.createProvider();
-            TranslationStore store = config.diskCache
-                    ? new PersistentTranslationCache(config.cacheFile, 10_000)
-                    : new TranslationCache(10_000);
-            int workers = provider.id().contains("offline-llama:") ? 1 : 2;
-            created = new RenderTranslationSession(
-                    provider, "auto", config.targetLanguage, store, workers, config.displayMode,
-                    config.translateEnglishOnly);
-            created.setBlockedKeywords(config.blockedKeywords);
-            created.setProtectedLiteralsSupplier(ForgeTranslationRuntime::playerNameSnapshot);
-            createdProvider = provider;
+            try {
+                // Record the provider before the store and the session are built around it: a
+                // failure in either must not orphan a provider that may already hold resources.
+                createdProvider = provider;
+                TranslationStore store = config.diskCache
+                        ? new PersistentTranslationCache(config.cacheFile, 10_000)
+                        : new TranslationCache(10_000);
+                int workers = provider.id().contains("offline-llama:") ? 1 : 2;
+                created = new RenderTranslationSession(
+                        provider, "auto", config.targetLanguage, store, workers, config.displayMode,
+                        config.translateEnglishOnly);
+                created.setBlockedKeywords(config.blockedKeywords);
+                created.setProtectedLiteralsSupplier(ForgeTranslationRuntime::playerNameSnapshot);
+            } catch (Throwable buildFailure) {
+                // The session was never handed to anyone and its own close() needs a live provider,
+                // so the provider is what has to be released here. TranslationProvider does not
+                // declare close(); the providers that own resources expose it via AutoCloseable.
+                if (createdProvider instanceof AutoCloseable) {
+                    try {
+                        ((AutoCloseable) createdProvider).close();
+                    } catch (Throwable closeFailure) {
+                        // Keep the build failure as the one the caller sees (F8 and
+                        // applyHomeSettings recover from it) and record the teardown failure as
+                        // suppressed information instead of letting it replace the original.
+                        buildFailure.addSuppressed(closeFailure);
+                    }
+                }
+                throw buildFailure;
+            }
         }
         // Swap last, in one synchronized block. The replaced session is captured in a local
         // variable because the field no longer refers to it after the next three assignments.

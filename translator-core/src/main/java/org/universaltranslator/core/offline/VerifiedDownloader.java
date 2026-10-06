@@ -12,6 +12,7 @@ import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Collections;
+import org.universaltranslator.core.UserAgent;
 
 /** HTTPS downloader with resume support, a pinned size and a mandatory SHA-256 check. */
 public final class VerifiedDownloader {
@@ -249,7 +250,7 @@ public final class VerifiedDownloader {
         connection.setConnectTimeout(15_000);
         connection.setReadTimeout(30_000);
         connection.setInstanceFollowRedirects(false);
-        connection.setRequestProperty("User-Agent", "MCAutoTranslationTool/1.1");
+        connection.setRequestProperty("User-Agent", UserAgent.VALUE);
         if (offset > 0L) {
             connection.setRequestProperty("Range", "bytes=" + offset + "-");
         }

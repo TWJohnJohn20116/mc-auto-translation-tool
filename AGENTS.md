@@ -200,6 +200,12 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
    1.16 bundle 已涵蓋那 5 個版本；「16 个 JAR」也要改成新的數字）。網站測試只從 `app/page.tsx` 讀
    `releaseVersion` 與 `metadata.title`，其餘文案不會被測試抓到，數字與覆蓋範圍必須人工確認。
    這一步沒有自動化，漏掉只會在事後被使用者發現。
+7. 更新**程式碼內**寫死的版本號：`translator-core` 的 `core/UserAgent.java` 是對外請求版本號的
+   **唯一來源**（`HttpJsonClient` 與 `VerifiedDownloader` 都引用它的 `VALUE`）。`translator-core` 的
+   `build.gradle` **沒有** `processResources`，也沒有任何建置產生的版本資源，所以那個常數無法由建置
+   產生，必須跟著 `mod_version` 一起手改，否則每次對外請求都會送出舊版本號。改完用
+   `grep -rn 'MCAutoTranslationTool/' translator-core/src/main/java` 確認**只剩 `UserAgent.java` 一處**
+   ——2026-10-06 就是因為兩處各有一份而飄掉（下載模型宣告 `1.1`，當時版本已是 `1.3.11`）。
 
 發布前務必先讓主要建置的 `CI 總結` 變綠，且 `downloads/` 內容必須與 `mod_version` 一致，否則
 `verify_release_jars.py` 會失敗。

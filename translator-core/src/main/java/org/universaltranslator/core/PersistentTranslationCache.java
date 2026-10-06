@@ -24,12 +24,23 @@ import java.util.Properties;
  * finishes. There is no background thread, no timer and no pending-write queue, so the class cannot
  * leak a thread past its owner and nothing can grow without bound. The only deferred state is the
  * dirty flag plus the in-memory LRU map itself.
+ *
+ * <p>The file is read lazily on the first {@link #get(String)}, {@link #put(String, String)},
+ * {@link #size()} or {@link #clear()} instead of in the constructor. Callers build this cache while
+ * handling a settings change on the client tick thread, whereas the first lookup normally happens
+ * on a worker thread, so the constructor performs no disk I/O at all.
  */
 public final class PersistentTranslationCache implements TranslationStore {
     private final Object diskLock = new Object();
     private final Path file;
     private final Map<String, String> entries;
 
+    /**
+     * Guarded by {@code this}. True once the file has been consulted, whether the read succeeded,
+     * failed or was skipped because the file does not exist. Never reset: {@link #clear()} sets it
+     * so a cleared cache cannot read the deleted entries back from disk.
+     */
+    private boolean loaded;
     /** Guarded by {@code this}. Bumped by every in-memory mutation, including {@link #clear()}. */
     private long revision;
     /** Guarded by {@code this}. True while a thread is running {@link #flushLoop}. */
@@ -39,6 +50,11 @@ public final class PersistentTranslationCache implements TranslationStore {
     /** Guarded by {@link #diskLock}. Revision of the newest state already written to the file. */
     private long persistedRevision;
 
+    /**
+     * The signature keeps {@code IOException} for every existing platform caller, but this
+     * constructor never touches the disk: the file is read by {@link #ensureLoadedLocked()} on the
+     * first lookup instead.
+     */
     public PersistentTranslationCache(Path file, final int maximumEntries) throws IOException {
         if (maximumEntries < 1) {
             throw new IllegalArgumentException("maximumEntries must be positive");
@@ -50,11 +66,11 @@ public final class PersistentTranslationCache implements TranslationStore {
                 return size() > maximumEntries;
             }
         };
-        load();
     }
 
     @Override
     public synchronized String get(String key) {
+        ensureLoadedLocked();
         return entries.get(hash(key));
     }
 
@@ -63,6 +79,7 @@ public final class PersistentTranslationCache implements TranslationStore {
         Map<String, String> snapshot;
         long snapshotRevision;
         synchronized (this) {
+            ensureLoadedLocked();
             String hashed = hash(key);
             String previous = entries.get(hashed);
             if (previous != null && previous.equals(value)) {
@@ -88,6 +105,9 @@ public final class PersistentTranslationCache implements TranslationStore {
         Map<String, String> snapshot;
         long snapshotRevision;
         synchronized (this) {
+            // Mark the file as already consulted before dropping the entries. Without this a later
+            // put would lazily read the file back and resurrect everything the user just deleted.
+            loaded = true;
             entries.clear();
             // Clearing is an explicit user action, so this thread writes the empty map itself and
             // only returns once the file reflects it. A flush still in flight carries an older
@@ -100,6 +120,7 @@ public final class PersistentTranslationCache implements TranslationStore {
     }
 
     public synchronized int size() {
+        ensureLoadedLocked();
         return entries.size();
     }
 
@@ -130,6 +151,27 @@ public final class PersistentTranslationCache implements TranslationStore {
                 flushing = false;
             }
             throw failure;
+        }
+    }
+
+    /**
+     * Performs the deferred read exactly once. Caller must hold the monitor of {@code this}: the
+     * flag is set before the read starts, so no two threads can read the file and no thread can
+     * observe a half-loaded map. The flag is also set when the read fails, which keeps a permanently
+     * unreadable file from retrying disk I/O on every lookup; an unreadable cache is treated as an
+     * empty one, so translation still works and only the cached entries are lost.
+     */
+    private void ensureLoadedLocked() {
+        if (loaded) {
+            return;
+        }
+        loaded = true;
+        try {
+            load();
+        } catch (IOException unreadableCache) {
+            // get/put/clear cannot declare IOException without breaking every platform caller. The
+            // constructor used to propagate this, so a corrupt or locked cache file now degrades to
+            // an empty cache instead of failing the settings change that built this instance.
         }
     }
 

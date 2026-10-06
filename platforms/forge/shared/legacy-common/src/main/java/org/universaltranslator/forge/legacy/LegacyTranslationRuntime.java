@@ -89,13 +89,32 @@ public final class LegacyTranslationRuntime {
                     ? new PersistentTranslationCache(config.cacheFile.toPath(), 10_000)
                     : new TranslationCache(10_000);
             TranslationProvider provider = config.createProvider();
-            int workers = provider.id().contains("offline-llama:") ? 1 : 2;
-            created = new RenderTranslationSession(
-                    provider, "auto", config.targetLanguage, store, workers, config.displayMode,
-                    config.translateEnglishOnly);
-            created.setBlockedKeywords(config.blockedKeywords);
-            created.setProtectedLiteralsSupplier(LegacyTranslationRuntime::playerNameSnapshot);
-            createdProvider = provider;
+            try {
+                // Record the provider before the session is built around it: a failure here must
+                // not orphan a provider that may already hold resources.
+                createdProvider = provider;
+                int workers = provider.id().contains("offline-llama:") ? 1 : 2;
+                created = new RenderTranslationSession(
+                        provider, "auto", config.targetLanguage, store, workers, config.displayMode,
+                        config.translateEnglishOnly);
+                created.setBlockedKeywords(config.blockedKeywords);
+                created.setProtectedLiteralsSupplier(LegacyTranslationRuntime::playerNameSnapshot);
+            } catch (Throwable buildFailure) {
+                // The session was never handed to anyone and its own close() needs a live provider,
+                // so the provider is what has to be released here. TranslationProvider does not
+                // declare close(); the providers that own resources expose it via AutoCloseable.
+                if (createdProvider instanceof AutoCloseable) {
+                    try {
+                        ((AutoCloseable) createdProvider).close();
+                    } catch (Throwable closeFailure) {
+                        // Keep the build failure as the one the caller sees (F8 and
+                        // applyHomeSettings recover from it) and record the teardown failure as
+                        // suppressed information instead of letting it replace the original.
+                        buildFailure.addSuppressed(closeFailure);
+                    }
+                }
+                throw buildFailure;
+            }
         }
         // Swap last, in one synchronized block. The replaced session is captured in a local
         // variable because the field no longer refers to it after the next three assignments.
