@@ -11,7 +11,8 @@ subprojects {
     def requestedToolchain = providers.gradleProperty("toolchainVersion").orNull
     def requiredToolchain = requestedToolchain == null
             ? (project.name.startsWith("platform-fabric-26.") ||
-               project.name.startsWith("platform-forge-26.") ? 25 : 21)
+               project.name.startsWith("platform-forge-26.") ||
+               project.name.startsWith("platform-neoforge-26.") ? 25 : 21)
             : Integer.parseInt(requestedToolchain)
 
     pluginManager.withPlugin("java") {
