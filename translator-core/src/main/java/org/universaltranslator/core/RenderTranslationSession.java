@@ -23,10 +23,22 @@ public final class RenderTranslationSession implements AutoCloseable {
     private static final int MAX_RENDERED_OUTPUTS = 8_192;
     private static final int MAX_FAILED_TRANSLATIONS = 1_024;
     // A request whose future is never completed (for example an Error escaping the coordinator's
-    // worker, which only catches Exception) would otherwise hold a pending slot forever. This is
-    // longer than the slowest provider read timeout (120s), so a genuinely in-flight request is
-    // never reclaimed and the ordinary backpressure behaviour is preserved.
-    private static final long PENDING_EXPIRY_MILLIS = 180_000L;
+    // worker) would otherwise hold a pending slot forever, so the guard is kept. It has to be
+    // longer than the slowest request the provider wiring can produce, including retries, or a
+    // request that is still legitimately retrying is reclaimed and submitted a second time.
+    //
+    // Worst case for one submitted request, from OnlineProviderConfig.create(...) and
+    // ResilientTranslationProvider:
+    //   api-max-attempts            = 5          (clamped to 1..5, so 5 is the ceiling)
+    //   api-connect-timeout-ms      = 60_000     (clamped to 250..60_000)
+    //   api-read-timeout-ms         = 300_000    (clamped to 1_000..300_000)
+    //   api-min-request-interval-ms = 60_000     (clamped to 0..60_000, waited once per attempt)
+    //   retry backoff               = 200 + 400 + 800 + 1_600 = 3_000
+    //                                 (200 << (attempt - 1), capped at 2_000, slept between attempts)
+    // 5 * (60_000 + 300_000 + 60_000) + 3_000 = 2_103_000 ms, so 40 minutes keeps the guard
+    // strictly above the slowest request the configuration can produce. Time spent waiting in the
+    // coordinator's bounded work queue is not covered by this bound.
+    private static final long PENDING_EXPIRY_MILLIS = 2_400_000L;
     private static final int MAX_BACKGROUND_SUBMISSIONS_PER_SECOND = 4;
     private static final int MAX_PRIORITY_SUBMISSIONS_PER_SECOND = 12;
 
@@ -43,8 +55,10 @@ public final class RenderTranslationSession implements AutoCloseable {
     // reclaimed instead of permanently consuming one of the MAX_PENDING_TRANSLATIONS slots.
     private final ConcurrentHashMap<RenderKey, Long> pending = new ConcurrentHashMap<RenderKey, Long>();
     private final ConcurrentHashMap<RenderKey, Long> retryAfter = new ConcurrentHashMap<RenderKey, Long>();
-    // Insertion order for the bounded eviction of translatedOutputs and retryAfter. Keys that
-    // were already evicted stay in the queue harmlessly; the remove is simply a no-op.
+    // Insertion order for the bounded eviction of translated, translatedOutputs and retryAfter.
+    // Keys that were already evicted stay in the queue harmlessly; the remove is simply a no-op.
+    private final ConcurrentLinkedQueue<RenderKey> renderedTranslationOrder =
+            new ConcurrentLinkedQueue<RenderKey>();
     private final ConcurrentLinkedQueue<String> renderedOutputOrder =
             new ConcurrentLinkedQueue<String>();
     private final ConcurrentLinkedQueue<RenderKey> retryOrder =
@@ -266,16 +280,22 @@ public final class RenderTranslationSession implements AutoCloseable {
         retryAfter.remove(key);
         if (result.isTranslated()) {
             if (translated.size() >= MAX_RENDERED_TRANSLATIONS) {
-                // Only the translation map is evicted. translatedOutputs is the re-entry
-                // guard that stops the mod from translating its own rendered output; losing
-                // it would re-submit every evicted line (and compound the bilingual prefix).
-                translated.clear();
+                // Evict the oldest entries instead of clearing the map: a full clear dropped every
+                // cached line at once, so the whole screen fell back to the original text and had
+                // to be translated again over the next few dozen frames. Only the translation map
+                // is evicted here. translatedOutputs is the re-entry guard that stops the mod from
+                // translating its own rendered output; losing it would re-submit every evicted line
+                // (and compound the bilingual prefix). Its own bound is larger and evicts the same
+                // fraction of its cap, so it still outlives the keys this map retains.
+                evictOldestRenderedTranslations(MAX_RENDERED_TRANSLATIONS / 8);
             }
             if (translatedOutputs.size() >= MAX_RENDERED_OUTPUTS) {
                 evictOldestRenderedOutputs(MAX_RENDERED_OUTPUTS / 8);
             }
             String output = formatOutput(original, result.getTranslatedText());
-            translated.put(key, output);
+            if (translated.put(key, output) == null) {
+                renderedTranslationOrder.add(key);
+            }
             rememberRenderedOutput(output);
             rememberRenderedOutput(TranslationTextStyling.stripLegacyFormatting(output));
             return true;
@@ -301,6 +321,11 @@ public final class RenderTranslationSession implements AutoCloseable {
         if (translatedOutputs.putIfAbsent(output, Boolean.TRUE) == null) {
             renderedOutputOrder.add(output);
         }
+    }
+
+    /** Removes roughly {@code count} of the oldest rendered translation entries. */
+    private void evictOldestRenderedTranslations(int count) {
+        evictOldest(renderedTranslationOrder, translated, count);
     }
 
     /** Removes roughly {@code count} of the oldest re-entry guard entries. */
@@ -492,6 +517,7 @@ public final class RenderTranslationSession implements AutoCloseable {
     public synchronized void clearRenderedTranslations() {
         translated.clear();
         translatedOutputs.clear();
+        renderedTranslationOrder.clear();
         renderedOutputOrder.clear();
         pending.clear();
         retryAfter.clear();
