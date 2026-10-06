@@ -190,8 +190,12 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
 5. workflow 會驗證 48 顆 JAR 與 checksum、縮減成 **31 顆可直接安裝 JAR**（加 `SHA256SUMS.txt` 共
    32 個資產），再建立或更新 `v<mod_version>` Release；版本號含 `-` 者視為 prerelease。
    NeoForge **不做**版本範圍合併（同一顆 JAR 塞多個同 `modId` 實作會載入失敗），每個版本各一顆。
-6. 更新文件的下載表格：`README.md` 與 `docs/Zh-cn|Zh-tw|en/README.md` 裡的連結是**寫死版本號**的
+6. 更新文件與網站：`README.md` 與 `docs/Zh-cn|Zh-tw|en/README.md` 裡的連結是**寫死版本號**的
    （`releases/download/v<版本>/...`），新增或移除目標時四個檔案都要一起改，否則會指向不存在的檔案。
+   `website/app/page.tsx` 也要一起更新：`releaseVersion`、`metadata.title`／`description`、按鈕文字，
+   以及文案裡的 **JAR 數量**與**覆蓋範圍**（1.3.11 的說明寫著「不含 1.16.0–1.16.4」，1.4 的 Fabric
+   1.16 bundle 已涵蓋那 5 個版本；「16 个 JAR」也要改成新的數字）。網站測試只從 `app/page.tsx` 讀
+   `releaseVersion` 與 `metadata.title`，其餘文案不會被測試抓到，數字與覆蓋範圍必須人工確認。
    這一步沒有自動化，漏掉只會在事後被使用者發現。
 
 發布前務必先讓主要建置的 `CI 總結` 變綠，且 `downloads/` 內容必須與 `mod_version` 一致，否則
