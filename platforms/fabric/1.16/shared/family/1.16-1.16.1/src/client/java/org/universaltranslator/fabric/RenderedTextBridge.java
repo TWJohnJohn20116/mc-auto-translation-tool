@@ -1,6 +1,7 @@
 package org.universaltranslator.fabric;
 
 import net.minecraft.text.LiteralText;
+import net.minecraft.text.MutableText;
 import net.minecraft.text.StringRenderable;
 import net.minecraft.text.Style;
 import net.minecraft.text.Text;
@@ -8,6 +9,7 @@ import net.minecraft.util.Formatting;
 import org.universaltranslator.core.TextKind;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TranslationTextStyling;
+import org.universaltranslator.core.TranslationStyleRuns;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -32,6 +34,10 @@ public final class RenderedTextBridge {
     public static Text translate(Text text) {
         if (text == null) {
             return null;
+        }
+        Text styled = translateStyledSiblings(text);
+        if (styled != null) {
+            return styled;
         }
         String original = text.getString();
         String translated = translateRaw(original);
@@ -110,9 +116,61 @@ public final class RenderedTextBridge {
                 text, TranslationRenderContext.current());
     }
 
-    private static Style translatedStyle(Style original) {
-        TranslationTextColor color = FabricTranslationRuntime.translatedTextColor();
-        if (original.getColor() != null || color == null || !color.changesColor()) {
+    /**
+     * Rebuilds the translation as one child per source sibling so every server-provided style
+     * survives; flattening the component into a single literal keeps only the first style.
+     * Returns {@code null} when the source is not a flat sibling list or carries a single
+     * style, so the caller keeps the ordinary path.
+     */
+    private static Text translateStyledSiblings(Text text) {
+        List<Text> siblings = text.getSiblings();
+        if (siblings.isEmpty()) {
+            return null;
+        }
+        List<String> texts = new ArrayList<String>(siblings.size() + 1);
+        List<Object> styleKeys = new ArrayList<Object>(siblings.size() + 1);
+        List<Style> styles = new ArrayList<Style>(siblings.size() + 1);
+        boolean sourceHasColor = text.getStyle().getColor() != null;
+        int siblingLength = 0;
+        for (Text sibling : siblings) {
+            if (!sibling.getSiblings().isEmpty()) {
+                return null;
+            }
+            String value = sibling.getString();
+            texts.add(value);
+            styleKeys.add(sibling.getStyle());
+            styles.add(sibling.getStyle());
+            siblingLength += value.length();
+            sourceHasColor |= sibling.getStyle().getColor() != null;
+        }
+        String full = text.getString();
+        if (full.length() < siblingLength) {
+            return null;
+        }
+        // Text the root renders before its siblings keeps the root's own style.
+        String own = full.substring(0, full.length() - siblingLength);
+        if (!own.isEmpty()) {
+            texts.add(0, own);
+            styleKeys.add(0, text.getStyle());
+            styles.add(0, text.getStyle());
+        }
+        List<TranslationStyleRuns.Run> runs = TranslationStyleRuns.mergeAdjacent(texts, styleKeys);
+        if (!TranslationStyleRuns.shouldRebuildRuns(runs)) {
+            return null;
+        }
+        TranslationTextColor color = TranslationStyleRuns.resolveTranslatedColor(
+                sourceHasColor, FabricTranslationRuntime.translatedTextColor());
+        MutableText rebuilt = new LiteralText("");
+        rebuilt.setStyle(text.getStyle());
+        for (TranslationStyleRuns.Run run : runs) {
+            rebuilt.append(new LiteralText(translateRaw(run.text()))
+                    .setStyle(applyColor(styles.get(run.sourceIndex()), color)));
+        }
+        return rebuilt;
+    }
+
+    private static Style applyColor(Style original, TranslationTextColor color) {
+        if (color == null) {
             return original;
         }
         switch (color) {
@@ -122,8 +180,13 @@ public final class RenderedTextBridge {
             case YELLOW: return original.withColor(Formatting.YELLOW);
             case WHITE: return original.withColor(Formatting.WHITE);
             case AQUA: return original.withColor(Formatting.AQUA);
-            case ORIGINAL:
             default: return original;
         }
+    }
+
+    private static Style translatedStyle(Style original) {
+        return applyColor(original, TranslationStyleRuns.resolveTranslatedColor(
+                original.getColor() != null,
+                FabricTranslationRuntime.translatedTextColor()));
     }
 }

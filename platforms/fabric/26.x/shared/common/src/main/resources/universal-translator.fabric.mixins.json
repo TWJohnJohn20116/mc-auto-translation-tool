@@ -11,7 +11,8 @@
     "TextFieldWidgetMixin",
     "TextRendererMixin",
     "InGameHudContextMixin",
-    "BossBarHudContextMixin"
+    "BossBarHudContextMixin",
+    "InGameHudStatusIndicatorMixin"
   ],
   "injectors": {
     "defaultRequire": 1

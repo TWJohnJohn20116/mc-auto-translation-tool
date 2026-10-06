@@ -1,5 +1,6 @@
 package org.universaltranslator.core;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CancellationException;
@@ -27,6 +28,15 @@ public final class TranslationCoordinator implements AutoCloseable {
     private final ThreadPoolExecutor executor;
     private final ConcurrentHashMap<String, CompletableFuture<TranslationResult>> inFlight =
             new ConcurrentHashMap<String, CompletableFuture<TranslationResult>>();
+    // Content signature of the protected-literal snapshot that was seen last. The platform
+    // republishes that snapshot as a fresh immutable list every few seconds, so an identity
+    // based signature both defeated de-duplication (the same line was requested twice across a
+    // refresh, and a paid API was billed twice) and could, on a 32-bit identity collision, make
+    // two different protection sets share one result. Hashing the contents on every render
+    // thread lookup would be too expensive, so the signature is memoized under the assumption
+    // the platform publishes an immutable snapshot that keeps its contents until it is replaced
+    // by the next refresh; that turns the scan into one pass per refresh.
+    private volatile LiteralsSignature literalsSignature;
     private final AtomicBoolean closed = new AtomicBoolean();
 
     public TranslationCoordinator(TranslationProvider provider, TranslationStore cache, int workerCount) {
@@ -89,11 +99,12 @@ public final class TranslationCoordinator implements AutoCloseable {
         final TextKind effectiveKind = kind == null ? TextKind.OTHER : kind;
 
         // Keep all regex construction, cache I/O and provider work off the render thread.
-        // Include the iterable identity so requests with different player-name snapshots
-        // cannot accidentally share an in-flight result without iterating on the render thread.
+        // The protected-literal snapshot is identified by its contents so that requests with
+        // different player-name snapshots cannot accidentally share an in-flight result, while
+        // requests that only differ in the list instance still de-duplicate.
         final String requestKey = CACHE_FORMAT_VERSION + "\n" + provider.id() + "\n" + effectiveSource + "\n"
                 + targetLanguage + "\n" + effectiveKind + "\n" + preserveHanText + "\n"
-                + System.identityHashCode(protectedLiterals) + "\n" + text;
+                + protectedLiteralsSignature(protectedLiterals) + "\n" + text;
         CompletableFuture<TranslationResult> existing = inFlight.get(requestKey);
         if (existing == null) {
             final CompletableFuture<TranslationResult> created =
@@ -136,6 +147,54 @@ public final class TranslationCoordinator implements AutoCloseable {
             }
         }
         return existing;
+    }
+
+    /**
+     * Content signature of the protected-literal snapshot, memoized by snapshot identity.
+     *
+     * <p>Called from {@code translate(...)} on the render thread, so the scan only runs when the
+     * platform has published a new snapshot instead of once per lookup.
+     */
+    private String protectedLiteralsSignature(Iterable<String> protectedLiterals) {
+        if (protectedLiterals == null) {
+            return "none";
+        }
+        LiteralsSignature cached = literalsSignature;
+        if (cached != null && cached.source == protectedLiterals) {
+            return cached.value;
+        }
+        String value = signatureOf(protectedLiterals);
+        literalsSignature = new LiteralsSignature(protectedLiterals, value);
+        return value;
+    }
+
+    /**
+     * Stable signature of the literal contents. Only a {@link List} is walked here: an arbitrary
+     * {@link Iterable} is deliberately left alone because reading it on the render thread could
+     * consume an iterable that can only be traversed once, and the worker that builds the
+     * protected text still has to read it. Such iterables keep the previous identity behaviour.
+     */
+    private static String signatureOf(Iterable<String> protectedLiterals) {
+        if (!(protectedLiterals instanceof List)) {
+            return "id:" + System.identityHashCode(protectedLiterals);
+        }
+        List<?> literals = (List<?>) protectedLiterals;
+        int size = literals.size();
+        // FNV-1a over the entries. A 64-bit content hash cannot realistically collide the way
+        // two 32-bit identity hashes can.
+        long hash = 0xcbf29ce484222325L;
+        for (int index = 0; index < size; index++) {
+            Object literal = literals.get(index);
+            String value = literal instanceof String ? (String) literal : String.valueOf(literal);
+            for (int offset = 0; offset < value.length(); offset++) {
+                hash ^= value.charAt(offset);
+                hash *= 0x100000001b3L;
+            }
+            // Separate adjacent entries so ["ab", "c"] cannot hash like ["a", "bc"].
+            hash ^= 0x0aL;
+            hash *= 0x100000001b3L;
+        }
+        return size + ":" + Long.toHexString(hash);
     }
 
     private String translateSegments(
@@ -245,6 +304,20 @@ public final class TranslationCoordinator implements AutoCloseable {
             return throwable == null ? "Translation failed" : throwable.getClass().getSimpleName();
         }
         return message;
+    }
+
+    /**
+     * Memoized content signature of one protected-literal snapshot. Held in a single volatile
+     * field so a reader can never observe a signature that belongs to a different snapshot.
+     */
+    private static final class LiteralsSignature {
+        private final Iterable<String> source;
+        private final String value;
+
+        private LiteralsSignature(Iterable<String> source, String value) {
+            this.source = source;
+            this.value = value;
+        }
     }
 
     private static final class TranslationThreadFactory implements ThreadFactory {
