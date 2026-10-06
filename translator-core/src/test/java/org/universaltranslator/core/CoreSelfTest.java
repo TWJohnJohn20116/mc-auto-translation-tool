@@ -919,7 +919,10 @@ public final class CoreSelfTest {
         assertEquals("[Guild] Steve", merged.get(0).text());
         assertEquals(0, merged.get(0).sourceIndex());
         assertEquals(" says hi", merged.get(1).text());
-        assertEquals(1, merged.get(1).sourceIndex());
+        // sourceIndex is the index in the input list, not the index of the merged run: the
+        // bridges use it to fetch the Style of the sibling the run starts at. " says hi" is the
+        // third input entry, so its index is 2.
+        assertEquals(2, merged.get(1).sourceIndex());
         assertEquals(2, TranslationStyleRuns.distinctStyleCount(merged));
         assertTrue(TranslationStyleRuns.shouldRebuildRuns(merged));
 
