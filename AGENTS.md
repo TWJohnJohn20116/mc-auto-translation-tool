@@ -190,6 +190,9 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
 5. workflow 會驗證 48 顆 JAR 與 checksum、縮減成 **31 顆可直接安裝 JAR**（加 `SHA256SUMS.txt` 共
    32 個資產），再建立或更新 `v<mod_version>` Release；版本號含 `-` 者視為 prerelease。
    NeoForge **不做**版本範圍合併（同一顆 JAR 塞多個同 `modId` 實作會載入失敗），每個版本各一顆。
+   **注意**：`publish-release.yml` 的 `expected` 陣列與數量檢查描述的是**目前 `downloads/` 裡已提交
+   的版本**，現在還是 1.3.11 的 33 顆／17 個資產。下一個版本用 `prepare-release` 重新產生
+   `downloads/` 時，必須在**同一個 PR** 裡把這兩處改成新的目標清單與數量，否則發布會失敗。
 6. 更新文件與網站：`README.md` 與 `docs/Zh-cn|Zh-tw|en/README.md` 裡的連結是**寫死版本號**的
    （`releases/download/v<版本>/...`），新增或移除目標時四個檔案都要一起改，否則會指向不存在的檔案。
    `website/app/page.tsx` 也要一起更新：`releaseVersion`、`metadata.title`／`description`、按鈕文字，
@@ -203,11 +206,17 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
 
 ## 修改 CI 的規則
 
-- `prepare-release.yml` 的 48 個目標必須與 `publish-release.yml` 的 `expected` 陣列完全一致，
-  新增或移除目標時兩邊要一起改；每個目標的 `project` 與 `jar_dir` 也要對得上 `settings.gradle`
-  （`jar_dir` 是專案目錄，JAR 會在它的 `build/release-assets`、`build/release` 或 `build/libs` 下）。
-  收集時是用**版本號精確比對** `*-<version>.jar`，不要改成「目錄裡唯一的 JAR」：本機與快取目錄
-  常留有舊版本的 JAR。
+- `prepare-release.yml` 的 48 個目標是「要建置什麼」；`publish-release.yml` 的 `expected` 陣列
+  （目標 JAR 名稱，每個目標一顆）與 `-ne <數量>`（合併後的可安裝資產數）描述的是**目前 `downloads/`
+  裡已提交的那個版本**。兩者**不是同時改**：
+  - 目標清單可以隨時改動——`prepare-release.yml` 只有 `workflow_dispatch`，改了不會觸發任何執行。
+  - `expected` 與數量**只能在 `release/prepare-<version>` PR 裡改**（那個 PR 會把 `downloads/` 整個
+    換成新版本）。**不要**在還沒重新產生 `downloads/` 之前就改它：`publish-release.yml` 的觸發路徑
+    包含它自己，任何動到它的 push 到 `main` 都會立刻用新數字去驗證舊的 `downloads/` 而失敗
+    （2026-10-06 就差點這樣把 `main` 弄紅）。
+  - 每個目標的 `project` 與 `jar_dir` 也要對得上 `settings.gradle`（`jar_dir` 是專案目錄，JAR 會在
+    它的 `build/release-assets`、`build/release` 或 `build/libs` 下）。收集時是用**版本號精確比對**
+    `*-<version>.jar`，不要改成「目錄裡唯一的 JAR」：本機與快取目錄常留有舊版本的 JAR。
 - `prepare-release.yml` 用動態 matrix（`fromJSON`）：48 個目標的清單在 `plan` job 裡，只有被要求的
   目標才會開 runner，打錯名稱會直接以 `::error::` 失敗（`build.yml` 的靜態 matrix 遇到打錯的名稱
   只會靜默略過，所以那邊仍要用 `gh run view --json jobs` 確認）。`build.yml` 維持靜態 matrix：它是

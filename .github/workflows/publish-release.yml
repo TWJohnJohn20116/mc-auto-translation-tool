@@ -74,7 +74,7 @@ jobs:
             "MCAutoTranslationTool-$version-mc1.12.2-forge.jar"
             "MCAutoTranslationTool-$version-mc1.13.x-fabric.jar"
             "MCAutoTranslationTool-$version-mc1.14-1.15.x-fabric.jar"
-            "MCAutoTranslationTool-$version-mc1.16.x-fabric.jar"
+            "MCAutoTranslationTool-$version-mc1.16.5-fabric.jar"
             "MCAutoTranslationTool-$version-mc1.16.5-forge.jar"
             "MCAutoTranslationTool-$version-mc1.17-1.18.x-fabric.jar"
             "MCAutoTranslationTool-$version-mc1.18.2-forge.jar"
@@ -86,21 +86,6 @@ jobs:
             "MCAutoTranslationTool-$version-mc1.21.1-neoforge.jar"
             "MCAutoTranslationTool-$version-mc1.21.3-neoforge.jar"
             "MCAutoTranslationTool-$version-mc1.21.11-neoforge.jar"
-            "MCAutoTranslationTool-$version-mc1.20.4-neoforge.jar"
-            "MCAutoTranslationTool-$version-mc1.20.6-neoforge.jar"
-            "MCAutoTranslationTool-$version-mc1.21-neoforge.jar"
-            "MCAutoTranslationTool-$version-mc1.21.2-neoforge.jar"
-            "MCAutoTranslationTool-$version-mc1.21.4-neoforge.jar"
-            "MCAutoTranslationTool-$version-mc1.21.5-neoforge.jar"
-            "MCAutoTranslationTool-$version-mc1.21.6-neoforge.jar"
-            "MCAutoTranslationTool-$version-mc1.21.7-neoforge.jar"
-            "MCAutoTranslationTool-$version-mc1.21.8-neoforge.jar"
-            "MCAutoTranslationTool-$version-mc1.21.9-neoforge.jar"
-            "MCAutoTranslationTool-$version-mc1.21.10-neoforge.jar"
-            "MCAutoTranslationTool-$version-mc26.1-neoforge.jar"
-            "MCAutoTranslationTool-$version-mc26.1.1-neoforge.jar"
-            "MCAutoTranslationTool-$version-mc26.1.2-neoforge.jar"
-            "MCAutoTranslationTool-$version-mc26.2-neoforge.jar"
             "MCAutoTranslationTool-$version-mc1.21.x-fabric.jar"
             "MCAutoTranslationTool-$version-mc1.21-forge.jar"
             "MCAutoTranslationTool-$version-mc1.21.1-forge.jar"
@@ -181,8 +166,8 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t assets < <(find "$ASSET_DIR" -maxdepth 1 -type f \( -name '*.jar' -o -name 'SHA256SUMS.txt' \) -print | sort)
-          if [[ "${#assets[@]}" -ne 32 ]]; then
-            echo "Expected thirty-one compatible JARs and SHA256SUMS.txt" >&2
+          if [[ "${#assets[@]}" -ne 17 ]]; then
+            echo "Expected sixteen compatible JARs and SHA256SUMS.txt" >&2
             exit 1
           fi
           notes="$RUNNER_TEMP/release-notes.md"
