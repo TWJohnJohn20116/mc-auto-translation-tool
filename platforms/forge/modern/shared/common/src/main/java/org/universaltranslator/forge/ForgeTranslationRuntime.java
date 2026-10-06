@@ -24,6 +24,9 @@ import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 
 public final class ForgeTranslationRuntime {
     private static final long PLAYER_NAME_SNAPSHOT_MILLIS = 5_000L;
@@ -38,6 +41,19 @@ public final class ForgeTranslationRuntime {
     private static volatile long protectedPlayerNamesExpireAt;
     private static final RecentUserText RECENT_USER_TEXT = new RecentUserText();
     private static CompletableFuture<Void> outgoingTail = CompletableFuture.completedFuture(null);
+    // A single daemon thread serializes the teardown of replaced sessions: at most one reaper
+    // thread exists no matter how often the configuration is switched, and two replaced sessions
+    // can never tear down concurrently. Threads are created lazily, so a client that never switches
+    // pays nothing, and the daemon flag keeps the reaper from holding the JVM open.
+    private static final ExecutorService SESSION_REAPER = Executors.newSingleThreadExecutor(
+            new ThreadFactory() {
+                @Override
+                public Thread newThread(Runnable runnable) {
+                    Thread thread = new Thread(runnable, "universal-translator-session-reaper");
+                    thread.setDaemon(true);
+                    return thread;
+                }
+            });
 
     private ForgeTranslationRuntime() {
     }
@@ -55,24 +71,82 @@ public final class ForgeTranslationRuntime {
         }
     }
 
+    /**
+     * Installs a replacement configuration without blocking the caller on the teardown of the one
+     * it replaces.
+     *
+     * <p>Build first: the replacement provider, store and session are constructed before any live
+     * field is touched, so a construction failure (a rejected provider configuration, an unreadable
+     * cache path) leaves the previous session fully usable. The old order shut the previous session
+     * down first, so failing halfway left the client with no translation at all.
+     *
+     * <p>Swap second: {@code session}, {@code activeConfig} and {@code activeProvider} are replaced
+     * together under the class monitor. The previous session keeps serving every lookup until that
+     * instant, so switching costs no translation gap.
+     *
+     * <p>Close the replaced session in the background: {@code close()} interrupts the workers and
+     * then waits up to five seconds for one parked in a provider read, and running that on the
+     * client tick thread is what froze the game for hundreds of milliseconds to several seconds on
+     * every F8 toggle and settings save.
+     */
     static synchronized void initialize(ForgeConfig config) throws IOException {
-        shutdown();
+        // Build the replacement without touching session/activeConfig/activeProvider: if anything
+        // here throws, the caller still has the previous, fully working session.
+        TranslationProvider createdProvider = null;
+        RenderTranslationSession created = null;
+        if (config.enabled) {
+            TranslationProvider provider = config.createProvider();
+            TranslationStore store = config.diskCache
+                    ? new PersistentTranslationCache(config.cacheFile, 10_000)
+                    : new TranslationCache(10_000);
+            int workers = provider.id().contains("offline-llama:") ? 1 : 2;
+            created = new RenderTranslationSession(
+                    provider, "auto", config.targetLanguage, store, workers, config.displayMode,
+                    config.translateEnglishOnly);
+            created.setBlockedKeywords(config.blockedKeywords);
+            created.setProtectedLiteralsSupplier(ForgeTranslationRuntime::playerNameSnapshot);
+            createdProvider = provider;
+        }
+        // Swap last, in one synchronized block. The replaced session is captured in a local
+        // variable because the field no longer refers to it after the next three assignments.
+        RenderTranslationSession replaced = session;
         activeConfig = config;
-        if (!config.enabled) {
+        activeProvider = createdProvider;
+        session = created;
+        protectedPlayerNames = Collections.emptyList();
+        protectedPlayerNamesExpireAt = 0L;
+        RECENT_USER_TEXT.clear();
+        outgoingTail = CompletableFuture.completedFuture(null);
+        closeInBackground(replaced);
+    }
+
+    /**
+     * Hands a replaced session to the shared reaper so its teardown never runs on the caller's
+     * thread. {@link #shutdown()} stays synchronous on purpose: it runs while the game is closing,
+     * where blocking is free, and it closes whichever session is current at that moment, which is
+     * never one that was already handed to the reaper.
+     */
+    private static void closeInBackground(final RenderTranslationSession replaced) {
+        if (replaced == null) {
             return;
         }
-        TranslationProvider provider = config.createProvider();
-        activeProvider = provider;
-        TranslationStore store = config.diskCache
-                ? new PersistentTranslationCache(config.cacheFile, 10_000)
-                : new TranslationCache(10_000);
-        int workers = provider.id().contains("offline-llama:") ? 1 : 2;
-        RenderTranslationSession created = new RenderTranslationSession(
-                provider, "auto", config.targetLanguage, store, workers, config.displayMode,
-                config.translateEnglishOnly);
-        created.setBlockedKeywords(config.blockedKeywords);
-        created.setProtectedLiteralsSupplier(ForgeTranslationRuntime::playerNameSnapshot);
-        session = created;
+        try {
+            SESSION_REAPER.execute(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        replaced.close();
+                    } catch (Throwable ignored) {
+                        // A reaper must never die with a teardown still pending. The session is
+                        // already unreachable from the live fields, so a failure here can only
+                        // leak its resources; there is no caller left to report it to.
+                    }
+                }
+            });
+        } catch (Throwable rejected) {
+            // The executor only rejects once it has been shut down, which this class never does.
+            // Leaving the replaced session unclosed still beats blocking the caller.
+        }
     }
 
     static String translateForRender(String original, TextKind kind) {
