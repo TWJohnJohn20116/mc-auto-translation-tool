@@ -2,3 +2,13 @@ allowBuilds:
   esbuild: true
   sharp: true
   workerd: true
+
+# 安全性覆寫：這些套件的修復版都只發布在非 latest 的 dist-tag 上
+# （brace-expansion 在 1.x、js-yaml 在 v4-legacy），Dependabot 因此無法解析，
+# 每週重試都會以 security_update_not_possible 失敗。pnpm 11 不讀 package.json
+# 的 pnpm 欄位，所以設定放在這裡。
+overrides:
+  "brace-expansion@1": "1.1.21"
+  "js-yaml@4": "4.3.2"
+  "fast-uri@3": "3.1.7"
+  "esbuild@<0.25.0": "0.25.0"
