@@ -70,6 +70,19 @@ public final class ProtectedText {
     private static final Pattern PROTECTED_WITH_HAN =
             Pattern.compile("(?:" + PROTECTED_SOURCE + "|" + HAN_SOURCE + ")");
     private static final Pattern INTERNAL_TOKEN = Pattern.compile("__UT_\\d+__");
+    /**
+     * How many distinct literal sets keep their compiled pattern alive. The platform publishes a
+     * fresh player-name snapshot every few seconds, so a handful of slots is enough to serve every
+     * worker between two snapshots while keeping the cache bounded.
+     */
+    private static final int PATTERN_CACHE_CAPACITY = 4;
+    private static final long FNV_OFFSET_BASIS = 0xcbf29ce484222325L;
+    private static final long FNV_PRIME = 0x100000001b3L;
+    /** Guards {@link #PATTERN_CACHE} and {@link #patternCacheCursor}. */
+    private static final Object PATTERN_CACHE_LOCK = new Object();
+    private static final PatternCacheEntry[] PATTERN_CACHE =
+            new PatternCacheEntry[PATTERN_CACHE_CAPACITY];
+    private static int patternCacheCursor;
 
     private final String original;
     private final String template;
@@ -124,6 +137,14 @@ public final class ProtectedText {
                 return Integer.compare(second.length(), first.length());
             }
         });
+        return parseWithPattern(text, cachedPattern(literals, preserveHanText));
+    }
+
+    /**
+     * Builds the alternation source and compiles it. This is the expensive step, so callers go
+     * through {@link #cachedPattern(List, boolean)} instead of calling it directly.
+     */
+    private static Pattern compilePattern(List<String> literals, boolean preserveHanText) {
         StringBuilder source = new StringBuilder(
                 "(?:" + NOT_AFTER_FORMAT_CODE + "(?<![A-Za-z0-9_])(?:" + FORMAT_CODE + ")*(?:");
         for (int index = 0; index < literals.size(); index++) {
@@ -137,8 +158,86 @@ public final class ProtectedText {
             source.append('|').append(HAN_SOURCE);
         }
         source.append(')');
-        return parseWithPattern(text, Pattern.compile(
-                source.toString(), Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE));
+        return Pattern.compile(
+                source.toString(), Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+    }
+
+    /**
+     * Returns the compiled pattern for an already deduplicated and sorted literal list, reusing a
+     * previously compiled one when the same content has just been seen.
+     *
+     * <p>The key is the literal <em>content</em>, never the iterable identity: the platform
+     * republishes an equal-but-new {@code List} every few seconds, so an identity key would never
+     * hit. {@link #signature(List, boolean)} is only a fast reject filter; the entry is reused
+     * solely when {@link List#equals(Object)} confirms that every literal matches, so a signature
+     * collision can never hand back a pattern built from different literals.
+     */
+    private static Pattern cachedPattern(List<String> literals, boolean preserveHanText) {
+        long signature = signature(literals, preserveHanText);
+        synchronized (PATTERN_CACHE_LOCK) {
+            for (int index = 0; index < PATTERN_CACHE.length; index++) {
+                PatternCacheEntry entry = PATTERN_CACHE[index];
+                if (entry != null && entry.matches(signature, preserveHanText, literals)) {
+                    return entry.pattern;
+                }
+            }
+            // Compiling under the lock keeps a burst of workers that all miss on a freshly
+            // published snapshot down to a single compilation instead of one per thread.
+            Pattern compiled = compilePattern(literals, preserveHanText);
+            PATTERN_CACHE[patternCacheCursor] =
+                    new PatternCacheEntry(signature, preserveHanText, literals, compiled);
+            patternCacheCursor = (patternCacheCursor + 1) % PATTERN_CACHE.length;
+            return compiled;
+        }
+    }
+
+    /**
+     * FNV-1a over the length and characters of every literal, with a separator between entries and
+     * the Han flag mixed in first. Framing each literal with its length keeps {@code ["ab", "c"]}
+     * apart from {@code ["a", "bc"]}, so equal-length-but-different content never shares a key.
+     */
+    private static long signature(List<String> literals, boolean preserveHanText) {
+        long hash = FNV_OFFSET_BASIS;
+        hash = (hash ^ (preserveHanText ? 1L : 0L)) * FNV_PRIME;
+        for (int index = 0; index < literals.size(); index++) {
+            String literal = literals.get(index);
+            int length = literal.length();
+            hash = (hash ^ length) * FNV_PRIME;
+            hash = (hash ^ 0x1fL) * FNV_PRIME;
+            for (int offset = 0; offset < length; offset++) {
+                hash = (hash ^ literal.charAt(offset)) * FNV_PRIME;
+            }
+        }
+        return hash;
+    }
+
+    private static final class PatternCacheEntry {
+        private final long signature;
+        private final boolean preserveHanText;
+        private final List<String> literals;
+        private final Pattern pattern;
+
+        private PatternCacheEntry(
+                long signature,
+                boolean preserveHanText,
+                List<String> literals,
+                Pattern pattern
+        ) {
+            this.signature = signature;
+            this.preserveHanText = preserveHanText;
+            this.literals = Collections.unmodifiableList(new ArrayList<String>(literals));
+            this.pattern = pattern;
+        }
+
+        private boolean matches(
+                long candidateSignature,
+                boolean candidateHan,
+                List<String> candidate
+        ) {
+            return signature == candidateSignature
+                    && preserveHanText == candidateHan
+                    && literals.equals(candidate);
+        }
     }
 
     private static ProtectedText parseWithPattern(String text, Pattern pattern) {

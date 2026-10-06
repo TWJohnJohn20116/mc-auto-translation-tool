@@ -54,6 +54,9 @@ public final class HttpJsonClient {
         }
         String bodyValue = bodyText == null ? "" : bodyText;
         HttpURLConnection connection = (HttpURLConnection) endpoint.toURL().openConnection();
+        // Set only when the response body was read to the end and closed, so the socket can go
+        // back to the keep-alive pool instead of being torn down by disconnect().
+        boolean connectionReusable = false;
         try {
             connection.setRequestMethod(requestMethod);
             connection.setConnectTimeout(connectTimeoutMillis);
@@ -89,13 +92,44 @@ public final class HttpJsonClient {
                     providerError = JsonStrings.readStringField(response, "Message");
                 }
                 throw new HttpStatusException(status, "Translation service returned HTTP " + status
-                        + (providerError == null ? "" : ": " + providerError));
+                        + (providerError == null ? "" : ": " + providerError),
+                        parseRetryAfterSeconds(connection.getHeaderField("Retry-After")));
+            }
+            // The body was read to the end and closed, so the connection may be pooled. Any other
+            // exit (non-2xx status, exception, unread body) still disconnects below.
+            if (stream != null) {
+                connectionReusable = true;
             }
             return response;
         } catch (ConnectException refused) {
             throw TranslationEndpointUnavailableException.connectionRefused(endpoint, refused);
         } finally {
-            connection.disconnect();
+            if (!connectionReusable) {
+                connection.disconnect();
+            }
+        }
+    }
+
+    /**
+     * Parses a {@code Retry-After} header value into seconds.
+     *
+     * <p>Only the delta-seconds form is supported (for example {@code 120}); the HTTP-date form and
+     * any other unparsable value are treated as unknown and reported as {@code null}. A malformed
+     * header never fails the request itself.
+     *
+     * @param headerValue raw {@code Retry-After} header value, possibly {@code null}
+     * @return the advertised delay in seconds, or {@code null} when it is unknown
+     */
+    private static Long parseRetryAfterSeconds(String headerValue) {
+        String candidate = headerValue == null ? "" : headerValue.trim();
+        if (candidate.isEmpty()) {
+            return null;
+        }
+        try {
+            long seconds = Long.parseLong(candidate);
+            return seconds < 0 ? null : Long.valueOf(seconds);
+        } catch (NumberFormatException notDeltaSeconds) {
+            return null;
         }
     }
 
