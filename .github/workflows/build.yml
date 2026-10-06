@@ -129,7 +129,11 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       targets: ${{ steps.resolve.outputs.targets }}
+      forge_changed: ${{ steps.forge.outputs.changed }}
     steps:
+      - name: 取出原始碼
+        uses: actions/checkout@v7
+
       - name: 解析要建置的目標
         id: resolve
         shell: bash
@@ -145,6 +149,32 @@ jobs:
             echo "targets=" >> "$GITHUB_OUTPUT"
           else
             echo "targets=,$requested," >> "$GITHUB_OUTPUT"
+          fi
+
+      # Forge／NeoForge 的建置要跑 Minecraft Mavenizer 與 ForgeGradle 的 decompile，
+      # 單一目標就要 3～5 分鐘。只動到文件、網站或 Fabric 的 PR 不可能影響它們，
+      # 因此略過「建置步驟」——job 本身仍會執行並回報成功，CI 總結 才不會卡在 waiting。
+      - name: 判斷有沒有動到 Forge／NeoForge
+        id: forge
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" != "pull_request" || -z "$BASE_REF" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "非 PR 觸發，一律建置 Forge／NeoForge"
+            exit 0
+          fi
+          git fetch --no-tags --depth=1 origin "$BASE_REF"
+          # 保守策略：只有「所有變更都落在與 Forge 無關的路徑」時才略過。
+          # 文件、網站、下載資產與 Fabric 平台都是獨立專案，改動它們不會影響 Forge。
+          if git diff --name-only FETCH_HEAD HEAD | grep -qvE '^(docs/|website/|downloads/|platforms/fabric/)|\.md$|^LICENSE$|^\.gitignore$'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "這個 PR 有動到 Forge／NeoForge 相關路徑"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "這個 PR 只動到文件、網站、下載資產或 Fabric，略過 Forge／NeoForge 建置"
           fi
 
   platform-build:
@@ -212,7 +242,11 @@ jobs:
 
       - name: 建置平台
         id: build
-        if: needs.plan.outputs.targets == '' || contains(needs.plan.outputs.targets, format(',{0},', matrix.target))
+        if: >-
+          (needs.plan.outputs.targets == '' &&
+          (needs.plan.outputs.forge_changed == 'true' ||
+          (!startsWith(matrix.target, 'forge-') && !startsWith(matrix.target, 'neoforge-')))) ||
+          contains(needs.plan.outputs.targets, format(',{0},', matrix.target))
         uses: ./.github/actions/gradle-build
         with:
           args: --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
@@ -221,7 +255,8 @@ jobs:
       # 需要產物時改用 workflow_dispatch 或 push main 的執行。
       - name: 上傳平台 JAR
         if: >-
-          success() && github.event_name != 'pull_request' &&
+          success() && steps.build.outcome == 'success' &&
+          github.event_name != 'pull_request' &&
           (needs.plan.outputs.targets == '' ||
           contains(needs.plan.outputs.targets, format(',{0},', matrix.target)))
         uses: actions/upload-artifact@v7
@@ -303,16 +338,19 @@ jobs:
       - name: 建置舊版平台
         id: build
         if: >-
-          needs.plan.outputs.targets == '' ||
-          contains(needs.plan.outputs.targets, format(',{0},', matrix.target)) ||
-          contains(needs.plan.outputs.targets, ',legacy,')
+          contains(needs.plan.outputs.targets, ',legacy,') ||
+          (needs.plan.outputs.targets == '' &&
+          (needs.plan.outputs.forge_changed == 'true' ||
+          !startsWith(matrix.target, 'forge-'))) ||
+          contains(needs.plan.outputs.targets, format(',{0},', matrix.target))
         uses: ./.github/actions/gradle-build
         with:
           args: --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
 
       - name: 上傳舊版 JAR
         if: >-
-          success() && github.event_name != 'pull_request' &&
+          success() && steps.build.outcome == 'success' &&
+          github.event_name != 'pull_request' &&
           (needs.plan.outputs.targets == '' ||
           contains(needs.plan.outputs.targets, format(',{0},', matrix.target)) ||
           contains(needs.plan.outputs.targets, ',legacy,'))
