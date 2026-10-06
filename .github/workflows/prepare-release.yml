@@ -102,7 +102,6 @@ jobs:
             {"target": "mc1.21.1-neoforge", "project": "platform-neoforge-1.21.1", "jar_dir": "platforms/neoforge/1.21/versions/1.21.1", "java": "21"},
             {"target": "mc1.21.3-neoforge", "project": "platform-neoforge-1.21.3", "jar_dir": "platforms/neoforge/1.21/versions/1.21.3", "java": "21"},
             {"target": "mc1.21.11-neoforge", "project": "platform-neoforge-1.21.11", "jar_dir": "platforms/neoforge/1.21/versions/1.21.11", "java": "21"},
-            {"target": "mc1.20.2-neoforge", "project": "platform-neoforge-1.20.2", "jar_dir": "platforms/neoforge/1.20/versions/1.20.2", "java": "21"},
             {"target": "mc1.20.4-neoforge", "project": "platform-neoforge-1.20.4", "jar_dir": "platforms/neoforge/1.20/versions/1.20.4", "java": "21"},
             {"target": "mc1.20.6-neoforge", "project": "platform-neoforge-1.20.6", "jar_dir": "platforms/neoforge/1.20/versions/1.20.6", "java": "21"},
             {"target": "mc1.21-neoforge", "project": "platform-neoforge-1.21", "jar_dir": "platforms/neoforge/1.21/versions/1.21", "java": "21"},
