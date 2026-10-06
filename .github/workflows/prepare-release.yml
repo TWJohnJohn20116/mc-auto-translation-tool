@@ -1,10 +1,10 @@
 name: 準備發布資產
 
-# 一鍵把 downloads/<mod_version> 準備好：建置 33 個目標、用標準檔名收集、產生
+# 一鍵把 downloads/<mod_version> 準備好：建置 49 個目標、用標準檔名收集、產生
 # SHA256SUMS.txt、跑 verify_release_jars.py 驗證，然後開 PR。
 # 原本這一步是在本機手動做的（見 AGENTS.md 的發布流程）。
 #
-# 刻意不放在 PR 路徑上：33 個目標各要 2-8 分鐘，一次約 10 分鐘牆鐘時間。
+# 刻意不放在 PR 路徑上：49 個目標各要 2-8 分鐘，一次約 10～20 分鐘牆鐘時間。
 
 on:
   workflow_dispatch:
@@ -16,7 +16,7 @@ on:
         type: string
       targets:
         description: >-
-          逗號分隔的目標名稱（例如 mc1.21.7-forge），留空則全部 33 個。
+          逗號分隔的目標名稱（例如 mc1.21.7-forge），留空則全部 49 個。
           只指定部分目標時不會開 PR，僅用來煙霧測試。
         required: false
         default: ""
@@ -65,7 +65,7 @@ jobs:
             echo "full=false" >> "$GITHUB_OUTPUT"
           fi
 
-          # 33 個發布目標的權威清單，必須與 publish-release.yml 的 expected 陣列一致。
+          # 49 個發布目標的權威清單，必須與 publish-release.yml 的 expected 陣列一致。
           # 放在這裡才能用動態 matrix：只有被要求的目標會開 runner。
           TARGETS_JSON="$(cat <<'JSON'
           [
@@ -101,7 +101,23 @@ jobs:
             {"target": "mc1.20.1-neoforge", "project": "platform-neoforge-1.20.1", "jar_dir": "platforms/neoforge/1.20.1", "java": "21"},
             {"target": "mc1.21.1-neoforge", "project": "platform-neoforge-1.21.1", "jar_dir": "platforms/neoforge/1.21/versions/1.21.1", "java": "21"},
             {"target": "mc1.21.3-neoforge", "project": "platform-neoforge-1.21.3", "jar_dir": "platforms/neoforge/1.21/versions/1.21.3", "java": "21"},
-            {"target": "mc1.21.11-neoforge", "project": "platform-neoforge-1.21.11", "jar_dir": "platforms/neoforge/1.21/versions/1.21.11", "java": "21"}
+            {"target": "mc1.21.11-neoforge", "project": "platform-neoforge-1.21.11", "jar_dir": "platforms/neoforge/1.21/versions/1.21.11", "java": "21"},
+            {"target": "mc1.20.2-neoforge", "project": "platform-neoforge-1.20.2", "jar_dir": "platforms/neoforge/1.20/versions/1.20.2", "java": "21"},
+            {"target": "mc1.20.4-neoforge", "project": "platform-neoforge-1.20.4", "jar_dir": "platforms/neoforge/1.20/versions/1.20.4", "java": "21"},
+            {"target": "mc1.20.6-neoforge", "project": "platform-neoforge-1.20.6", "jar_dir": "platforms/neoforge/1.20/versions/1.20.6", "java": "21"},
+            {"target": "mc1.21-neoforge", "project": "platform-neoforge-1.21", "jar_dir": "platforms/neoforge/1.21/versions/1.21", "java": "21"},
+            {"target": "mc1.21.2-neoforge", "project": "platform-neoforge-1.21.2", "jar_dir": "platforms/neoforge/1.21/versions/1.21.2", "java": "21"},
+            {"target": "mc1.21.4-neoforge", "project": "platform-neoforge-1.21.4", "jar_dir": "platforms/neoforge/1.21/versions/1.21.4", "java": "21"},
+            {"target": "mc1.21.5-neoforge", "project": "platform-neoforge-1.21.5", "jar_dir": "platforms/neoforge/1.21/versions/1.21.5", "java": "21"},
+            {"target": "mc1.21.6-neoforge", "project": "platform-neoforge-1.21.6", "jar_dir": "platforms/neoforge/1.21/versions/1.21.6", "java": "21"},
+            {"target": "mc1.21.7-neoforge", "project": "platform-neoforge-1.21.7", "jar_dir": "platforms/neoforge/1.21/versions/1.21.7", "java": "21"},
+            {"target": "mc1.21.8-neoforge", "project": "platform-neoforge-1.21.8", "jar_dir": "platforms/neoforge/1.21/versions/1.21.8", "java": "21"},
+            {"target": "mc1.21.9-neoforge", "project": "platform-neoforge-1.21.9", "jar_dir": "platforms/neoforge/1.21/versions/1.21.9", "java": "21"},
+            {"target": "mc1.21.10-neoforge", "project": "platform-neoforge-1.21.10", "jar_dir": "platforms/neoforge/1.21/versions/1.21.10", "java": "21"},
+            {"target": "mc26.1-neoforge", "project": "platform-neoforge-26.1", "jar_dir": "platforms/neoforge/26.x/versions/26.1", "java": "25"},
+            {"target": "mc26.1.1-neoforge", "project": "platform-neoforge-26.1.1", "jar_dir": "platforms/neoforge/26.x/versions/26.1.1", "java": "25"},
+            {"target": "mc26.1.2-neoforge", "project": "platform-neoforge-26.1.2", "jar_dir": "platforms/neoforge/26.x/versions/26.1.2", "java": "25"},
+            {"target": "mc26.2-neoforge", "project": "platform-neoforge-26.2", "jar_dir": "platforms/neoforge/26.x/versions/26.2", "java": "25"}
           ]
           JSON
           )"
@@ -126,7 +142,7 @@ jobs:
           targets = json.loads(os.environ["TARGETS_JSON"])
           print("matrix=" + json.dumps({"include": targets}))
           PY
-            echo "要準備 $version 的全部 33 個目標"
+            echo "要準備 $version 的全部 49 個目標"
           else
             python3 - "$requested" >> "$GITHUB_OUTPUT" <<'PY'
           import json, os, sys
@@ -300,7 +316,7 @@ jobs:
             --require-complete-checksums \
             "${jars[@]}"
 
-      - name: 檢查目標數量是否為 33
+      - name: 檢查目標數量是否為 49
         if: needs.plan.outputs.full == 'true'
         env:
           VERSION: ${{ needs.plan.outputs.version }}
@@ -313,8 +329,8 @@ jobs:
               find "$target_dir" -maxdepth 1 -type f -name '*.jar.part-aa'
             } | wc -l
           )"
-          if [[ "$count" -ne 33 ]]; then
-            echo "發布目錄必須剛好有 33 顆目標 JAR，實際 $count 顆" >&2
+          if [[ "$count" -ne 49 ]]; then
+            echo "發布目錄必須剛好有 49 顆目標 JAR，實際 $count 顆" >&2
             exit 1
           fi
 

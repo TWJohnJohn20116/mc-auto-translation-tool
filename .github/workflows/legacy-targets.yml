@@ -202,3 +202,106 @@ jobs:
             echo "| 結果 | ${result} |"
             echo "| artifact | ${ARTIFACT:-無} |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # NeoForge 各版本要跑 Minecraft Mavenizer 與 ForgeGradle 的 decompile，單一目標就要
+  # 3～5 分鐘，依 AGENTS.md 的規則放在這裡（排程／手動），不放進 PR 必經的 build.yml。
+  # 這些目標過去只存在於 settings.gradle，從來沒有被任何 workflow 建置，也沒有發布過。
+  neoforge-targets:
+    name: 建置 NeoForge ${{ matrix.target }}
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: neoforge-1.20.2
+            java: "21"
+          - target: neoforge-1.20.4
+            java: "21"
+          - target: neoforge-1.20.6
+            java: "21"
+          - target: neoforge-1.21
+            java: "21"
+          - target: neoforge-1.21.2
+            java: "21"
+          - target: neoforge-1.21.4
+            java: "21"
+          - target: neoforge-1.21.5
+            java: "21"
+          - target: neoforge-1.21.6
+            java: "21"
+          - target: neoforge-1.21.7
+            java: "21"
+          - target: neoforge-1.21.8
+            java: "21"
+          - target: neoforge-1.21.9
+            java: "21"
+          - target: neoforge-1.21.10
+            java: "21"
+          - target: neoforge-26.1
+            java: "25"
+          - target: neoforge-26.1.1
+            java: "25"
+          - target: neoforge-26.1.2
+            java: "25"
+          - target: neoforge-26.2
+            java: "25"
+    steps:
+      - name: 取出原始碼
+        uses: actions/checkout@v7
+
+      - name: 設定 Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+
+      - name: 設定 Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+          add-job-summary: on-failure
+
+      - name: 建置 NeoForge 平台
+        id: build
+        if: needs.plan.outputs.targets == '' || contains(needs.plan.outputs.targets, format(',{0},', matrix.target))
+        uses: ./.github/actions/gradle-build
+        with:
+          args: --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
+
+      - name: 上傳 NeoForge JAR
+        if: >-
+          success() && (needs.plan.outputs.targets == '' ||
+          contains(needs.plan.outputs.targets, format(',{0},', matrix.target)))
+        uses: actions/upload-artifact@v7
+        with:
+          name: platform-${{ matrix.target }}
+          path: platforms/**/build/libs/*.jar
+          if-no-files-found: warn
+          retention-days: 3
+
+      - name: 寫入建置摘要
+        if: always()
+        env:
+          TARGET: ${{ matrix.target }}
+          OUTCOME: ${{ steps.build.outcome }}
+          ARTIFACT: platform-${{ matrix.target }}
+        run: |
+          case "${OUTCOME:-}" in
+            success) result="成功" ;;
+            failure) result="失敗" ;;
+            skipped) result="略過（本次未要求）" ;;
+            *) result="未知（${OUTCOME:-未執行}）" ;;
+          esac
+          version="$(sed -n 's|.*gradle-\([0-9][0-9.]*\)-.*|\1|p' gradle/wrapper/gradle-wrapper.properties | head -n 1 || true)"
+          {
+            echo "## 建置摘要"
+            echo
+            echo "| 項目 | 內容 |"
+            echo "| --- | --- |"
+            echo "| 目標 | ${TARGET:-未指定} |"
+            echo "| Gradle 版本 | ${version:-未知} |"
+            echo "| 結果 | ${result} |"
+            echo "| artifact | ${ARTIFACT:-無} |"
+          } >> "$GITHUB_STEP_SUMMARY"
