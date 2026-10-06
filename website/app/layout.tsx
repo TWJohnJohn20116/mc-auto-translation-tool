@@ -7,7 +7,7 @@ import "./globals.css";
 // only so relative asset URLs never resolve to `http://localhost:3000` in
 // production. Override it before shipping.
 const FALLBACK_SITE_URL =
-  "https://github.com/wuxiangdan96-byte/mc-auto-translation-tool";
+  "https://github.com/TWJohnJohn20116/mc-auto-translation-tool";
 
 function resolveMetadataBase(value: string | undefined): URL {
   try {

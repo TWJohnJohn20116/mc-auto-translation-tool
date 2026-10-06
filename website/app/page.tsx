@@ -43,7 +43,7 @@ const versions = [
 
 const releaseVersion = "1.3.11";
 const githubDownloadBase =
-  `https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v${releaseVersion}`;
+  `https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v${releaseVersion}`;
 
 const releaseFile = (target: string) =>
   `MCAutoTranslationTool-${releaseVersion}-mc${target}.jar`;
@@ -285,8 +285,8 @@ export default function Home() {
         </div>
         <div className="downloadMeta">
           <a href={`${githubDownloadBase}/SHA256SUMS.txt`}>SHA-256 校验文件</a>
-          <a href={`https://github.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/tag/v${releaseVersion}`}>查看正式版说明</a>
-          <a href="https://github.com/wuxiangdan96-byte/mc-auto-translation-tool">查看 GitHub 源代码</a>
+          <a href={`https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/tag/v${releaseVersion}`}>查看正式版说明</a>
+          <a href="https://github.com/TWJohnJohn20116/mc-auto-translation-tool">查看 GitHub 源代码</a>
           <a href="https://space.bilibili.com/3546631091783712">原作者：B站「我小张7272635」</a>
           <span>转载或改编请保留原作者署名 · MIT License</span>
         </div>
