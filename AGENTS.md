@@ -204,6 +204,16 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   `legacy-targets.yml`。PR 的牆鐘時間由最慢的 job 決定——曾經有一個 job 序列跑 7 個舊版目標，
   讓整體變成 15.9 分；拆成各自獨立的 matrix job 平行跑之後瓶頸才回到單一目標。
   同類目標一律拆成獨立 job，不要串在同一條 Gradle 指令裡。
+- **Forge／NeoForge 的建置在 PR 上條件化**：`plan` job 用 `git diff` 判斷這個 PR 有沒有動到
+  Forge 相關路徑，結果放在 `forge_changed` 輸出。只有「所有變更都落在 `docs/`、`website/`、
+  `downloads/`、`platforms/fabric/`、`*.md`、`LICENSE`、`.gitignore`」時，才會略過那些目標的
+  **建置步驟**。這是保守策略：清單以外一律建置。
+  - **不要改成 job 層級的 `if:`**：job 被略過會讓 `CI 總結` 的 `needs` 缺一項結果而卡在
+    waiting。略過的必須是步驟，job 本身仍要執行並回報成功。
+  - 非 PR 觸發（push `main`、排程、`workflow_dispatch`）一律建置全部目標，所以每次合併仍會
+    完整驗證一輪；`workflow_dispatch` 明確指定 `targets` 時也一律照做，不受 `forge_changed` 影響。
+  - 目的：Forge 家族的 Mavenizer 與 decompile 單一目標就要 3～5 分鐘，PR 只動文件、網站或
+    Fabric 時是白白消耗 runner。
 - **產物只在非 PR 的執行上傳**：所有 `upload-artifact` 步驟的 `if:` 都帶
   `github.event_name != 'pull_request'`，`retention-days` 一律 **3 天**。PR 是最頻繁的觸發來源，
   產物對審查沒有幫助卻會佔用儲存與頻寬（2026-10-05 之前是 7～30 天）。要取產物就手動觸發，
@@ -276,6 +286,11 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
 ## 其他專案慣例
 
 - 版本號來源是 `gradle.properties` 的 `mod_version`；發布目錄為 `downloads/<mod_version>`。
+- `website/` 用 pnpm 11（CI 以 `corepack enable` 讀 `package.json` 的 `packageManager` 決定版本）。
+  **pnpm 11 不再讀 `package.json` 的 `pnpm` 欄位**：`overrides`、`allowBuilds` 這類設定要放
+  `website/pnpm-workspace.yaml`，放進 `package.json` 只會被靜默忽略（僅吐一行 WARN）。
+  2026-10-06 就因此白做了一次無效的 `overrides`。要重新產生 lockfile 時用專案指定的版本，
+  不要用系統上剛好裝的那個（版本不同會產生大量無關的 lockfile 變動）。
 - 文件為三語：`docs/Zh-cn`（主）、`docs/Zh-tw`、`docs/en`；改一份時要考慮同步其餘兩份。
 - 不要提交 `build/` 產物或 `hs_err_pid*.log`；也不要為了方便而修改 `.gitignore` 讓產物進版控。
 - 回報時附上對應的 GitHub Actions run 連結。尚未推送、尚未經 CI 驗證的變更，必須明確說明
