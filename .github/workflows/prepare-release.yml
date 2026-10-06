@@ -73,7 +73,7 @@ jobs:
             {"target": "mc1.12.2-forge", "project": "", "jar_dir": "platforms/forge/legacy/1.12.2", "standalone": true, "java": "8"},
             {"target": "mc1.13.x-fabric", "project": "platform-fabric-1.13.x", "jar_dir": "platforms/fabric/1.13/bundle", "java": "21"},
             {"target": "mc1.14-1.15.x-fabric", "project": "platform-fabric-1.14-1.15.x", "jar_dir": "platforms/fabric/1.14-1.15/bundle", "java": "21"},
-            {"target": "mc1.16.5-fabric", "project": "platform-fabric-1.16.5", "jar_dir": "platforms/fabric/1.16/versions/1.16.5", "java": "21"},
+            {"target": "mc1.16.x-fabric", "project": "platform-fabric-1.16.x", "jar_dir": "platforms/fabric/1.16/bundle", "java": "21"},
             {"target": "mc1.17-1.18.x-fabric", "project": "platform-fabric-1.17-1.18.x", "jar_dir": "platforms/fabric/1.17-1.18/bundle", "java": "21"},
             {"target": "mc1.19.x-fabric", "project": "platform-fabric-1.19.x", "jar_dir": "platforms/fabric/1.19/bundle", "java": "21"},
             {"target": "mc1.20.x-fabric", "project": "platform-fabric-1.20.x", "jar_dir": "platforms/fabric/1.20/bundle", "java": "21"},

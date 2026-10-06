@@ -74,7 +74,7 @@ jobs:
             "MCAutoTranslationTool-$version-mc1.12.2-forge.jar"
             "MCAutoTranslationTool-$version-mc1.13.x-fabric.jar"
             "MCAutoTranslationTool-$version-mc1.14-1.15.x-fabric.jar"
-            "MCAutoTranslationTool-$version-mc1.16.5-fabric.jar"
+            "MCAutoTranslationTool-$version-mc1.16.x-fabric.jar"
             "MCAutoTranslationTool-$version-mc1.16.5-forge.jar"
             "MCAutoTranslationTool-$version-mc1.17-1.18.x-fabric.jar"
             "MCAutoTranslationTool-$version-mc1.18.2-forge.jar"
