@@ -213,7 +213,7 @@ jobs:
           name: release-${{ matrix.target }}
           path: dist/*.jar
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 3
 
   assemble:
     name: 彙整並開 PR
@@ -318,6 +318,17 @@ jobs:
             exit 1
           fi
 
+      - name: 移除舊版本的 downloads 目錄
+        if: needs.plan.outputs.full == 'true'
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          # downloads/ 只是發布資產的暫存區：舊版本早已隨 Release 發布出去，
+          # 目錄留在倉庫裡只會累積體積（2026-10-05 清理前有 22 個殘留目錄、235 MB）。
+          # 只保留目前 mod_version 的目錄。
+          find downloads -mindepth 1 -maxdepth 1 -type d ! -name "$VERSION" -print -exec rm -rf {} +
+
       - name: 開 PR
         if: needs.plan.outputs.full == 'true'
         env:
@@ -329,7 +340,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$branch"
-          git add "downloads/$VERSION"
+          # 用 -A：除了新增／更新目前版本，也要把上面移除的舊版本目錄一併納入。
+          git add -A downloads
           if git diff --cached --quiet; then
             echo "downloads/$VERSION 與目前內容相同，不需要開 PR"
             exit 0

@@ -69,7 +69,7 @@ jobs:
             **/build/reports/**
             **/build/test-results/**
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: 3
 
       - name: 寫入建置摘要
         if: always()
@@ -217,16 +217,19 @@ jobs:
         with:
           args: --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
 
+      # PR 是最頻繁的觸發來源，而 PR 的產物對審查沒有幫助，卻會佔用儲存與頻寬。
+      # 需要產物時改用 workflow_dispatch 或 push main 的執行。
       - name: 上傳平台 JAR
         if: >-
-          success() && (needs.plan.outputs.targets == '' ||
+          success() && github.event_name != 'pull_request' &&
+          (needs.plan.outputs.targets == '' ||
           contains(needs.plan.outputs.targets, format(',{0},', matrix.target)))
         uses: actions/upload-artifact@v7
         with:
           name: platform-${{ matrix.target }}
           path: platforms/**/build/libs/*.jar
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 3
 
       - name: 寫入建置摘要
         if: always()
@@ -309,7 +312,8 @@ jobs:
 
       - name: 上傳舊版 JAR
         if: >-
-          success() && (needs.plan.outputs.targets == '' ||
+          success() && github.event_name != 'pull_request' &&
+          (needs.plan.outputs.targets == '' ||
           contains(needs.plan.outputs.targets, format(',{0},', matrix.target)) ||
           contains(needs.plan.outputs.targets, ',legacy,'))
         uses: actions/upload-artifact@v7
@@ -321,7 +325,7 @@ jobs:
             platforms/**/build/libs/*.jar
             platforms/**/build/release/*.jar
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 3
 
       - name: 寫入建置摘要
         if: always()
@@ -391,7 +395,8 @@ jobs:
 
       - name: 上傳縮減後的發布 JAR
         if: >-
-          success() && (needs.plan.outputs.targets == '' ||
+          success() && github.event_name != 'pull_request' &&
+          (needs.plan.outputs.targets == '' ||
           contains(needs.plan.outputs.targets, ',release,'))
         uses: actions/upload-artifact@v7
         with:
@@ -400,7 +405,7 @@ jobs:
             build/release-assets/*.jar
             build/release-assets/SHA256SUMS.txt
           if-no-files-found: warn
-          retention-days: 30
+          retention-days: 3
 
       - name: 寫入建置摘要
         if: always()

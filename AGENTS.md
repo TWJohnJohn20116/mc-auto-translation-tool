@@ -40,7 +40,7 @@
 
 | Workflow | 檔案 | 觸發條件 | 用途 |
 | --- | --- | --- | --- |
-| 主要建置 | `.github/workflows/build.yml` | PR、push `main`、`workflow_dispatch` | workflow 靜態檢查（actionlint + shellcheck）、核心檢查、網站檢查（只在 PR 動到 `website/` 時才真的跑）、17 個平台目標、7 個舊版目標（各自獨立 job 平行跑）、發布資產驗證，最後由 `CI 總結` 彙總。這是 PR 必經路徑，牆鐘約 8 分 |
+| 主要建置 | `.github/workflows/build.yml` | PR、push `main`、`workflow_dispatch` | workflow 靜態檢查（actionlint + shellcheck）、核心檢查、網站檢查（只在 PR 動到 `website/` 時才真的跑）、17 個平台目標、7 個舊版目標（各自獨立 job 平行跑）、發布資產驗證，最後由 `CI 總結` 彙總。這是 PR 必經路徑，牆鐘約 5～6 分（由最慢的 job 決定） |
 | 舊版目標 | `.github/workflows/legacy-targets.yml` | 每週排程（週一 03:17 UTC）、`workflow_dispatch` | 4 個 Ornithe／舊版 Fabric bundle（1.3.1–1.15）與 2 個獨立 Forge 1.8.9／1.12.2 建置。這些要 remap／decompile 多個舊版 Minecraft，刻意不放在 PR 路徑 |
 | 準備發布資產 | `.github/workflows/prepare-release.yml` | 只有 `workflow_dispatch` | 一鍵準備 `downloads/<mod_version>`：建置 33 個目標、用標準檔名收集、產生 `SHA256SUMS.txt`、跑 `verify_release_jars.py` 驗證，再開 PR。手動觸發，不在 PR 路徑上（一次約 10 分鐘牆鐘時間） |
 | 發布下載資產 | `.github/workflows/publish-release.yml` | push `main`（限特定路徑）、`workflow_dispatch` | 驗證 `downloads/<version>` 並建立或更新 GitHub Release |
@@ -89,6 +89,9 @@ git -c 'credential.helper=' -c 'credential.helper=!gh auth git-credential' push 
    ```bash
    gh run download <run-id> -n platform-fabric-1.21.x -D build/ci-artifacts
    ```
+
+   **PR 的執行沒有產物**（見「修改 CI 的規則」）：要取產物請用 `workflow_dispatch` 或 push `main`
+   的執行。產物保留 **3 天**，過期就取不到。
 
    - 平台目標 → artifact 名稱 `platform-<target>`（內容 `platforms/**/build/libs/*.jar`）
    - 舊版目標 1.16.5–1.20.1 → artifact 名稱 `legacy-<target>`（同時涵蓋 Fabric 的 `build/libs` 與
@@ -201,6 +204,15 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   `legacy-targets.yml`。PR 的牆鐘時間由最慢的 job 決定——曾經有一個 job 序列跑 7 個舊版目標，
   讓整體變成 15.9 分；拆成各自獨立的 matrix job 平行跑之後瓶頸才回到單一目標。
   同類目標一律拆成獨立 job，不要串在同一條 Gradle 指令裡。
+- **產物只在非 PR 的執行上傳**：所有 `upload-artifact` 步驟的 `if:` 都帶
+  `github.event_name != 'pull_request'`，`retention-days` 一律 **3 天**。PR 是最頻繁的觸發來源，
+  產物對審查沒有幫助卻會佔用儲存與頻寬（2026-10-05 之前是 7～30 天）。要取產物就手動觸發，
+  或看 push `main` 的執行。
+- `downloads/` 只保留目前 `mod_version` 的目錄：`prepare-release.yml` 的 `assemble` job 會在開 PR 前
+  移除其他版本目錄，並用 `git add -A downloads` 把刪除一起納入。舊版本早已隨 Release 發布，
+  目錄留在倉庫裡只會累積體積（2026-10-05 清理前有 22 個殘留目錄、235 MB）。
+- 不要為了量測而反覆觸發 workflow：每次觸發都是 20 個以上 job 的完整執行。改動請批次處理，
+  一次執行驗證多項變更，不要一項一項推上去各跑一輪。
 - 新增 job 時，必須把它加進 `ci-status` 的 `needs`（`build.yml`），否則它不會被彙總、分支保護也擋不住失敗。
 - `website/` 由 `website` job 檢查（`pnpm install --frozen-lockfile`、`pnpm run lint`、`pnpm test`）：
   它用 `git diff` 判斷這個 PR 有沒有動到 `website/`，沒動就整條略過，所以一般 PR 幾乎零成本，
