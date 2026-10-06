@@ -80,6 +80,7 @@ public final class UniversalTranslatorForgeClient {
             while (TOGGLE_TRANSLATION.consumeClick()) {
                 toggle(client);
             }
+            ForgeRuntimeStatusNotifier.tick(client, connected);
         }
 
         @SubscribeEvent
@@ -132,6 +133,7 @@ public final class UniversalTranslatorForgeClient {
                 updated.validateProviderConfiguration();
             }
             ForgeTranslationRuntime.initialize(updated);
+            ForgeRuntimeStatusNotifier.reset();
             updated.save();
             client.gui.setOverlayMessage(new TranslationTextComponent(
                     "message.universal_translator.toggle", new TranslationTextComponent(

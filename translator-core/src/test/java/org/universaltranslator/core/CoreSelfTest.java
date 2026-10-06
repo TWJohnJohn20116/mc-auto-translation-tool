@@ -33,12 +33,16 @@ public final class CoreSelfTest {
     public static void main(String[] args) throws Exception {
         protectsDynamicScoreboardValues();
         skipsAlreadyChineseAndNonTextValues();
+        skipsModOwnMessagesInEveryLocale();
         protectsExistingChineseInMixedText();
         stylesCompletedTranslations();
+        plansPerRunStyling();
         validatesSmallModelOutputs();
         preservesRecentUserMessages();
         cachesDynamicTemplates();
         deduplicatesConcurrentRequests();
+        deduplicatesRefreshedProtectedLiterals();
+        separatesRequestsWithDifferentProtectedLiterals();
         completesQueuedRequestsWhenClosed();
         fallsBackToOriginalOnFailure();
         enforcesSafeEndpoints();
@@ -850,6 +854,30 @@ public final class CoreSelfTest {
         assertTrue(LanguageHeuristics.shouldTranslate("欢迎 VIP", "zh-CN"));
     }
 
+    private static void skipsModOwnMessagesInEveryLocale() {
+        // The mod's own messages come from assets/universal_translator/lang/*. Only some of them
+        // wrap the name in brackets, and the Traditional Chinese name is a different string from
+        // the Simplified one, so a bracket-only literal list used to submit them for translation.
+        // The expected strings below are copied from zh_cn.json, zh_tw.json and en_us.json.
+        assertFalse(LanguageHeuristics.shouldTranslate(
+                "MC Auto Translation Tool: Toggle failed", "zh-CN"));
+        assertFalse(LanguageHeuristics.shouldTranslate(
+                "\u00a7b[MC Auto Translation Tool] \u00a7fPress U to open settings.", "zh-CN"));
+        assertFalse(LanguageHeuristics.shouldTranslate(
+                "MC \u81ea\u52a8\u7ffb\u8bd1\u5de5\u5177\uff1a\u5207\u6362\u5931\u8d25", "en"));
+        assertFalse(LanguageHeuristics.shouldTranslate(
+                "MC \u81ea\u52a8\u7ffb\u8bd1\u5de5\u5177\uff1a\u5207\u6362\u5931\u8d25", "zh-CN"));
+        assertFalse(LanguageHeuristics.shouldTranslate(
+                "MC \u81ea\u52d5\u7ffb\u8b6f\u5de5\u5177\uff1a\u5207\u63db\u5931\u6557", "en"));
+        assertFalse(LanguageHeuristics.shouldTranslate(
+                "\u00a7c[MC \u81ea\u52d5\u7ffb\u8b6f\u5de5\u5177] \u5df2\u8207\u4f3a\u670d\u5668\u4e2d\u65b7\u9023\u7dda\u3002",
+                "en"));
+        assertFalse(LanguageHeuristics.shouldTranslate(
+                "Universal Translator: Toggle failed", "zh-CN"));
+        // Server text that merely mentions a translation tool must still be translated.
+        assertTrue(LanguageHeuristics.shouldTranslate("Translation tool update available", "zh-CN"));
+    }
+
     private static void protectsExistingChineseInMixedText() throws Exception {
         ProtectedText protectedText = ProtectedText.parse(
                 "Welcome 欢迎 VIP 服务器", java.util.Collections.<String>emptyList(), true);
@@ -881,6 +909,39 @@ public final class CoreSelfTest {
                 "COINS 155", "金币 155", TranslationTextColor.AQUA));
         assertTrue(TranslationTextStyling.hasLegacyColor("\u00a7dINFORMATION"));
         assertFalse(TranslationTextStyling.hasLegacyColor("\u00a7lINFORMATION"));
+    }
+
+    private static void plansPerRunStyling() {
+        java.util.List<TranslationStyleRuns.Run> merged = TranslationStyleRuns.mergeAdjacent(
+                Arrays.asList("[Guild] ", "Steve", " says hi"),
+                Arrays.<Object>asList("gold", "gold", "white"));
+        assertEquals(2, merged.size());
+        assertEquals("[Guild] Steve", merged.get(0).text());
+        assertEquals(0, merged.get(0).sourceIndex());
+        assertEquals(" says hi", merged.get(1).text());
+        assertEquals(1, merged.get(1).sourceIndex());
+        assertEquals(2, TranslationStyleRuns.distinctStyleCount(merged));
+        assertTrue(TranslationStyleRuns.shouldRebuildRuns(merged));
+
+        java.util.List<TranslationStyleRuns.Run> flat = TranslationStyleRuns.mergeAdjacent(
+                Arrays.asList("Coins: ", "42"), Arrays.<Object>asList("plain", "plain"));
+        assertEquals(1, flat.size());
+        assertEquals("Coins: 42", flat.get(0).text());
+        assertFalse(TranslationStyleRuns.shouldRebuildRuns(flat));
+        assertFalse(TranslationStyleRuns.shouldRebuildRuns(TranslationStyleRuns.mergeAdjacent(
+                java.util.Collections.<String>emptyList(),
+                java.util.Collections.<Object>emptyList())));
+        assertFalse(TranslationStyleRuns.shouldRebuildRuns(null));
+        assertEquals(0, TranslationStyleRuns.distinctStyleCount(null));
+
+        assertEquals(TranslationTextColor.AQUA, TranslationStyleRuns.resolveTranslatedColor(
+                false, TranslationTextColor.AQUA));
+        assertEquals(TranslationTextColor.ORIGINAL, TranslationStyleRuns.resolveTranslatedColor(
+                true, TranslationTextColor.AQUA));
+        assertEquals(TranslationTextColor.ORIGINAL, TranslationStyleRuns.resolveTranslatedColor(
+                false, TranslationTextColor.ORIGINAL));
+        assertEquals(TranslationTextColor.ORIGINAL, TranslationStyleRuns.resolveTranslatedColor(
+                false, null));
     }
 
     private static void validatesSmallModelOutputs() {
@@ -951,6 +1012,44 @@ public final class CoreSelfTest {
             first.get(2, TimeUnit.SECONDS);
             second.get(2, TimeUnit.SECONDS);
             assertEquals(1, provider.calls.get());
+        }
+    }
+
+    private static void deduplicatesRefreshedProtectedLiterals() throws Exception {
+        CountingProvider provider = new CountingProvider(false);
+        try (TranslationCoordinator coordinator = new TranslationCoordinator(
+                provider, new TranslationCache(100), 2)) {
+            // The platform republishes the player-name snapshot as a new List instance every few
+            // seconds. Equal contents must still share one in-flight request: an identity based
+            // key sent the same line to the provider twice and billed a paid API twice.
+            java.util.concurrent.CompletableFuture<TranslationResult> first = coordinator.translate(
+                    "Players online", "auto", "zh-CN", TextKind.PLAYER_LIST_HEADER,
+                    Arrays.asList("Steve_42", "Alex_7"));
+            java.util.concurrent.CompletableFuture<TranslationResult> second = coordinator.translate(
+                    "Players online", "auto", "zh-CN", TextKind.PLAYER_LIST_HEADER,
+                    Arrays.asList("Steve_42", "Alex_7"));
+            assertTrue(first == second);
+            first.get(2, TimeUnit.SECONDS);
+            second.get(2, TimeUnit.SECONDS);
+            assertEquals(1, provider.calls.get());
+        }
+    }
+
+    private static void separatesRequestsWithDifferentProtectedLiterals() throws Exception {
+        CountingProvider provider = new CountingProvider(false);
+        try (TranslationCoordinator coordinator = new TranslationCoordinator(
+                provider, new TranslationCache(100), 2)) {
+            // A different snapshot must not reuse a future that was built with another
+            // protection set, even when text, kind, languages and size are identical.
+            java.util.concurrent.CompletableFuture<TranslationResult> first = coordinator.translate(
+                    "Players online", "auto", "zh-CN", TextKind.PLAYER_LIST_HEADER,
+                    Arrays.asList("Steve_42"));
+            java.util.concurrent.CompletableFuture<TranslationResult> second = coordinator.translate(
+                    "Players online", "auto", "zh-CN", TextKind.PLAYER_LIST_HEADER,
+                    Arrays.asList("Alex_7"));
+            first.get(2, TimeUnit.SECONDS);
+            second.get(2, TimeUnit.SECONDS);
+            assertEquals(2, provider.calls.get());
         }
     }
 

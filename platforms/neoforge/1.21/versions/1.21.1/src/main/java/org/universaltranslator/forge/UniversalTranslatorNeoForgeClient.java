@@ -94,6 +94,7 @@ public final class UniversalTranslatorNeoForgeClient {
             while (TOGGLE_TRANSLATION.consumeClick()) {
                 toggle(client);
             }
+            ForgeRuntimeStatusNotifier.tick(client, connected);
         }
 
         @SubscribeEvent
@@ -146,6 +147,7 @@ public final class UniversalTranslatorNeoForgeClient {
                 updated.validateProviderConfiguration();
             }
             ForgeTranslationRuntime.initialize(updated);
+            ForgeRuntimeStatusNotifier.reset();
             updated.save();
             client.gui.setOverlayMessage(
                     Component.translatable(

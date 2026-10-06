@@ -9,6 +9,7 @@ import net.minecraft.text.StringVisitable;
 import net.minecraft.util.Formatting;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TranslationTextStyling;
+import org.universaltranslator.core.TranslationStyleRuns;
 import org.universaltranslator.core.TextKind;
 
 import java.util.ArrayList;
@@ -36,6 +37,10 @@ public final class RenderedTextBridge {
         if (text == null) {
             return null;
         }
+        Text styled = translateStyledSiblings(text);
+        if (styled != null) {
+            return styled;
+        }
         String original = text.getString();
         String translated = translateRaw(original);
         if (original.equals(translated)) {
@@ -50,19 +55,80 @@ public final class RenderedTextBridge {
         }
         StringBuilder original = new StringBuilder();
         AtomicReference<Style> firstStyle = new AtomicReference<Style>(Style.EMPTY);
+        final boolean[] multiStyle = new boolean[]{false};
         text.accept((index, style, codePoint) -> {
             if (original.length() == 0) {
                 firstStyle.set(style);
+            } else if (!multiStyle[0] && !style.equals(firstStyle.get())) {
+                multiStyle[0] = true;
             }
             original.appendCodePoint(codePoint);
             return true;
         });
+        if (multiStyle[0]) {
+            // Flattening would keep only the first segment's colour and drop bold, italic and
+            // click events from later segments, so rebuild the line run by run instead.
+            OrderedText rebuilt = rebuildStyledRuns(text);
+            if (rebuilt != null) {
+                return rebuilt;
+            }
+        }
         String translated = translateRaw(original.toString());
         if (original.toString().equals(translated)) {
             return text;
         }
         MutableText replacement = new LiteralText(translated).setStyle(translatedStyle(firstStyle.get()));
         return replacement.asOrderedText();
+    }
+
+    /** Rebuilds a multi-style ordered line as one child per style run, or null when it cannot. */
+    private static OrderedText rebuildStyledRuns(OrderedText text) {
+        List<String> texts = new ArrayList<String>();
+        List<Object> styleKeys = new ArrayList<Object>();
+        List<Style> styles = new ArrayList<Style>();
+        StringBuilder current = new StringBuilder();
+        AtomicReference<Style> currentStyle = new AtomicReference<Style>();
+        text.accept((index, style, codePoint) -> {
+            if (currentStyle.get() == null || !style.equals(currentStyle.get())) {
+                addRun(texts, styleKeys, styles, current, currentStyle.get());
+                currentStyle.set(style);
+            }
+            current.appendCodePoint(codePoint);
+            return true;
+        });
+        addRun(texts, styleKeys, styles, current, currentStyle.get());
+        List<TranslationStyleRuns.Run> runs = TranslationStyleRuns.mergeAdjacent(texts, styleKeys);
+        if (!TranslationStyleRuns.shouldRebuildRuns(runs)) {
+            return null;
+        }
+        boolean sourceHasColor = false;
+        for (Style style : styles) {
+            sourceHasColor |= style.getColor() != null;
+        }
+        TranslationTextColor color = TranslationStyleRuns.resolveTranslatedColor(
+                sourceHasColor, FabricTranslationRuntime.translatedTextColor());
+        MutableText rebuilt = new LiteralText("");
+        for (TranslationStyleRuns.Run run : runs) {
+            rebuilt.append(new LiteralText(translateRaw(run.text()))
+                    .setStyle(applyColor(styles.get(run.sourceIndex()), color)));
+        }
+        return rebuilt.asOrderedText();
+    }
+
+    private static void addRun(
+            List<String> texts,
+            List<Object> styleKeys,
+            List<Style> styles,
+            StringBuilder current,
+            Style style
+    ) {
+        if (current.length() == 0) {
+            return;
+        }
+        texts.add(current.toString());
+        styleKeys.add(style);
+        styles.add(style);
+        current.setLength(0);
     }
 
     public static StringVisitable translate(StringVisitable text) {
@@ -134,9 +200,61 @@ public final class RenderedTextBridge {
                 text, TranslationRenderContext.current());
     }
 
-    private static Style translatedStyle(Style original) {
-        TranslationTextColor color = FabricTranslationRuntime.translatedTextColor();
-        if (original.getColor() != null || color == null || !color.changesColor()) {
+    /**
+     * Rebuilds the translation as one child per source sibling so every server-provided style
+     * survives; flattening the component into a single literal keeps only the first style.
+     * Returns {@code null} when the source is not a flat sibling list or carries a single
+     * style, so the caller keeps the ordinary path.
+     */
+    private static Text translateStyledSiblings(Text text) {
+        List<Text> siblings = text.getSiblings();
+        if (siblings.isEmpty()) {
+            return null;
+        }
+        List<String> texts = new ArrayList<String>(siblings.size() + 1);
+        List<Object> styleKeys = new ArrayList<Object>(siblings.size() + 1);
+        List<Style> styles = new ArrayList<Style>(siblings.size() + 1);
+        boolean sourceHasColor = text.getStyle().getColor() != null;
+        int siblingLength = 0;
+        for (Text sibling : siblings) {
+            if (!sibling.getSiblings().isEmpty()) {
+                return null;
+            }
+            String value = sibling.getString();
+            texts.add(value);
+            styleKeys.add(sibling.getStyle());
+            styles.add(sibling.getStyle());
+            siblingLength += value.length();
+            sourceHasColor |= sibling.getStyle().getColor() != null;
+        }
+        String full = text.getString();
+        if (full.length() < siblingLength) {
+            return null;
+        }
+        // Text the root renders before its siblings keeps the root's own style.
+        String own = full.substring(0, full.length() - siblingLength);
+        if (!own.isEmpty()) {
+            texts.add(0, own);
+            styleKeys.add(0, text.getStyle());
+            styles.add(0, text.getStyle());
+        }
+        List<TranslationStyleRuns.Run> runs = TranslationStyleRuns.mergeAdjacent(texts, styleKeys);
+        if (!TranslationStyleRuns.shouldRebuildRuns(runs)) {
+            return null;
+        }
+        TranslationTextColor color = TranslationStyleRuns.resolveTranslatedColor(
+                sourceHasColor, FabricTranslationRuntime.translatedTextColor());
+        MutableText rebuilt = new LiteralText("");
+        rebuilt.setStyle(text.getStyle());
+        for (TranslationStyleRuns.Run run : runs) {
+            rebuilt.append(new LiteralText(translateRaw(run.text()))
+                    .setStyle(applyColor(styles.get(run.sourceIndex()), color)));
+        }
+        return rebuilt;
+    }
+
+    private static Style applyColor(Style original, TranslationTextColor color) {
+        if (color == null) {
             return original;
         }
         switch (color) {
@@ -146,8 +264,13 @@ public final class RenderedTextBridge {
             case YELLOW: return original.withColor(Formatting.YELLOW);
             case WHITE: return original.withColor(Formatting.WHITE);
             case AQUA: return original.withColor(Formatting.AQUA);
-            case ORIGINAL:
             default: return original;
         }
+    }
+
+    private static Style translatedStyle(Style original) {
+        return applyColor(original, TranslationStyleRuns.resolveTranslatedColor(
+                original.getColor() != null,
+                FabricTranslationRuntime.translatedTextColor()));
     }
 }
