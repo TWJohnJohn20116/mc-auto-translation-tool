@@ -13,6 +13,8 @@ import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.ServerSocket;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -50,6 +52,20 @@ public final class LlamaCppOfflineProvider
     public static final long QUALITY_MODEL_SIZE = OfflineModel.QUALITY.expectedBytes();
     public static final String QUALITY_MODEL_SHA256 =
             "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e";
+
+    /**
+     * Header line of the sidecar that records the last completed full-file verification
+     * of an installed model. The trailing version lets a future format change invalidate
+     * every older marker instead of misreading it as a valid entry.
+     */
+    private static final String MODEL_VERIFICATION_CACHE_HEADER =
+            "universal-translator-model-verification-v1";
+    /** Suffix of the sidecar written next to an installed model. */
+    private static final String MODEL_VERIFICATION_CACHE_SUFFIX = ".verified";
+    /** Number of lines a well-formed sidecar must contain. */
+    private static final int MODEL_VERIFICATION_CACHE_LINES = 5;
+    /** A sidecar is five short lines; anything larger is treated as malformed. */
+    private static final long MODEL_VERIFICATION_CACHE_MAX_BYTES = 4096L;
 
     private final Path root;
     private final boolean autoDownload;
@@ -436,9 +452,7 @@ public final class LlamaCppOfflineProvider
 
     private Path ensureModel() throws IOException {
         Path model = root.resolve("models").resolve(modelId).resolve(modelFile);
-        if (Files.isRegularFile(model)
-                && Files.size(model) == modelSize
-                && modelSha256.equalsIgnoreCase(VerifiedDownloader.sha256(model))) {
+        if (Files.isRegularFile(model) && isInstalledModelVerified(model)) {
             return model;
         }
         if (!autoDownload) {
@@ -452,7 +466,159 @@ public final class LlamaCppOfflineProvider
         Path downloaded = VerifiedDownloader.download(
                 sources, model, modelSize, modelSha256, progressListener("正在下载离线模型"));
         status = "离线模型下载并校验完成";
+        rememberDownloadedModelVerification(downloaded);
         return downloaded;
+    }
+
+    /**
+     * Accepts an installed model only when its pinned size matches and either the sidecar
+     * proves that this exact file state was hashed before, or
+     * {@link VerifiedDownloader#sha256(Path)} passes right now.
+     *
+     * <p>Re-hashing a multi-hundred-megabyte model on every start is what this shortcut
+     * exists to avoid, so the conclusion is keyed by the file size, the last-modified time
+     * and the pinned digest. Any difference, any unreadable or malformed sidecar and any
+     * platform that cannot report a last-modified time all fall back to the full hash,
+     * which stays the only way a file is ever accepted for the first time.</p>
+     */
+    private boolean isInstalledModelVerified(Path model) throws IOException {
+        long size = Files.size(model);
+        if (size != modelSize) {
+            return false;
+        }
+        Long modifiedMillis = lastModifiedMillis(model);
+        if (modifiedMillis != null
+                && isModelVerificationCached(model, size, modifiedMillis.longValue())) {
+            return true;
+        }
+        if (!modelSha256.equalsIgnoreCase(VerifiedDownloader.sha256(model))) {
+            return false;
+        }
+        // Record the conclusion only while the file still has the size and timestamp that
+        // were observed before hashing. A file replaced while it was being read would
+        // otherwise be remembered with a digest that does not describe its bytes.
+        if (matchesObservedState(model, size, modifiedMillis)) {
+            rememberModelVerification(model, size, modifiedMillis.longValue());
+        }
+        return true;
+    }
+
+    /**
+     * The downloader already proved the pinned digest before it returned, so the same
+     * sidecar can be written without hashing the file a second time. Anything that cannot
+     * be read simply leaves the cache empty and the next start verifies normally.
+     */
+    private void rememberDownloadedModelVerification(Path downloaded) {
+        if (!isPinnedSha256(modelSha256)) {
+            return;
+        }
+        Long modifiedMillis = lastModifiedMillis(downloaded);
+        if (modifiedMillis == null) {
+            return;
+        }
+        try {
+            long size = Files.size(downloaded);
+            if (size == modelSize) {
+                rememberModelVerification(downloaded, size, modifiedMillis.longValue());
+            }
+        } catch (IOException unreadable) {
+            // Leave the cache empty; the next start hashes the file normally.
+        }
+    }
+
+    /**
+     * Reads the sidecar and accepts it only when every recorded field matches the current
+     * file state and the digest this provider pins. Every failure mode - a missing file, an
+     * unreadable file, a malformed or truncated file, an unexpected header, a different
+     * model, a different size, a different timestamp or a different digest - returns false,
+     * which makes the caller compute the full SHA-256 instead.
+     */
+    private boolean isModelVerificationCached(Path model, long size, long modifiedMillis) {
+        if (!isPinnedSha256(modelSha256)) {
+            return false;
+        }
+        try {
+            Path marker = modelVerificationMarker(model);
+            if (Files.size(marker) > MODEL_VERIFICATION_CACHE_MAX_BYTES) {
+                return false;
+            }
+            List<String> lines = Files.readAllLines(marker, StandardCharsets.UTF_8);
+            return lines.size() == MODEL_VERIFICATION_CACHE_LINES
+                    && MODEL_VERIFICATION_CACHE_HEADER.equals(lines.get(0).trim())
+                    && modelFile.equals(lines.get(1).trim())
+                    && Long.toString(size).equals(lines.get(2).trim())
+                    && Long.toString(modifiedMillis).equals(lines.get(3).trim())
+                    && modelSha256.equalsIgnoreCase(lines.get(4).trim());
+        } catch (IOException | RuntimeException unreadableOrMalformed) {
+            return false;
+        }
+    }
+
+    /**
+     * Records a completed verification next to the model. This is deliberately best effort:
+     * a read-only game directory must never turn an already verified model into a startup
+     * failure, it only means that the next start hashes the file again.
+     */
+    private void rememberModelVerification(Path model, long size, long modifiedMillis) {
+        Path marker = modelVerificationMarker(model);
+        Path temporary = marker.resolveSibling(marker.getFileName().toString() + ".tmp");
+        try {
+            StringBuilder content = new StringBuilder();
+            content.append(MODEL_VERIFICATION_CACHE_HEADER).append('\n');
+            content.append(modelFile).append('\n');
+            content.append(size).append('\n');
+            content.append(modifiedMillis).append('\n');
+            content.append(modelSha256).append('\n');
+            Files.write(temporary, content.toString().getBytes(StandardCharsets.UTF_8));
+            try {
+                Files.move(temporary, marker,
+                        StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException notAtomic) {
+                Files.move(temporary, marker, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (IOException | RuntimeException unwritable) {
+            try {
+                Files.deleteIfExists(temporary);
+            } catch (IOException | RuntimeException ignored) {
+                // A leftover temporary file is harmless; the marker is only a cache.
+            }
+        }
+    }
+
+    /**
+     * Sidecar path for a model. It sits next to the model, so deleting or replacing the
+     * model directory also discards the cached conclusion.
+     */
+    private Path modelVerificationMarker(Path model) {
+        return model.resolveSibling(
+                model.getFileName().toString() + MODEL_VERIFICATION_CACHE_SUFFIX);
+    }
+
+    /** True when the file still has exactly the size and timestamp observed before hashing. */
+    private static boolean matchesObservedState(Path model, long size, Long modifiedMillis) {
+        if (modifiedMillis == null) {
+            return false;
+        }
+        try {
+            return Files.size(model) == size
+                    && modifiedMillis.longValue() == Files.getLastModifiedTime(model).toMillis();
+        } catch (IOException | RuntimeException changedWhileHashing) {
+            return false;
+        }
+    }
+
+    /** Last-modified time in milliseconds, or null when the platform cannot report one. */
+    private static Long lastModifiedMillis(Path model) {
+        try {
+            return Long.valueOf(Files.getLastModifiedTime(model).toMillis());
+        } catch (IOException | RuntimeException unavailable) {
+            return null;
+        }
+    }
+
+    /** True for a value that can be the pinned SHA-256 of a verified download. */
+    private static boolean isPinnedSha256(String value) {
+        return value != null && value.matches("(?i)[0-9a-f]{64}");
     }
 
     private VerifiedDownloader.ProgressListener progressListener(final String stage) {
