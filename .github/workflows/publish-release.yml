@@ -181,8 +181,8 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t assets < <(find "$ASSET_DIR" -maxdepth 1 -type f \( -name '*.jar' -o -name 'SHA256SUMS.txt' \) -print | sort)
-          if [[ "${#assets[@]}" -ne 33 ]]; then
-            echo "Expected thirty-two compatible JARs and SHA256SUMS.txt" >&2
+          if [[ "${#assets[@]}" -ne 32 ]]; then
+            echo "Expected thirty-one compatible JARs and SHA256SUMS.txt" >&2
             exit 1
           fi
           notes="$RUNNER_TEMP/release-notes.md"

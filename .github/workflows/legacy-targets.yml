@@ -215,8 +215,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: neoforge-1.20.2
-            java: "21"
           - target: neoforge-1.20.4
             java: "21"
           - target: neoforge-1.20.6
