@@ -25,6 +25,7 @@ public final class CustomHttpJsonTranslationProvider implements TranslationProvi
     private final Map<String, String> headerTemplates;
     private final String apiKey;
     private final HttpJsonClient http;
+    private final String id;
 
     public CustomHttpJsonTranslationProvider(
             String endpoint,
@@ -44,16 +45,19 @@ public final class CustomHttpJsonTranslationProvider implements TranslationProvi
         this.apiKey = ProviderSupport.optional(apiKey);
         this.http = http;
         this.headerTemplates = validateHeaders(headerTemplates);
+        // The coordinator keys both its in-flight map and the disk cache on this id, so two
+        // configurations that share a host but differ in request/response semantics must not
+        // collide. Hash the raw path and the templates, never the credentials or header values.
+        // Every input is fixed once construction succeeds, so hash the template once here
+        // instead of hashing up to 64 KiB on every id() call from the render thread.
+        String fingerprint = this.endpoint.getRawPath()
+                + "\n" + this.method + "\n" + this.responsePath + "\n" + this.requestTemplate;
+        this.id = "custom-http-json:" + this.endpoint.getHost() + ":" + CryptoSupport.sha256Hex(fingerprint);
     }
 
     @Override
     public String id() {
-        // The coordinator keys both its in-flight map and the disk cache on this id, so two
-        // configurations that share a host but differ in request/response semantics must not
-        // collide. Hash the raw path and the templates, never the credentials or header values.
-        String fingerprint = endpoint.getRawPath()
-                + "\n" + method + "\n" + responsePath + "\n" + requestTemplate;
-        return "custom-http-json:" + endpoint.getHost() + ":" + CryptoSupport.sha256Hex(fingerprint);
+        return id;
     }
 
     @Override

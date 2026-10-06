@@ -22,7 +22,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 public final class FabricTranslationRuntime {
@@ -102,7 +104,9 @@ public final class FabricTranslationRuntime {
         if (client.getConnection() == null) {
             protectedPlayerNames = Collections.emptyList();
         } else {
-            List<String> names = new ArrayList<String>();
+            // Hash-set dedup keeps this O(n); the old linear scan was O(n^2) on the
+            // render thread with up to MAX_PROTECTED_PLAYER_NAMES tab-list entries.
+            LinkedHashSet<String> names = new LinkedHashSet<String>();
             if (protectPlayerNames) {
                 addProtectedLiteral(names, client.getUser().getName());
             }
@@ -118,13 +122,13 @@ public final class FabricTranslationRuntime {
                     addProtectedLiteral(names, name);
                 });
             }
-            protectedPlayerNames = Collections.unmodifiableList(names);
+            protectedPlayerNames = Collections.unmodifiableList(new ArrayList<String>(names));
         }
         protectedPlayerNamesExpireAt = now + PLAYER_NAME_SNAPSHOT_MILLIS;
         return protectedPlayerNames;
     }
 
-    private static void addProtectedLiteral(List<String> values, String value) {
+    private static void addProtectedLiteral(Set<String> values, String value) {
         if (value == null) {
             return;
         }

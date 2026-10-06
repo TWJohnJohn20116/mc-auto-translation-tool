@@ -132,16 +132,21 @@ public final class RenderTranslationSession implements AutoCloseable {
         if (isCompletedOutput(original)) {
             return original;
         }
+        TextKind effectiveKind = kind == null ? TextKind.OTHER : kind;
+        RenderKey key = new RenderKey(original, effectiveKind);
+        // Probe the render cache before the heuristics. An entry can only exist for text that
+        // already passed LanguageHeuristics.shouldTranslate with this session's fixed target
+        // language, and that check is a pure function of (text, targetLanguage). Text the
+        // heuristics reject therefore has no entry, so the returned value is unchanged while a
+        // cache hit stops paying for the full-text scan on every frame.
+        String ready = translated.get(key);
+        if (ready != null) {
+            return ready;
+        }
         // Avoid building player-name snapshots for text that is already in the
         // target language or contains no words worth translating.
         if (!LanguageHeuristics.shouldTranslate(original, targetLanguage)) {
             return original;
-        }
-        TextKind effectiveKind = kind == null ? TextKind.OTHER : kind;
-        RenderKey key = new RenderKey(original, effectiveKind);
-        String ready = translated.get(key);
-        if (ready != null) {
-            return ready;
         }
 
         Long retryAt = retryAfter.get(key);

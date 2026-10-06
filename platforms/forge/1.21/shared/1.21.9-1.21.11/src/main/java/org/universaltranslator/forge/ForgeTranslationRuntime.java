@@ -21,6 +21,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
@@ -118,7 +119,9 @@ public final class ForgeTranslationRuntime {
         if (client.getConnection() == null) {
             protectedPlayerNames = Collections.emptyList();
         } else {
-            List<String> names = new ArrayList<String>();
+            // LinkedHashSet removes duplicates in O(1) per name and keeps insertion order, so the
+            // snapshot no longer rescans the whole list for every player on the render thread.
+            LinkedHashSet<String> names = new LinkedHashSet<String>();
             if (protectPlayerNames) {
                 addProtectedLiteral(names, client.getUser().getName());
             }
@@ -134,13 +137,13 @@ public final class ForgeTranslationRuntime {
                     addProtectedLiteral(names, name);
                 });
             }
-            protectedPlayerNames = Collections.unmodifiableList(names);
+            protectedPlayerNames = Collections.unmodifiableList(new ArrayList<String>(names));
         }
         protectedPlayerNamesExpireAt = now + PLAYER_NAME_SNAPSHOT_MILLIS;
         return protectedPlayerNames;
     }
 
-    private static void addProtectedLiteral(List<String> values, String value) {
+    private static void addProtectedLiteral(LinkedHashSet<String> values, String value) {
         if (value == null) {
             return;
         }
