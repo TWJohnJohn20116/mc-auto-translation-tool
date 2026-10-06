@@ -107,7 +107,7 @@ jobs:
           name: legacy-fabric-${{ matrix.target }}
           path: platforms/**/build/libs/*.jar
           if-no-files-found: warn
-          retention-days: 30
+          retention-days: 3
 
       - name: 寫入建置摘要
         if: always()
@@ -176,7 +176,7 @@ jobs:
           name: ${{ matrix.target }}
           path: ${{ matrix.dir }}/build/libs/*.jar
           if-no-files-found: warn
-          retention-days: 30
+          retention-days: 3
 
       - name: 寫入建置摘要
         if: always()
