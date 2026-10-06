@@ -51,7 +51,7 @@ test("server-renders the public-benefit project home page", async () => {
   const version = escapeRe(releaseVersion);
   const releaseDownloads = html.match(
     new RegExp(
-      `https://github\\.com/wuxiangdan96-byte/mc-auto-translation-tool/releases/download/v${version}/[A-Za-z0-9.-]+`,
+      `https://github\\.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v${version}/[A-Za-z0-9.-]+`,
       "g",
     ),
   ) ?? [];

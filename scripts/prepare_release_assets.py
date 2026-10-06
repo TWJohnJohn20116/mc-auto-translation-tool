@@ -187,7 +187,7 @@ def _build_fabric_all(version: str, implementations: dict[str, bytes]) -> bytes:
         "name": "MC Auto Translation Tool - All Fabric Versions",
         "description": "Selects the exact Universal Translator implementation for this Minecraft version.",
         "authors": ["我小张7272635"],
-        "contact": {"sources": "https://github.com/wuxiangdan96-byte/mc-auto-translation-tool"},
+        "contact": {"sources": "https://github.com/TWJohnJohn20116/mc-auto-translation-tool"},
         "license": "MIT",
         "environment": "client",
         "jars": [
