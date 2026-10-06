@@ -8,6 +8,21 @@ public final class RecentUserText {
     private static final int MAX_ENTRIES = 128;
     private static final long RETAIN_MILLIS = 30L * 60L * 1_000L;
 
+    /**
+     * Prefixes that chat renderers prepend to the message body. The prefixed
+     * forms are built once in {@link #remember(String)} so that the render path
+     * only compares against precomputed strings and allocates nothing.
+     */
+    private static final String[] PREFIXES = {
+            "> ",
+            ": ",
+            "：",
+            " » ",
+            " › ",
+            " >> ",
+            " -> ",
+    };
+
     private final Deque<Entry> entries = new ArrayDeque<Entry>();
 
     public synchronized void remember(String text) {
@@ -17,7 +32,7 @@ public final class RecentUserText {
         }
         long now = System.currentTimeMillis();
         removeExpired(now);
-        entries.addFirst(new Entry(normalized, now + RETAIN_MILLIS));
+        entries.addFirst(new Entry(normalized, prefixedForms(normalized), now + RETAIN_MILLIS));
         while (entries.size() > MAX_ENTRIES) {
             entries.removeLast();
         }
@@ -31,14 +46,7 @@ public final class RecentUserText {
         long now = System.currentTimeMillis();
         removeExpired(now);
         for (Entry entry : entries) {
-            if (rendered.equals(entry.text)
-                    || rendered.endsWith("> " + entry.text)
-                    || rendered.endsWith(": " + entry.text)
-                    || rendered.endsWith("：" + entry.text)
-                    || rendered.endsWith(" » " + entry.text)
-                    || rendered.endsWith(" › " + entry.text)
-                    || rendered.endsWith(" >> " + entry.text)
-                    || rendered.endsWith(" -> " + entry.text)) {
+            if (rendered.equals(entry.text) || entry.hasPrefixFormOf(rendered)) {
                 return true;
             }
         }
@@ -62,13 +70,38 @@ public final class RecentUserText {
         return TranslationTextStyling.stripLegacyFormatting(text).trim();
     }
 
+    /**
+     * Builds every "{@code prefix + text}" form once, so that lookups on the
+     * render path never concatenate. The plain text is not part of this array:
+     * an exact match stays an equality check and must not become a suffix test.
+     */
+    private static String[] prefixedForms(String text) {
+        String[] forms = new String[PREFIXES.length];
+        for (int index = 0; index < PREFIXES.length; index++) {
+            forms[index] = PREFIXES[index] + text;
+        }
+        return forms;
+    }
+
     private static final class Entry {
         private final String text;
+        private final String[] prefixedForms;
         private final long expiresAt;
 
-        private Entry(String text, long expiresAt) {
+        private Entry(String text, String[] prefixedForms, long expiresAt) {
             this.text = text;
+            this.prefixedForms = prefixedForms;
             this.expiresAt = expiresAt;
+        }
+
+        /** True when the rendered line ends with one of the precomputed forms. */
+        private boolean hasPrefixFormOf(String rendered) {
+            for (String form : prefixedForms) {
+                if (rendered.endsWith(form)) {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 }
