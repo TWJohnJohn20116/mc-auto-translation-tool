@@ -468,7 +468,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
                     offlineModel,
                     apiFallback,
                     diskCache,
-                    animatedUi);
+                    animatedUi,
+                    original.hudIndicatorSettings());
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
                     && (updated.tencentSecretId.isEmpty() || updated.tencentSecretKey.isEmpty())) {
                 throw new IllegalArgumentException(tr("error.universal_translator.tencent_credentials"));
