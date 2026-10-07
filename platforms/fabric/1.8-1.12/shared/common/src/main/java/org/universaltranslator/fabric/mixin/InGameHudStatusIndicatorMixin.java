@@ -42,8 +42,8 @@ import org.universaltranslator.fabric.TranslationRenderContext;
  */
 @Mixin(GameGui.class)
 abstract class InGameHudStatusIndicatorMixin {
-    @Inject(method = "render(F)V", at = @At("RETURN"), require = 0)
-    private void universalTranslator$renderStatusIndicator(float delta, CallbackInfo callback) {
+    @Inject(method = "renderHotbar(Lnet/minecraft/client/render/Window;F)V", at = @At("RETURN"), require = 0)
+    private void universalTranslator$renderStatusIndicator(Window window, float delta, CallbackInfo callback) {
         // Read the settings first: a disabled indicator draws nothing at all.
         HudIndicatorSettings settings = FabricTranslationRuntime.homeSettings().getHudIndicator();
         if (!settings.isIndicator()) {
@@ -66,12 +66,14 @@ abstract class InGameHudStatusIndicatorMixin {
             default:
                 break;
         }
+        // The Window arrives as a parameter of renderHotbar, which every version this bundle is
+        // compiled for (1.8.2-1.12.2) calls with it. Reading the window from Minecraft instead is
+        // not portable: the member is not visible to a mixin outside its package, and the Window
+        // constructor takes different arguments across these versions.
         Minecraft client = Minecraft.getInstance();
-        // Minecraft's own window member is not visible to a mixin outside its package, and GameGui
-        // exposes no accessor for it. Constructing a Window re-reads the current display size, which
-        // is exactly the GUI-scaled size the HUD draws in, and it relies only on the public
-        // Window(Minecraft) constructor. The object is small and this runs once per frame.
-        Window window = new Window(client);
+        if (window == null) {
+            return;
+        }
         int windowWidth = (int) window.getScaledWidth();
         int windowHeight = (int) window.getScaledHeight();
         HudIndicatorCorner corner = settings.getCorner();
