@@ -29,6 +29,9 @@
   "screen.universal_translator.option.target_preset": "目标：%s",
   "screen.universal_translator.option.hud_indicator": "HUD 状态指示器：%s",
   "screen.universal_translator.option.hud_corner": "HUD 位置：%s",
+  "screen.universal_translator.option.hud_size": "HUD 大小：%s",
+  "screen.universal_translator.option.hud_margin": "HUD 边距：%s",
+  "screen.universal_translator.option.hud_color": "HUD 颜色：%s",
   "screen.universal_translator.llm.title": "LLM API 设置",
   "screen.universal_translator.llm.endpoint": "API 地址",
   "screen.universal_translator.llm.model": "模型名称",
@@ -139,5 +142,6 @@
   "screen.universal_translator.tab.scopes": "范围",
   "screen.universal_translator.tab.engine": "引擎",
   "screen.universal_translator.tab.outgoing": "发送",
+  "screen.universal_translator.tab.hud": "HUD",
   "screen.universal_translator.info.outgoing_hint": "在聊天栏发言时，自动翻译为目标语言发送"
 }
