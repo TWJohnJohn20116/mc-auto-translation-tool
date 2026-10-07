@@ -106,6 +106,13 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     private long animationStartedNanos = System.nanoTime();
     private SettingsSelectionList.Kind openSelection = SettingsSelectionList.Kind.NONE;
 
+    /** The preview panel is a miniature of Minecraft's 320x240 minimum logical screen. */
+    private static final int HUD_PREVIEW_SCREEN_WIDTH = 320;
+    private static final int HUD_PREVIEW_SCREEN_HEIGHT = 240;
+    /** Tallest the preview panel may be. It shrinks on short windows so it never hits Save. */
+    private static final int HUD_DRAG_PREVIEW_HEIGHT = 48;
+    private static final int HUD_DRAG_HANDLE_SIZE = 8;
+
     UniversalTranslatorConfigScreenBase(Screen parent, ForgeConfig config) {
         super(Component.translatable("screen.universal_translator.settings.title"));
         this.parent = parent;
@@ -281,6 +288,9 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
 
         refreshLabels();
         updateTabVisibility();
+
+        // A resize or a screen rebuild mid-drag must not leave the handle stuck to the pointer.
+        hudDragging = false;
     }
 
     private Button button(int x, int y, int width, Runnable action) {
@@ -592,10 +602,12 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         if (!hudDragging) {
             return false;
         }
-        hudIndicatorOffsetX = clampOffset(
-                hudIndicatorOffsetX + (int) Math.round(mouseX - hudDragLastX));
-        hudIndicatorOffsetY = clampOffset(
-                hudIndicatorOffsetY + (int) Math.round(mouseY - hudDragLastY));
+        // One preview pixel is not one GUI pixel: the panel is a scaled-down screen, so undo the
+        // scale before turning the pointer delta into a real offset.
+        hudIndicatorOffsetX = clampOffset(hudIndicatorOffsetX
+                + (int) Math.round((mouseX - hudDragLastX) / hudScaleX()));
+        hudIndicatorOffsetY = clampOffset(hudIndicatorOffsetY
+                + (int) Math.round((mouseY - hudDragLastY) / hudScaleY()));
         hudDragLastX = mouseX;
         hudDragLastY = mouseY;
         return true;
@@ -615,22 +627,80 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                 Math.min(HudIndicatorSettings.MAX_OFFSET, value));
     }
 
-    private boolean insideHudDragHandle(double mouseX, double mouseY) {
-        int[] handle = hudDragHandlePosition();
-        return mouseX >= handle[0] && mouseX < handle[0] + 10
-                && mouseY >= handle[1] && mouseY < handle[1] + 10;
+    private int hudPreviewX() {
+        return layout().left;
     }
 
-    /** Top-left corner of the 10x10 handle inside the HUD preview strip. */
-    private int[] hudDragHandlePosition() {
-        Layout layout = layout();
-        int px = layout.left;
-        int py = layout.contentRow(4);
-        int pw = layout.totalWidth;
-        int ph = 20;
-        int hx = Math.max(px, Math.min(px + pw - 10, px + pw / 2 - 5 + hudIndicatorOffsetX));
-        int hy = Math.max(py, Math.min(py + ph - 10, py + ph / 2 - 5 + hudIndicatorOffsetY));
-        return new int[] {hx, hy};
+    private int hudPreviewY() {
+        return layout().contentRow(4);
+    }
+
+    private int hudPreviewW() {
+        return layout().totalWidth;
+    }
+
+    /**
+     * Panel height, capped by the space above the Save/Cancel row.
+     *
+     * <p>{@code contentRow(4)} does not shrink on very short windows because the row step has a
+     * floor, so a fixed height would overlap Save. Clamping here keeps the panel clear of it.
+     */
+    private int hudPreviewH() {
+        int available = layout().saveY - 4 - hudPreviewY();
+        if (available < HUD_DRAG_HANDLE_SIZE) {
+            // No room above Save: skip the preview entirely rather than draw a panel that
+            // overlaps it, which is exactly what the cap above exists to prevent.
+            return 0;
+        }
+        return Math.min(HUD_DRAG_PREVIEW_HEIGHT, available);
+    }
+
+    /**
+     * Where the indicator sits on the real screen before the drag offset: the same anchor maths
+     * the HUD mixin uses, so the preview cannot drift from what the player actually sees.
+     */
+    private int hudAnchorX() {
+        return hudIndicatorCorner.isRight()
+                ? HUD_PREVIEW_SCREEN_WIDTH - hudIndicatorMargin - hudIndicatorSize
+                : hudIndicatorMargin;
+    }
+
+    private int hudAnchorY() {
+        return hudIndicatorCorner.isBottom()
+                ? HUD_PREVIEW_SCREEN_HEIGHT - hudIndicatorMargin - hudIndicatorSize
+                : hudIndicatorMargin;
+    }
+
+    private double hudScaleX() {
+        return hudPreviewW() / (double) HUD_PREVIEW_SCREEN_WIDTH;
+    }
+
+    private double hudScaleY() {
+        return hudPreviewH() / (double) HUD_PREVIEW_SCREEN_HEIGHT;
+    }
+
+    private int hudHandleX() {
+        int px = hudPreviewX();
+        int pw = hudPreviewW();
+        int x = px + (int) Math.round((hudAnchorX() + hudIndicatorOffsetX) * hudScaleX());
+        return Math.max(px, Math.min(px + pw - HUD_DRAG_HANDLE_SIZE, x));
+    }
+
+    private int hudHandleY() {
+        int py = hudPreviewY();
+        int ph = hudPreviewH();
+        int y = py + (int) Math.round((hudAnchorY() + hudIndicatorOffsetY) * hudScaleY());
+        return Math.max(py, Math.min(py + ph - HUD_DRAG_HANDLE_SIZE, y));
+    }
+
+    private boolean insideHudDragHandle(double mouseX, double mouseY) {
+        if (hudPreviewH() <= 0) {
+            return false;
+        }
+        int hx = hudHandleX();
+        int hy = hudHandleY();
+        return mouseX >= hx && mouseX < hx + HUD_DRAG_HANDLE_SIZE
+                && mouseY >= hy && mouseY < hy + HUD_DRAG_HANDLE_SIZE;
     }
 
     /**
@@ -643,13 +713,17 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         if (activeTab != Tab.HUD) {
             return;
         }
-        int[] handle = hudDragHandlePosition();
-        Layout layout = layout();
-        int px = layout.left;
-        int py = layout.contentRow(4);
-        int pw = layout.totalWidth;
-        graphics.fill(px, py, px + pw, py + 20, 0x40000000);
-        graphics.fill(handle[0], handle[1], handle[0] + 10, handle[1] + 10,
+        int px = hudPreviewX();
+        int py = hudPreviewY();
+        int pw = hudPreviewW();
+        int ph = hudPreviewH();
+        if (ph <= 0) {
+            return;
+        }
+        graphics.fill(px, py, px + pw, py + ph, 0x40000000);
+        int hx = hudHandleX();
+        int hy = hudHandleY();
+        graphics.fill(hx, hy, hx + HUD_DRAG_HANDLE_SIZE, hy + HUD_DRAG_HANDLE_SIZE,
                 hudDragging ? 0xFFFFAA00 : 0xFF00AA00);
     }
 
