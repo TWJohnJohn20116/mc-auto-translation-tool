@@ -22,6 +22,14 @@ import org.universaltranslator.core.SettingsSelectionList;
 
 /** Minimal dependency-free settings screen, opened with U by default. */
 final class UniversalTranslatorConfigScreen extends Screen {
+
+    /** The preview panel is a miniature of Minecraft's 320x240 minimum logical screen. */
+    private static final int HUD_PREVIEW_SCREEN_WIDTH = 320;
+    private static final int HUD_PREVIEW_SCREEN_HEIGHT = 240;
+    /** Tallest the preview panel may be. It shrinks on short windows so it never hits Save. */
+    private static final int HUD_DRAG_PREVIEW_HEIGHT = 48;
+    private static final int HUD_DRAG_HANDLE_SIZE = 8;
+
     private final Screen parent;
     private final FabricConfig original;
     private boolean enabled;
@@ -44,6 +52,19 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private String llmModel;
     private String targetLanguage;
     private String outgoingTargetLanguage;
+    private boolean hudIndicator;
+    private HudIndicatorCorner hudIndicatorCorner;
+    private int hudIndicatorSize;
+    private int hudIndicatorMargin;
+    private HudIndicatorColor hudIndicatorColor;
+    private HudIndicatorContent hudIndicatorContent;
+    private HudIndicatorVisibility hudIndicatorVisibility;
+    private int hudIndicatorOffsetX;
+    private int hudIndicatorOffsetY;
+    private boolean hudDragging;
+    private double hudDragLastX;
+    private double hudDragLastY;
+
 
     private enum Tab {
         GENERAL,
@@ -59,6 +80,14 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private ButtonWidget tabOutgoingButton;
     private ButtonWidget tabHudButton;
     private ButtonWidget llmConfigButton;
+    private ButtonWidget hudIndicatorButton;
+    private ButtonWidget hudCornerButton;
+    private ButtonWidget hudSizeButton;
+    private ButtonWidget hudMarginButton;
+    private ButtonWidget hudColorButton;
+    private ButtonWidget hudContentButton;
+    private ButtonWidget hudVisibilityButton;
+
 
 
     private TextFieldWidget endpoint;
@@ -107,6 +136,16 @@ final class UniversalTranslatorConfigScreen extends Screen {
         this.llmEndpoint = config.editorEndpoint(config.provider);
         this.llmApiKey = config.editorApiKey(config.provider);
         this.llmModel = config.editorModel(config.provider);
+        this.hudIndicator = config.hudIndicator;
+        this.hudIndicatorCorner = config.hudIndicatorCorner;
+        this.hudIndicatorSize = config.hudIndicatorSize;
+        this.hudIndicatorMargin = config.hudIndicatorMargin;
+        this.hudIndicatorColor = config.hudIndicatorColor;
+        this.hudIndicatorContent = config.hudIndicatorContent;
+        this.hudIndicatorVisibility = config.hudIndicatorVisibility;
+        this.hudIndicatorOffsetX = config.hudIndicatorOffsetX;
+        this.hudIndicatorOffsetY = config.hudIndicatorOffsetY;
+
 
     }
 
