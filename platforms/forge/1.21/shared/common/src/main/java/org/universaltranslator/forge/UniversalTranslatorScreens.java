@@ -6,8 +6,10 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import org.universaltranslator.core.DiagnosticsLogExporter;
 import org.universaltranslator.core.HudIndicatorColor;
+import org.universaltranslator.core.HudIndicatorContent;
 import org.universaltranslator.core.HudIndicatorCorner;
 import org.universaltranslator.core.HudIndicatorSettings;
+import org.universaltranslator.core.HudIndicatorVisibility;
 import org.universaltranslator.core.OfflineModel;
 import org.universaltranslator.core.SettingsSelectionList;
 import org.universaltranslator.core.SettingsUiAnimation;
@@ -45,6 +47,8 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     private int hudIndicatorSize;
     private int hudIndicatorMargin;
     private HudIndicatorColor hudIndicatorColor;
+    private HudIndicatorContent hudIndicatorContent;
+    private HudIndicatorVisibility hudIndicatorVisibility;
     private String provider;
     private String llmEndpoint;
     private String llmApiKey;
@@ -76,6 +80,8 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     private Button hudSizeButton;
     private Button hudMarginButton;
     private Button hudColorButton;
+    private Button hudContentButton;
+    private Button hudVisibilityButton;
     private Button chatButton;
     private Button otherButton;
     private Button vanillaButton;
@@ -118,6 +124,8 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         this.hudIndicatorSize = config.hudIndicatorSize;
         this.hudIndicatorMargin = config.hudIndicatorMargin;
         this.hudIndicatorColor = config.hudIndicatorColor;
+        this.hudIndicatorContent = config.hudIndicatorContent;
+        this.hudIndicatorVisibility = config.hudIndicatorVisibility;
         this.provider = config.provider;
         this.llmEndpoint = config.editorEndpoint(config.provider);
         this.llmApiKey = config.editorApiKey(config.provider);
@@ -249,6 +257,14 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
             HudIndicatorColor[] colors = HudIndicatorColor.values();
             hudIndicatorColor = colors[(hudIndicatorColor.ordinal() + 1) % colors.length];
         }));
+        hudContentButton = addRenderableWidget(button(layout.right, layout.contentRow(2), layout.buttonWidth, () -> {
+            HudIndicatorContent[] contents = HudIndicatorContent.values();
+            hudIndicatorContent = contents[(hudIndicatorContent.ordinal() + 1) % contents.length];
+        }));
+        hudVisibilityButton = addRenderableWidget(button(left, layout.contentRow(3), layout.buttonWidth, () -> {
+            HudIndicatorVisibility[] visibilities = HudIndicatorVisibility.values();
+            hudIndicatorVisibility = visibilities[(hudIndicatorVisibility.ordinal() + 1) % visibilities.length];
+        }));
 
         // --- Bottom Action Row ---
         addRenderableWidget(Button.builder(Component.translatable("screen.universal_translator.save"),
@@ -281,6 +297,10 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                 Integer.toString(hudIndicatorMargin)));
         hudColorButton.setMessage(Component.translatable("screen.universal_translator.option.hud_color",
                 hudColorLabel(hudIndicatorColor)));
+        hudContentButton.setMessage(Component.translatable("screen.universal_translator.option.hud_content",
+                hudContentLabel(hudIndicatorContent)));
+        hudVisibilityButton.setMessage(Component.translatable("screen.universal_translator.option.hud_visibility",
+                hudVisibilityLabel(hudIndicatorVisibility)));
         enabledButton.setMessage(Component.translatable("screen.universal_translator.option.automatic", onOff(enabled)));
         cacheButton.setMessage(Component.translatable("screen.universal_translator.option.cache", onOff(diskCache)));
         chatButton.setMessage(Component.translatable("screen.universal_translator.option.chat", onOff(translateChat)));
@@ -313,6 +333,8 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         hudSizeButton.active = hudIndicator;
         hudMarginButton.active = hudIndicator;
         hudColorButton.active = hudIndicator;
+        hudContentButton.active = hudIndicator;
+        hudVisibilityButton.active = hudIndicator;
         refreshTabButtons();
     }
 
@@ -360,6 +382,8 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         hudSizeButton.visible = isHud;
         hudMarginButton.visible = isHud;
         hudColorButton.visible = isHud;
+        hudContentButton.visible = isHud;
+        hudVisibilityButton.visible = isHud;
 
         refreshTabButtons();
     }
@@ -388,7 +412,8 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                     llmEndpoint, llmApiKey, llmModel, offlineAutoDownload, offlineModel,
                     apiFallback, diskCache, animatedUi,
                     new HudIndicatorSettings(hudIndicator, hudIndicatorCorner,
-                            hudIndicatorSize, hudIndicatorMargin, hudIndicatorColor));
+                            hudIndicatorSize, hudIndicatorMargin, hudIndicatorColor,
+                            hudIndicatorContent, hudIndicatorVisibility));
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
                     && (updated.tencentSecretId.isEmpty() || updated.tencentSecretKey.isEmpty())) {
                 throw new IllegalArgumentException(tr("error.universal_translator.tencent_credentials"));
@@ -594,6 +619,14 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
 
     private static String hudColorLabel(HudIndicatorColor color) {
         return tr("value.universal_translator.color." + color.configName().replace('-', '_'));
+    }
+
+    private static String hudContentLabel(HudIndicatorContent content) {
+        return tr("value.universal_translator.hud_content." + content.configName().replace('-', '_'));
+    }
+
+    private static String hudVisibilityLabel(HudIndicatorVisibility visibility) {
+        return tr("value.universal_translator.hud_visibility." + visibility.configName().replace('-', '_'));
     }
 
     private static String tr(String key, Object... arguments) {

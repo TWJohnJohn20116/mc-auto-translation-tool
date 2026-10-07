@@ -4,7 +4,9 @@ import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationDisplayMode;
 import org.universaltranslator.core.HudIndicatorCorner;
 import org.universaltranslator.core.HudIndicatorColor;
+import org.universaltranslator.core.HudIndicatorContent;
 import org.universaltranslator.core.HudIndicatorSettings;
+import org.universaltranslator.core.HudIndicatorVisibility;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TextKind;
 import org.universaltranslator.core.LocalConfigSecurity;
@@ -40,6 +42,8 @@ final class ForgeConfig {
     final int hudIndicatorSize;
     final int hudIndicatorMargin;
     final HudIndicatorColor hudIndicatorColor;
+    final HudIndicatorContent hudIndicatorContent;
+    final HudIndicatorVisibility hudIndicatorVisibility;
     final String blockedKeywords;
     final String targetLanguage;
     final String outgoingTargetLanguage;
@@ -67,7 +71,8 @@ final class ForgeConfig {
 
     HudIndicatorSettings hudIndicatorSettings() {
         return new HudIndicatorSettings(
-                hudIndicator, hudIndicatorCorner, hudIndicatorSize, hudIndicatorMargin, hudIndicatorColor);
+                hudIndicator, hudIndicatorCorner, hudIndicatorSize, hudIndicatorMargin, hudIndicatorColor,
+                hudIndicatorContent, hudIndicatorVisibility);
     }
 
     private ForgeConfig(Properties properties, Path configFile, Path cacheFile) {
@@ -92,6 +97,10 @@ final class ForgeConfig {
                 HudIndicatorSettings.MIN_MARGIN, HudIndicatorSettings.MAX_MARGIN);
         this.hudIndicatorColor = HudIndicatorColor.fromConfig(
                 properties.getProperty("hud-indicator-color", "green"));
+        this.hudIndicatorContent = HudIndicatorContent.fromConfig(
+                properties.getProperty("hud-indicator-content", "dot"));
+        this.hudIndicatorVisibility = HudIndicatorVisibility.fromConfig(
+                properties.getProperty("hud-indicator-visibility", "always"));
         this.blockedKeywords = boundedKeywords(properties.getProperty("blocked-keywords", ""));
         this.targetLanguage = properties.getProperty("target-language", "zh-CN").trim();
         this.outgoingTargetLanguage = properties.getProperty(
@@ -215,6 +224,8 @@ final class ForgeConfig {
         properties.setProperty("hud-indicator-size", Integer.toString(hudIndicator.getSize()));
         properties.setProperty("hud-indicator-margin", Integer.toString(hudIndicator.getMargin()));
         properties.setProperty("hud-indicator-color", hudIndicator.getColor().configName());
+        properties.setProperty("hud-indicator-content", hudIndicator.getContent().configName());
+        properties.setProperty("hud-indicator-visibility", hudIndicator.getVisibility().configName());
         return new ForgeConfig(properties, configFile, cacheFile);
     }
 
@@ -322,6 +333,8 @@ final class ForgeConfig {
         properties.setProperty("hud-indicator-size", "6");
         properties.setProperty("hud-indicator-margin", "4");
         properties.setProperty("hud-indicator-color", "green");
+        properties.setProperty("hud-indicator-content", "dot");
+        properties.setProperty("hud-indicator-visibility", "always");
         properties.setProperty("blocked-keywords", "");
         properties.setProperty("target-language", "zh-CN");
         properties.setProperty("outgoing-target-language", "en");
@@ -362,6 +375,8 @@ final class ForgeConfig {
         properties.setProperty("hud-indicator-size", Integer.toString(hudIndicatorSize));
         properties.setProperty("hud-indicator-margin", Integer.toString(hudIndicatorMargin));
         properties.setProperty("hud-indicator-color", hudIndicatorColor.configName());
+        properties.setProperty("hud-indicator-content", hudIndicatorContent.configName());
+        properties.setProperty("hud-indicator-visibility", hudIndicatorVisibility.configName());
         properties.setProperty("blocked-keywords", blockedKeywords);
         properties.setProperty("target-language", targetLanguage);
         properties.setProperty("outgoing-target-language", outgoingTargetLanguage);

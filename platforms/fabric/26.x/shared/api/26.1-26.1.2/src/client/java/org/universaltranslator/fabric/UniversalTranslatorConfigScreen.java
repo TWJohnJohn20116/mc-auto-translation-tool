@@ -7,8 +7,10 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import org.universaltranslator.core.HudIndicatorColor;
+import org.universaltranslator.core.HudIndicatorContent;
 import org.universaltranslator.core.HudIndicatorCorner;
 import org.universaltranslator.core.HudIndicatorSettings;
+import org.universaltranslator.core.HudIndicatorVisibility;
 import org.universaltranslator.core.TranslationDisplayMode;
 import org.universaltranslator.core.OfflineModel;
 import org.universaltranslator.core.TargetLanguage;
@@ -50,6 +52,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private int hudIndicatorSize;
     private int hudIndicatorMargin;
     private HudIndicatorColor hudIndicatorColor;
+    private HudIndicatorContent hudIndicatorContent;
+    private HudIndicatorVisibility hudIndicatorVisibility;
     private String provider;
     private String llmEndpoint;
     private String llmApiKey;
@@ -74,6 +78,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private Button hudSizeButton;
     private Button hudMarginButton;
     private Button hudColorButton;
+    private Button hudContentButton;
+    private Button hudVisibilityButton;
     private Button chatButton;
     private Button otherButton;
     private Button vanillaButton;
@@ -117,6 +123,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
         this.hudIndicatorSize = config.hudIndicatorSize;
         this.hudIndicatorMargin = config.hudIndicatorMargin;
         this.hudIndicatorColor = config.hudIndicatorColor;
+        this.hudIndicatorContent = config.hudIndicatorContent;
+        this.hudIndicatorVisibility = config.hudIndicatorVisibility;
         this.provider = config.provider;
         this.llmEndpoint = config.editorEndpoint(config.provider);
         this.llmApiKey = config.editorApiKey(config.provider);
@@ -311,6 +319,18 @@ final class UniversalTranslatorConfigScreen extends Screen {
             refreshLabels();
         }).bounds(left, layout.contentRow(2), layout.buttonWidth, 20).build());
 
+        hudContentButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+            hudIndicatorContent = HudIndicatorContent.values()[
+                    (hudIndicatorContent.ordinal() + 1) % HudIndicatorContent.values().length];
+            refreshLabels();
+        }).bounds(layout.right, layout.contentRow(2), layout.buttonWidth, 20).build());
+
+        hudVisibilityButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+            hudIndicatorVisibility = HudIndicatorVisibility.values()[
+                    (hudIndicatorVisibility.ordinal() + 1) % HudIndicatorVisibility.values().length];
+            refreshLabels();
+        }).bounds(left, layout.contentRow(3), layout.buttonWidth, 20).build());
+
         // --- Bottom Action Row ---
         addRenderableWidget(Button.builder(Component.translatable("screen.universal_translator.save"), button -> saveAndApply())
                 .bounds(left, layout.saveY, layout.buttonWidth, 20).build());
@@ -371,6 +391,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
         hudSizeButton.visible = isHud;
         hudMarginButton.visible = isHud;
         hudColorButton.visible = isHud;
+        hudContentButton.visible = isHud;
+        hudVisibilityButton.visible = isHud;
 
         refreshTabButtons();
     }
@@ -403,10 +425,16 @@ final class UniversalTranslatorConfigScreen extends Screen {
                 "screen.universal_translator.option.hud_margin", hudIndicatorMargin));
         hudColorButton.setMessage(Component.translatable(
                 "screen.universal_translator.option.hud_color", hudColorLabel(hudIndicatorColor)));
+        hudContentButton.setMessage(Component.translatable(
+                "screen.universal_translator.option.hud_content", hudContentLabel(hudIndicatorContent)));
+        hudVisibilityButton.setMessage(Component.translatable(
+                "screen.universal_translator.option.hud_visibility", hudVisibilityLabel(hudIndicatorVisibility)));
         hudCornerButton.active = hudIndicator;
         hudSizeButton.active = hudIndicator;
         hudMarginButton.active = hudIndicator;
         hudColorButton.active = hudIndicator;
+        hudContentButton.active = hudIndicator;
+        hudVisibilityButton.active = hudIndicator;
         enabledButton.setMessage(Component.translatable("screen.universal_translator.option.automatic", onOff(enabled)));
         chatButton.setMessage(Component.translatable("screen.universal_translator.option.chat", onOff(translateChat)));
         otherButton.setMessage(Component.translatable("screen.universal_translator.option.other", onOff(translateOther)));
@@ -469,7 +497,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
                     diskCache,
                     animatedUi,
                     new HudIndicatorSettings(hudIndicator, hudIndicatorCorner,
-                            hudIndicatorSize, hudIndicatorMargin, hudIndicatorColor));
+                            hudIndicatorSize, hudIndicatorMargin, hudIndicatorColor,
+                            hudIndicatorContent, hudIndicatorVisibility));
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
                     && (updated.tencentSecretId.isEmpty() || updated.tencentSecretKey.isEmpty())) {
                 throw new IllegalArgumentException(tr("error.universal_translator.tencent_credentials"));
@@ -684,6 +713,16 @@ final class UniversalTranslatorConfigScreen extends Screen {
 
     private static Component hudColorLabel(HudIndicatorColor color) {
         return Component.translatable("value.universal_translator.color." + color.configName().replace('-', '_'));
+    }
+
+    private static Component hudContentLabel(HudIndicatorContent content) {
+        return Component.translatable(
+                "value.universal_translator.hud_content." + content.configName().replace('-', '_'));
+    }
+
+    private static Component hudVisibilityLabel(HudIndicatorVisibility visibility) {
+        return Component.translatable(
+                "value.universal_translator.hud_visibility." + visibility.configName().replace('-', '_'));
     }
 
     private static Component hudCornerLabel(HudIndicatorCorner corner) {
