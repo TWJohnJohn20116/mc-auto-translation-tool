@@ -54,6 +54,11 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private HudIndicatorColor hudIndicatorColor;
     private HudIndicatorContent hudIndicatorContent;
     private HudIndicatorVisibility hudIndicatorVisibility;
+    private int hudIndicatorOffsetX;
+    private int hudIndicatorOffsetY;
+    private boolean hudDragging;
+    private double hudDragLastX;
+    private double hudDragLastY;
     private String provider;
     private String llmEndpoint;
     private String llmApiKey;
@@ -100,6 +105,13 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private long animationStartedNanos = System.nanoTime();
     private SettingsSelectionList.Kind openSelection = SettingsSelectionList.Kind.NONE;
 
+    /** The preview panel is a miniature of Minecraft's 320x240 minimum logical screen. */
+    private static final int HUD_PREVIEW_SCREEN_WIDTH = 320;
+    private static final int HUD_PREVIEW_SCREEN_HEIGHT = 240;
+    /** Tallest the preview panel may be. It shrinks on short windows so it never hits Save. */
+    private static final int HUD_DRAG_PREVIEW_HEIGHT = 48;
+    private static final int HUD_DRAG_HANDLE_SIZE = 8;
+
     UniversalTranslatorConfigScreen(Screen parent, ForgeConfig config) {
         super(Component.translatable("screen.universal_translator.settings.title"));
         this.parent = parent;
@@ -125,6 +137,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
         this.hudIndicatorColor = config.hudIndicatorColor;
         this.hudIndicatorContent = config.hudIndicatorContent;
         this.hudIndicatorVisibility = config.hudIndicatorVisibility;
+        this.hudIndicatorOffsetX = config.hudIndicatorOffsetX;
+        this.hudIndicatorOffsetY = config.hudIndicatorOffsetY;
         this.provider = config.provider;
         this.llmEndpoint = config.editorEndpoint(config.provider);
         this.llmApiKey = config.editorApiKey(config.provider);
@@ -339,6 +353,9 @@ final class UniversalTranslatorConfigScreen extends Screen {
 
         refreshLabels();
         updateTabVisibility();
+
+        // A resize or a screen rebuild mid-drag must not leave the handle stuck to the pointer.
+        hudDragging = false;
     }
 
     private void updateTabVisibility() {
@@ -498,7 +515,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
                     animatedUi,
                     new HudIndicatorSettings(hudIndicator, hudIndicatorCorner,
                             hudIndicatorSize, hudIndicatorMargin, hudIndicatorColor,
-                            hudIndicatorContent, hudIndicatorVisibility));
+                            hudIndicatorContent, hudIndicatorVisibility,
+                            hudIndicatorOffsetX, hudIndicatorOffsetY));
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
                     && (updated.tencentSecretId.isEmpty() || updated.tencentSecretKey.isEmpty())) {
                 throw new IllegalArgumentException(tr("error.universal_translator.tencent_credentials"));
@@ -590,6 +608,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
             }
         }
         super.extractRenderState(graphics, mouseX, mouseY, delta);
+        renderHudDragPreview(graphics);
         if (animatedUi) {
             int overlayAlpha = SettingsUiAnimation.openingOverlayAlpha(opening);
             if (overlayAlpha > 0) {
@@ -603,11 +622,176 @@ final class UniversalTranslatorConfigScreen extends Screen {
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-        if (openSelection != SettingsSelectionList.Kind.NONE
-                && selectFromList(event.x(), event.y())) {
-            return true;
+        return handleDragStart(event.x(), event.y())
+                || (openSelection != SettingsSelectionList.Kind.NONE
+                        && selectFromList(event.x(), event.y()))
+                || super.mouseClicked(event, doubleClick);
+    }
+
+    @Override
+    public boolean mouseDragged(MouseButtonEvent event, double deltaX, double deltaY) {
+        return handleDragMove(event.x(), event.y())
+                || super.mouseDragged(event, deltaX, deltaY);
+    }
+
+    @Override
+    public boolean mouseReleased(MouseButtonEvent event) {
+        return handleDragEnd()
+                || super.mouseReleased(event);
+    }
+
+    /**
+     * Starts a HUD indicator drag when the press lands on the preview handle.
+     *
+     * <p>This 26.x screen has no shared base, so the whole drag implementation lives here. It
+     * refuses while a selection list is open so the list keeps first claim on the click and the
+     * pre-existing click handling is unchanged even though {@code mouseClicked} now asks for a drag
+     * first.
+     */
+    private boolean handleDragStart(double mouseX, double mouseY) {
+        if (openSelection != SettingsSelectionList.Kind.NONE) {
+            return false;
         }
-        return super.mouseClicked(event, doubleClick);
+        if (activeTab != Tab.HUD) {
+            return false;
+        }
+        if (!insideHudDragHandle(mouseX, mouseY)) {
+            return false;
+        }
+        hudDragging = true;
+        hudDragLastX = mouseX;
+        hudDragLastY = mouseY;
+        return true;
+    }
+
+    /** Moves the pending offsets by the pointer delta, clamped to the frozen core bounds. */
+    private boolean handleDragMove(double mouseX, double mouseY) {
+        if (!hudDragging) {
+            return false;
+        }
+        // One preview pixel is not one GUI pixel: the panel is a scaled-down screen, so undo the
+        // scale before turning the pointer delta into a real offset.
+        hudIndicatorOffsetX = clampOffset(hudIndicatorOffsetX
+                + (int) Math.round((mouseX - hudDragLastX) / hudScaleX()));
+        hudIndicatorOffsetY = clampOffset(hudIndicatorOffsetY
+                + (int) Math.round((mouseY - hudDragLastY) / hudScaleY()));
+        hudDragLastX = mouseX;
+        hudDragLastY = mouseY;
+        return true;
+    }
+
+    /** Ends the drag. The offsets are only persisted later by {@link #saveAndApply()}. */
+    private boolean handleDragEnd() {
+        if (!hudDragging) {
+            return false;
+        }
+        hudDragging = false;
+        return true;
+    }
+
+    private static int clampOffset(int value) {
+        return Math.max(HudIndicatorSettings.MIN_OFFSET,
+                Math.min(HudIndicatorSettings.MAX_OFFSET, value));
+    }
+
+    private int hudPreviewX() {
+        return layout().left;
+    }
+
+    private int hudPreviewY() {
+        return layout().contentRow(4);
+    }
+
+    private int hudPreviewW() {
+        return layout().totalWidth;
+    }
+
+    /**
+     * Panel height, capped by the space above the Save/Cancel row.
+     *
+     * <p>{@code contentRow(4)} does not shrink on very short windows because the row step has a
+     * floor, so a fixed height would overlap Save. Clamping here keeps the panel clear of it.
+     */
+    private int hudPreviewH() {
+        int available = layout().saveY - 4 - hudPreviewY();
+        if (available < HUD_DRAG_HANDLE_SIZE) {
+            // No room above Save: skip the preview entirely rather than draw a panel that
+            // overlaps it, which is exactly what the cap above exists to prevent.
+            return 0;
+        }
+        return Math.min(HUD_DRAG_PREVIEW_HEIGHT, available);
+    }
+
+    /**
+     * Where the indicator sits on the real screen before the drag offset: the same anchor maths
+     * the HUD mixin uses, so the preview cannot drift from what the player actually sees.
+     */
+    private int hudAnchorX() {
+        return hudIndicatorCorner.isRight()
+                ? HUD_PREVIEW_SCREEN_WIDTH - hudIndicatorMargin - hudIndicatorSize
+                : hudIndicatorMargin;
+    }
+
+    private int hudAnchorY() {
+        return hudIndicatorCorner.isBottom()
+                ? HUD_PREVIEW_SCREEN_HEIGHT - hudIndicatorMargin - hudIndicatorSize
+                : hudIndicatorMargin;
+    }
+
+    private double hudScaleX() {
+        return hudPreviewW() / (double) HUD_PREVIEW_SCREEN_WIDTH;
+    }
+
+    private double hudScaleY() {
+        return hudPreviewH() / (double) HUD_PREVIEW_SCREEN_HEIGHT;
+    }
+
+    private int hudHandleX() {
+        int px = hudPreviewX();
+        int pw = hudPreviewW();
+        int x = px + (int) Math.round((hudAnchorX() + hudIndicatorOffsetX) * hudScaleX());
+        return Math.max(px, Math.min(px + pw - HUD_DRAG_HANDLE_SIZE, x));
+    }
+
+    private int hudHandleY() {
+        int py = hudPreviewY();
+        int ph = hudPreviewH();
+        int y = py + (int) Math.round((hudAnchorY() + hudIndicatorOffsetY) * hudScaleY());
+        return Math.max(py, Math.min(py + ph - HUD_DRAG_HANDLE_SIZE, y));
+    }
+
+    private boolean insideHudDragHandle(double mouseX, double mouseY) {
+        if (hudPreviewH() <= 0) {
+            return false;
+        }
+        int hx = hudHandleX();
+        int hy = hudHandleY();
+        return mouseX >= hx && mouseX < hx + HUD_DRAG_HANDLE_SIZE
+                && mouseY >= hy && mouseY < hy + HUD_DRAG_HANDLE_SIZE;
+    }
+
+    /**
+     * Draws the HUD indicator preview strip plus its drag handle.
+     *
+     * <p>Called from {@code extractRenderState} right after {@code super.extractRenderState}, so it
+     * lands above the widgets while the opening overlay and the selection list still cover it.
+     */
+    private void renderHudDragPreview(GuiGraphicsExtractor graphics) {
+        if (activeTab != Tab.HUD) {
+            return;
+        }
+        int px = hudPreviewX();
+        int py = hudPreviewY();
+        int pw = hudPreviewW();
+        int ph = hudPreviewH();
+        if (ph <= 0) {
+            return;
+        }
+        graphics.fill(px, py, px + pw, py + ph, 0x40000000);
+        int hx = hudHandleX();
+        int hy = hudHandleY();
+        graphics.fill(hx, hy, hx + HUD_DRAG_HANDLE_SIZE, hy + HUD_DRAG_HANDLE_SIZE,
+                hudDragging ? 0xFFFFAA00 : 0xFF00AA00);
     }
 
     private void renderSelection(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {

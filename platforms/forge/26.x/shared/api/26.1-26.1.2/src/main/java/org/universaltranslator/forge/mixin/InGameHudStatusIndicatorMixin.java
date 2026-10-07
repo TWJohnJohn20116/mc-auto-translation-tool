@@ -60,6 +60,13 @@ abstract class InGameHudStatusIndicatorMixin {
         int size = settings.getSize();
         int left = corner.isRight() ? graphics.guiWidth() - margin - size : margin;
         int top = corner.isBottom() ? graphics.guiHeight() - margin - size : margin;
+        // The drag offset comes from the settings screen, but the config file is plain text a
+        // player can edit, so clamp the final position instead of trusting the stored range: the
+        // indicator must never end up somewhere it cannot be dragged back from.
+        left += settings.getOffsetX();
+        top += settings.getOffsetY();
+        left = Math.max(0, Math.min(graphics.guiWidth() - size, left));
+        top = Math.max(0, Math.min(graphics.guiHeight() - size, top));
         int right = left + size;
         int bottom = top + size;
         int borderColor = 0xFF000000;

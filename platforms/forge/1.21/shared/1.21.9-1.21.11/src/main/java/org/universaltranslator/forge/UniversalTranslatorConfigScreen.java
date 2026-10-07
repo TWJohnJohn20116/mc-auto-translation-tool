@@ -21,8 +21,21 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-        return handleSelectionClick(event.x(), event.y())
+        return handleDragStart(event.x(), event.y())
+                || handleSelectionClick(event.x(), event.y())
                 || super.mouseClicked(event, doubleClick);
+    }
+
+    @Override
+    public boolean mouseDragged(MouseButtonEvent event, double deltaX, double deltaY) {
+        return handleDragMove(event.x(), event.y())
+                || super.mouseDragged(event, deltaX, deltaY);
+    }
+
+    @Override
+    public boolean mouseReleased(MouseButtonEvent event) {
+        return handleDragEnd()
+                || super.mouseReleased(event);
     }
 }
 
