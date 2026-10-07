@@ -818,11 +818,11 @@ final class LegacyConfigScreen extends GuiScreen {
     }
 
     @Override
-    protected void mouseDragged(int mouseX, int mouseY, int clickedMouseButton, long timeSinceLastClick) {
+    protected void mouseClickMove(int mouseX, int mouseY, int clickedMouseButton, long timeSinceLastClick) {
         if (handleDragMove(mouseX, mouseY)) {
             return;
         }
-        super.mouseDragged(mouseX, mouseY, clickedMouseButton, timeSinceLastClick);
+        super.mouseClickMove(mouseX, mouseY, clickedMouseButton, timeSinceLastClick);
     }
 
     @Override
