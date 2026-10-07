@@ -54,7 +54,7 @@ runs:
           # "Failed to setup Minecraft, ...DownloadException: Failed to download"，
           # 不在原本的清單裡，於是 2026-10-06 的 fabric-1.19.2 暫時性網路失敗被當成
           # 程式錯誤、一次都沒重試（同一個 PR 的其他目標全綠，紅燈純屬假警報）。
-          if grep -qiE 'Could not resolve|Could not GET|Could not HEAD|Connection reset|Read timed out|Temporary failure in name resolution|502 Bad Gateway|503 Service Unavailable|Received status code 5|Failed to download|Could not download|DownloadException|Failed to setup Minecraft' "$log"; then
+          if grep -qiE 'Could not resolve|Could not GET|Could not HEAD|Connection reset|Connection refused|timed out|TimeoutException|ConnectException|UnknownHostException|Network is unreachable|Temporary failure in name resolution|502 Bad Gateway|503 Service Unavailable|Received status code 5|Failed to download|Could not download|DownloadException|Failed to setup Minecraft' "$log"; then
             attempt=$((attempt + 1))
             echo "::warning::疑似網路或依賴解析失敗，10 秒後重試（第 $attempt 次，最多 $MAX_ATTEMPTS 次）"
             sleep 10
