@@ -1,16 +1,23 @@
 package org.universaltranslator.forge.legacy;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.GuiButton;
+import net.minecraft.client.gui.ScaledResolution;
 import net.minecraft.client.gui.GuiMainMenu;
 import net.minecraft.client.resources.I18n;
 import net.minecraft.client.settings.KeyBinding;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.client.event.GuiScreenEvent;
+import net.minecraftforge.client.event.RenderGameOverlayEvent;
 import net.minecraftforge.fml.client.registry.ClientRegistry;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
 import org.lwjgl.input.Keyboard;
+import org.universaltranslator.core.HudIndicatorContent;
+import org.universaltranslator.core.HudIndicatorCorner;
+import org.universaltranslator.core.HudIndicatorSettings;
+import org.universaltranslator.core.TranslationActivity;
 import org.universaltranslator.core.TranslationResult;
 import org.universaltranslator.core.TranslationStatusLocalizer;
 
@@ -207,6 +214,115 @@ public final class LegacyClientEvents {
         return I18n.format(key, arguments);
     }
 
+    /**
+     * Paints the translation status indicator on the HUD.
+     *
+     * <p>Unlike the Fabric families this needs no bytecode hook: Forge fires
+     * {@code RenderGameOverlayEvent.Post} after the vanilla HUD is drawn, which is exactly where the
+     * square belongs. Everything drawn comes from {@code HudIndicatorSettings}: the corner, size,
+     * margin, colour, what appears inside the square, and when it is drawn at all.
+     */
+    @SubscribeEvent
+    public void onRenderGameOverlay(RenderGameOverlayEvent.Post event) {
+        if (event.type != RenderGameOverlayEvent.ElementType.ALL) {
+            return;
+        }
+        // Read the settings first: a disabled indicator draws nothing at all.
+        HudIndicatorSettings settings = LegacyTranslationRuntime.homeSettings().getHudIndicator();
+        if (!settings.isIndicator()) {
+            return;
+        }
+        switch (settings.getVisibility()) {
+            case WHILE_TRANSLATING:
+                if (!TranslationActivity.isTranslating()) {
+                    return;
+                }
+                break;
+            case WHEN_DISABLED:
+                // The translation master switch, deliberately not the indicator's own option: the
+                // indicator option already gated every value of this enum above.
+                if (LegacyTranslationRuntime.homeSettings().isEnabled()) {
+                    return;
+                }
+                break;
+            case ALWAYS:
+            default:
+                break;
+        }
+        Minecraft client = Minecraft.getMinecraft();
+        if (client == null) {
+            return;
+        }
+        ScaledResolution resolution = new ScaledResolution(client);
+        int windowWidth = resolution.getScaledWidth();
+        int windowHeight = resolution.getScaledHeight();
+        HudIndicatorCorner corner = settings.getCorner();
+        int margin = settings.getMargin();
+        int size = settings.getSize();
+        int left = corner.isRight() ? windowWidth - margin - size : margin;
+        int top = corner.isBottom() ? windowHeight - margin - size : margin;
+        // The drag offset comes from the settings screen, but the config file is plain text a
+        // player can edit, so clamp the final position instead of trusting the stored range: the
+        // indicator must never end up somewhere it cannot be dragged back from.
+        left += settings.getOffsetX();
+        top += settings.getOffsetY();
+        left = Math.max(0, Math.min(windowWidth - size, left));
+        top = Math.max(0, Math.min(windowHeight - size, top));
+        int right = left + size;
+        int bottom = top + size;
+        int borderColor = 0xFF000000;
+        // One pixel of opaque black keeps the indicator readable against sky and bright terrain.
+        Gui.drawRect(left - 1, top - 1, right + 1, top, borderColor);
+        Gui.drawRect(left - 1, bottom, right + 1, bottom + 1, borderColor);
+        Gui.drawRect(left - 1, top, left, bottom, borderColor);
+        Gui.drawRect(right, top, right + 1, bottom, borderColor);
+        if (LegacyTranslationRuntime.homeSettings().isEnabled()) {
+            // Solid colour while translation is on: configurable, green by default.
+            Gui.drawRect(left, top, right, bottom, settings.getColor().argb());
+        } else {
+            // A hollow red frame while translation is off, so the two states differ in shape as well
+            // as in colour and remain distinguishable for players who cannot separate the two hues.
+            int disabledColor = 0xFFFF5555;
+            Gui.drawRect(left, top, right, top + 1, disabledColor);
+            Gui.drawRect(left, bottom - 1, right, bottom, disabledColor);
+            Gui.drawRect(left, top + 1, left + 1, bottom - 1, disabledColor);
+            Gui.drawRect(right - 1, top + 1, right, bottom - 1, disabledColor);
+        }
+        // The label is drawn in both states: the target language and the provider are settings, so
+        // they stay informative even while translation is off.
+        HudIndicatorContent content = settings.getContent();
+        if (content == HudIndicatorContent.DOT) {
+            return;
+        }
+        String label = null;
+        if (content == HudIndicatorContent.LANGUAGE) {
+            label = LegacyTranslationRuntime.homeSettings().getTargetLanguage();
+        } else if (content == HudIndicatorContent.PROVIDER) {
+            label = LegacyTranslationRuntime.homeSettings().getProvider();
+        } else if (content == HudIndicatorContent.ACTIVITY && TranslationActivity.isTranslating()) {
+            label = I18n.format("value.universal_translator.hud_content.activity");
+        }
+        if (label == null || label.isEmpty()) {
+            return;
+        }
+        FontRenderer font = LegacyVersionAccess.fontRenderer();
+        // The legacy FontRenderer is hooked so that everything it renders can be translated;
+        // measuring or drawing the label unguarded would feed the indicator's own text back into
+        // the translation path.
+        LegacyRenderContext.pushTextInput();
+        try {
+            int labelWidth = font.getStringWidth(label);
+            // Beside the square, never over it: a 6px square cannot hold "zh-TW", and a label
+            // centred on a right-corner square would run off the screen edge.
+            int labelLeft = corner.isRight() ? left - 2 - labelWidth : right + 2;
+            // y is the top of the text line, so centre it against the square by hand.
+            int labelY = top + (size - 8) / 2;
+            font.drawStringWithShadow(label, (float) labelLeft, (float) labelY, 0xFFFFFFFF);
+        } finally {
+            LegacyRenderContext.popTextInput();
+        }
+    }
+
     private static void sendCompletedMessage(
             Minecraft minecraft,
             String original,
@@ -236,3 +352,4 @@ public final class LegacyClientEvents {
         }
     }
 }
+
