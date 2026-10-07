@@ -5,7 +5,9 @@ import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.text.Text;
+import org.universaltranslator.core.HudIndicatorColor;
 import org.universaltranslator.core.HudIndicatorCorner;
+import org.universaltranslator.core.HudIndicatorSettings;
 import org.universaltranslator.core.TranslationDisplayMode;
 import org.universaltranslator.core.OfflineModel;
 import org.universaltranslator.core.TargetLanguage;
@@ -36,6 +38,9 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
     private boolean translateEnglishOnly;
     private TranslationTextColor translatedTextColor;
     private HudIndicatorCorner hudIndicatorCorner;
+    private int hudIndicatorSize;
+    private int hudIndicatorMargin;
+    private HudIndicatorColor hudIndicatorColor;
     private String provider;
     private String llmEndpoint;
     private String llmApiKey;
@@ -46,13 +51,15 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
         GENERAL,
         SCOPES,
         ENGINE,
-        OUTGOING
+        OUTGOING,
+        HUD
     }
     private Tab activeTab = Tab.GENERAL;
     private ButtonWidget tabGeneralButton;
     private ButtonWidget tabScopesButton;
     private ButtonWidget tabEngineButton;
     private ButtonWidget tabOutgoingButton;
+    private ButtonWidget tabHudButton;
     private ButtonWidget llmConfigButton;
 
     private TextFieldWidget endpoint;
@@ -61,6 +68,9 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
     private ButtonWidget uiStyleButton;
     private ButtonWidget hudIndicatorButton;
     private ButtonWidget hudCornerButton;
+    private ButtonWidget hudSizeButton;
+    private ButtonWidget hudMarginButton;
+    private ButtonWidget hudColorButton;
     private ButtonWidget chatButton;
     private ButtonWidget otherButton;
     private ButtonWidget vanillaButton;
@@ -101,6 +111,9 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
         this.translateEnglishOnly = config.translateEnglishOnly;
         this.translatedTextColor = config.translatedTextColor;
         this.hudIndicatorCorner = config.hudIndicatorCorner;
+        this.hudIndicatorSize = config.hudIndicatorSize;
+        this.hudIndicatorMargin = config.hudIndicatorMargin;
+        this.hudIndicatorColor = config.hudIndicatorColor;
         this.provider = config.provider;
         this.llmEndpoint = config.editorEndpoint(config.provider);
         this.llmApiKey = config.editorApiKey(config.provider);
@@ -142,6 +155,11 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
             updateTabVisibility();
         }).dimensions(layout.tabX(3), layout.tabY(), layout.tabWidth(), 20).build());
 
+        this.tabHudButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+            activeTab = Tab.HUD;
+            updateTabVisibility();
+        }).dimensions(layout.tabX(4), layout.tabY(), layout.tabWidth(), 20).build());
+
         // --- Tab 1: General (常規) ---
         this.enabledButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
             enabled = !enabled;
@@ -175,23 +193,12 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
             refreshLabels();
         }).dimensions(layout.right, layout.contentRow(2), layout.buttonWidth, 20).build());
 
-        this.hudIndicatorButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
-            hudIndicator = !hudIndicator;
-            refreshLabels();
-        }).dimensions(left, layout.contentRow(3), layout.buttonWidth, 20).build());
-
-        this.hudCornerButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
-            hudIndicatorCorner = HudIndicatorCorner.values()[
-                    (hudIndicatorCorner.ordinal() + 1) % HudIndicatorCorner.values().length];
-            refreshLabels();
-        }).dimensions(layout.right, layout.contentRow(3), layout.buttonWidth, 20).build());
-
         this.diagnosticsButton = addDrawableChild(ButtonWidget.builder(
                 Text.translatable("screen.universal_translator.diagnostics.title"), button -> {
             if (client != null) {
                 client.setScreen(new UniversalTranslatorDiagnosticsScreen(this));
             }
-        }).dimensions(left, layout.contentRow(4), layout.totalWidth, 20).build());
+        }).dimensions(left, layout.contentRow(3), layout.totalWidth, 20).build());
 
         // --- Tab 2: Scopes (範圍) ---
         this.chatButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
@@ -270,6 +277,36 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
             openSelection = SettingsSelectionList.Kind.OUTGOING_LANGUAGE;
         }).dimensions(left, layout.contentRow(1), layout.totalWidth, 20).build());
 
+        // --- Tab 5: HUD (抬頭顯示) ---
+        this.hudIndicatorButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+            hudIndicator = !hudIndicator;
+            refreshLabels();
+        }).dimensions(left, layout.contentRow(0), layout.buttonWidth, 20).build());
+
+        this.hudCornerButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+            hudIndicatorCorner = HudIndicatorCorner.values()[
+                    (hudIndicatorCorner.ordinal() + 1) % HudIndicatorCorner.values().length];
+            refreshLabels();
+        }).dimensions(layout.right, layout.contentRow(0), layout.buttonWidth, 20).build());
+
+        this.hudSizeButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+            hudIndicatorSize = hudIndicatorSize >= HudIndicatorSettings.MAX_SIZE
+                    ? HudIndicatorSettings.MIN_SIZE : hudIndicatorSize + 1;
+            refreshLabels();
+        }).dimensions(left, layout.contentRow(1), layout.buttonWidth, 20).build());
+
+        this.hudMarginButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+            hudIndicatorMargin = hudIndicatorMargin >= HudIndicatorSettings.MAX_MARGIN
+                    ? HudIndicatorSettings.MIN_MARGIN : hudIndicatorMargin + 1;
+            refreshLabels();
+        }).dimensions(layout.right, layout.contentRow(1), layout.buttonWidth, 20).build());
+
+        this.hudColorButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+            hudIndicatorColor = HudIndicatorColor.values()[
+                    (hudIndicatorColor.ordinal() + 1) % HudIndicatorColor.values().length];
+            refreshLabels();
+        }).dimensions(left, layout.contentRow(2), layout.buttonWidth, 20).build());
+
         // --- Bottom Action Row ---
         addDrawableChild(ButtonWidget.builder(Text.translatable("screen.universal_translator.save"), button -> saveAndApply())
                 .dimensions(left, layout.saveY, layout.buttonWidth, 20).build());
@@ -288,7 +325,16 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
                 "screen.universal_translator.option.hud_indicator", onOff(hudIndicator)));
         hudCornerButton.setMessage(Text.translatable(
                 "screen.universal_translator.option.hud_corner", hudCornerLabel(hudIndicatorCorner)));
+        hudSizeButton.setMessage(Text.translatable(
+                "screen.universal_translator.option.hud_size", hudIndicatorSize));
+        hudMarginButton.setMessage(Text.translatable(
+                "screen.universal_translator.option.hud_margin", hudIndicatorMargin));
+        hudColorButton.setMessage(Text.translatable(
+                "screen.universal_translator.option.hud_color", hudColorLabel(hudIndicatorColor)));
         hudCornerButton.active = hudIndicator;
+        hudSizeButton.active = hudIndicator;
+        hudMarginButton.active = hudIndicator;
+        hudColorButton.active = hudIndicator;
         enabledButton.setMessage(Text.translatable("screen.universal_translator.option.automatic", onOff(enabled)));
         chatButton.setMessage(Text.translatable("screen.universal_translator.option.chat", onOff(translateChat)));
         otherButton.setMessage(Text.translatable("screen.universal_translator.option.other", onOff(translateOther)));
@@ -321,6 +367,7 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
         boolean isScopes = activeTab == Tab.SCOPES;
         boolean isEngine = activeTab == Tab.ENGINE;
         boolean isOutgoing = activeTab == Tab.OUTGOING;
+        boolean isHud = activeTab == Tab.HUD;
 
         // Tab 1: General
         enabledButton.visible = isGeneral;
@@ -329,8 +376,6 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
         colorButton.visible = isGeneral;
         cacheButton.visible = isGeneral;
         uiStyleButton.visible = isGeneral;
-        hudIndicatorButton.visible = isGeneral;
-        hudCornerButton.visible = isGeneral;
         diagnosticsButton.visible = isGeneral;
 
         // Tab 2: Scopes
@@ -355,6 +400,13 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
         outgoingButton.visible = isOutgoing;
         outgoingTargetLanguageButton.visible = isOutgoing;
 
+        // Tab 5: HUD
+        hudIndicatorButton.visible = isHud;
+        hudCornerButton.visible = isHud;
+        hudSizeButton.visible = isHud;
+        hudMarginButton.visible = isHud;
+        hudColorButton.visible = isHud;
+
         refreshTabButtons();
     }
 
@@ -364,6 +416,7 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
         tabScopesButton.setMessage(tabTitle("screen.universal_translator.tab.scopes", activeTab == Tab.SCOPES));
         tabEngineButton.setMessage(tabTitle("screen.universal_translator.tab.engine", activeTab == Tab.ENGINE));
         tabOutgoingButton.setMessage(tabTitle("screen.universal_translator.tab.outgoing", activeTab == Tab.OUTGOING));
+        tabHudButton.setMessage(tabTitle("screen.universal_translator.tab.hud", activeTab == Tab.HUD));
     }
 
     private Text tabTitle(String key, boolean active) {
@@ -405,8 +458,8 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
                     apiFallback,
                     diskCache,
                     animatedUi,
-                    hudIndicator,
-                    hudIndicatorCorner);
+                    new HudIndicatorSettings(hudIndicator, hudIndicatorCorner,
+                            hudIndicatorSize, hudIndicatorMargin, hudIndicatorColor));
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
                     && (updated.tencentSecretId.isEmpty() || updated.tencentSecretKey.isEmpty())) {
                 throw new IllegalArgumentException(tr("error.universal_translator.tencent_credentials"));
@@ -480,7 +533,7 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
             } else if (activeTab == Tab.GENERAL) {
                 context.drawCenteredTextWithShadow(this.textRenderer,
                         Text.translatable("screen.universal_translator.info.keybind"),
-                        this.width / 2, layout.contentRow(4) + 24, 0xFFA0A0A0);
+                        this.width / 2, layout.contentRow(3) + 24, 0xFFA0A0A0);
             } else if (activeTab == Tab.ENGINE) {
                 context.drawCenteredTextWithShadow(this.textRenderer,
                         Text.translatable(isOffline()
@@ -622,6 +675,10 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
         }
     }
 
+    private static String hudColorLabel(HudIndicatorColor color) {
+        return tr("value.universal_translator.color." + color.configName().replace('-', '_'));
+    }
+
     private static String hudCornerLabel(HudIndicatorCorner corner) {
         switch (corner) {
             case TOP_RIGHT: return tr("value.universal_translator.hud_corner.top_right");
@@ -637,7 +694,7 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
     }
 
     private Layout layout() {
-        SettingsScreenLayout.Geometry geometry = SettingsScreenLayout.calculate(this.width, this.height);
+        SettingsScreenLayout.Geometry geometry = SettingsScreenLayout.calculate(this.width, this.height, 5);
         return new Layout(geometry.left(), geometry.right(), geometry.totalWidth(), geometry.buttonWidth(),
                 geometry.top(), geometry.rowStep(), geometry.targetY(), geometry.endpointY(), geometry.saveY(),
                 geometry.tabY(), geometry.tabWidth(), geometry.tabGap(), geometry.contentTop(), geometry.contentRowStep());

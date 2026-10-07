@@ -112,6 +112,18 @@ public final class TranslationCoordinator implements AutoCloseable {
             existing = inFlight.putIfAbsent(requestKey, created);
             if (existing == null) {
                 existing = created;
+                // Only work that is really handed to the provider is counted. Every other exit
+                // above returns a future that performs no provider work (closed session, nothing
+                // to translate, or losing the putIfAbsent race to a thread that already counted
+                // this request), and none of those may light the HUD indicator.
+                // begin() sits before executor.execute(...) so a worker can never settle this
+                // future - and therefore run the end() below - before the count went up.
+                TranslationActivity.begin();
+                // Side-effect only: whenComplete returns a NEW future, which is deliberately
+                // discarded so the future handed back to callers keeps its identity and its
+                // original exception semantics. whenComplete (not thenRun) so failures,
+                // cancellation and close() decrement too.
+                created.whenComplete((result, failure) -> TranslationActivity.end());
                 try {
                     executor.execute(() -> {
                     try {
@@ -143,6 +155,11 @@ public final class TranslationCoordinator implements AutoCloseable {
                     inFlight.remove(requestKey, created);
                     created.complete(TranslationResult.failure(
                             text, "Translation queue is busy; retrying later"));
+                } catch (Throwable fatal) {
+                    // begin() already ran; without this the count would never come back down and the
+                    // HUD indicator would be stuck showing "translating" for the rest of the session.
+                    TranslationActivity.end();
+                    throw fatal;
                 }
             }
         }

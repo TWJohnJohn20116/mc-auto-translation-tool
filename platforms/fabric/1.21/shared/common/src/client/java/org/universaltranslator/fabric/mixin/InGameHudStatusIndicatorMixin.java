@@ -8,6 +8,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.universaltranslator.core.HudIndicatorCorner;
+import org.universaltranslator.core.HudIndicatorSettings;
 import org.universaltranslator.fabric.FabricTranslationRuntime;
 
 /**
@@ -26,12 +27,13 @@ abstract class InGameHudStatusIndicatorMixin {
     private void universalTranslator$renderStatusIndicator(
             DrawContext context, RenderTickCounter tickCounter, CallbackInfo callback) {
         // Read the settings first: a disabled indicator draws nothing at all.
-        if (!FabricTranslationRuntime.homeSettings().isHudIndicator()) {
+        HudIndicatorSettings settings = FabricTranslationRuntime.homeSettings().getHudIndicator();
+        if (!settings.isIndicator()) {
             return;
         }
-        HudIndicatorCorner corner = FabricTranslationRuntime.homeSettings().getHudIndicatorCorner();
-        int margin = 4;
-        int size = 6;
+        HudIndicatorCorner corner = settings.getCorner();
+        int margin = settings.getMargin();
+        int size = settings.getSize();
         int left = corner.isRight() ? context.getScaledWindowWidth() - margin - size : margin;
         int top = corner.isBottom() ? context.getScaledWindowHeight() - margin - size : margin;
         int right = left + size;
@@ -43,8 +45,8 @@ abstract class InGameHudStatusIndicatorMixin {
         context.fill(left - 1, top, left, bottom, borderColor);
         context.fill(right, top, right + 1, bottom, borderColor);
         if (FabricTranslationRuntime.homeSettings().isEnabled()) {
-            // Solid green while translation is on.
-            context.fill(left, top, right, bottom, 0xFF55FF55);
+            // Solid colour while translation is on: configurable, green by default.
+            context.fill(left, top, right, bottom, settings.getColor().argb());
             return;
         }
         // A hollow red frame while translation is off, so the two states differ in shape as well as

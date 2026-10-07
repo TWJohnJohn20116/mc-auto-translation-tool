@@ -9,7 +9,16 @@ public final class SettingsScreenLayout {
     private SettingsScreenLayout() {
     }
 
+    /** Four tabs, the layout every screen had before the HUD tab was added. */
     public static Geometry calculate(int screenWidth, int screenHeight) {
+        return calculate(screenWidth, screenHeight, 4);
+    }
+
+    /**
+     * @param tabCount number of tab buttons on the screen's tab row; screens without the HUD tab
+     *                 keep passing 4 so their geometry is unchanged
+     */
+    public static Geometry calculate(int screenWidth, int screenHeight, int tabCount) {
         int safeWidth = Math.max(40, screenWidth);
         int availableWidth = Math.max(40, safeWidth - 8);
         int totalWidth = safeWidth >= 200
@@ -45,9 +54,9 @@ public final class SettingsScreenLayout {
         }
 
         int tabY = Math.max(22, Math.min(HEADER_BOTTOM + 2, top - 2));
-        int tabCount = 4;
+        int safeTabCount = Math.max(1, tabCount);
         int tabGap = 3;
-        int tabWidth = Math.max(20, (totalWidth - tabGap * (tabCount - 1)) / tabCount);
+        int tabWidth = Math.max(20, (totalWidth - tabGap * (safeTabCount - 1)) / safeTabCount);
         int contentTop = tabY + BUTTON_HEIGHT + 4;
         int contentRowStep = Math.max(22, Math.min(26, (saveY - contentTop) / 4));
 

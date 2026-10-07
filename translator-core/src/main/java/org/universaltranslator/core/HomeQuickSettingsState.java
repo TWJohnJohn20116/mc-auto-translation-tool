@@ -11,35 +11,29 @@ public final class HomeQuickSettingsState {
     private final boolean enabled;
     private final boolean translateVanilla;
     private final String targetLanguage;
-    private final boolean hudIndicator;
-    private final HudIndicatorCorner hudIndicatorCorner;
+    private final HudIndicatorSettings hudIndicator;
 
     public HomeQuickSettingsState(
             boolean enabled,
             boolean translateVanilla,
             String targetLanguage,
-            boolean hudIndicator,
-            HudIndicatorCorner hudIndicatorCorner) {
+            HudIndicatorSettings hudIndicator) {
         this.enabled = enabled;
         this.translateVanilla = translateVanilla;
         this.targetLanguage = TargetLanguage.canonicalize(targetLanguage);
-        this.hudIndicator = hudIndicator;
-        // Never null: the HUD mixins call isRight()/isBottom() on this every frame, and the callers
-        // that build this snapshot without a loaded config have no corner to pass.
-        this.hudIndicatorCorner = hudIndicatorCorner == null
-                ? HudIndicatorCorner.TOP_LEFT
-                : hudIndicatorCorner;
+        // Never null: the HUD mixins dereference this every frame.
+        this.hudIndicator = hudIndicator == null ? HudIndicatorSettings.defaults() : hudIndicator;
     }
 
     /**
      * Convenience constructor for the platforms that have no HUD indicator at all: the indicator
-     * only exists from 1.21 onward, so the older runtimes have no values to thread through. Their
-     * snapshot still carries the two HUD fields so the type stays uniform, but nothing reads them
-     * there. Keeping this overload avoids editing nine runtime factories to pass settings that
-     * cannot be reached on those versions.
+     * only exists from 1.14 onward, so the older runtimes have no values to thread through. Their
+     * snapshot still carries the settings so the type stays uniform, but nothing reads them there.
+     * Keeping this overload avoids editing nine runtime factories to pass settings that cannot be
+     * reached on those versions.
      */
     public HomeQuickSettingsState(boolean enabled, boolean translateVanilla, String targetLanguage) {
-        this(enabled, translateVanilla, targetLanguage, true, HudIndicatorCorner.TOP_LEFT);
+        this(enabled, translateVanilla, targetLanguage, HudIndicatorSettings.defaults());
     }
 
     public boolean isEnabled() {
@@ -54,11 +48,7 @@ public final class HomeQuickSettingsState {
         return targetLanguage;
     }
 
-    public boolean isHudIndicator() {
+    public HudIndicatorSettings getHudIndicator() {
         return hudIndicator;
-    }
-
-    public HudIndicatorCorner getHudIndicatorCorner() {
-        return hudIndicatorCorner;
     }
 }

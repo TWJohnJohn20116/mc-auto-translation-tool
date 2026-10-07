@@ -5,7 +5,9 @@ import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import org.universaltranslator.core.DiagnosticsLogExporter;
+import org.universaltranslator.core.HudIndicatorColor;
 import org.universaltranslator.core.HudIndicatorCorner;
+import org.universaltranslator.core.HudIndicatorSettings;
 import org.universaltranslator.core.OfflineModel;
 import org.universaltranslator.core.SettingsSelectionList;
 import org.universaltranslator.core.SettingsUiAnimation;
@@ -40,6 +42,9 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     private boolean translateEnglishOnly;
     private TranslationTextColor translatedTextColor;
     private HudIndicatorCorner hudIndicatorCorner;
+    private int hudIndicatorSize;
+    private int hudIndicatorMargin;
+    private HudIndicatorColor hudIndicatorColor;
     private String provider;
     private String llmEndpoint;
     private String llmApiKey;
@@ -50,13 +55,15 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         GENERAL,
         SCOPES,
         ENGINE,
-        OUTGOING
+        OUTGOING,
+        HUD
     }
     private Tab activeTab = Tab.GENERAL;
     private Button tabGeneralButton;
     private Button tabScopesButton;
     private Button tabEngineButton;
     private Button tabOutgoingButton;
+    private Button tabHudButton;
     private Button llmConfigButton;
     private Button diagnosticsButton;
 
@@ -66,6 +73,9 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     private Button uiStyleButton;
     private Button hudIndicatorButton;
     private Button hudCornerButton;
+    private Button hudSizeButton;
+    private Button hudMarginButton;
+    private Button hudColorButton;
     private Button chatButton;
     private Button otherButton;
     private Button vanillaButton;
@@ -105,6 +115,9 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         this.translateEnglishOnly = config.translateEnglishOnly;
         this.translatedTextColor = config.translatedTextColor;
         this.hudIndicatorCorner = config.hudIndicatorCorner;
+        this.hudIndicatorSize = config.hudIndicatorSize;
+        this.hudIndicatorMargin = config.hudIndicatorMargin;
+        this.hudIndicatorColor = config.hudIndicatorColor;
         this.provider = config.provider;
         this.llmEndpoint = config.editorEndpoint(config.provider);
         this.llmApiKey = config.editorApiKey(config.provider);
@@ -146,6 +159,11 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
             updateTabVisibility();
         }).bounds(layout.tabX(3), layout.tabY(), layout.tabWidth(), 20).build());
 
+        tabHudButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+            activeTab = Tab.HUD;
+            updateTabVisibility();
+        }).bounds(layout.tabX(4), layout.tabY(), layout.tabWidth(), 20).build());
+
         // --- Tab 1: General (常規) ---
         enabledButton = addRenderableWidget(button(left, layout.contentRow(0), layout.buttonWidth,
                 () -> enabled = !enabled));
@@ -163,18 +181,12 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
             animatedUi = !animatedUi;
             animationStartedNanos = System.nanoTime();
         }));
-        hudIndicatorButton = addRenderableWidget(button(left, layout.contentRow(3), layout.buttonWidth,
-                () -> hudIndicator = !hudIndicator));
-        hudCornerButton = addRenderableWidget(button(layout.right, layout.contentRow(3), layout.buttonWidth, () -> {
-            HudIndicatorCorner[] corners = HudIndicatorCorner.values();
-            hudIndicatorCorner = corners[(hudIndicatorCorner.ordinal() + 1) % corners.length];
-        }));
         diagnosticsButton = addRenderableWidget(Button.builder(
                 Component.translatable("screen.universal_translator.diagnostics.title"), button -> {
                     if (minecraft != null) {
                         minecraft.setScreen(new UniversalTranslatorDiagnosticsScreen(this, original));
                     }
-                }).bounds(left, layout.contentRow(4), layout.totalWidth, 20).build());
+                }).bounds(left, layout.contentRow(3), layout.totalWidth, 20).build());
 
         // --- Tab 2: Scopes (範圍) ---
         chatButton = addRenderableWidget(button(left, layout.contentRow(0), layout.buttonWidth,
@@ -220,6 +232,24 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         outgoingTargetLanguageButton = addRenderableWidget(button(left, layout.contentRow(1),
                 layout.totalWidth, () -> openSelection = SettingsSelectionList.Kind.OUTGOING_LANGUAGE));
 
+        // --- Tab 5: HUD (抬頭顯示) ---
+        hudIndicatorButton = addRenderableWidget(button(left, layout.contentRow(0), layout.buttonWidth,
+                () -> hudIndicator = !hudIndicator));
+        hudCornerButton = addRenderableWidget(button(layout.right, layout.contentRow(0), layout.buttonWidth, () -> {
+            HudIndicatorCorner[] corners = HudIndicatorCorner.values();
+            hudIndicatorCorner = corners[(hudIndicatorCorner.ordinal() + 1) % corners.length];
+        }));
+        hudSizeButton = addRenderableWidget(button(left, layout.contentRow(1), layout.buttonWidth,
+                () -> hudIndicatorSize = hudIndicatorSize >= HudIndicatorSettings.MAX_SIZE
+                        ? HudIndicatorSettings.MIN_SIZE : hudIndicatorSize + 1));
+        hudMarginButton = addRenderableWidget(button(layout.right, layout.contentRow(1), layout.buttonWidth,
+                () -> hudIndicatorMargin = hudIndicatorMargin >= HudIndicatorSettings.MAX_MARGIN
+                        ? HudIndicatorSettings.MIN_MARGIN : hudIndicatorMargin + 1));
+        hudColorButton = addRenderableWidget(button(left, layout.contentRow(2), layout.buttonWidth, () -> {
+            HudIndicatorColor[] colors = HudIndicatorColor.values();
+            hudIndicatorColor = colors[(hudIndicatorColor.ordinal() + 1) % colors.length];
+        }));
+
         // --- Bottom Action Row ---
         addRenderableWidget(Button.builder(Component.translatable("screen.universal_translator.save"),
                 button -> saveAndApply()).bounds(left, layout.saveY, layout.buttonWidth, 20).build());
@@ -245,6 +275,12 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                 onOff(hudIndicator)));
         hudCornerButton.setMessage(Component.translatable("screen.universal_translator.option.hud_corner",
                 cornerLabel(hudIndicatorCorner)));
+        hudSizeButton.setMessage(Component.translatable("screen.universal_translator.option.hud_size",
+                Integer.toString(hudIndicatorSize)));
+        hudMarginButton.setMessage(Component.translatable("screen.universal_translator.option.hud_margin",
+                Integer.toString(hudIndicatorMargin)));
+        hudColorButton.setMessage(Component.translatable("screen.universal_translator.option.hud_color",
+                hudColorLabel(hudIndicatorColor)));
         enabledButton.setMessage(Component.translatable("screen.universal_translator.option.automatic", onOff(enabled)));
         cacheButton.setMessage(Component.translatable("screen.universal_translator.option.cache", onOff(diskCache)));
         chatButton.setMessage(Component.translatable("screen.universal_translator.option.chat", onOff(translateChat)));
@@ -274,6 +310,9 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                 TargetLanguage.displayName(outgoingTargetLanguage)));
         outgoingTargetLanguageButton.active = translateOutgoing;
         hudCornerButton.active = hudIndicator;
+        hudSizeButton.active = hudIndicator;
+        hudMarginButton.active = hudIndicator;
+        hudColorButton.active = hudIndicator;
         refreshTabButtons();
     }
 
@@ -282,6 +321,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         boolean isScopes = activeTab == Tab.SCOPES;
         boolean isEngine = activeTab == Tab.ENGINE;
         boolean isOutgoing = activeTab == Tab.OUTGOING;
+        boolean isHud = activeTab == Tab.HUD;
 
         // Tab 1: General
         enabledButton.visible = isGeneral;
@@ -291,8 +331,6 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         cacheButton.visible = isGeneral;
         uiStyleButton.visible = isGeneral;
         diagnosticsButton.visible = isGeneral;
-        hudIndicatorButton.visible = isGeneral;
-        hudCornerButton.visible = isGeneral;
 
         // Tab 2: Scopes
         chatButton.visible = isScopes;
@@ -316,6 +354,13 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         outgoingButton.visible = isOutgoing;
         outgoingTargetLanguageButton.visible = isOutgoing;
 
+        // Tab 5: HUD
+        hudIndicatorButton.visible = isHud;
+        hudCornerButton.visible = isHud;
+        hudSizeButton.visible = isHud;
+        hudMarginButton.visible = isHud;
+        hudColorButton.visible = isHud;
+
         refreshTabButtons();
     }
 
@@ -325,6 +370,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         tabScopesButton.setMessage(tabTitle("screen.universal_translator.tab.scopes", activeTab == Tab.SCOPES));
         tabEngineButton.setMessage(tabTitle("screen.universal_translator.tab.engine", activeTab == Tab.ENGINE));
         tabOutgoingButton.setMessage(tabTitle("screen.universal_translator.tab.outgoing", activeTab == Tab.OUTGOING));
+        tabHudButton.setMessage(tabTitle("screen.universal_translator.tab.hud", activeTab == Tab.HUD));
     }
 
     private Component tabTitle(String key, boolean active) {
@@ -340,7 +386,9 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                     blockedKeywords.getValue(), targetLanguage, outgoingTargetLanguage, displayMode,
                     translateEnglishOnly, translatedTextColor, provider, endpoint.getValue(),
                     llmEndpoint, llmApiKey, llmModel, offlineAutoDownload, offlineModel,
-                    apiFallback, diskCache, animatedUi, hudIndicator, hudIndicatorCorner);
+                    apiFallback, diskCache, animatedUi,
+                    new HudIndicatorSettings(hudIndicator, hudIndicatorCorner,
+                            hudIndicatorSize, hudIndicatorMargin, hudIndicatorColor));
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
                     && (updated.tencentSecretId.isEmpty() || updated.tencentSecretKey.isEmpty())) {
                 throw new IllegalArgumentException(tr("error.universal_translator.tencent_credentials"));
@@ -408,7 +456,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                         width / 2, layout.contentRow(2) + 6, 0xFFA0A0A0);
             } else if (activeTab == Tab.GENERAL) {
                 graphics.centered(Component.translatable("screen.universal_translator.info.keybind"),
-                        width / 2, layout.contentRow(4) + 24, 0xFFA0A0A0);
+                        width / 2, layout.contentRow(3) + 24, 0xFFA0A0A0);
             } else if (activeTab == Tab.ENGINE) {
                 graphics.centered(Component.translatable(isOffline()
                                 ? "screen.universal_translator.info.offline"
@@ -544,12 +592,16 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         return tr("value.universal_translator.hud_corner." + corner.configName().replace('-', '_'));
     }
 
+    private static String hudColorLabel(HudIndicatorColor color) {
+        return tr("value.universal_translator.color." + color.configName().replace('-', '_'));
+    }
+
     private static String tr(String key, Object... arguments) {
         return Component.translatable(key, arguments).getString();
     }
 
     private Layout layout() {
-        SettingsScreenLayout.Geometry geometry = SettingsScreenLayout.calculate(width, height);
+        SettingsScreenLayout.Geometry geometry = SettingsScreenLayout.calculate(width, height, 5);
         return new Layout(geometry.left(), geometry.right(), geometry.totalWidth(), geometry.buttonWidth(),
                 geometry.top(), geometry.rowStep(), geometry.targetY(), geometry.endpointY(), geometry.saveY(),
                 geometry.tabY(), geometry.tabWidth(), geometry.tabGap(), geometry.contentTop(), geometry.contentRowStep());

@@ -8,6 +8,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.universaltranslator.core.HudIndicatorCorner;
+import org.universaltranslator.core.HudIndicatorSettings;
 import org.universaltranslator.forge.ForgeTranslationRuntime;
 
 /**
@@ -28,12 +29,13 @@ abstract class InGameHudStatusIndicatorMixin {
     private void universalTranslator$renderStatusIndicator(
             GuiGraphicsExtractor graphics, DeltaTracker deltaTracker, CallbackInfo callback) {
         // Read the settings first: a disabled indicator draws nothing at all.
-        if (!ForgeTranslationRuntime.homeSettings().isHudIndicator()) {
+        HudIndicatorSettings settings = ForgeTranslationRuntime.homeSettings().getHudIndicator();
+        if (!settings.isIndicator()) {
             return;
         }
-        HudIndicatorCorner corner = ForgeTranslationRuntime.homeSettings().getHudIndicatorCorner();
-        int margin = 4;
-        int size = 6;
+        HudIndicatorCorner corner = settings.getCorner();
+        int margin = settings.getMargin();
+        int size = settings.getSize();
         int left = corner.isRight() ? graphics.guiWidth() - margin - size : margin;
         int top = corner.isBottom() ? graphics.guiHeight() - margin - size : margin;
         int right = left + size;
@@ -45,8 +47,8 @@ abstract class InGameHudStatusIndicatorMixin {
         graphics.fill(left - 1, top, left, bottom, borderColor);
         graphics.fill(right, top, right + 1, bottom, borderColor);
         if (ForgeTranslationRuntime.homeSettings().isEnabled()) {
-            // Solid green while translation is on.
-            graphics.fill(left, top, right, bottom, 0xFF55FF55);
+            // Solid colour while translation is on: configurable, green by default.
+            graphics.fill(left, top, right, bottom, settings.getColor().argb());
             return;
         }
         // A hollow red frame while translation is off, so the two states differ in shape as well as

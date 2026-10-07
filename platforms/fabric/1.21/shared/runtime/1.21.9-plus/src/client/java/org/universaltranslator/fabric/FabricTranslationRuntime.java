@@ -4,7 +4,6 @@ import net.minecraft.client.MinecraftClient;
 import org.universaltranslator.core.RenderTranslationSession;
 import org.universaltranslator.core.MinecraftContentScope;
 import org.universaltranslator.core.HomeQuickSettingsState;
-import org.universaltranslator.core.HudIndicatorCorner;
 import org.universaltranslator.core.TargetLanguage;
 import org.universaltranslator.core.PersistentTranslationCache;
 import org.universaltranslator.core.TextKind;
@@ -394,11 +393,9 @@ public final class FabricTranslationRuntime {
 
     private static HomeQuickSettingsState homeSettingsState(FabricConfig config) {
         return config == null
-                ? new HomeQuickSettingsState(
-                        false, true, TargetLanguage.SIMPLIFIED_CHINESE,
-                        true, HudIndicatorCorner.TOP_LEFT)
+                ? new HomeQuickSettingsState(false, true, TargetLanguage.SIMPLIFIED_CHINESE)
                 : new HomeQuickSettingsState(
                         config.enabled, config.translateVanilla, config.targetLanguage,
-                        config.hudIndicator, config.hudIndicatorCorner);
+                        config.hudIndicatorSettings());
     }
 }
