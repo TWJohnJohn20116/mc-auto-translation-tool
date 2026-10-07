@@ -5,35 +5,32 @@ import net.minecraft.client.font.TextRenderer;
 
 /**
  * TEMPORARY probe. This file exists only to make the 1.13.2 mapping names visible in a CI log: every
- * line below names a candidate class or member, and the compiler reports the ones that do not exist.
+ * line below names a candidate member, and the compiler reports the ones that do not exist.
  * Delete this file as soon as the names are known.
  */
 final class HudApiProbe {
     private HudApiProbe() {
     }
 
-    static void probeWindowClass() {
-        Object a = (net.minecraft.client.Window) null;
-        Object b = (net.minecraft.class_1041) null;
-        Object c = (net.minecraft.client.util.Window) null;
-        Object d = (com.mojang.blaze3d.platform.Window) null;
+    static void probeHud(MinecraftClient client) {
+        Object a = client.inGameHud.getScaledWidth();
+        Object b = client.inGameHud.getScaledHeight();
+        Object c = client.inGameHud.getWidth();
+        Object d = client.inGameHud.getHeight();
+        Object e = client.inGameHud.getChatHud().getWidth();
+        Object f = client.inGameHud.getChatHud().getHeight();
     }
 
-    static void probeWindowAccess(MinecraftClient client) {
-        Object a = client.window;
-        Object b = client.getWindow();
+    static void probeClient(MinecraftClient client) {
+        Object a = client.getWindow();
+        Object b = client.window;
+        Object c = client.getFramebuffer();
+        Object d = client.getMainWindow();
+        Object e = client.getWindowHandle();
     }
 
-    static void probeWindowSize(MinecraftClient client) {
-        Object a = client.window.getScaledWidth();
-        Object b = client.window.getScaledHeight();
-        Object c = client.window.getGuiScaledWidth();
-        Object d = client.window.getGuiScaledHeight();
-        Object e = client.getWindow().getScaledWidth();
-    }
-
-    static void probeTextWidth(TextRenderer font) {
+    static void probeText(TextRenderer font) {
         Object a = font.getStringWidth("x");
-        Object b = font.getWidth("x");
+        Object b = font.drawWithShadow("x", 0.0F, 0.0F, 0);
     }
 }
