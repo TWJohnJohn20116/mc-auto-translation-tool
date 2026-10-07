@@ -5,6 +5,7 @@ import net.minecraft.client.render.TextRenderer;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 
+
 import org.universaltranslator.core.TranslationDisplayMode;
 import org.universaltranslator.core.OfflineModel;
 import org.universaltranslator.core.TargetLanguage;
@@ -14,6 +15,11 @@ import org.universaltranslator.core.TranslationProviderCatalog;
 import org.universaltranslator.core.SettingsUiAnimation;
 import org.universaltranslator.core.SettingsScreenLayout;
 import org.universaltranslator.core.SettingsSelectionList;
+import org.universaltranslator.core.HudIndicatorColor;
+import org.universaltranslator.core.HudIndicatorContent;
+import org.universaltranslator.core.HudIndicatorCorner;
+import org.universaltranslator.core.HudIndicatorSettings;
+import org.universaltranslator.core.HudIndicatorVisibility;
 
 /** Dependency-free settings UI shared by Forge 1.8.9 and 1.12.2. */
 final class UniversalTranslatorConfigScreen extends Screen {
@@ -21,7 +27,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
         GENERAL,
         SCOPES,
         ENGINE,
-        OUTGOING
+        OUTGOING,
+        HUD
     }
 
     private static final int ENABLED = 1;
@@ -49,6 +56,18 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private static final int TAB_ENGINE = 103;
     private static final int TAB_OUTGOING = 104;
     private static final int LLM_SETTINGS = 105;
+    private static final int TAB_HUD = 106;
+    private static final int HUD_INDICATOR = 23;
+    private static final int HUD_CORNER = 24;
+    private static final int HUD_SIZE = 25;
+    private static final int HUD_MARGIN = 26;
+    private static final int HUD_COLOR = 27;
+    private static final int HUD_CONTENT = 28;
+    private static final int HUD_VISIBILITY = 29;
+    private static final int HUD_PREVIEW_SCREEN_WIDTH = 320;
+    private static final int HUD_PREVIEW_SCREEN_HEIGHT = 240;
+    private static final int HUD_DRAG_PREVIEW_HEIGHT = 48;
+    private static final int HUD_DRAG_HANDLE_SIZE = 8;
 
     private final Screen parent;
     private final FabricConfig original;
@@ -72,6 +91,18 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private String llmModel;
     private String targetLanguage;
     private String outgoingTargetLanguage;
+    private boolean hudIndicator;
+    private HudIndicatorCorner hudIndicatorCorner;
+    private int hudIndicatorSize;
+    private int hudIndicatorMargin;
+    private HudIndicatorColor hudIndicatorColor;
+    private HudIndicatorContent hudIndicatorContent;
+    private HudIndicatorVisibility hudIndicatorVisibility;
+    private int hudIndicatorOffsetX;
+    private int hudIndicatorOffsetY;
+    private boolean hudDragging;
+    private double hudDragLastX;
+    private double hudDragLastY;
 
     private Tab activeTab = Tab.GENERAL;
     private ButtonWidget tabGeneralButton;
@@ -106,6 +137,14 @@ final class UniversalTranslatorConfigScreen extends Screen {
 
     private ButtonWidget saveButton;
     private ButtonWidget cancelButton;
+    private ButtonWidget tabHudButton;
+    private ButtonWidget hudIndicatorButton;
+    private ButtonWidget hudCornerButton;
+    private ButtonWidget hudSizeButton;
+    private ButtonWidget hudMarginButton;
+    private ButtonWidget hudColorButton;
+    private ButtonWidget hudContentButton;
+    private ButtonWidget hudVisibilityButton;
 
     private TextRenderer renderer;
     private String status = "";
@@ -133,6 +172,16 @@ final class UniversalTranslatorConfigScreen extends Screen {
         this.llmEndpoint = config.editorEndpoint(config.provider);
         this.llmApiKey = config.editorApiKey(config.provider);
         this.llmModel = config.editorModel(config.provider);
+        HudIndicatorSettings hud = config.hudIndicatorSettings();
+        this.hudIndicator = hud.isIndicator();
+        this.hudIndicatorCorner = hud.getCorner();
+        this.hudIndicatorSize = hud.getSize();
+        this.hudIndicatorMargin = hud.getMargin();
+        this.hudIndicatorColor = hud.getColor();
+        this.hudIndicatorContent = hud.getContent();
+        this.hudIndicatorVisibility = hud.getVisibility();
+        this.hudIndicatorOffsetX = hud.getOffsetX();
+        this.hudIndicatorOffsetY = hud.getOffsetY();
     }
 
     @Override
@@ -148,13 +197,13 @@ final class UniversalTranslatorConfigScreen extends Screen {
         }
         buttons.clear();
         renderer = OrnitheClientAccess.textRenderer();
-        SettingsScreenLayout.Geometry layout = SettingsScreenLayout.calculate(width, height);
+        SettingsScreenLayout.Geometry layout = SettingsScreenLayout.calculate(width, height, 5);
         int left = layout.left();
         int right = layout.right();
         int buttonWidth = layout.buttonWidth();
         int totalWidth = layout.totalWidth();
 
-        // 4 Navigation Tabs
+        // 5 Navigation Tabs
         tabGeneralButton = new ButtonWidget(TAB_GENERAL, layout.tabX(0), layout.tabY(), layout.tabWidth(), 20,
                 tr("screen.universal_translator.tab.general"));
         tabScopesButton = new ButtonWidget(TAB_SCOPES, layout.tabX(1), layout.tabY(), layout.tabWidth(), 20,
@@ -168,6 +217,10 @@ final class UniversalTranslatorConfigScreen extends Screen {
         buttons.add(tabScopesButton);
         buttons.add(tabEngineButton);
         buttons.add(tabOutgoingButton);
+
+        tabHudButton = new ButtonWidget(TAB_HUD, layout.tabX(4), layout.tabY(), layout.tabWidth(), 20,
+                tr("screen.universal_translator.tab.hud"));
+        buttons.add(tabHudButton);
 
         // Tab 1: General (常規)
         enabledButton = new ButtonWidget(ENABLED, left, layout.contentRow(0), buttonWidth, 20, "");
@@ -227,6 +280,23 @@ final class UniversalTranslatorConfigScreen extends Screen {
         buttons.add(outgoingButton);
         buttons.add(outgoingTargetButton);
 
+        // Tab 5: HUD (抬頭顯示)
+        hudIndicatorButton = new ButtonWidget(HUD_INDICATOR, left, layout.contentRow(0), buttonWidth, 20, "");
+        hudCornerButton = new ButtonWidget(HUD_CORNER, right, layout.contentRow(0), buttonWidth, 20, "");
+        hudSizeButton = new ButtonWidget(HUD_SIZE, left, layout.contentRow(1), buttonWidth, 20, "");
+        hudMarginButton = new ButtonWidget(HUD_MARGIN, right, layout.contentRow(1), buttonWidth, 20, "");
+        hudColorButton = new ButtonWidget(HUD_COLOR, left, layout.contentRow(2), buttonWidth, 20, "");
+        hudContentButton = new ButtonWidget(HUD_CONTENT, right, layout.contentRow(2), buttonWidth, 20, "");
+        hudVisibilityButton = new ButtonWidget(HUD_VISIBILITY, left, layout.contentRow(3), buttonWidth, 20, "");
+
+        buttons.add(hudIndicatorButton);
+        buttons.add(hudCornerButton);
+        buttons.add(hudSizeButton);
+        buttons.add(hudMarginButton);
+        buttons.add(hudColorButton);
+        buttons.add(hudContentButton);
+        buttons.add(hudVisibilityButton);
+
         // Bottom Bar
         saveButton = new ButtonWidget(SAVE, left, layout.saveY(), buttonWidth, 20,
                 tr("screen.universal_translator.save"));
@@ -245,6 +315,9 @@ final class UniversalTranslatorConfigScreen extends Screen {
         tabScopesButton.active = activeTab != Tab.SCOPES;
         tabEngineButton.active = activeTab != Tab.ENGINE;
         tabOutgoingButton.active = activeTab != Tab.OUTGOING;
+        tabHudButton.active = activeTab != Tab.HUD;
+        // Leaving the tab mid-drag would otherwise keep moving the indicator on the next click.
+        hudDragging = false;
 
         // General
         boolean isGen = activeTab == Tab.GENERAL;
@@ -281,6 +354,16 @@ final class UniversalTranslatorConfigScreen extends Screen {
         outgoingButton.visible = isOut;
         outgoingTargetButton.visible = isOut;
         outgoingTargetButton.active = translateOutgoing;
+
+        // HUD
+        boolean isHud = activeTab == Tab.HUD;
+        hudIndicatorButton.visible = isHud;
+        hudCornerButton.visible = isHud;
+        hudSizeButton.visible = isHud;
+        hudMarginButton.visible = isHud;
+        hudColorButton.visible = isHud;
+        hudContentButton.visible = isHud;
+        hudVisibilityButton.visible = isHud;
     }
 
     @Override
@@ -299,6 +382,10 @@ final class UniversalTranslatorConfigScreen extends Screen {
             return;
         } else if (button.id == TAB_OUTGOING) {
             activeTab = Tab.OUTGOING;
+            updateTabVisibility();
+            return;
+        } else if (button.id == TAB_HUD) {
+            activeTab = Tab.HUD;
             updateTabVisibility();
             return;
         } else if (button.id == ENABLED) {
@@ -346,6 +433,26 @@ final class UniversalTranslatorConfigScreen extends Screen {
             openSelection = SettingsSelectionList.Kind.TARGET_LANGUAGE;
         } else if (button.id == OUTGOING_TARGET_LANGUAGE) {
             openSelection = SettingsSelectionList.Kind.OUTGOING_LANGUAGE;
+        } else if (button.id == HUD_INDICATOR) {
+            hudIndicator = !hudIndicator;
+        } else if (button.id == HUD_CORNER) {
+            hudIndicatorCorner = HudIndicatorCorner.values()[
+                    (hudIndicatorCorner.ordinal() + 1) % HudIndicatorCorner.values().length];
+        } else if (button.id == HUD_SIZE) {
+            hudIndicatorSize = hudIndicatorSize >= HudIndicatorSettings.MAX_SIZE
+                    ? HudIndicatorSettings.MIN_SIZE : hudIndicatorSize + 1;
+        } else if (button.id == HUD_MARGIN) {
+            hudIndicatorMargin = hudIndicatorMargin >= HudIndicatorSettings.MAX_MARGIN
+                    ? HudIndicatorSettings.MIN_MARGIN : hudIndicatorMargin + 1;
+        } else if (button.id == HUD_COLOR) {
+            hudIndicatorColor = HudIndicatorColor.values()[
+                    (hudIndicatorColor.ordinal() + 1) % HudIndicatorColor.values().length];
+        } else if (button.id == HUD_CONTENT) {
+            hudIndicatorContent = HudIndicatorContent.values()[
+                    (hudIndicatorContent.ordinal() + 1) % HudIndicatorContent.values().length];
+        } else if (button.id == HUD_VISIBILITY) {
+            hudIndicatorVisibility = HudIndicatorVisibility.values()[
+                    (hudIndicatorVisibility.ordinal() + 1) % HudIndicatorVisibility.values().length];
         } else if (button.id == SAVE) {
             saveAndApply();
             return;
@@ -421,6 +528,193 @@ final class UniversalTranslatorConfigScreen extends Screen {
                     TargetLanguage.displayName(outgoingTargetLanguage));
             outgoingTargetButton.active = translateOutgoing;
         }
+        if (hudIndicatorButton != null) {
+            hudIndicatorButton.message = tr("screen.universal_translator.option.hud_indicator",
+                    onOff(hudIndicator));
+            hudCornerButton.message = tr("screen.universal_translator.option.hud_corner",
+                    hudCornerLabel(hudIndicatorCorner));
+            hudSizeButton.message = tr("screen.universal_translator.option.hud_size", hudIndicatorSize);
+            hudMarginButton.message = tr("screen.universal_translator.option.hud_margin", hudIndicatorMargin);
+            hudColorButton.message = tr("screen.universal_translator.option.hud_color",
+                    hudColorLabel(hudIndicatorColor));
+            hudContentButton.message = tr("screen.universal_translator.option.hud_content",
+                    hudContentLabel(hudIndicatorContent));
+            hudVisibilityButton.message = tr("screen.universal_translator.option.hud_visibility",
+                    hudVisibilityLabel(hudIndicatorVisibility));
+            // The indicator's own options are meaningless while it is switched off, so they are
+            // greyed out rather than hidden: the player can still see what is being configured.
+            hudCornerButton.active = hudIndicator;
+            hudSizeButton.active = hudIndicator;
+            hudMarginButton.active = hudIndicator;
+            hudColorButton.active = hudIndicator;
+            hudContentButton.active = hudIndicator;
+            hudVisibilityButton.active = hudIndicator;
+        }
+    }
+
+    private SettingsScreenLayout.Geometry layout() {
+        return SettingsScreenLayout.calculate(width, height, 5);
+    }
+
+    private static int clampOffset(int value) {
+        return Math.max(HudIndicatorSettings.MIN_OFFSET,
+                Math.min(HudIndicatorSettings.MAX_OFFSET, value));
+    }
+
+    private int hudPreviewX() {
+        return layout().left();
+    }
+
+    private int hudPreviewY() {
+        return layout().contentRow(4);
+    }
+
+    private int hudPreviewW() {
+        return layout().totalWidth();
+    }
+
+    /**
+     * Panel height, capped by the space above the Save/Cancel row.
+     *
+     * <p>{@code contentRow(4)} does not shrink on very short windows because the row step has a
+     * floor, so a fixed height would overlap Save. Clamping here keeps the panel clear of it.
+     */
+    private int hudPreviewH() {
+        int available = layout().saveY() - 4 - hudPreviewY();
+        if (available < HUD_DRAG_HANDLE_SIZE) {
+            // No room above Save: skip the preview entirely rather than draw a panel that overlaps
+            // it, which is exactly what the cap above exists to prevent.
+            return 0;
+        }
+        return Math.min(HUD_DRAG_PREVIEW_HEIGHT, available);
+    }
+
+    /**
+     * Where the indicator sits on the real screen before the drag offset: the same anchor maths the
+     * HUD mixin uses, so the preview cannot drift from what the player actually sees.
+     */
+    private int hudAnchorX() {
+        return hudIndicatorCorner.isRight()
+                ? HUD_PREVIEW_SCREEN_WIDTH - hudIndicatorMargin - hudIndicatorSize
+                : hudIndicatorMargin;
+    }
+
+    private int hudAnchorY() {
+        return hudIndicatorCorner.isBottom()
+                ? HUD_PREVIEW_SCREEN_HEIGHT - hudIndicatorMargin - hudIndicatorSize
+                : hudIndicatorMargin;
+    }
+
+    private double hudScaleX() {
+        return hudPreviewW() / (double) HUD_PREVIEW_SCREEN_WIDTH;
+    }
+
+    private double hudScaleY() {
+        return hudPreviewH() / (double) HUD_PREVIEW_SCREEN_HEIGHT;
+    }
+
+    private int hudHandleX() {
+        int px = hudPreviewX();
+        int pw = hudPreviewW();
+        int x = px + (int) Math.round((hudAnchorX() + hudIndicatorOffsetX) * hudScaleX());
+        return Math.max(px, Math.min(px + pw - HUD_DRAG_HANDLE_SIZE, x));
+    }
+
+    private int hudHandleY() {
+        int py = hudPreviewY();
+        int ph = hudPreviewH();
+        int y = py + (int) Math.round((hudAnchorY() + hudIndicatorOffsetY) * hudScaleY());
+        return Math.max(py, Math.min(py + ph - HUD_DRAG_HANDLE_SIZE, y));
+    }
+
+    private boolean insideHudDragHandle(double mouseX, double mouseY) {
+        if (hudPreviewH() <= 0) {
+            return false;
+        }
+        int hx = hudHandleX();
+        int hy = hudHandleY();
+        return mouseX >= hx && mouseX < hx + HUD_DRAG_HANDLE_SIZE
+                && mouseY >= hy && mouseY < hy + HUD_DRAG_HANDLE_SIZE;
+    }
+
+    private boolean handleDragStart(double mouseX, double mouseY) {
+        // A selection list keeps first claim on the click: without this, the drag would swallow the
+        // click that is meant to close the list.
+        if (openSelection != SettingsSelectionList.Kind.NONE) {
+            return false;
+        }
+        if (activeTab != Tab.HUD) {
+            return false;
+        }
+        if (!insideHudDragHandle(mouseX, mouseY)) {
+            return false;
+        }
+        hudDragging = true;
+        hudDragLastX = mouseX;
+        hudDragLastY = mouseY;
+        return true;
+    }
+
+    private boolean handleDragMove(double mouseX, double mouseY) {
+        if (!hudDragging) {
+            return false;
+        }
+        // One preview pixel is not one GUI pixel: the panel is a scaled-down screen, so undo the
+        // scale before turning the pointer delta into a real offset.
+        hudIndicatorOffsetX = clampOffset(hudIndicatorOffsetX
+                + (int) Math.round((mouseX - hudDragLastX) / hudScaleX()));
+        hudIndicatorOffsetY = clampOffset(hudIndicatorOffsetY
+                + (int) Math.round((mouseY - hudDragLastY) / hudScaleY()));
+        hudDragLastX = mouseX;
+        hudDragLastY = mouseY;
+        return true;
+    }
+
+    private boolean handleDragEnd() {
+        if (!hudDragging) {
+            return false;
+        }
+        hudDragging = false;
+        return true;
+    }
+
+    private void drawHudDragPreview() {
+        int px = hudPreviewX();
+        int py = hudPreviewY();
+        int pw = hudPreviewW();
+        int ph = hudPreviewH();
+        if (ph <= 0) {
+            return;
+        }
+        fill(px, py, px + pw, py + ph, 0x40000000);
+        // A corner marker on the anchor edge the indicator hugs, so the four corner options are
+        // visible in the preview instead of only in the button label.
+        int hx = hudHandleX();
+        int hy = hudHandleY();
+        fill(hx, hy, hx + HUD_DRAG_HANDLE_SIZE, hy + HUD_DRAG_HANDLE_SIZE,
+                hudDragging ? 0xFFFFAA00 : 0xFF00AA00);
+    }
+
+    private static String hudCornerLabel(HudIndicatorCorner corner) {
+        switch (corner) {
+            case TOP_RIGHT: return tr("value.universal_translator.hud_corner.top_right");
+            case BOTTOM_LEFT: return tr("value.universal_translator.hud_corner.bottom_left");
+            case BOTTOM_RIGHT: return tr("value.universal_translator.hud_corner.bottom_right");
+            case TOP_LEFT:
+            default: return tr("value.universal_translator.hud_corner.top_left");
+        }
+    }
+
+    private static String hudColorLabel(HudIndicatorColor color) {
+        return tr("value.universal_translator.color." + color.configName().replace('-', '_'));
+    }
+
+    private static String hudContentLabel(HudIndicatorContent content) {
+        return tr("value.universal_translator.hud_content." + content.configName().replace('-', '_'));
+    }
+
+    private static String hudVisibilityLabel(HudIndicatorVisibility visibility) {
+        return tr("value.universal_translator.hud_visibility." + visibility.configName().replace('-', '_'));
     }
 
     private ButtonWidget button(int id) {
@@ -469,7 +763,9 @@ final class UniversalTranslatorConfigScreen extends Screen {
                     apiFallback,
                     diskCache,
                     animatedUi,
-                    original.hudIndicatorSettings());
+                    new HudIndicatorSettings(hudIndicator, hudIndicatorCorner, hudIndicatorSize,
+                            hudIndicatorMargin, hudIndicatorColor, hudIndicatorContent,
+                            hudIndicatorVisibility, hudIndicatorOffsetX, hudIndicatorOffsetY));
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
                     && (updated.tencentSecretId.isEmpty() || updated.tencentSecretKey.isEmpty())) {
                 throw new IllegalArgumentException(tr("error.universal_translator.tencent_credentials"));
@@ -520,6 +816,9 @@ final class UniversalTranslatorConfigScreen extends Screen {
                 && selectFromList(mouseX, mouseY)) {
             return;
         }
+        if (handleDragStart(mouseX, mouseY)) {
+            return;
+        }
         super.mouseClicked(mouseX, mouseY, mouseButton);
         if (activeTab == Tab.ENGINE && !isOffline() && endpoint != null) {
             endpoint.mouseClicked(mouseX, mouseY, mouseButton);
@@ -530,9 +829,25 @@ final class UniversalTranslatorConfigScreen extends Screen {
     }
 
     @Override
+    protected void mouseDragged(int mouseX, int mouseY, int clickedMouseButton, long timeSinceLastClick) {
+        if (handleDragMove(mouseX, mouseY)) {
+            return;
+        }
+        super.mouseDragged(mouseX, mouseY, clickedMouseButton, timeSinceLastClick);
+    }
+
+    @Override
+    protected void mouseReleased(int mouseX, int mouseY, int mouseButton) {
+        if (handleDragEnd()) {
+            return;
+        }
+        super.mouseReleased(mouseX, mouseY, mouseButton);
+    }
+
+    @Override
     public void render(int mouseX, int mouseY, float partialTicks) {
         renderBackground();
-        SettingsScreenLayout.Geometry layout = SettingsScreenLayout.calculate(width, height);
+        SettingsScreenLayout.Geometry layout = SettingsScreenLayout.calculate(width, height, 5);
         long now = System.nanoTime();
         float opening = 1.0F;
         if (animatedUi) {
@@ -616,6 +931,9 @@ final class UniversalTranslatorConfigScreen extends Screen {
             if (overlayAlpha > 0) {
                 fill(0, 0, width, height, overlayAlpha << 24);
             }
+        }
+        if (activeTab == Tab.HUD) {
+            drawHudDragPreview();
         }
         if (openSelection != SettingsSelectionList.Kind.NONE) {
             renderSelection(mouseX, mouseY);
