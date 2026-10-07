@@ -395,6 +395,7 @@ public final class FabricTranslationRuntime {
         return config == null
                 ? new HomeQuickSettingsState(false, true, TargetLanguage.SIMPLIFIED_CHINESE)
                 : new HomeQuickSettingsState(
-                        config.enabled, config.translateVanilla, config.targetLanguage);
+                        config.enabled, config.translateVanilla, config.targetLanguage,
+                        config.hudIndicatorSettings(), config.provider);
     }
 }

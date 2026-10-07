@@ -11,6 +11,7 @@
     "TextFieldWidgetMixin",
     "TextRendererMixin",
     "InGameHudContextMixin",
+    "InGameHudStatusIndicatorMixin",
     "PlayerListHudContextMixin",
     "BossBarHudContextMixin"
   ],
