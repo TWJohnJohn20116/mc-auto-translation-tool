@@ -64,6 +64,10 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private static final int HUD_COLOR = 27;
     private static final int HUD_CONTENT = 28;
     private static final int HUD_VISIBILITY = 29;
+    private static final int HUD_PREVIEW_SCREEN_WIDTH = 320;
+    private static final int HUD_PREVIEW_SCREEN_HEIGHT = 240;
+    private static final int HUD_DRAG_PREVIEW_HEIGHT = 48;
+    private static final int HUD_DRAG_HANDLE_SIZE = 8;
 
     private final Screen parent;
     private final FabricConfig original;
@@ -96,6 +100,9 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private HudIndicatorVisibility hudIndicatorVisibility;
     private int hudIndicatorOffsetX;
     private int hudIndicatorOffsetY;
+    private boolean hudDragging;
+    private double hudDragLastX;
+    private double hudDragLastY;
 
     private Tab activeTab = Tab.GENERAL;
     private ButtonWidget tabGeneralButton;
@@ -309,6 +316,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
         tabEngineButton.active = activeTab != Tab.ENGINE;
         tabOutgoingButton.active = activeTab != Tab.OUTGOING;
         tabHudButton.active = activeTab != Tab.HUD;
+        // Leaving the tab mid-drag would otherwise keep moving the indicator on the next click.
+        hudDragging = false;
 
         // General
         boolean isGen = activeTab == Tab.GENERAL;
@@ -543,6 +552,149 @@ final class UniversalTranslatorConfigScreen extends Screen {
         }
     }
 
+    private SettingsScreenLayout.Geometry layout() {
+        return SettingsScreenLayout.calculate(width, height, 5);
+    }
+
+    private static int clampOffset(int value) {
+        return Math.max(HudIndicatorSettings.MIN_OFFSET,
+                Math.min(HudIndicatorSettings.MAX_OFFSET, value));
+    }
+
+    private int hudPreviewX() {
+        return layout().left();
+    }
+
+    private int hudPreviewY() {
+        return layout().contentRow(4);
+    }
+
+    private int hudPreviewW() {
+        return layout().totalWidth();
+    }
+
+    /**
+     * Panel height, capped by the space above the Save/Cancel row.
+     *
+     * <p>{@code contentRow(4)} does not shrink on very short windows because the row step has a
+     * floor, so a fixed height would overlap Save. Clamping here keeps the panel clear of it.
+     */
+    private int hudPreviewH() {
+        int available = layout().saveY() - 4 - hudPreviewY();
+        if (available < HUD_DRAG_HANDLE_SIZE) {
+            // No room above Save: skip the preview entirely rather than draw a panel that overlaps
+            // it, which is exactly what the cap above exists to prevent.
+            return 0;
+        }
+        return Math.min(HUD_DRAG_PREVIEW_HEIGHT, available);
+    }
+
+    /**
+     * Where the indicator sits on the real screen before the drag offset: the same anchor maths the
+     * HUD mixin uses, so the preview cannot drift from what the player actually sees.
+     */
+    private int hudAnchorX() {
+        return hudIndicatorCorner.isRight()
+                ? HUD_PREVIEW_SCREEN_WIDTH - hudIndicatorMargin - hudIndicatorSize
+                : hudIndicatorMargin;
+    }
+
+    private int hudAnchorY() {
+        return hudIndicatorCorner.isBottom()
+                ? HUD_PREVIEW_SCREEN_HEIGHT - hudIndicatorMargin - hudIndicatorSize
+                : hudIndicatorMargin;
+    }
+
+    private double hudScaleX() {
+        return hudPreviewW() / (double) HUD_PREVIEW_SCREEN_WIDTH;
+    }
+
+    private double hudScaleY() {
+        return hudPreviewH() / (double) HUD_PREVIEW_SCREEN_HEIGHT;
+    }
+
+    private int hudHandleX() {
+        int px = hudPreviewX();
+        int pw = hudPreviewW();
+        int x = px + (int) Math.round((hudAnchorX() + hudIndicatorOffsetX) * hudScaleX());
+        return Math.max(px, Math.min(px + pw - HUD_DRAG_HANDLE_SIZE, x));
+    }
+
+    private int hudHandleY() {
+        int py = hudPreviewY();
+        int ph = hudPreviewH();
+        int y = py + (int) Math.round((hudAnchorY() + hudIndicatorOffsetY) * hudScaleY());
+        return Math.max(py, Math.min(py + ph - HUD_DRAG_HANDLE_SIZE, y));
+    }
+
+    private boolean insideHudDragHandle(double mouseX, double mouseY) {
+        if (hudPreviewH() <= 0) {
+            return false;
+        }
+        int hx = hudHandleX();
+        int hy = hudHandleY();
+        return mouseX >= hx && mouseX < hx + HUD_DRAG_HANDLE_SIZE
+                && mouseY >= hy && mouseY < hy + HUD_DRAG_HANDLE_SIZE;
+    }
+
+    private boolean handleDragStart(double mouseX, double mouseY) {
+        // A selection list keeps first claim on the click: without this, the drag would swallow the
+        // click that is meant to close the list.
+        if (openSelection != SettingsSelectionList.Kind.NONE) {
+            return false;
+        }
+        if (activeTab != Tab.HUD) {
+            return false;
+        }
+        if (!insideHudDragHandle(mouseX, mouseY)) {
+            return false;
+        }
+        hudDragging = true;
+        hudDragLastX = mouseX;
+        hudDragLastY = mouseY;
+        return true;
+    }
+
+    private boolean handleDragMove(double mouseX, double mouseY) {
+        if (!hudDragging) {
+            return false;
+        }
+        // One preview pixel is not one GUI pixel: the panel is a scaled-down screen, so undo the
+        // scale before turning the pointer delta into a real offset.
+        hudIndicatorOffsetX = clampOffset(hudIndicatorOffsetX
+                + (int) Math.round((mouseX - hudDragLastX) / hudScaleX()));
+        hudIndicatorOffsetY = clampOffset(hudIndicatorOffsetY
+                + (int) Math.round((mouseY - hudDragLastY) / hudScaleY()));
+        hudDragLastX = mouseX;
+        hudDragLastY = mouseY;
+        return true;
+    }
+
+    private boolean handleDragEnd() {
+        if (!hudDragging) {
+            return false;
+        }
+        hudDragging = false;
+        return true;
+    }
+
+    private void drawHudDragPreview() {
+        int px = hudPreviewX();
+        int py = hudPreviewY();
+        int pw = hudPreviewW();
+        int ph = hudPreviewH();
+        if (ph <= 0) {
+            return;
+        }
+        fill(px, py, px + pw, py + ph, 0x40000000);
+        // A corner marker on the anchor edge the indicator hugs, so the four corner options are
+        // visible in the preview instead of only in the button label.
+        int hx = hudHandleX();
+        int hy = hudHandleY();
+        fill(hx, hy, hx + HUD_DRAG_HANDLE_SIZE, hy + HUD_DRAG_HANDLE_SIZE,
+                hudDragging ? 0xFFFFAA00 : 0xFF00AA00);
+    }
+
     private static String hudCornerLabel(HudIndicatorCorner corner) {
         switch (corner) {
             case TOP_RIGHT: return tr("value.universal_translator.hud_corner.top_right");
@@ -652,6 +804,9 @@ final class UniversalTranslatorConfigScreen extends Screen {
                 && selectFromList(mouseX, mouseY)) {
             return;
         }
+        if (handleDragStart(mouseX, mouseY)) {
+            return;
+        }
         super.mouseClicked(mouseX, mouseY, mouseButton);
         if (activeTab == Tab.ENGINE && !isOffline() && endpoint != null) {
             endpoint.mouseClicked(mouseX, mouseY, mouseButton);
@@ -659,6 +814,22 @@ final class UniversalTranslatorConfigScreen extends Screen {
         if (activeTab == Tab.SCOPES && blockedKeywords != null) {
             blockedKeywords.mouseClicked(mouseX, mouseY, mouseButton);
         }
+    }
+
+    @Override
+    protected void mouseDragged(int mouseX, int mouseY, int clickedMouseButton, long timeSinceLastClick) {
+        if (handleDragMove(mouseX, mouseY)) {
+            return;
+        }
+        super.mouseDragged(mouseX, mouseY, clickedMouseButton, timeSinceLastClick);
+    }
+
+    @Override
+    protected void mouseReleased(int mouseX, int mouseY, int mouseButton) {
+        if (handleDragEnd()) {
+            return;
+        }
+        super.mouseReleased(mouseX, mouseY, mouseButton);
     }
 
     @Override
@@ -748,6 +919,9 @@ final class UniversalTranslatorConfigScreen extends Screen {
             if (overlayAlpha > 0) {
                 fill(0, 0, width, height, overlayAlpha << 24);
             }
+        }
+        if (activeTab == Tab.HUD) {
+            drawHudDragPreview();
         }
         if (openSelection != SettingsSelectionList.Kind.NONE) {
             renderSelection(mouseX, mouseY);
