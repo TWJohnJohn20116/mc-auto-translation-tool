@@ -9,7 +9,7 @@ import org.universaltranslator.core.HudIndicatorContent;
 import org.universaltranslator.core.HudIndicatorCorner;
 import org.universaltranslator.core.HudIndicatorSettings;
 import org.universaltranslator.core.HudIndicatorVisibility;
-
+import org.universaltranslator.core.TranslationDisplayMode;
 import org.universaltranslator.core.OfflineModel;
 import org.universaltranslator.core.TargetLanguage;
 import org.universaltranslator.core.TranslationStatusLocalizer;
@@ -303,6 +303,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
                     (hudIndicatorVisibility.ordinal() + 1) % HudIndicatorVisibility.values().length];
             refreshLabels();
         }).dimensions(left, layout.contentRow(3), layout.buttonWidth, 20).build());
+
+        // --- Bottom Action Row ---
 
 
         addDrawableChild(ButtonWidget.builder(Text.translatable("screen.universal_translator.save"), button -> saveAndApply())
