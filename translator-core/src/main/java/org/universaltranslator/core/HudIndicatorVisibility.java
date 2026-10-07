@@ -16,7 +16,14 @@ public enum HudIndicatorVisibility {
     ALWAYS("always"),
     /** Only drawn while at least one translation is in flight ({@link TranslationActivity}). */
     WHILE_TRANSLATING("while-translating"),
-    /** Only drawn while the master switch is off, as a reminder. */
+    /**
+     * Only drawn while translation itself is switched off
+     * ({@code !HomeQuickSettingsState.isEnabled()}), as a reminder.
+     *
+     * <p>That is the translation master switch, deliberately not the indicator's own option: the
+     * indicator option gates every value of this enum equally, so reading it here as well would
+     * make this constant unreachable.
+     */
     WHEN_DISABLED("when-disabled");
 
     private final String configName;
