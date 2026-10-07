@@ -828,12 +828,11 @@ final class UniversalTranslatorConfigScreen extends Screen {
         }
     }
 
-    @Override
+    // Deliberately no @Override and no super call: Screen only gained mouseDragged in 1.7.10, and
+    // this bundle also compiles for 1.3.1-1.5.2 where the method does not exist. Dragging the HUD
+    // preview therefore works from 1.7.10 onwards; older versions still have the offset buttons.
     protected void mouseDragged(int mouseX, int mouseY, int clickedMouseButton, long timeSinceLastClick) {
-        if (handleDragMove(mouseX, mouseY)) {
-            return;
-        }
-        super.mouseDragged(mouseX, mouseY, clickedMouseButton, timeSinceLastClick);
+        handleDragMove(mouseX, mouseY);
     }
 
     @Override
