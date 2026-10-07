@@ -2,6 +2,11 @@ package org.universaltranslator.forge;
 
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationDisplayMode;
+import org.universaltranslator.core.HudIndicatorCorner;
+import org.universaltranslator.core.HudIndicatorColor;
+import org.universaltranslator.core.HudIndicatorContent;
+import org.universaltranslator.core.HudIndicatorSettings;
+import org.universaltranslator.core.HudIndicatorVisibility;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TextKind;
 import org.universaltranslator.core.LocalConfigSecurity;
@@ -32,6 +37,15 @@ final class ForgeConfig {
     final boolean translateOutgoing;
     final boolean translatePlayerNames;
     final boolean animatedUi;
+    final boolean hudIndicator;
+    final HudIndicatorCorner hudIndicatorCorner;
+    final int hudIndicatorSize;
+    final int hudIndicatorMargin;
+    final HudIndicatorColor hudIndicatorColor;
+    final HudIndicatorContent hudIndicatorContent;
+    final HudIndicatorVisibility hudIndicatorVisibility;
+    final int hudIndicatorOffsetX;
+    final int hudIndicatorOffsetY;
     final String blockedKeywords;
     final String targetLanguage;
     final String outgoingTargetLanguage;
@@ -57,6 +71,13 @@ final class ForgeConfig {
     private final OnlineProviderConfig onlineProviderConfig;
     private final Path configFile;
 
+    HudIndicatorSettings hudIndicatorSettings() {
+        return new HudIndicatorSettings(
+                hudIndicator, hudIndicatorCorner, hudIndicatorSize, hudIndicatorMargin, hudIndicatorColor,
+                hudIndicatorContent, hudIndicatorVisibility,
+                hudIndicatorOffsetX, hudIndicatorOffsetY);
+    }
+
     private ForgeConfig(Properties properties, Path configFile, Path cacheFile) {
         this.enabled = Boolean.parseBoolean(properties.getProperty("enabled", "false"));
         this.translateChat = Boolean.parseBoolean(properties.getProperty("translate-chat", "true"));
@@ -68,6 +89,27 @@ final class ForgeConfig {
         this.translatePlayerNames = Boolean.parseBoolean(
                 properties.getProperty("translate-player-names", "false"));
         this.animatedUi = Boolean.parseBoolean(properties.getProperty("animated-ui", "true"));
+        this.hudIndicator = Boolean.parseBoolean(properties.getProperty("hud-indicator", "true"));
+        this.hudIndicatorCorner = HudIndicatorCorner.fromConfig(
+                properties.getProperty("hud-indicator-corner", "top-left"));
+        this.hudIndicatorSize = parseBoundedInt(
+                properties.getProperty("hud-indicator-size", "6"), 6,
+                HudIndicatorSettings.MIN_SIZE, HudIndicatorSettings.MAX_SIZE);
+        this.hudIndicatorMargin = parseBoundedInt(
+                properties.getProperty("hud-indicator-margin", "4"), 4,
+                HudIndicatorSettings.MIN_MARGIN, HudIndicatorSettings.MAX_MARGIN);
+        this.hudIndicatorColor = HudIndicatorColor.fromConfig(
+                properties.getProperty("hud-indicator-color", "green"));
+        this.hudIndicatorContent = HudIndicatorContent.fromConfig(
+                properties.getProperty("hud-indicator-content", "dot"));
+        this.hudIndicatorVisibility = HudIndicatorVisibility.fromConfig(
+                properties.getProperty("hud-indicator-visibility", "always"));
+        this.hudIndicatorOffsetX = parseBoundedInt(
+                properties.getProperty("hud-indicator-offset-x", "0"),
+                0, HudIndicatorSettings.MIN_OFFSET, HudIndicatorSettings.MAX_OFFSET);
+        this.hudIndicatorOffsetY = parseBoundedInt(
+                properties.getProperty("hud-indicator-offset-y", "0"),
+                0, HudIndicatorSettings.MIN_OFFSET, HudIndicatorSettings.MAX_OFFSET);
         this.blockedKeywords = boundedKeywords(properties.getProperty("blocked-keywords", ""));
         this.targetLanguage = properties.getProperty("target-language", "zh-CN").trim();
         this.outgoingTargetLanguage = properties.getProperty(
@@ -159,7 +201,8 @@ final class ForgeConfig {
             OfflineModel offlineModel,
             boolean apiFallback,
             boolean diskCache,
-            boolean animatedUi
+            boolean animatedUi,
+            HudIndicatorSettings hudIndicator
     ) {
         Properties properties = toProperties();
         properties.setProperty("enabled", Boolean.toString(enabled));
@@ -185,6 +228,15 @@ final class ForgeConfig {
         properties.setProperty("api-fallback", Boolean.toString(apiFallback));
         properties.setProperty("disk-cache", Boolean.toString(diskCache));
         properties.setProperty("animated-ui", Boolean.toString(animatedUi));
+        properties.setProperty("hud-indicator", Boolean.toString(hudIndicator.isIndicator()));
+        properties.setProperty("hud-indicator-corner", hudIndicator.getCorner().configName());
+        properties.setProperty("hud-indicator-size", Integer.toString(hudIndicator.getSize()));
+        properties.setProperty("hud-indicator-margin", Integer.toString(hudIndicator.getMargin()));
+        properties.setProperty("hud-indicator-color", hudIndicator.getColor().configName());
+        properties.setProperty("hud-indicator-content", hudIndicator.getContent().configName());
+        properties.setProperty("hud-indicator-visibility", hudIndicator.getVisibility().configName());
+        properties.setProperty("hud-indicator-offset-x", Integer.toString(hudIndicator.getOffsetX()));
+        properties.setProperty("hud-indicator-offset-y", Integer.toString(hudIndicator.getOffsetY()));
         return new ForgeConfig(properties, configFile, cacheFile);
     }
 
@@ -287,6 +339,15 @@ final class ForgeConfig {
         properties.setProperty("translate-outgoing", "false");
         properties.setProperty("translate-player-names", "false");
         properties.setProperty("animated-ui", "true");
+        properties.setProperty("hud-indicator", "true");
+        properties.setProperty("hud-indicator-corner", "top-left");
+        properties.setProperty("hud-indicator-size", "6");
+        properties.setProperty("hud-indicator-margin", "4");
+        properties.setProperty("hud-indicator-color", "green");
+        properties.setProperty("hud-indicator-content", "dot");
+        properties.setProperty("hud-indicator-visibility", "always");
+        properties.setProperty("hud-indicator-offset-x", "0");
+        properties.setProperty("hud-indicator-offset-y", "0");
         properties.setProperty("blocked-keywords", "");
         properties.setProperty("target-language", "zh-CN");
         properties.setProperty("outgoing-target-language", "en");
@@ -322,6 +383,15 @@ final class ForgeConfig {
         properties.setProperty("translate-outgoing", Boolean.toString(translateOutgoing));
         properties.setProperty("translate-player-names", Boolean.toString(translatePlayerNames));
         properties.setProperty("animated-ui", Boolean.toString(animatedUi));
+        properties.setProperty("hud-indicator", Boolean.toString(hudIndicator));
+        properties.setProperty("hud-indicator-corner", hudIndicatorCorner.configName());
+        properties.setProperty("hud-indicator-size", Integer.toString(hudIndicatorSize));
+        properties.setProperty("hud-indicator-margin", Integer.toString(hudIndicatorMargin));
+        properties.setProperty("hud-indicator-color", hudIndicatorColor.configName());
+        properties.setProperty("hud-indicator-content", hudIndicatorContent.configName());
+        properties.setProperty("hud-indicator-visibility", hudIndicatorVisibility.configName());
+        properties.setProperty("hud-indicator-offset-x", Integer.toString(hudIndicatorOffsetX));
+        properties.setProperty("hud-indicator-offset-y", Integer.toString(hudIndicatorOffsetY));
         properties.setProperty("blocked-keywords", blockedKeywords);
         properties.setProperty("target-language", targetLanguage);
         properties.setProperty("outgoing-target-language", outgoingTargetLanguage);
@@ -351,6 +421,18 @@ final class ForgeConfig {
             return Integer.parseInt(properties.getProperty("config-version", "1").trim());
         } catch (NumberFormatException ignored) {
             return 1;
+        }
+    }
+
+    private static int parseBoundedInt(String raw, int fallback, int min, int max) {
+        if (raw == null) {
+            return fallback;
+        }
+        try {
+            int parsed = Integer.parseInt(raw.trim());
+            return parsed < min || parsed > max ? fallback : parsed;
+        } catch (NumberFormatException invalid) {
+            return fallback;
         }
     }
 
