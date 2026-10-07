@@ -3,6 +3,11 @@ package org.universaltranslator.forge.legacy;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationDisplayMode;
 import org.universaltranslator.core.TranslationTextColor;
+import org.universaltranslator.core.HudIndicatorColor;
+import org.universaltranslator.core.HudIndicatorContent;
+import org.universaltranslator.core.HudIndicatorCorner;
+import org.universaltranslator.core.HudIndicatorSettings;
+import org.universaltranslator.core.HudIndicatorVisibility;
 import org.universaltranslator.core.TextKind;
 import org.universaltranslator.core.LocalConfigSecurity;
 import org.universaltranslator.core.OfflineModel;
@@ -55,6 +60,15 @@ final class LegacyConfig {
     final File offlineDirectory;
     final boolean diskCache;
     final File cacheFile;
+    final boolean hudIndicator;
+    final HudIndicatorCorner hudIndicatorCorner;
+    final int hudIndicatorSize;
+    final int hudIndicatorMargin;
+    final HudIndicatorColor hudIndicatorColor;
+    final HudIndicatorContent hudIndicatorContent;
+    final HudIndicatorVisibility hudIndicatorVisibility;
+    final int hudIndicatorOffsetX;
+    final int hudIndicatorOffsetY;
     private final OnlineProviderConfig onlineProviderConfig;
     private final File configFile;
 
@@ -102,6 +116,34 @@ final class LegacyConfig {
         this.configFile = configFile;
         this.cacheFile = cacheFile;
         this.offlineDirectory = new File(configFile.getParentFile(), "universal-translator-offline");
+        this.hudIndicator = Boolean.parseBoolean(properties.getProperty("hud-indicator", "true"));
+        this.hudIndicatorCorner = HudIndicatorCorner.fromConfig(
+                properties.getProperty("hud-indicator-corner", "top-left"));
+        this.hudIndicatorSize = parseBoundedInt(
+                properties.getProperty("hud-indicator-size", "6"), 6,
+                HudIndicatorSettings.MIN_SIZE, HudIndicatorSettings.MAX_SIZE);
+        this.hudIndicatorMargin = parseBoundedInt(
+                properties.getProperty("hud-indicator-margin", "4"), 4,
+                HudIndicatorSettings.MIN_MARGIN, HudIndicatorSettings.MAX_MARGIN);
+        this.hudIndicatorColor = HudIndicatorColor.fromConfig(
+                properties.getProperty("hud-indicator-color", "green"));
+        this.hudIndicatorContent = HudIndicatorContent.fromConfig(
+                properties.getProperty("hud-indicator-content", "dot"));
+        this.hudIndicatorVisibility = HudIndicatorVisibility.fromConfig(
+                properties.getProperty("hud-indicator-visibility", "always"));
+        this.hudIndicatorOffsetX = parseBoundedInt(
+                properties.getProperty("hud-indicator-offset-x", "0"),
+                0, HudIndicatorSettings.MIN_OFFSET, HudIndicatorSettings.MAX_OFFSET);
+        this.hudIndicatorOffsetY = parseBoundedInt(
+                properties.getProperty("hud-indicator-offset-y", "0"),
+                0, HudIndicatorSettings.MIN_OFFSET, HudIndicatorSettings.MAX_OFFSET);
+    }
+
+    HudIndicatorSettings hudIndicatorSettings() {
+        return new HudIndicatorSettings(
+                hudIndicator, hudIndicatorCorner, hudIndicatorSize, hudIndicatorMargin, hudIndicatorColor,
+                hudIndicatorContent, hudIndicatorVisibility,
+                hudIndicatorOffsetX, hudIndicatorOffsetY);
     }
 
     static LegacyConfig load(File configDirectory) throws IOException {
@@ -130,7 +172,7 @@ final class LegacyConfig {
             properties.setProperty("translate-english-only", "true");
             properties.setProperty("translated-text-color", "aqua");
         }
-        properties.setProperty("config-version", "6");
+        properties.setProperty("config-version", "7");
         LocalConfigSecurity.restrictToOwner(file.toPath());
         LegacyConfig loaded = new LegacyConfig(
                 properties, file, new File(configDirectory, "universal-translator-cache.properties"));
@@ -162,7 +204,8 @@ final class LegacyConfig {
             OfflineModel offlineModel,
             boolean apiFallback,
             boolean diskCache,
-            boolean animatedUi
+            boolean animatedUi,
+            HudIndicatorSettings hudIndicator
     ) {
         Properties properties = toProperties();
         properties.setProperty("enabled", Boolean.toString(enabled));
@@ -188,6 +231,15 @@ final class LegacyConfig {
         properties.setProperty("api-fallback", Boolean.toString(apiFallback));
         properties.setProperty("disk-cache", Boolean.toString(diskCache));
         properties.setProperty("animated-ui", Boolean.toString(animatedUi));
+        properties.setProperty("hud-indicator", Boolean.toString(hudIndicator.isIndicator()));
+        properties.setProperty("hud-indicator-corner", hudIndicator.getCorner().configName());
+        properties.setProperty("hud-indicator-size", Integer.toString(hudIndicator.getSize()));
+        properties.setProperty("hud-indicator-margin", Integer.toString(hudIndicator.getMargin()));
+        properties.setProperty("hud-indicator-color", hudIndicator.getColor().configName());
+        properties.setProperty("hud-indicator-content", hudIndicator.getContent().configName());
+        properties.setProperty("hud-indicator-visibility", hudIndicator.getVisibility().configName());
+        properties.setProperty("hud-indicator-offset-x", Integer.toString(hudIndicator.getOffsetX()));
+        properties.setProperty("hud-indicator-offset-y", Integer.toString(hudIndicator.getOffsetY()));
         return new LegacyConfig(properties, configFile, cacheFile);
     }
 
@@ -284,7 +336,7 @@ final class LegacyConfig {
 
     private static Properties defaults() {
         Properties properties = new Properties();
-        properties.setProperty("config-version", "6");
+        properties.setProperty("config-version", "7");
         properties.setProperty("enabled", "false");
         properties.setProperty("translate-chat", "true");
         properties.setProperty("translate-other", "true");
@@ -319,7 +371,7 @@ final class LegacyConfig {
     private Properties toProperties() {
         Properties properties = new Properties();
         onlineProviderConfig.writeTo(properties);
-        properties.setProperty("config-version", "6");
+        properties.setProperty("config-version", "7");
         properties.setProperty("enabled", Boolean.toString(enabled));
         properties.setProperty("translate-chat", Boolean.toString(translateChat));
         properties.setProperty("translate-other", Boolean.toString(translateOther));
@@ -348,6 +400,15 @@ final class LegacyConfig {
         properties.setProperty("api-fallback", Boolean.toString(apiFallback));
         properties.setProperty("api-fallback-provider", apiFallbackProvider);
         properties.setProperty("disk-cache", Boolean.toString(diskCache));
+        properties.setProperty("hud-indicator", Boolean.toString(hudIndicator));
+        properties.setProperty("hud-indicator-corner", hudIndicatorCorner.configName());
+        properties.setProperty("hud-indicator-size", Integer.toString(hudIndicatorSize));
+        properties.setProperty("hud-indicator-margin", Integer.toString(hudIndicatorMargin));
+        properties.setProperty("hud-indicator-color", hudIndicatorColor.configName());
+        properties.setProperty("hud-indicator-content", hudIndicatorContent.configName());
+        properties.setProperty("hud-indicator-visibility", hudIndicatorVisibility.configName());
+        properties.setProperty("hud-indicator-offset-x", Integer.toString(hudIndicatorOffsetX));
+        properties.setProperty("hud-indicator-offset-y", Integer.toString(hudIndicatorOffsetY));
         return properties;
     }
 
@@ -359,9 +420,18 @@ final class LegacyConfig {
         }
     }
 
+    private static int parseBoundedInt(String raw, int fallback, int min, int max) {
+        try {
+            int value = Integer.parseInt(raw.trim());
+            return Math.max(min, Math.min(max, value));
+        } catch (NumberFormatException ignored) {
+            return fallback;
+        }
+    }
     private static String boundedKeywords(String value) {
         String normalized = value == null ? "" : value.trim();
         return normalized.length() <= TranslationBlocklist.MAX_CONFIG_LENGTH
                 ? normalized : normalized.substring(0, TranslationBlocklist.MAX_CONFIG_LENGTH);
     }
 }
+

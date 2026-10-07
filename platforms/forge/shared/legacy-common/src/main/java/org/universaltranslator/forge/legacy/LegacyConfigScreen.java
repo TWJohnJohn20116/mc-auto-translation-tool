@@ -458,7 +458,8 @@ final class LegacyConfigScreen extends GuiScreen {
                     offlineModel,
                     apiFallback,
                     diskCache,
-                    animatedUi);
+                    animatedUi,
+                    original.hudIndicatorSettings());
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
                     && (updated.tencentSecretId.isEmpty() || updated.tencentSecretKey.isEmpty())) {
                 throw new IllegalArgumentException(tr("error.universal_translator.tencent_credentials"));
@@ -727,3 +728,4 @@ final class LegacyConfigScreen extends GuiScreen {
         return I18n.format(key, arguments);
     }
 }
+
