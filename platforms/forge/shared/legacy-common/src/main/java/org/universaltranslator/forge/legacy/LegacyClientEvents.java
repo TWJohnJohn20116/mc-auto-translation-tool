@@ -1,6 +1,7 @@
 package org.universaltranslator.forge.legacy;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.ScaledResolution;
@@ -224,7 +225,7 @@ public final class LegacyClientEvents {
      */
     @SubscribeEvent
     public void onRenderGameOverlay(RenderGameOverlayEvent.Post event) {
-        if (event.type != RenderGameOverlayEvent.ElementType.ALL) {
+        if (event.getType() != RenderGameOverlayEvent.ElementType.ALL) {
             return;
         }
         // Read the settings first: a disabled indicator draws nothing at all.
