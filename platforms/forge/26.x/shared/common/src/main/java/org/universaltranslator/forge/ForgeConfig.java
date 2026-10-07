@@ -2,6 +2,7 @@ package org.universaltranslator.forge;
 
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationDisplayMode;
+import org.universaltranslator.core.HudIndicatorCorner;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TextKind;
 import org.universaltranslator.core.LocalConfigSecurity;
@@ -32,6 +33,8 @@ final class ForgeConfig {
     final boolean translateOutgoing;
     final boolean translatePlayerNames;
     final boolean animatedUi;
+    final boolean hudIndicator;
+    final HudIndicatorCorner hudIndicatorCorner;
     final String blockedKeywords;
     final String targetLanguage;
     final String outgoingTargetLanguage;
@@ -68,6 +71,9 @@ final class ForgeConfig {
         this.translatePlayerNames = Boolean.parseBoolean(
                 properties.getProperty("translate-player-names", "false"));
         this.animatedUi = Boolean.parseBoolean(properties.getProperty("animated-ui", "true"));
+        this.hudIndicator = Boolean.parseBoolean(properties.getProperty("hud-indicator", "true"));
+        this.hudIndicatorCorner = HudIndicatorCorner.fromConfig(
+                properties.getProperty("hud-indicator-corner", "top-left"));
         this.blockedKeywords = boundedKeywords(properties.getProperty("blocked-keywords", ""));
         this.targetLanguage = properties.getProperty("target-language", "zh-CN").trim();
         this.outgoingTargetLanguage = properties.getProperty(
@@ -159,7 +165,9 @@ final class ForgeConfig {
             OfflineModel offlineModel,
             boolean apiFallback,
             boolean diskCache,
-            boolean animatedUi
+            boolean animatedUi,
+            boolean hudIndicator,
+            HudIndicatorCorner hudIndicatorCorner
     ) {
         Properties properties = toProperties();
         properties.setProperty("enabled", Boolean.toString(enabled));
@@ -185,6 +193,8 @@ final class ForgeConfig {
         properties.setProperty("api-fallback", Boolean.toString(apiFallback));
         properties.setProperty("disk-cache", Boolean.toString(diskCache));
         properties.setProperty("animated-ui", Boolean.toString(animatedUi));
+        properties.setProperty("hud-indicator", Boolean.toString(hudIndicator));
+        properties.setProperty("hud-indicator-corner", hudIndicatorCorner.configName());
         return new ForgeConfig(properties, configFile, cacheFile);
     }
 
@@ -287,6 +297,8 @@ final class ForgeConfig {
         properties.setProperty("translate-outgoing", "false");
         properties.setProperty("translate-player-names", "false");
         properties.setProperty("animated-ui", "true");
+        properties.setProperty("hud-indicator", "true");
+        properties.setProperty("hud-indicator-corner", "top-left");
         properties.setProperty("blocked-keywords", "");
         properties.setProperty("target-language", "zh-CN");
         properties.setProperty("outgoing-target-language", "en");
@@ -322,6 +334,8 @@ final class ForgeConfig {
         properties.setProperty("translate-outgoing", Boolean.toString(translateOutgoing));
         properties.setProperty("translate-player-names", Boolean.toString(translatePlayerNames));
         properties.setProperty("animated-ui", Boolean.toString(animatedUi));
+        properties.setProperty("hud-indicator", Boolean.toString(hudIndicator));
+        properties.setProperty("hud-indicator-corner", hudIndicatorCorner.configName());
         properties.setProperty("blocked-keywords", blockedKeywords);
         properties.setProperty("target-language", targetLanguage);
         properties.setProperty("outgoing-target-language", outgoingTargetLanguage);
