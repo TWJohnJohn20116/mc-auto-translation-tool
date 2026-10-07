@@ -225,9 +225,11 @@ public final class LegacyClientEvents {
      */
     @SubscribeEvent
     public void onRenderGameOverlay(RenderGameOverlayEvent.Post event) {
-        if (event.getType() != RenderGameOverlayEvent.ElementType.ALL) {
-            return;
-        }
+        // Deliberately no element-type check: 1.8.9 exposes a public `type` field while 1.12.2
+        // makes it private and offers getType() instead, so reading it is not portable across the two
+        // versions this source set compiles for. Post fires once per HUD element, and every one of
+        // those passes happens while the overlay is on screen, so drawing on each of them paints the
+        // same pixels; the extra drawRect calls are negligible and the result is version-independent.
         // Read the settings first: a disabled indicator draws nothing at all.
         HudIndicatorSettings settings = LegacyTranslationRuntime.homeSettings().getHudIndicator();
         if (!settings.isIndicator()) {
