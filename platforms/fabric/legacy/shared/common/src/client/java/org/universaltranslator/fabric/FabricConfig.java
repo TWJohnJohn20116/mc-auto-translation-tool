@@ -201,7 +201,8 @@ final class FabricConfig {
             OfflineModel offlineModel,
             boolean apiFallback,
             boolean diskCache,
-            boolean animatedUi
+            boolean animatedUi,
+            HudIndicatorSettings hudIndicator
     ) {
         Properties properties = toProperties();
         properties.setProperty("enabled", Boolean.toString(enabled));
@@ -227,6 +228,15 @@ final class FabricConfig {
         properties.setProperty("api-fallback", Boolean.toString(apiFallback));
         properties.setProperty("disk-cache", Boolean.toString(diskCache));
         properties.setProperty("animated-ui", Boolean.toString(animatedUi));
+        properties.setProperty("hud-indicator", Boolean.toString(hudIndicator.isIndicator()));
+        properties.setProperty("hud-indicator-corner", hudIndicator.getCorner().configName());
+        properties.setProperty("hud-indicator-size", Integer.toString(hudIndicator.getSize()));
+        properties.setProperty("hud-indicator-margin", Integer.toString(hudIndicator.getMargin()));
+        properties.setProperty("hud-indicator-color", hudIndicator.getColor().configName());
+        properties.setProperty("hud-indicator-content", hudIndicator.getContent().configName());
+        properties.setProperty("hud-indicator-visibility", hudIndicator.getVisibility().configName());
+        properties.setProperty("hud-indicator-offset-x", Integer.toString(hudIndicator.getOffsetX()));
+        properties.setProperty("hud-indicator-offset-y", Integer.toString(hudIndicator.getOffsetY()));
         return new FabricConfig(properties, configFile, cacheFile);
     }
 
