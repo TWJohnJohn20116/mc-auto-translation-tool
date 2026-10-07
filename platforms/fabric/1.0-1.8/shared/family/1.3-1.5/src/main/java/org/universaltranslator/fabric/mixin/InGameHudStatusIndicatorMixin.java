@@ -11,6 +11,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 abstract class InGameHudStatusIndicatorMixin {
     @Inject(method = "render(FZII)V", at = @At("RETURN"), require = 0)
     private void universalTranslator$renderStatusIndicator(float delta, boolean flag, int width, int height, CallbackInfo callback) {
-        HudIndicatorOverlay.render();
+        HudIndicatorOverlay.render(width, height);
     }
 }

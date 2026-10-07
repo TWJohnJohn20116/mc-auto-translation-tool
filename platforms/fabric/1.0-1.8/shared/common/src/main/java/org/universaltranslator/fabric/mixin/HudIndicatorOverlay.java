@@ -3,8 +3,8 @@ package org.universaltranslator.fabric.mixin;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiElement;
 import net.minecraft.client.render.TextRenderer;
-import net.minecraft.client.render.Window;
-import net.minecraft.client.resource.language.I18n;
+
+import net.minecraft.locale.I18n;
 import org.universaltranslator.core.HudIndicatorContent;
 import org.universaltranslator.core.HudIndicatorCorner;
 import org.universaltranslator.core.HudIndicatorSettings;
@@ -23,7 +23,7 @@ final class HudIndicatorOverlay {
     private HudIndicatorOverlay() {
     }
 
-    static void render() {
+    static void render(int windowWidth, int windowHeight) {
         // Read the settings first: a disabled indicator draws nothing at all.
         HudIndicatorSettings settings = FabricTranslationRuntime.homeSettings().getHudIndicator();
         if (!settings.isIndicator()) {
@@ -46,16 +46,10 @@ final class HudIndicatorOverlay {
             default:
                 break;
         }
-        // The window is read straight off Minecraft: the ploceus names this bundle uses expose it
-        // (unlike the 1.8.2-1.12.2 mappings), and no 1.3.1-1.8.1 version hands a Window to a method
-        // this mixin could hook -- renderHotbar(Window, float) only appears in 1.8.
+        // The caller supplies the GUI-scaled size. No version in this bundle lets a mixin reach the
+        // Window (the field exists but is not visible), so each injection point passes what it
+        // already has: render(FZII)V carries width/height, renderHotbar carries the Window.
         Minecraft client = Minecraft.getInstance();
-        Window window = client.window;
-        if (window == null) {
-            return;
-        }
-        int windowWidth = (int) window.getScaledWidth();
-        int windowHeight = (int) window.getScaledHeight();
         HudIndicatorCorner corner = settings.getCorner();
         int margin = settings.getMargin();
         int size = settings.getSize();
@@ -118,7 +112,7 @@ final class HudIndicatorOverlay {
             int labelLeft = corner.isRight() ? left - 2 - labelWidth : right + 2;
             // y is the top of the text line, so centre it against the square by hand.
             int labelY = top + (size - 8) / 2;
-            font.drawWithShadow(label, (float) labelLeft, (float) labelY, 0xFFFFFFFF);
+            font.drawWithShadow(label, labelLeft, labelY, 0xFFFFFFFF);
         } finally {
             TranslationRenderContext.popTextInput();
         }
