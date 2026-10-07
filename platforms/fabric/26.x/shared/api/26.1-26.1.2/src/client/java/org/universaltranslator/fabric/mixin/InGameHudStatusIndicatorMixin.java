@@ -27,10 +27,10 @@ abstract class InGameHudStatusIndicatorMixin {
     private void universalTranslator$renderStatusIndicator(
             GuiGraphicsExtractor graphics, DeltaTracker deltaTracker, CallbackInfo callback) {
         // Read the settings first: a disabled indicator draws nothing at all.
-        if (!FabricTranslationRuntime.homeSettings().hudIndicator) {
+        if (!FabricTranslationRuntime.homeSettings().isHudIndicator()) {
             return;
         }
-        HudIndicatorCorner corner = FabricTranslationRuntime.homeSettings().hudIndicatorCorner;
+        HudIndicatorCorner corner = FabricTranslationRuntime.homeSettings().getHudIndicatorCorner();
         int margin = 4;
         int size = 6;
         int left = corner.isRight() ? graphics.guiWidth() - margin - size : margin;

@@ -28,10 +28,10 @@ abstract class InGameHudStatusIndicatorMixin {
     private void universalTranslator$renderStatusIndicator(
             GuiGraphicsExtractor graphics, DeltaTracker deltaTracker, CallbackInfo callback) {
         // Read the settings first: a disabled indicator draws nothing at all.
-        if (!ForgeTranslationRuntime.homeSettings().hudIndicator) {
+        if (!ForgeTranslationRuntime.homeSettings().isHudIndicator()) {
             return;
         }
-        HudIndicatorCorner corner = ForgeTranslationRuntime.homeSettings().hudIndicatorCorner;
+        HudIndicatorCorner corner = ForgeTranslationRuntime.homeSettings().getHudIndicatorCorner();
         int margin = 4;
         int size = 6;
         int left = corner.isRight() ? graphics.guiWidth() - margin - size : margin;

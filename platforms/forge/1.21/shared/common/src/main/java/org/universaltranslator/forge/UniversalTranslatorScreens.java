@@ -163,9 +163,9 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
             animatedUi = !animatedUi;
             animationStartedNanos = System.nanoTime();
         }));
-        hudIndicatorButton = addRenderableWidget(button(left, layout.contentRow(4), layout.buttonWidth,
+        hudIndicatorButton = addRenderableWidget(button(left, layout.contentRow(3), layout.buttonWidth,
                 () -> hudIndicator = !hudIndicator));
-        hudCornerButton = addRenderableWidget(button(layout.right, layout.contentRow(4), layout.buttonWidth, () -> {
+        hudCornerButton = addRenderableWidget(button(layout.right, layout.contentRow(3), layout.buttonWidth, () -> {
             HudIndicatorCorner[] corners = HudIndicatorCorner.values();
             hudIndicatorCorner = corners[(hudIndicatorCorner.ordinal() + 1) % corners.length];
         }));
@@ -174,7 +174,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                     if (minecraft != null) {
                         minecraft.setScreen(new UniversalTranslatorDiagnosticsScreen(this, original));
                     }
-                }).bounds(left, layout.contentRow(3), layout.totalWidth, 20).build());
+                }).bounds(left, layout.contentRow(4), layout.totalWidth, 20).build());
 
         // --- Tab 2: Scopes (範圍) ---
         chatButton = addRenderableWidget(button(left, layout.contentRow(0), layout.buttonWidth,
