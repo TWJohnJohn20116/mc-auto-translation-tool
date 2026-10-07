@@ -190,13 +190,13 @@ final class UniversalTranslatorConfigScreen extends Screen {
         }
         buttons.clear();
         renderer = OrnitheClientAccess.textRenderer();
-        SettingsScreenLayout.Geometry layout = SettingsScreenLayout.calculate(width, height);
+        SettingsScreenLayout.Geometry layout = SettingsScreenLayout.calculate(width, height, 5);
         int left = layout.left();
         int right = layout.right();
         int buttonWidth = layout.buttonWidth();
         int totalWidth = layout.totalWidth();
 
-        // 4 Navigation Tabs
+        // 5 Navigation Tabs
         tabGeneralButton = new ButtonWidget(TAB_GENERAL, layout.tabX(0), layout.tabY(), layout.tabWidth(), 20,
                 tr("screen.universal_translator.tab.general"));
         tabScopesButton = new ButtonWidget(TAB_SCOPES, layout.tabX(1), layout.tabY(), layout.tabWidth(), 20,
@@ -664,7 +664,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
     @Override
     public void render(int mouseX, int mouseY, float partialTicks) {
         renderBackground();
-        SettingsScreenLayout.Geometry layout = SettingsScreenLayout.calculate(width, height);
+        SettingsScreenLayout.Geometry layout = SettingsScreenLayout.calculate(width, height, 5);
         long now = System.nanoTime();
         float opening = 1.0F;
         if (animatedUi) {
