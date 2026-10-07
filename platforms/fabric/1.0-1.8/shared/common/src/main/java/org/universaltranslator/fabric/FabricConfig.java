@@ -1,5 +1,10 @@
 package org.universaltranslator.fabric;
 
+import org.universaltranslator.core.HudIndicatorCorner;
+import org.universaltranslator.core.HudIndicatorColor;
+import org.universaltranslator.core.HudIndicatorContent;
+import org.universaltranslator.core.HudIndicatorSettings;
+import org.universaltranslator.core.HudIndicatorVisibility;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationDisplayMode;
 import org.universaltranslator.core.TranslationTextColor;
@@ -54,6 +59,15 @@ final class FabricConfig {
     final Path offlineDirectory;
     final boolean diskCache;
     final Path cacheFile;
+    final boolean hudIndicator;
+    final HudIndicatorCorner hudIndicatorCorner;
+    final int hudIndicatorSize;
+    final int hudIndicatorMargin;
+    final HudIndicatorColor hudIndicatorColor;
+    final HudIndicatorContent hudIndicatorContent;
+    final HudIndicatorVisibility hudIndicatorVisibility;
+    final int hudIndicatorOffsetX;
+    final int hudIndicatorOffsetY;
     private final OnlineProviderConfig onlineProviderConfig;
     private final Path configFile;
 
@@ -97,10 +111,38 @@ final class FabricConfig {
         this.apiFallbackProvider = properties.getProperty(
                 "api-fallback-provider", "libretranslate").trim();
         this.diskCache = Boolean.parseBoolean(properties.getProperty("disk-cache", "true"));
+        this.hudIndicator = Boolean.parseBoolean(properties.getProperty("hud-indicator", "true"));
+        this.hudIndicatorCorner = HudIndicatorCorner.fromConfig(
+                properties.getProperty("hud-indicator-corner", "top-left"));
+        this.hudIndicatorSize = parseBoundedInt(
+                properties.getProperty("hud-indicator-size", "6"), 6,
+                HudIndicatorSettings.MIN_SIZE, HudIndicatorSettings.MAX_SIZE);
+        this.hudIndicatorMargin = parseBoundedInt(
+                properties.getProperty("hud-indicator-margin", "4"), 4,
+                HudIndicatorSettings.MIN_MARGIN, HudIndicatorSettings.MAX_MARGIN);
+        this.hudIndicatorColor = HudIndicatorColor.fromConfig(
+                properties.getProperty("hud-indicator-color", "green"));
+        this.hudIndicatorContent = HudIndicatorContent.fromConfig(
+                properties.getProperty("hud-indicator-content", "dot"));
+        this.hudIndicatorVisibility = HudIndicatorVisibility.fromConfig(
+                properties.getProperty("hud-indicator-visibility", "always"));
+        this.hudIndicatorOffsetX = parseBoundedInt(
+                properties.getProperty("hud-indicator-offset-x", "0"),
+                0, HudIndicatorSettings.MIN_OFFSET, HudIndicatorSettings.MAX_OFFSET);
+        this.hudIndicatorOffsetY = parseBoundedInt(
+                properties.getProperty("hud-indicator-offset-y", "0"),
+                0, HudIndicatorSettings.MIN_OFFSET, HudIndicatorSettings.MAX_OFFSET);
         this.onlineProviderConfig = OnlineProviderConfig.from(properties);
         this.configFile = configFile;
         this.cacheFile = cacheFile;
         this.offlineDirectory = configFile.getParent().resolve("universal-translator-offline");
+    }
+
+    HudIndicatorSettings hudIndicatorSettings() {
+        return new HudIndicatorSettings(
+                hudIndicator, hudIndicatorCorner, hudIndicatorSize, hudIndicatorMargin, hudIndicatorColor,
+                hudIndicatorContent, hudIndicatorVisibility,
+                hudIndicatorOffsetX, hudIndicatorOffsetY);
     }
 
     static FabricConfig load(Path configDirectory) throws IOException {
@@ -159,7 +201,8 @@ final class FabricConfig {
             OfflineModel offlineModel,
             boolean apiFallback,
             boolean diskCache,
-            boolean animatedUi
+            boolean animatedUi,
+            HudIndicatorSettings hudIndicator
     ) {
         Properties properties = toProperties();
         properties.setProperty("enabled", Boolean.toString(enabled));
@@ -185,6 +228,15 @@ final class FabricConfig {
         properties.setProperty("api-fallback", Boolean.toString(apiFallback));
         properties.setProperty("disk-cache", Boolean.toString(diskCache));
         properties.setProperty("animated-ui", Boolean.toString(animatedUi));
+        properties.setProperty("hud-indicator", Boolean.toString(hudIndicator.isIndicator()));
+        properties.setProperty("hud-indicator-corner", hudIndicator.getCorner().configName());
+        properties.setProperty("hud-indicator-size", Integer.toString(hudIndicator.getSize()));
+        properties.setProperty("hud-indicator-margin", Integer.toString(hudIndicator.getMargin()));
+        properties.setProperty("hud-indicator-color", hudIndicator.getColor().configName());
+        properties.setProperty("hud-indicator-content", hudIndicator.getContent().configName());
+        properties.setProperty("hud-indicator-visibility", hudIndicator.getVisibility().configName());
+        properties.setProperty("hud-indicator-offset-x", Integer.toString(hudIndicator.getOffsetX()));
+        properties.setProperty("hud-indicator-offset-y", Integer.toString(hudIndicator.getOffsetY()));
         return new FabricConfig(properties, configFile, cacheFile);
     }
 
@@ -307,6 +359,15 @@ final class FabricConfig {
         properties.setProperty("api-fallback", "false");
         properties.setProperty("api-fallback-provider", "libretranslate");
         properties.setProperty("disk-cache", "true");
+        properties.setProperty("hud-indicator", "true");
+        properties.setProperty("hud-indicator-corner", "top-left");
+        properties.setProperty("hud-indicator-size", "6");
+        properties.setProperty("hud-indicator-margin", "4");
+        properties.setProperty("hud-indicator-color", "green");
+        properties.setProperty("hud-indicator-content", "dot");
+        properties.setProperty("hud-indicator-visibility", "always");
+        properties.setProperty("hud-indicator-offset-x", "0");
+        properties.setProperty("hud-indicator-offset-y", "0");
         OnlineProviderConfig.applyDefaults(properties);
         return properties;
     }
@@ -343,6 +404,15 @@ final class FabricConfig {
         properties.setProperty("api-fallback", Boolean.toString(apiFallback));
         properties.setProperty("api-fallback-provider", apiFallbackProvider);
         properties.setProperty("disk-cache", Boolean.toString(diskCache));
+        properties.setProperty("hud-indicator", Boolean.toString(hudIndicator));
+        properties.setProperty("hud-indicator-corner", hudIndicatorCorner.configName());
+        properties.setProperty("hud-indicator-size", Integer.toString(hudIndicatorSize));
+        properties.setProperty("hud-indicator-margin", Integer.toString(hudIndicatorMargin));
+        properties.setProperty("hud-indicator-color", hudIndicatorColor.configName());
+        properties.setProperty("hud-indicator-content", hudIndicatorContent.configName());
+        properties.setProperty("hud-indicator-visibility", hudIndicatorVisibility.configName());
+        properties.setProperty("hud-indicator-offset-x", Integer.toString(hudIndicatorOffsetX));
+        properties.setProperty("hud-indicator-offset-y", Integer.toString(hudIndicatorOffsetY));
         return properties;
     }
 
@@ -351,6 +421,18 @@ final class FabricConfig {
             return Integer.parseInt(properties.getProperty("config-version", "1").trim());
         } catch (NumberFormatException ignored) {
             return 1;
+        }
+    }
+
+    private static int parseBoundedInt(String raw, int fallback, int min, int max) {
+        if (raw == null) {
+            return fallback;
+        }
+        try {
+            int parsed = Integer.parseInt(raw.trim());
+            return parsed < min || parsed > max ? fallback : parsed;
+        } catch (NumberFormatException invalid) {
+            return fallback;
         }
     }
 

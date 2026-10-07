@@ -10,7 +10,8 @@
     "SignEditScreenMixin",
     "TitleScreenMixin",
     "MinecraftMixin",
-    "LocalClientPlayerEntityMixin"
+    "LocalClientPlayerEntityMixin",
+    "InGameHudStatusIndicatorMixin"
   ],
   "injectors": {
     "defaultRequire": 0
