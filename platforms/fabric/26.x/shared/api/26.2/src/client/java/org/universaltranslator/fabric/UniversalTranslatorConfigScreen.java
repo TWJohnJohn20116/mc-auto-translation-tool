@@ -23,6 +23,11 @@ import org.universaltranslator.core.SettingsSelectionList;
 
 /** Minimal dependency-free settings screen, opened with U by default. */
 final class UniversalTranslatorConfigScreen extends Screen {
+    /** Side of the square drag handle drawn inside the HUD tab's preview panel. */
+    private static final int HUD_DRAG_HANDLE_SIZE = 10;
+    /** Height of that preview panel, in GUI pixels. */
+    private static final int HUD_DRAG_PREVIEW_HEIGHT = 20;
+
     private enum Tab {
         GENERAL,
         SCOPES,
@@ -54,6 +59,11 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private HudIndicatorColor hudIndicatorColor;
     private HudIndicatorContent hudIndicatorContent;
     private HudIndicatorVisibility hudIndicatorVisibility;
+    private int hudIndicatorOffsetX;
+    private int hudIndicatorOffsetY;
+    private boolean hudDragging;
+    private double hudDragLastX;
+    private double hudDragLastY;
     private String provider;
     private String llmEndpoint;
     private String llmApiKey;
@@ -125,6 +135,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
         this.hudIndicatorColor = config.hudIndicatorColor;
         this.hudIndicatorContent = config.hudIndicatorContent;
         this.hudIndicatorVisibility = config.hudIndicatorVisibility;
+        this.hudIndicatorOffsetX = config.hudIndicatorOffsetX;
+        this.hudIndicatorOffsetY = config.hudIndicatorOffsetY;
         this.provider = config.provider;
         this.llmEndpoint = config.editorEndpoint(config.provider);
         this.llmApiKey = config.editorApiKey(config.provider);
@@ -498,7 +510,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
                     animatedUi,
                     new HudIndicatorSettings(hudIndicator, hudIndicatorCorner,
                             hudIndicatorSize, hudIndicatorMargin, hudIndicatorColor,
-                            hudIndicatorContent, hudIndicatorVisibility));
+                            hudIndicatorContent, hudIndicatorVisibility,
+                            hudIndicatorOffsetX, hudIndicatorOffsetY));
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
                     && (updated.tencentSecretId.isEmpty() || updated.tencentSecretKey.isEmpty())) {
                 throw new IllegalArgumentException(tr("error.universal_translator.tencent_credentials"));
@@ -596,6 +609,9 @@ final class UniversalTranslatorConfigScreen extends Screen {
                 graphics.fill(0, 0, this.width, this.height, overlayAlpha << 24);
             }
         }
+        if (activeTab == Tab.HUD) {
+            drawHudDragPreview(graphics);
+        }
         if (openSelection != SettingsSelectionList.Kind.NONE) {
             renderSelection(graphics, mouseX, mouseY);
         }
@@ -603,11 +619,99 @@ final class UniversalTranslatorConfigScreen extends Screen {
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        if (handleDragStart(event.x(), event.y())) {
+            return true;
+        }
         if (openSelection != SettingsSelectionList.Kind.NONE
                 && selectFromList(event.x(), event.y())) {
             return true;
         }
         return super.mouseClicked(event, doubleClick);
+    }
+
+    @Override
+    public boolean mouseDragged(MouseButtonEvent event, double deltaX, double deltaY) {
+        return handleDragMove(event.x(), event.y())
+                || super.mouseDragged(event, deltaX, deltaY);
+    }
+
+    @Override
+    public boolean mouseReleased(MouseButtonEvent event) {
+        return handleDragEnd()
+                || super.mouseReleased(event);
+    }
+
+    private boolean handleDragStart(double mouseX, double mouseY) {
+        if (activeTab != Tab.HUD) {
+            return false;
+        }
+        if (!insideHudDragHandle(mouseX, mouseY)) {
+            return false;
+        }
+        hudDragging = true;
+        hudDragLastX = mouseX;
+        hudDragLastY = mouseY;
+        return true;
+    }
+
+    private boolean handleDragMove(double mouseX, double mouseY) {
+        if (!hudDragging) {
+            return false;
+        }
+        hudIndicatorOffsetX = clampOffset(
+                hudIndicatorOffsetX + (int) Math.round(mouseX - hudDragLastX));
+        hudIndicatorOffsetY = clampOffset(
+                hudIndicatorOffsetY + (int) Math.round(mouseY - hudDragLastY));
+        hudDragLastX = mouseX;
+        hudDragLastY = mouseY;
+        return true;
+    }
+
+    private boolean handleDragEnd() {
+        if (!hudDragging) {
+            return false;
+        }
+        hudDragging = false;
+        return true;
+    }
+
+    private static int clampOffset(int value) {
+        return Math.max(HudIndicatorSettings.MIN_OFFSET,
+                Math.min(HudIndicatorSettings.MAX_OFFSET, value));
+    }
+
+    private boolean insideHudDragHandle(double mouseX, double mouseY) {
+        Layout layout = layout();
+        int px = layout.left;
+        int py = layout.contentRow(4);
+        int pw = layout.totalWidth;
+        int hx = hudHandleX(px, pw, hudIndicatorOffsetX);
+        int hy = hudHandleY(py, HUD_DRAG_PREVIEW_HEIGHT, hudIndicatorOffsetY);
+        return mouseX >= hx && mouseX < hx + HUD_DRAG_HANDLE_SIZE
+                && mouseY >= hy && mouseY < hy + HUD_DRAG_HANDLE_SIZE;
+    }
+
+    private static int hudHandleX(int panelLeft, int panelWidth, int offsetX) {
+        return Math.max(panelLeft, Math.min(panelLeft + panelWidth - HUD_DRAG_HANDLE_SIZE,
+                panelLeft + panelWidth / 2 - HUD_DRAG_HANDLE_SIZE / 2 + offsetX));
+    }
+
+    private static int hudHandleY(int panelTop, int panelHeight, int offsetY) {
+        return Math.max(panelTop, Math.min(panelTop + panelHeight - HUD_DRAG_HANDLE_SIZE,
+                panelTop + panelHeight / 2 - HUD_DRAG_HANDLE_SIZE / 2 + offsetY));
+    }
+
+    private void drawHudDragPreview(GuiGraphicsExtractor graphics) {
+        Layout layout = layout();
+        int px = layout.left;
+        int py = layout.contentRow(4);
+        int pw = layout.totalWidth;
+        int ph = HUD_DRAG_PREVIEW_HEIGHT;
+        graphics.fill(px, py, px + pw, py + ph, 0x40000000);
+        int hx = hudHandleX(px, pw, hudIndicatorOffsetX);
+        int hy = hudHandleY(py, ph, hudIndicatorOffsetY);
+        graphics.fill(hx, hy, hx + HUD_DRAG_HANDLE_SIZE, hy + HUD_DRAG_HANDLE_SIZE,
+                hudDragging ? 0xFFFFAA00 : 0xFF00AA00);
     }
 
     private void renderSelection(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {

@@ -54,6 +54,11 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private HudIndicatorColor hudIndicatorColor;
     private HudIndicatorContent hudIndicatorContent;
     private HudIndicatorVisibility hudIndicatorVisibility;
+    private int hudIndicatorOffsetX;
+    private int hudIndicatorOffsetY;
+    private boolean hudDragging;
+    private double hudDragLastX;
+    private double hudDragLastY;
     private String provider;
     private String llmEndpoint;
     private String llmApiKey;
@@ -125,6 +130,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
         this.hudIndicatorColor = config.hudIndicatorColor;
         this.hudIndicatorContent = config.hudIndicatorContent;
         this.hudIndicatorVisibility = config.hudIndicatorVisibility;
+        this.hudIndicatorOffsetX = config.hudIndicatorOffsetX;
+        this.hudIndicatorOffsetY = config.hudIndicatorOffsetY;
         this.provider = config.provider;
         this.llmEndpoint = config.editorEndpoint(config.provider);
         this.llmApiKey = config.editorApiKey(config.provider);
@@ -498,7 +505,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
                     animatedUi,
                     new HudIndicatorSettings(hudIndicator, hudIndicatorCorner,
                             hudIndicatorSize, hudIndicatorMargin, hudIndicatorColor,
-                            hudIndicatorContent, hudIndicatorVisibility));
+                            hudIndicatorContent, hudIndicatorVisibility,
+                            hudIndicatorOffsetX, hudIndicatorOffsetY));
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
                     && (updated.tencentSecretId.isEmpty() || updated.tencentSecretKey.isEmpty())) {
                 throw new IllegalArgumentException(tr("error.universal_translator.tencent_credentials"));
@@ -590,6 +598,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
             }
         }
         super.extractRenderState(graphics, mouseX, mouseY, delta);
+        renderHudDragPreview(graphics);
         if (animatedUi) {
             int overlayAlpha = SettingsUiAnimation.openingOverlayAlpha(opening);
             if (overlayAlpha > 0) {
@@ -603,11 +612,112 @@ final class UniversalTranslatorConfigScreen extends Screen {
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-        if (openSelection != SettingsSelectionList.Kind.NONE
-                && selectFromList(event.x(), event.y())) {
-            return true;
+        return handleDragStart(event.x(), event.y())
+                || (openSelection != SettingsSelectionList.Kind.NONE
+                        && selectFromList(event.x(), event.y()))
+                || super.mouseClicked(event, doubleClick);
+    }
+
+    @Override
+    public boolean mouseDragged(MouseButtonEvent event, double deltaX, double deltaY) {
+        return handleDragMove(event.x(), event.y())
+                || super.mouseDragged(event, deltaX, deltaY);
+    }
+
+    @Override
+    public boolean mouseReleased(MouseButtonEvent event) {
+        return handleDragEnd()
+                || super.mouseReleased(event);
+    }
+
+    /**
+     * Starts a HUD indicator drag when the press lands on the preview handle.
+     *
+     * <p>This 26.x screen has no shared base, so the whole drag implementation lives here. It
+     * refuses while a selection list is open so the list keeps first claim on the click and the
+     * pre-existing click handling is unchanged even though {@code mouseClicked} now asks for a drag
+     * first.
+     */
+    private boolean handleDragStart(double mouseX, double mouseY) {
+        if (openSelection != SettingsSelectionList.Kind.NONE) {
+            return false;
         }
-        return super.mouseClicked(event, doubleClick);
+        if (activeTab != Tab.HUD) {
+            return false;
+        }
+        if (!insideHudDragHandle(mouseX, mouseY)) {
+            return false;
+        }
+        hudDragging = true;
+        hudDragLastX = mouseX;
+        hudDragLastY = mouseY;
+        return true;
+    }
+
+    /** Moves the pending offsets by the pointer delta, clamped to the frozen core bounds. */
+    private boolean handleDragMove(double mouseX, double mouseY) {
+        if (!hudDragging) {
+            return false;
+        }
+        hudIndicatorOffsetX = clampOffset(
+                hudIndicatorOffsetX + (int) Math.round(mouseX - hudDragLastX));
+        hudIndicatorOffsetY = clampOffset(
+                hudIndicatorOffsetY + (int) Math.round(mouseY - hudDragLastY));
+        hudDragLastX = mouseX;
+        hudDragLastY = mouseY;
+        return true;
+    }
+
+    /** Ends the drag. The offsets are only persisted later by {@link #saveAndApply()}. */
+    private boolean handleDragEnd() {
+        if (!hudDragging) {
+            return false;
+        }
+        hudDragging = false;
+        return true;
+    }
+
+    private static int clampOffset(int value) {
+        return Math.max(HudIndicatorSettings.MIN_OFFSET,
+                Math.min(HudIndicatorSettings.MAX_OFFSET, value));
+    }
+
+    private boolean insideHudDragHandle(double mouseX, double mouseY) {
+        int[] handle = hudDragHandlePosition();
+        return mouseX >= handle[0] && mouseX < handle[0] + 10
+                && mouseY >= handle[1] && mouseY < handle[1] + 10;
+    }
+
+    /** Top-left corner of the 10x10 handle inside the HUD preview strip. */
+    private int[] hudDragHandlePosition() {
+        Layout layout = layout();
+        int px = layout.left;
+        int py = layout.contentRow(4);
+        int pw = layout.totalWidth;
+        int ph = 20;
+        int hx = Math.max(px, Math.min(px + pw - 10, px + pw / 2 - 5 + hudIndicatorOffsetX));
+        int hy = Math.max(py, Math.min(py + ph - 10, py + ph / 2 - 5 + hudIndicatorOffsetY));
+        return new int[] {hx, hy};
+    }
+
+    /**
+     * Draws the HUD indicator preview strip plus its drag handle.
+     *
+     * <p>Called from {@code extractRenderState} right after {@code super.extractRenderState}, so it
+     * lands above the widgets while the opening overlay and the selection list still cover it.
+     */
+    private void renderHudDragPreview(GuiGraphicsExtractor graphics) {
+        if (activeTab != Tab.HUD) {
+            return;
+        }
+        int[] handle = hudDragHandlePosition();
+        Layout layout = layout();
+        int px = layout.left;
+        int py = layout.contentRow(4);
+        int pw = layout.totalWidth;
+        graphics.fill(px, py, px + pw, py + 20, 0x40000000);
+        graphics.fill(handle[0], handle[1], handle[0] + 10, handle[1] + 10,
+                hudDragging ? 0xFFFFAA00 : 0xFF00AA00);
     }
 
     private void renderSelection(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {

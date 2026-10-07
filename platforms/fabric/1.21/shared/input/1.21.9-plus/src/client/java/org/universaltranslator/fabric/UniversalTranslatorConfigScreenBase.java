@@ -12,9 +12,28 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
 
     protected abstract boolean handleSelectionClick(double mouseX, double mouseY);
 
+    protected abstract boolean handleDragStart(double mouseX, double mouseY);
+
+    protected abstract boolean handleDragMove(double mouseX, double mouseY);
+
+    protected abstract boolean handleDragEnd();
+
     @Override
     public boolean mouseClicked(Click click, boolean doubleClick) {
-        return handleSelectionClick(click.x(), click.y())
+        return handleDragStart(click.x(), click.y())
+                || handleSelectionClick(click.x(), click.y())
                 || super.mouseClicked(click, doubleClick);
+    }
+
+    @Override
+    public boolean mouseDragged(Click click, double deltaX, double deltaY) {
+        return handleDragMove(click.x(), click.y())
+                || super.mouseDragged(click, deltaX, deltaY);
+    }
+
+    @Override
+    public boolean mouseReleased(Click click) {
+        return handleDragEnd()
+                || super.mouseReleased(click);
     }
 }

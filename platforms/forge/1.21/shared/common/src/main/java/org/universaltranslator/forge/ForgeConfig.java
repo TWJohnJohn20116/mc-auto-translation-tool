@@ -44,6 +44,8 @@ final class ForgeConfig {
     final HudIndicatorColor hudIndicatorColor;
     final HudIndicatorContent hudIndicatorContent;
     final HudIndicatorVisibility hudIndicatorVisibility;
+    final int hudIndicatorOffsetX;
+    final int hudIndicatorOffsetY;
     final String blockedKeywords;
     final String targetLanguage;
     final String outgoingTargetLanguage;
@@ -72,7 +74,8 @@ final class ForgeConfig {
     HudIndicatorSettings hudIndicatorSettings() {
         return new HudIndicatorSettings(
                 hudIndicator, hudIndicatorCorner, hudIndicatorSize, hudIndicatorMargin, hudIndicatorColor,
-                hudIndicatorContent, hudIndicatorVisibility);
+                hudIndicatorContent, hudIndicatorVisibility,
+                hudIndicatorOffsetX, hudIndicatorOffsetY);
     }
 
     private ForgeConfig(Properties properties, Path configFile, Path cacheFile) {
@@ -101,6 +104,12 @@ final class ForgeConfig {
                 properties.getProperty("hud-indicator-content", "dot"));
         this.hudIndicatorVisibility = HudIndicatorVisibility.fromConfig(
                 properties.getProperty("hud-indicator-visibility", "always"));
+        this.hudIndicatorOffsetX = parseBoundedInt(
+                properties.getProperty("hud-indicator-offset-x", "0"),
+                0, HudIndicatorSettings.MIN_OFFSET, HudIndicatorSettings.MAX_OFFSET);
+        this.hudIndicatorOffsetY = parseBoundedInt(
+                properties.getProperty("hud-indicator-offset-y", "0"),
+                0, HudIndicatorSettings.MIN_OFFSET, HudIndicatorSettings.MAX_OFFSET);
         this.blockedKeywords = boundedKeywords(properties.getProperty("blocked-keywords", ""));
         this.targetLanguage = properties.getProperty("target-language", "zh-CN").trim();
         this.outgoingTargetLanguage = properties.getProperty(
@@ -226,6 +235,8 @@ final class ForgeConfig {
         properties.setProperty("hud-indicator-color", hudIndicator.getColor().configName());
         properties.setProperty("hud-indicator-content", hudIndicator.getContent().configName());
         properties.setProperty("hud-indicator-visibility", hudIndicator.getVisibility().configName());
+        properties.setProperty("hud-indicator-offset-x", Integer.toString(hudIndicator.getOffsetX()));
+        properties.setProperty("hud-indicator-offset-y", Integer.toString(hudIndicator.getOffsetY()));
         return new ForgeConfig(properties, configFile, cacheFile);
     }
 
@@ -335,6 +346,8 @@ final class ForgeConfig {
         properties.setProperty("hud-indicator-color", "green");
         properties.setProperty("hud-indicator-content", "dot");
         properties.setProperty("hud-indicator-visibility", "always");
+        properties.setProperty("hud-indicator-offset-x", "0");
+        properties.setProperty("hud-indicator-offset-y", "0");
         properties.setProperty("blocked-keywords", "");
         properties.setProperty("target-language", "zh-CN");
         properties.setProperty("outgoing-target-language", "en");
@@ -377,6 +390,8 @@ final class ForgeConfig {
         properties.setProperty("hud-indicator-color", hudIndicatorColor.configName());
         properties.setProperty("hud-indicator-content", hudIndicatorContent.configName());
         properties.setProperty("hud-indicator-visibility", hudIndicatorVisibility.configName());
+        properties.setProperty("hud-indicator-offset-x", Integer.toString(hudIndicatorOffsetX));
+        properties.setProperty("hud-indicator-offset-y", Integer.toString(hudIndicatorOffsetY));
         properties.setProperty("blocked-keywords", blockedKeywords);
         properties.setProperty("target-language", targetLanguage);
         properties.setProperty("outgoing-target-language", outgoingTargetLanguage);

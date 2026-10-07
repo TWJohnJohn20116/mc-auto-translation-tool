@@ -9,7 +9,8 @@ package org.universaltranslator.core;
  * this once, which keeps the key-to-field mapping in a single place per config.
  *
  * <p>{@link #defaults()} reproduces the hard-coded indicator that shipped before it was
- * configurable: enabled, top-left, 6x6, 4px margin, green, a plain dot, always visible.
+ * configurable: enabled, top-left, 6x6, 4px margin, green, a plain dot, always visible, and
+ * sitting exactly on its corner with no drag offset.
  */
 public final class HudIndicatorSettings {
     public static final int MIN_SIZE = 2;
@@ -19,6 +20,17 @@ public final class HudIndicatorSettings {
     public static final int DEFAULT_SIZE = 6;
     public static final int DEFAULT_MARGIN = 4;
 
+    /**
+     * Bounds on how far a drag may push the indicator away from its corner anchor, in GUI pixels.
+     *
+     * <p>This is a sanity bound on the stored value, not an on-screen guarantee: the config file is
+     * plain text a player can edit, so the HUD mixins clamp the final position against the window
+     * size as well.
+     */
+    public static final int MIN_OFFSET = -256;
+    public static final int MAX_OFFSET = 256;
+    public static final int DEFAULT_OFFSET = 0;
+
     private final boolean indicator;
     private final HudIndicatorCorner corner;
     private final int size;
@@ -26,13 +38,16 @@ public final class HudIndicatorSettings {
     private final HudIndicatorColor color;
     private final HudIndicatorContent content;
     private final HudIndicatorVisibility visibility;
+    private final int offsetX;
+    private final int offsetY;
 
     /**
      * Full constructor.
      *
      * <p>Only called by the platform configs, which read the keys and pass them positionally.
-     * Callers that predate the content/visibility options should use the five-argument overload
-     * below instead of repeating the two defaults.
+     * Callers that predate the drag offsets should use the seven-argument overload below, and
+     * callers that predate content/visibility should use the five-argument one, instead of
+     * repeating the defaults.
      */
     public HudIndicatorSettings(
             boolean indicator,
@@ -41,7 +56,9 @@ public final class HudIndicatorSettings {
             int margin,
             HudIndicatorColor color,
             HudIndicatorContent content,
-            HudIndicatorVisibility visibility) {
+            HudIndicatorVisibility visibility,
+            int offsetX,
+            int offsetY) {
         this.indicator = indicator;
         // Never null: the HUD mixins call isRight()/isBottom() on it every frame.
         this.corner = corner == null ? HudIndicatorCorner.TOP_LEFT : corner;
@@ -52,6 +69,26 @@ public final class HudIndicatorSettings {
         this.visibility = visibility == null ? HudIndicatorVisibility.ALWAYS : visibility;
         this.size = clamp(size, MIN_SIZE, MAX_SIZE, DEFAULT_SIZE);
         this.margin = clamp(margin, MIN_MARGIN, MAX_MARGIN, DEFAULT_MARGIN);
+        this.offsetX = clamp(offsetX, MIN_OFFSET, MAX_OFFSET, DEFAULT_OFFSET);
+        this.offsetY = clamp(offsetY, MIN_OFFSET, MAX_OFFSET, DEFAULT_OFFSET);
+    }
+
+    /**
+     * Convenience overload for callers that set content and visibility but not the drag offsets.
+     *
+     * <p>Zero offsets put the indicator back on its corner anchor, which is exactly the behaviour
+     * that shipped before dragging existed, so the screens did not have to change at all.
+     */
+    public HudIndicatorSettings(
+            boolean indicator,
+            HudIndicatorCorner corner,
+            int size,
+            int margin,
+            HudIndicatorColor color,
+            HudIndicatorContent content,
+            HudIndicatorVisibility visibility) {
+        this(indicator, corner, size, margin, color, content, visibility,
+                DEFAULT_OFFSET, DEFAULT_OFFSET);
     }
 
     /**
@@ -114,5 +151,21 @@ public final class HudIndicatorSettings {
     /** When the indicator is drawn at all. Never null. */
     public HudIndicatorVisibility getVisibility() {
         return visibility;
+    }
+
+    /**
+     * Horizontal drag offset from the corner anchor, in GUI pixels.
+     *
+     * <p>Always within {@link #MIN_OFFSET}..{@link #MAX_OFFSET}. The anchor still decides which
+     * screen edge the indicator hugs, so dragging adds to a corner instead of replacing it and the
+     * corner option never becomes dead configuration.
+     */
+    public int getOffsetX() {
+        return offsetX;
+    }
+
+    /** Vertical drag offset from the corner anchor. See {@link #getOffsetX()} for the anchor rule. */
+    public int getOffsetY() {
+        return offsetY;
     }
 }
