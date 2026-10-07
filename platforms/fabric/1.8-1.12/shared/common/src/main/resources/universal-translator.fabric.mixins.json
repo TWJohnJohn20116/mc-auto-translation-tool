@@ -3,6 +3,7 @@
   "package": "org.universaltranslator.fabric.mixin",
   "compatibilityLevel": "JAVA_8",
   "client": [
+    "InGameHudStatusIndicatorMixin",
     "TextRendererMixin",
     "ChatGuiMixin",
     "ScreenMixin",
