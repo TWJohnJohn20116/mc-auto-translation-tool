@@ -67,10 +67,11 @@ abstract class InGameHudStatusIndicatorMixin {
                 break;
         }
         Minecraft client = Minecraft.getInstance();
-        Window window = client.window;
-        if (window == null) {
-            return;
-        }
+        // Minecraft's own window member is not visible to a mixin outside its package, and GameGui
+        // exposes no accessor for it. Constructing a Window re-reads the current display size, which
+        // is exactly the GUI-scaled size the HUD draws in, and it relies only on the public
+        // Window(Minecraft) constructor. The object is small and this runs once per frame.
+        Window window = new Window(client);
         int windowWidth = (int) window.getScaledWidth();
         int windowHeight = (int) window.getScaledHeight();
         HudIndicatorCorner corner = settings.getCorner();
