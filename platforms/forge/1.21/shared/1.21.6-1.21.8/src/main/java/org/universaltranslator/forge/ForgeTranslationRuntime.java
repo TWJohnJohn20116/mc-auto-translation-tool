@@ -4,6 +4,7 @@ import net.minecraft.client.Minecraft;
 import org.universaltranslator.core.RenderTranslationSession;
 import org.universaltranslator.core.MinecraftContentScope;
 import org.universaltranslator.core.HomeQuickSettingsState;
+import org.universaltranslator.core.HudIndicatorCorner;
 import org.universaltranslator.core.TargetLanguage;
 import org.universaltranslator.core.PersistentTranslationCache;
 import org.universaltranslator.core.TextKind;
@@ -395,8 +396,11 @@ public final class ForgeTranslationRuntime {
 
     private static HomeQuickSettingsState homeSettingsState(ForgeConfig config) {
         return config == null
-                ? new HomeQuickSettingsState(false, true, TargetLanguage.SIMPLIFIED_CHINESE)
+                ? new HomeQuickSettingsState(
+                        false, true, TargetLanguage.SIMPLIFIED_CHINESE,
+                        true, HudIndicatorCorner.TOP_LEFT)
                 : new HomeQuickSettingsState(
-                        config.enabled, config.translateVanilla, config.targetLanguage);
+                        config.enabled, config.translateVanilla, config.targetLanguage,
+                        config.hudIndicator, config.hudIndicatorCorner);
     }
 }

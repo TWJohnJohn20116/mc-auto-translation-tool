@@ -7,6 +7,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.universaltranslator.core.HudIndicatorCorner;
 import org.universaltranslator.forge.ForgeTranslationRuntime;
 
 /**
@@ -26,10 +27,17 @@ abstract class InGameHudStatusIndicatorMixin {
             at = @At("RETURN"))
     private void universalTranslator$renderStatusIndicator(
             GuiGraphicsExtractor graphics, DeltaTracker deltaTracker, CallbackInfo callback) {
-        int left = 4;
-        int top = 4;
-        int right = left + 6;
-        int bottom = top + 6;
+        // Read the settings first: a disabled indicator draws nothing at all.
+        if (!ForgeTranslationRuntime.homeSettings().isHudIndicator()) {
+            return;
+        }
+        HudIndicatorCorner corner = ForgeTranslationRuntime.homeSettings().getHudIndicatorCorner();
+        int margin = 4;
+        int size = 6;
+        int left = corner.isRight() ? graphics.guiWidth() - margin - size : margin;
+        int top = corner.isBottom() ? graphics.guiHeight() - margin - size : margin;
+        int right = left + size;
+        int bottom = top + size;
         int borderColor = 0xFF000000;
         // One pixel of opaque black keeps the indicator readable against sky and bright terrain.
         graphics.fill(left - 1, top - 1, right + 1, top, borderColor);

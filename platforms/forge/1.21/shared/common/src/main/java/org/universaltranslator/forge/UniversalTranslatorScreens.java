@@ -5,6 +5,7 @@ import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import org.universaltranslator.core.DiagnosticsLogExporter;
+import org.universaltranslator.core.HudIndicatorCorner;
 import org.universaltranslator.core.OfflineModel;
 import org.universaltranslator.core.SettingsSelectionList;
 import org.universaltranslator.core.SettingsUiAnimation;
@@ -30,6 +31,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     private boolean translateOutgoing;
     private boolean translatePlayerNames;
     private boolean animatedUi;
+    private boolean hudIndicator;
     private boolean diskCache;
     private boolean offlineAutoDownload;
     private OfflineModel offlineModel;
@@ -37,6 +39,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     private TranslationDisplayMode displayMode;
     private boolean translateEnglishOnly;
     private TranslationTextColor translatedTextColor;
+    private HudIndicatorCorner hudIndicatorCorner;
     private String provider;
     private String llmEndpoint;
     private String llmApiKey;
@@ -61,6 +64,8 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     private EditBox blockedKeywords;
     private Button enabledButton;
     private Button uiStyleButton;
+    private Button hudIndicatorButton;
+    private Button hudCornerButton;
     private Button chatButton;
     private Button otherButton;
     private Button vanillaButton;
@@ -91,6 +96,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         this.translateOutgoing = config.translateOutgoing;
         this.translatePlayerNames = config.translatePlayerNames;
         this.animatedUi = config.animatedUi;
+        this.hudIndicator = config.hudIndicator;
         this.diskCache = config.diskCache;
         this.offlineAutoDownload = config.offlineAutoDownload;
         this.offlineModel = config.offlineModel;
@@ -98,6 +104,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         this.displayMode = config.displayMode;
         this.translateEnglishOnly = config.translateEnglishOnly;
         this.translatedTextColor = config.translatedTextColor;
+        this.hudIndicatorCorner = config.hudIndicatorCorner;
         this.provider = config.provider;
         this.llmEndpoint = config.editorEndpoint(config.provider);
         this.llmApiKey = config.editorApiKey(config.provider);
@@ -156,12 +163,18 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
             animatedUi = !animatedUi;
             animationStartedNanos = System.nanoTime();
         }));
+        hudIndicatorButton = addRenderableWidget(button(left, layout.contentRow(3), layout.buttonWidth,
+                () -> hudIndicator = !hudIndicator));
+        hudCornerButton = addRenderableWidget(button(layout.right, layout.contentRow(3), layout.buttonWidth, () -> {
+            HudIndicatorCorner[] corners = HudIndicatorCorner.values();
+            hudIndicatorCorner = corners[(hudIndicatorCorner.ordinal() + 1) % corners.length];
+        }));
         diagnosticsButton = addRenderableWidget(Button.builder(
                 Component.translatable("screen.universal_translator.diagnostics.title"), button -> {
                     if (minecraft != null) {
                         minecraft.setScreen(new UniversalTranslatorDiagnosticsScreen(this, original));
                     }
-                }).bounds(left, layout.contentRow(3), layout.totalWidth, 20).build());
+                }).bounds(left, layout.contentRow(4), layout.totalWidth, 20).build());
 
         // --- Tab 2: Scopes (範圍) ---
         chatButton = addRenderableWidget(button(left, layout.contentRow(0), layout.buttonWidth,
@@ -228,6 +241,10 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         uiStyleButton.setMessage(Component.translatable("screen.universal_translator.option.ui_style",
                 tr(animatedUi ? "value.universal_translator.ui_animated"
                         : "value.universal_translator.ui_classic")));
+        hudIndicatorButton.setMessage(Component.translatable("screen.universal_translator.option.hud_indicator",
+                onOff(hudIndicator)));
+        hudCornerButton.setMessage(Component.translatable("screen.universal_translator.option.hud_corner",
+                cornerLabel(hudIndicatorCorner)));
         enabledButton.setMessage(Component.translatable("screen.universal_translator.option.automatic", onOff(enabled)));
         cacheButton.setMessage(Component.translatable("screen.universal_translator.option.cache", onOff(diskCache)));
         chatButton.setMessage(Component.translatable("screen.universal_translator.option.chat", onOff(translateChat)));
@@ -256,6 +273,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                 "screen.universal_translator.option.outgoing_target",
                 TargetLanguage.displayName(outgoingTargetLanguage)));
         outgoingTargetLanguageButton.active = translateOutgoing;
+        hudCornerButton.active = hudIndicator;
         refreshTabButtons();
     }
 
@@ -273,6 +291,8 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         cacheButton.visible = isGeneral;
         uiStyleButton.visible = isGeneral;
         diagnosticsButton.visible = isGeneral;
+        hudIndicatorButton.visible = isGeneral;
+        hudCornerButton.visible = isGeneral;
 
         // Tab 2: Scopes
         chatButton.visible = isScopes;
@@ -320,7 +340,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                     blockedKeywords.getValue(), targetLanguage, outgoingTargetLanguage, displayMode,
                     translateEnglishOnly, translatedTextColor, provider, endpoint.getValue(),
                     llmEndpoint, llmApiKey, llmModel, offlineAutoDownload, offlineModel,
-                    apiFallback, diskCache, animatedUi);
+                    apiFallback, diskCache, animatedUi, hudIndicator, hudIndicatorCorner);
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
                     && (updated.tencentSecretId.isEmpty() || updated.tencentSecretKey.isEmpty())) {
                 throw new IllegalArgumentException(tr("error.universal_translator.tencent_credentials"));
@@ -388,7 +408,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                         width / 2, layout.contentRow(2) + 6, 0xFFA0A0A0);
             } else if (activeTab == Tab.GENERAL) {
                 graphics.centered(Component.translatable("screen.universal_translator.info.keybind"),
-                        width / 2, layout.contentRow(3) + 24, 0xFFA0A0A0);
+                        width / 2, layout.contentRow(4) + 24, 0xFFA0A0A0);
             } else if (activeTab == Tab.ENGINE) {
                 graphics.centered(Component.translatable(isOffline()
                                 ? "screen.universal_translator.info.offline"
@@ -518,6 +538,10 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
 
     private static String colorLabel(TranslationTextColor color) {
         return tr("value.universal_translator.color." + color.configName().replace('-', '_'));
+    }
+
+    private static String cornerLabel(HudIndicatorCorner corner) {
+        return tr("value.universal_translator.hud_corner." + corner.configName().replace('-', '_'));
     }
 
     private static String tr(String key, Object... arguments) {
