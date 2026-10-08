@@ -38,7 +38,37 @@ public final class JsonStrings {
         if (json == null || json.trim().isEmpty()) {
             throw new IllegalArgumentException("JSON string is empty");
         }
-        return new Parser(json).parse();
+        try {
+            return new Parser(json).parse();
+        } catch (IllegalArgumentException malformed) {
+            // A bare "Invalid JSON value" says nothing about what the server actually sent, which is
+            // the first thing anyone needs when an endpoint answers 200 with a non-JSON body.
+            String reason = malformed.getMessage() == null ? "Invalid JSON" : malformed.getMessage();
+            throw new IllegalArgumentException(reason + bodyPreview(json), malformed);
+        }
+    }
+
+    /**
+     * Bounded single-line excerpt of a body, for error messages that must say what came back.
+     *
+     * <p>Sixty characters is enough to tell an HTML error page from a provider JSON error and
+     * short enough to survive a Minecraft chat line.
+     *
+     * @param json raw response body, possibly {@code null}
+     * @return an excerpt prefixed for appending to a sentence, never {@code null}
+     */
+    public static String bodyPreview(String json) {
+        String value = json == null ? "" : json;
+        int limit = Math.min(value.length(), 60);
+        StringBuilder excerpt = new StringBuilder(limit + 24);
+        for (int index = 0; index < limit; index++) {
+            char character = value.charAt(index);
+            excerpt.append(character < 0x20 ? ' ' : character);
+        }
+        if (value.length() > limit) {
+            excerpt.append('\u2026');
+        }
+        return " (body starts with: \"" + excerpt + "\")";
     }
 
     /** Reads a string through a small JSON path such as choices[0].message.content. */

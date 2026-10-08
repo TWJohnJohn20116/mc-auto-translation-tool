@@ -161,4 +161,20 @@
   ,"screen.universal_translator.llm.select_hint": "點擊模型即套用"
   ,"screen.universal_translator.llm.fetch_empty": "伺服器沒有回傳任何模型"
   ,"screen.universal_translator.llm.select_back": "返回"
+
+  ,"screen.universal_translator.engine.model": "模型：%s"
+  ,"screen.universal_translator.engine.test": "測試連線"
+  ,"screen.universal_translator.engine.check": "檢查設定"
+  ,"screen.universal_translator.engine.testing": "正在測試…"
+  ,"screen.universal_translator.engine.test_ok_config": "設定完整"
+  ,"screen.universal_translator.engine.summary": "端點 %s ・ 金鑰 %s"
+  ,"screen.universal_translator.engine.key_set": "已設定"
+  ,"screen.universal_translator.engine.key_unset": "未設定"
+  ,"screen.universal_translator.engine.config_file": "此服務的簽名欄位請在設定檔填寫"
+
+  ,"screen.universal_translator.engine.test_not_json": "端點有回應，但回傳的不是 JSON；請確認 LLM API 位址"
+  ,"screen.universal_translator.engine.test_ok_libre": "連線成功"
+
+  ,"screen.universal_translator.engine.test_ok_probe": "連線成功（模型 %s 有回應）"
+  ,"screen.universal_translator.engine.test_need_model": "請先設定模型"
 }

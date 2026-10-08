@@ -47,6 +47,12 @@ public final class ProviderSelfTest {
         parsesBaiduMultiLineTransResult();
         parsesOpenAiResponseWithReasoningContent();
         parsesOpenAiModelCatalog();
+        reportsNonJsonModelCatalogBodies();
+        explainsNonJsonBodies();
+        probesTheConfiguredChatEndpoint();
+        normalizesBaseUrlEndpoints();
+        reportsProviderErrorsFromContentlessResponses();
+        retriesReasoningOnlyResponsesWithFullBudget();
         derivesModelCatalogEndpoint();
         fetchesModelCatalogWithGet();
         System.out.println("ProviderSelfTest: all checks passed");
@@ -76,6 +82,30 @@ public final class ProviderSelfTest {
         }
         oversized.append("]}");
         assertEquals(OpenAiModelCatalog.MAXIMUM_MODELS, OpenAiModelCatalog.parse(oversized.toString()).size());
+    }
+
+    private static void reportsNonJsonModelCatalogBodies() {
+        // A 2xx body that is not JSON must not be reported as a working endpoint: the settings
+        // screen would otherwise call an HTML error page a successful connection.
+        assertFalse(OpenAiModelCatalog.readCatalog("<!DOCTYPE html><html>502").jsonBody());
+        assertFalse(OpenAiModelCatalog.readCatalog("not json").jsonBody());
+        assertFalse(OpenAiModelCatalog.readCatalog("").jsonBody());
+        assertFalse(OpenAiModelCatalog.readCatalog(null).jsonBody());
+        assertEquals(Collections.emptyList(), OpenAiModelCatalog.readCatalog("<!DOCTYPE html>").models());
+        assertTrue(OpenAiModelCatalog.readCatalog("{\"data\":[]}").jsonBody());
+        assertEquals(Collections.emptyList(), OpenAiModelCatalog.readCatalog("{\"data\":[]}").models());
+        assertTrue(OpenAiModelCatalog.readCatalog("{\"data\":[{\"id\":\"a\"}]}").jsonBody());
+        assertEquals(Collections.singletonList("a"),
+                OpenAiModelCatalog.readCatalog("{\"data\":[{\"id\":\"a\"}]}").models());
+    }
+
+    private static void explainsNonJsonBodies() {
+        try {
+            JsonStrings.parse("<!DOCTYPE html>");
+            throw new AssertionError("Expected a JSON parse failure");
+        } catch (IllegalArgumentException expected) {
+            assertTrue(expected.getMessage().contains("<!DOCTYPE html>"));
+        }
     }
 
     private static void derivesModelCatalogEndpoint() {
@@ -135,6 +165,144 @@ public final class ProviderSelfTest {
         }
         if (serverFailure.get() != null) {
             throw new AssertionError("Local model catalog test server failed", serverFailure.get());
+        }
+    }
+
+    private static void probesTheConfiguredChatEndpoint() throws Exception {
+        ServerSocket server = new ServerSocket(0, 3, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        AtomicReference<String> requestLine = new AtomicReference<String>();
+        AtomicReference<String> requestBody = new AtomicReference<String>();
+        AtomicReference<String> authorization = new AtomicReference<String>();
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread thread = new Thread(() -> {
+            try {
+                for (int index = 0; index < 3; index++) {
+                    try (Socket socket = server.accept()) {
+                        HttpRequest request = readRequest(socket.getInputStream(),
+                                "POST /v1/chat/completions HTTP/1.");
+                        requestLine.set(request.requestLine);
+                        requestBody.set(request.body);
+                        authorization.set(request.headers.get("authorization"));
+                        String response;
+                        if (index == 0) {
+                            response = "{\"choices\":[{\"message\":{\"content\":\"ping\"}}]}";
+                        } else if (index == 1) {
+                            // A relay's own error object behind HTTP 200 must not look healthy.
+                            response = "{\"error\":{\"message\":\"Insufficient Balance\"}}";
+                        } else {
+                            response = "<!DOCTYPE html><html>gateway</html>";
+                        }
+                        writeResponse(socket.getOutputStream(), 200, response);
+                    }
+                }
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-probe");
+        thread.setDaemon(true);
+        thread.start();
+        try {
+            OpenAiChatTranslationProvider provider = new OpenAiChatTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v1/chat/completions",
+                    "local-secret", "probe-model", "openai-compatible");
+            assertTrue(provider.probe().contains("\"choices\""));
+            assertEquals("POST /v1/chat/completions HTTP/1.1", requestLine.get());
+            assertEquals("Bearer local-secret", authorization.get());
+            assertTrue(requestBody.get().contains("\"model\":\"probe-model\""));
+            assertTrue(requestBody.get().contains("\"max_tokens\":1"));
+            assertTrue(requestBody.get().contains("\"stream\":false"));
+            assertThrows(provider::probe);
+            assertThrows(provider::probe);
+        } finally {
+            server.close();
+            thread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local probe test server failed", serverFailure.get());
+        }
+    }
+
+    private static void normalizesBaseUrlEndpoints() {
+        // A relay's advertised API address is https://host/v1; the chat path is implied.
+        assertEquals("https://relay.example/v1/chat/completions",
+                OpenAiChatTranslationProvider.normalizeEndpoint("https://relay.example/v1"));
+        assertEquals("https://relay.example/v1/chat/completions",
+                OpenAiChatTranslationProvider.normalizeEndpoint("https://relay.example/v1/"));
+        assertEquals("https://relay.example/v1/chat/completions",
+                OpenAiChatTranslationProvider.normalizeEndpoint(" https://relay.example/v1 "));
+        // Everything else passes through untouched.
+        assertEquals("https://api.deepseek.com/chat/completions",
+                OpenAiChatTranslationProvider.normalizeEndpoint("https://api.deepseek.com/chat/completions"));
+        assertEquals("https://azure.example/openai/deployments/d/chat/completions?api-version=2024-10-21",
+                OpenAiChatTranslationProvider.normalizeEndpoint(
+                        "https://azure.example/openai/deployments/d/chat/completions?api-version=2024-10-21"));
+        assertEquals("http://127.0.0.1:8080/v1/chat/completions",
+                OpenAiChatTranslationProvider.normalizeEndpoint("http://127.0.0.1:8080/v1/chat/completions"));
+    }
+
+    private static void reportsProviderErrorsFromContentlessResponses() {
+        // A relay that answers 200 with its own error object must say so, not "no content".
+        assertTrue(OpenAiChatTranslationProvider.describeMissingContent(
+                "{\"error\":{\"message\":\"Insufficient Balance\",\"type\":\"unknown_error\"}}")
+                .contains("Insufficient Balance"));
+        assertTrue(OpenAiChatTranslationProvider.describeMissingContent(
+                "{\"message\":\"model deepseek-v4.1-flash not found\"}")
+                .contains("model deepseek-v4.1-flash not found"));
+        assertTrue(OpenAiChatTranslationProvider.describeMissingContent("{\"unexpected\":true}")
+                .contains("did not contain translated content"));
+        assertTrue(OpenAiChatTranslationProvider.describeMissingContent("<!DOCTYPE html>")
+                .contains("<!DOCTYPE html>"));
+        assertTrue(OpenAiChatTranslationProvider.describeMissingContent(
+                "{\"choices\":[{\"message\":{\"content\":\"\",\"reasoning_content\":\"thinking\"}}]}")
+                .contains("reasoning content"));
+    }
+
+    private static void retriesReasoningOnlyResponsesWithFullBudget() throws Exception {
+        ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        AtomicReference<String> firstBody = new AtomicReference<String>();
+        AtomicReference<String> secondBody = new AtomicReference<String>();
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread thread = new Thread(() -> {
+            try {
+                for (int index = 0; index < 2; index++) {
+                    try (Socket socket = server.accept()) {
+                        HttpRequest request = readRequest(socket.getInputStream(),
+                                "POST /v1/chat/completions HTTP/1.");
+                        if (index == 0) {
+                            firstBody.set(request.body);
+                        } else {
+                            secondBody.set(request.body);
+                        }
+                        writeResponse(socket.getOutputStream(), 200, index == 0
+                                ? "{\"choices\":[{\"message\":{\"content\":\"\","
+                                        + "\"reasoning_content\":\"thinking\"}}]}"
+                                : "{\"choices\":[{\"message\":{\"content\":\"你好\"}}]}");
+                    }
+                }
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-reasoning-retry");
+        thread.setDaemon(true);
+        thread.start();
+        try {
+            OpenAiChatTranslationProvider provider = new OpenAiChatTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v1/chat/completions",
+                    "", "reasoner", "openai-compatible");
+            String translated = provider.translate(
+                    new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT));
+            assertEquals("你好", translated);
+            // A short input still gets the reasoning floor, and the retry spends the full budget.
+            assertTrue(firstBody.get().contains("\"max_tokens\":512"));
+            assertTrue(secondBody.get().contains("\"max_tokens\":2048"));
+        } finally {
+            server.close();
+            thread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local reasoning retry test server failed", serverFailure.get());
         }
     }
 
@@ -313,9 +481,10 @@ public final class ProviderSelfTest {
         assertEquals(1, attempts.get());
     }
 
-    private static HttpRequest readRequest(InputStream input) throws IOException {
+    private static HttpRequest readRequest(InputStream input, String expectedRequestLinePrefix)
+            throws IOException {
         String requestLine = readAsciiLine(input);
-        assertTrue(requestLine.startsWith("PUT /translate HTTP/1."));
+        assertTrue(requestLine.startsWith(expectedRequestLinePrefix));
         Map<String, String> headers = new LinkedHashMap<String, String>();
         String line;
         while (!(line = readAsciiLine(input)).isEmpty()) {
@@ -333,7 +502,11 @@ public final class ProviderSelfTest {
             if (count < 0) throw new IOException("Unexpected end of HTTP request body");
             offset += count;
         }
-        return new HttpRequest(headers, new String(body, StandardCharsets.UTF_8));
+        return new HttpRequest(requestLine, headers, new String(body, StandardCharsets.UTF_8));
+    }
+
+    private static HttpRequest readRequest(InputStream input) throws IOException {
+        return readRequest(input, "PUT /translate HTTP/1.");
     }
 
     private static String readAsciiLine(InputStream input) throws IOException {
@@ -358,10 +531,12 @@ public final class ProviderSelfTest {
     }
 
     private static final class HttpRequest {
+        private final String requestLine;
         private final Map<String, String> headers;
         private final String body;
 
-        private HttpRequest(Map<String, String> headers, String body) {
+        private HttpRequest(String requestLine, Map<String, String> headers, String body) {
+            this.requestLine = requestLine;
             this.headers = headers;
             this.body = body;
         }
