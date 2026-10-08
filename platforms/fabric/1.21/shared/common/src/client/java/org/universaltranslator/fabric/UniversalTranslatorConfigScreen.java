@@ -1,5 +1,9 @@
 package org.universaltranslator.fabric;
 
+import java.net.URI;
+import java.util.Collections;
+import java.util.List;
+
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
@@ -19,6 +23,11 @@ import org.universaltranslator.core.TranslationProviderCatalog;
 import org.universaltranslator.core.SettingsUiAnimation;
 import org.universaltranslator.core.SettingsScreenLayout;
 import org.universaltranslator.core.SettingsSelectionList;
+import org.universaltranslator.core.net.EndpointPolicy;
+import org.universaltranslator.core.net.HttpJsonClient;
+import org.universaltranslator.core.net.JsonStrings;
+import org.universaltranslator.core.provider.OpenAiChatTranslationProvider;
+import org.universaltranslator.core.provider.OpenAiModelCatalog;
 
 /** Minimal dependency-free settings screen, opened with U by default. */
 final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScreenBase {
@@ -28,6 +37,15 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
     /** Tallest the preview panel may be. It shrinks on short windows so it never hits Save. */
     private static final int HUD_DRAG_PREVIEW_HEIGHT = 48;
     private static final int HUD_DRAG_HANDLE_SIZE = 8;
+    /** Height of one row in the engine tab's model picker overlay. */
+    private static final int MODEL_ROW_HEIGHT = 12;
+    /** Y of the first model row; the picker title sits above it. */
+    private static final int MODEL_LIST_TOP = 46;
+    /** Room kept under the model rows for the paging, back, and hint lines. */
+    private static final int MODEL_LIST_FOOTER_HEIGHT = 62;
+    private static final String LIBRETRANSLATE_PROVIDER = "libretranslate";
+    private static final String TRANSLATE_PATH = "/translate";
+    private static final String LANGUAGES_PATH = "/languages";
 
     private final Screen parent;
     private final FabricConfig original;
@@ -77,6 +95,10 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
     private ButtonWidget tabOutgoingButton;
     private ButtonWidget tabHudButton;
     private ButtonWidget llmConfigButton;
+    private ButtonWidget modelPickButton;
+    private ButtonWidget fetchModelsButton;
+    private ButtonWidget testConnectionButton;
+    private ButtonWidget checkSettingsButton;
 
     private TextFieldWidget endpoint;
     private TextFieldWidget blockedKeywords;
@@ -106,6 +128,14 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
     private ButtonWidget targetLanguageButton;
     private ButtonWidget outgoingTargetLanguageButton;
     private String status = "";
+    /** Result of the engine tab's connection test; written by its worker thread. */
+    private volatile String testStatus = "";
+    private volatile boolean testStatusIsError;
+    private boolean testing;
+    private boolean fetchingModels;
+    private volatile List<String> fetchedModels = Collections.emptyList();
+    private volatile boolean modelListOpen;
+    private int modelPage;
     private long animationStartedNanos = System.nanoTime();
     private SettingsSelectionList.Kind openSelection = SettingsSelectionList.Kind.NONE;
 
@@ -256,30 +286,34 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
         this.blockedKeywords.setSuggestion(tr("screen.universal_translator.blocked_keywords_hint"));
 
         // --- Tab 3: Engine (引擎) ---
+        // The engine rows are centred in the free band (see engineRow) so the tab does not sit in
+        // the top third of an otherwise empty panel, and every row is reachable without moving the
+        // shared Save/Cancel row that the other tabs and the HUD preview depend on.
         this.providerButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
             openSelection = SettingsSelectionList.Kind.PROVIDER;
-        }).dimensions(left, layout.contentRow(0), layout.totalWidth, 20).build());
+        }).dimensions(left, engineRow(0), layout.totalWidth, 20).build());
 
         this.modelButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
             offlineModel = offlineModel.next();
             refreshLabels();
-        }).dimensions(left, layout.contentRow(1), layout.buttonWidth, 20).build());
+        }).dimensions(left, engineRow(1), layout.buttonWidth, 20).build());
 
         this.downloadButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
             offlineAutoDownload = !offlineAutoDownload;
             refreshLabels();
-        }).dimensions(layout.right, layout.contentRow(1), layout.buttonWidth, 20).build());
+        }).dimensions(layout.right, engineRow(1), layout.buttonWidth, 20).build());
 
-        this.endpoint = addDrawableChild(new TextFieldWidget(
-                this.textRenderer, left, layout.contentRow(1), layout.totalWidth, 20,
-                Text.translatable("screen.universal_translator.endpoint")));
-        this.endpoint.setMaxLength(512);
-        this.endpoint.setText(endpointValue);
+        this.modelPickButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+            if (fetchedModels.isEmpty()) {
+                fetchModels();
+            } else {
+                modelListOpen = true;
+            }
+        }).dimensions(left, engineRow(1), layout.buttonWidth, 20).build());
 
-        this.fallbackButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
-            apiFallback = !apiFallback;
-            refreshLabels();
-        }).dimensions(left, layout.contentRow(2), layout.totalWidth, 20).build());
+        this.fetchModelsButton = addDrawableChild(ButtonWidget.builder(
+                Text.translatable("screen.universal_translator.llm.fetch_models"), button -> fetchModels())
+                .dimensions(layout.right, engineRow(1), layout.buttonWidth, 20).build());
 
         this.llmConfigButton = addDrawableChild(ButtonWidget.builder(
                 Text.translatable("screen.universal_translator.option.llm_settings"), button -> {
@@ -287,7 +321,24 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
                 this.client.setScreen(new UniversalTranslatorLlmConfigScreen(
                         this, llmEndpoint, llmModel, !llmApiKey.isEmpty()));
             }
-        }).dimensions(left, layout.contentRow(2), layout.totalWidth, 20).build());
+        }).dimensions(left, engineRow(2), layout.buttonWidth, 20).build());
+
+        this.testConnectionButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> testConnection())
+                .dimensions(layout.right, engineRow(2), layout.buttonWidth, 20).build());
+
+        this.checkSettingsButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> testConnection())
+                .dimensions(left, engineRow(2), layout.totalWidth, 20).build());
+
+        this.fallbackButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+            apiFallback = !apiFallback;
+            refreshLabels();
+        }).dimensions(left, engineRow(2), layout.totalWidth, 20).build());
+
+        this.endpoint = addDrawableChild(new TextFieldWidget(
+                this.textRenderer, left, engineRow(1), layout.totalWidth, 20,
+                Text.translatable("screen.universal_translator.endpoint")));
+        this.endpoint.setMaxLength(512);
+        this.endpoint.setText(endpointValue);
 
         // --- Tab 4: Outgoing (傳送) ---
         this.outgoingButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
@@ -385,6 +436,13 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
                 "screen.universal_translator.option.player_names", onOff(translatePlayerNames)));
         cacheButton.setMessage(Text.translatable("screen.universal_translator.option.cache", onOff(diskCache)));
         providerButton.setMessage(Text.translatable("screen.universal_translator.option.provider", providerLabel()));
+        String modelValue = llmModel == null || llmModel.trim().isEmpty()
+                ? tr("screen.universal_translator.engine.key_unset") : llmModel.trim();
+        modelPickButton.setMessage(Text.translatable("screen.universal_translator.engine.model", modelValue));
+        testConnectionButton.setMessage(Text.translatable("screen.universal_translator.engine.test"));
+        checkSettingsButton.setMessage(Text.translatable(LIBRETRANSLATE_PROVIDER.equalsIgnoreCase(provider)
+                ? "screen.universal_translator.engine.test"
+                : "screen.universal_translator.engine.check"));
         displayButton.setMessage(Text.translatable("screen.universal_translator.option.display",
                 tr(displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED
                         ? "value.universal_translator.display_bilingual"
@@ -432,11 +490,21 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
         providerButton.visible = isEngine;
         boolean offline = isOffline();
         boolean llm = isLlm();
+        boolean libre = LIBRETRANSLATE_PROVIDER.equalsIgnoreCase(provider);
         modelButton.visible = isEngine && offline;
         downloadButton.visible = isEngine && offline;
         fallbackButton.visible = isEngine && offline;
-        endpoint.visible = isEngine && !offline;
         llmConfigButton.visible = isEngine && llm;
+        modelPickButton.visible = isEngine && llm;
+        fetchModelsButton.visible = isEngine && llm;
+        // The endpoint box edits the LibreTranslate endpoint key. Showing it for every online
+        // provider let a DeepSeek user edit a value DeepSeek never reads.
+        endpoint.visible = isEngine && libre;
+        testConnectionButton.visible = isEngine && llm;
+        checkSettingsButton.visible = isEngine && !offline && !llm;
+        if (!isEngine) {
+            modelListOpen = false;
+        }
 
         // Tab 4: Outgoing
         outgoingButton.visible = isOutgoing;
@@ -567,6 +635,9 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
         if (!status.isEmpty()) {
             context.drawCenteredTextWithShadow(this.textRenderer, Text.literal(status),
                     this.width / 2, messageY, 0xFFFF5555);
+        } else if (!testStatus.isEmpty()) {
+            context.drawCenteredTextWithShadow(this.textRenderer, Text.literal(testStatus),
+                    this.width / 2, messageY, testStatusIsError ? 0xFFFF5555 : 0xFF55FF55);
         } else if (!runtimeStatus.isEmpty()) {
             context.drawCenteredTextWithShadow(this.textRenderer, Text.literal(runtimeStatus),
                     this.width / 2, messageY,
@@ -580,13 +651,10 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
                 context.drawCenteredTextWithShadow(this.textRenderer,
                         Text.translatable("screen.universal_translator.info.keybind"),
                         this.width / 2, layout.contentRow(3) + 24, 0xFFA0A0A0);
-            } else if (activeTab == Tab.ENGINE) {
-                context.drawCenteredTextWithShadow(this.textRenderer,
-                        Text.translatable(isOffline()
-                                ? "screen.universal_translator.info.offline"
-                                : "screen.universal_translator.info.api"),
-                        this.width / 2, layout.contentRow(3) + 6, 0xFFFFAA55);
             }
+        }
+        if (activeTab == Tab.ENGINE) {
+            renderEngineInfo(context);
         }
         super.render(context, mouseX, mouseY, delta);
         if (animatedUi) {
@@ -601,10 +669,19 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
         if (openSelection != SettingsSelectionList.Kind.NONE) {
             renderSelection(context, mouseX, mouseY);
         }
+        if (activeTab == Tab.ENGINE && modelListOpen) {
+            renderModelList(context, mouseX, mouseY);
+        }
     }
 
     @Override
     protected boolean handleSelectionClick(double mouseX, double mouseY) {
+        // The catalog overlay owns the click first: the shared base calls this after the HUD drag
+        // seam, which refuses on the engine tab, so the picker still gets first claim.
+        if (activeTab == Tab.ENGINE && modelListOpen) {
+            handleModelListClick(mouseX, mouseY);
+            return true;
+        }
         return openSelection != SettingsSelectionList.Kind.NONE
                 && selectFromList(mouseX, mouseY);
     }
@@ -784,6 +861,9 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
             if (openSelection == SettingsSelectionList.Kind.PROVIDER) {
                 provider = values[selected];
                 loadLlmSettings(provider);
+                fetchedModels = Collections.emptyList();
+                modelListOpen = false;
+                setTestStatus("", false);
             }
             else if (openSelection == SettingsSelectionList.Kind.TARGET_LANGUAGE) targetLanguage = values[selected];
             else outgoingTargetLanguage = values[selected];
@@ -808,6 +888,230 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
         if (openSelection == SettingsSelectionList.Kind.PROVIDER) return "screen.universal_translator.selection.provider";
         if (openSelection == SettingsSelectionList.Kind.TARGET_LANGUAGE) return "screen.universal_translator.selection.target_language";
         return "screen.universal_translator.selection.outgoing_language";
+    }
+
+    /**
+     * Top of the engine tab's control block: three control rows plus the read-only summary and the
+     * privacy hint, centred in the band between the tab bar and Save. The shared geometry is left
+     * alone because Save/Cancel and the HUD preview depend on it.
+     */
+    private int engineBlockTop() {
+        Layout layout = layout();
+        int blockHeight = layout.contentRowStep * 2 + 20 + 46;
+        int available = layout.saveY - 6 - layout.contentTop;
+        return layout.contentTop + Math.max(0, (available - blockHeight) / 2);
+    }
+
+    private int engineRow(int index) {
+        return engineBlockTop() + layout().contentRowStep * index;
+    }
+
+    /** Read-only engine facts plus the always-visible privacy hint. */
+    private void renderEngineInfo(DrawContext context) {
+        int y = engineRow(2) + 24;
+        if (isLlm()) {
+            context.drawCenteredTextWithShadow(this.textRenderer, Text.translatable(
+                            "screen.universal_translator.engine.summary",
+                            trimForDisplay(llmEndpoint),
+                            tr(llmApiKey == null || llmApiKey.isEmpty()
+                                    ? "screen.universal_translator.engine.key_unset"
+                                    : "screen.universal_translator.engine.key_set")),
+                    this.width / 2, y, 0xFFA0A0A0);
+        } else if (!isOffline() && !LIBRETRANSLATE_PROVIDER.equalsIgnoreCase(provider)) {
+            context.drawCenteredTextWithShadow(this.textRenderer,
+                    Text.translatable("screen.universal_translator.engine.config_file"),
+                    this.width / 2, y, 0xFFA0A0A0);
+        }
+        context.drawCenteredTextWithShadow(this.textRenderer,
+                Text.translatable(isOffline()
+                        ? "screen.universal_translator.info.offline"
+                        : "screen.universal_translator.info.api"),
+                this.width / 2, y + 18, 0xFFFFAA55);
+    }
+
+    /** Queries the configured LLM endpoint for its catalog and opens the picker. */
+    private void fetchModels() {
+        if (fetchingModels) {
+            return;
+        }
+        final String endpointValue = llmEndpoint;
+        final String keyValue = llmApiKey;
+        fetchingModels = true;
+        setTestStatus(tr("screen.universal_translator.llm.fetching"), false);
+        Thread worker = new Thread(() -> {
+            OpenAiModelCatalog.Catalog catalog = null;
+            String failure = "";
+            try {
+                catalog = OpenAiModelCatalog.fetchCatalog(endpointValue, keyValue);
+            } catch (Exception error) {
+                failure = describe(error);
+            }
+            fetchingModels = false;
+            if (!failure.isEmpty()) {
+                setTestStatus(tr("screen.universal_translator.llm.fetch_failed", failure), true);
+                return;
+            }
+            if (!catalog.jsonBody()) {
+                setTestStatus(tr("screen.universal_translator.engine.test_not_json"), true);
+                return;
+            }
+            if (catalog.models().isEmpty()) {
+                setTestStatus(tr("screen.universal_translator.llm.fetch_empty"), true);
+                return;
+            }
+            fetchedModels = catalog.models();
+            modelPage = 0;
+            modelListOpen = true;
+            setTestStatus("", false);
+        }, "universal-translator-model-list");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    /**
+     * Checks that the selected service is reachable: an LLM endpoint must answer with a model
+     * catalog, LibreTranslate must answer on its languages endpoint, and every other service is
+     * only checked for complete credentials because the screen owns no endpoint for it.
+     */
+    private void testConnection() {
+        if (testing) {
+            return;
+        }
+        final boolean llm = isLlm();
+        final boolean libre = LIBRETRANSLATE_PROVIDER.equalsIgnoreCase(provider);
+        final String endpointValue = llm ? llmEndpoint : endpoint.getText().trim();
+        final String keyValue = llmApiKey;
+        testing = true;
+        setTestStatus(tr("screen.universal_translator.engine.testing"), false);
+        Thread worker = new Thread(() -> {
+            String message;
+            boolean error;
+            try {
+                if (llm) {
+                    // Probe the endpoint translations actually use. Reading /models can succeed
+                    // while every translation fails on a wrong chat path or an unset model.
+                    String model = llmModel == null ? "" : llmModel.trim();
+                    if (model.isEmpty()) {
+                        message = tr("screen.universal_translator.engine.test_need_model");
+                        error = true;
+                    } else {
+                        new OpenAiChatTranslationProvider(endpointValue, keyValue, model, provider).probe();
+                        message = tr("screen.universal_translator.engine.test_ok_probe", model);
+                        error = false;
+                    }
+                } else if (libre) {
+                    String url = libreLanguagesUrl(endpointValue);
+                    EndpointPolicy.requireSafeEndpoint(url);
+                    String body = new HttpJsonClient(5000, 15000).get(URI.create(url),
+                            Collections.<String, String>emptyMap());
+                    // The languages catalog is JSON; anything else means this is not LibreTranslate.
+                    JsonStrings.parse(body);
+                    message = tr("screen.universal_translator.engine.test_ok_libre");
+                    error = false;
+                } else {
+                    original.validateProviderConfiguration();
+                    message = tr("screen.universal_translator.engine.test_ok_config");
+                    error = false;
+                }
+            } catch (Exception failure) {
+                message = describe(failure);
+                error = true;
+            }
+            testing = false;
+            setTestStatus(message, error);
+        }, "universal-translator-connection-test");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    private void setTestStatus(String message, boolean error) {
+        testStatus = message;
+        testStatusIsError = error;
+    }
+
+    private static String describe(Exception error) {
+        String message = error.getMessage();
+        return message == null || message.trim().isEmpty() ? error.getClass().getSimpleName() : message;
+    }
+
+    /** LibreTranslate exposes reachability on {@code /languages}, not on {@code /translate}. */
+    private static String libreLanguagesUrl(String endpoint) {
+        String base = endpoint == null ? "" : endpoint.trim();
+        while (base.endsWith("/")) {
+            base = base.substring(0, base.length() - 1);
+        }
+        if (base.endsWith(TRANSLATE_PATH)) {
+            base = base.substring(0, base.length() - TRANSLATE_PATH.length());
+        }
+        return base + LANGUAGES_PATH;
+    }
+
+    /** Keeps the read-only endpoint line inside the panel; the editor still holds the full value. */
+    private static String trimForDisplay(String value) {
+        String trimmed = value == null ? "" : value.trim();
+        return trimmed.length() <= 44 ? trimmed : "\u2026" + trimmed.substring(trimmed.length() - 43);
+    }
+
+    /** Draws the fetched catalog over the settings so a served model can be picked. */
+    private void renderModelList(DrawContext context, int mouseX, int mouseY) {
+        context.fill(0, 0, this.width, this.height, 0xFF101010);
+        context.drawCenteredTextWithShadow(this.textRenderer,
+                Text.translatable("screen.universal_translator.llm.select_model", fetchedModels.size()),
+                this.width / 2, 20, 0xFFFFFFFF);
+        int rows = modelRowsPerPage();
+        int first = modelPage * rows;
+        for (int row = 0; row < rows && first + row < fetchedModels.size(); row++) {
+            int rowY = MODEL_LIST_TOP + row * MODEL_ROW_HEIGHT;
+            boolean hovered = mouseY >= rowY && mouseY < rowY + MODEL_ROW_HEIGHT;
+            context.drawTextWithShadow(this.textRenderer,
+                    Text.literal((hovered ? "> " : "  ") + fetchedModels.get(first + row)),
+                    24, rowY, hovered ? 0xFFFFD060 : 0xFFE0E0E0);
+        }
+        int pages = modelPageCount(rows);
+        context.drawCenteredTextWithShadow(this.textRenderer,
+                Text.literal("< " + (modelPage + 1) + "/" + pages + " >"),
+                this.width / 2, this.height - 46, 0xFFFFFFFF);
+        context.drawCenteredTextWithShadow(this.textRenderer,
+                Text.translatable("screen.universal_translator.llm.select_back"),
+                this.width / 2, this.height - 30, 0xFFFFD060);
+        context.drawCenteredTextWithShadow(this.textRenderer,
+                Text.translatable("screen.universal_translator.llm.select_hint"),
+                this.width / 2, this.height - 16, 0xFFA0A0A0);
+    }
+
+    private void handleModelListClick(double mouseX, double mouseY) {
+        if (mouseY >= this.height - 54 && mouseY < this.height - 38) {
+            int pages = modelPageCount(modelRowsPerPage());
+            if (pages > 1) {
+                modelPage = mouseX < this.width / 2.0
+                        ? (modelPage + pages - 1) % pages : (modelPage + 1) % pages;
+            }
+            return;
+        }
+        if (mouseY >= this.height - 38 && mouseY < this.height - 20) {
+            modelListOpen = false;
+            return;
+        }
+        if (mouseY < MODEL_LIST_TOP) {
+            return;
+        }
+        int rows = modelRowsPerPage();
+        int row = (int) ((mouseY - MODEL_LIST_TOP) / MODEL_ROW_HEIGHT);
+        int index = modelPage * rows + row;
+        if (row >= rows || index >= fetchedModels.size()) {
+            return;
+        }
+        llmModel = fetchedModels.get(index);
+        modelListOpen = false;
+        refreshLabels();
+    }
+
+    private int modelRowsPerPage() {
+        return Math.max(3, (this.height - MODEL_LIST_TOP - MODEL_LIST_FOOTER_HEIGHT) / MODEL_ROW_HEIGHT);
+    }
+
+    private int modelPageCount(int rows) {
+        return Math.max(1, (fetchedModels.size() + rows - 1) / rows);
     }
 
     @Override
