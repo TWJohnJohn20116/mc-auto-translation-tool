@@ -1067,7 +1067,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         graphics.fill(0, 0, this.width, this.height, 0xFF101010);
         graphics.centeredText(this.font,
                 Component.translatable("screen.universal_translator.llm.select_model", fetchedModels.size()),
-                this.width / 2, 20, 0xFFFFFF);
+                this.width / 2, 20, 0xFFFFFFFF);
         int rows = modelRowsPerPage();
         int first = modelPage * rows;
         for (int row = 0; row < rows && first + row < fetchedModels.size(); row++) {
@@ -1079,11 +1079,11 @@ final class UniversalTranslatorConfigScreen extends Screen {
         }
         int pages = modelPageCount(rows);
         graphics.centeredText(this.font, Component.literal("< " + (modelPage + 1) + "/" + pages + " >"),
-                this.width / 2, this.height - 46, 0xFFFFFF);
+                this.width / 2, this.height - 46, 0xFFFFFFFF);
         graphics.centeredText(this.font, Component.translatable("screen.universal_translator.llm.select_back"),
                 this.width / 2, this.height - 30, 0xFFFFD060);
         graphics.centeredText(this.font, Component.translatable("screen.universal_translator.llm.select_hint"),
-                this.width / 2, this.height - 16, 0xA0A0A0);
+                this.width / 2, this.height - 16, 0xFFA0A0A0);
     }
 
     private void handleModelListClick(double mouseX, double mouseY) {
