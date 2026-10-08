@@ -215,6 +215,10 @@ final class UniversalTranslatorConfigScreen extends Screen {
             activeTab = Tab.OUTGOING;
             updateTabVisibility();
         }).dimensions(layout.tabX(3), layout.tabY(), layout.tabWidth(), 20).build());
+        this.tabHudButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+            activeTab = Tab.HUD;
+            updateTabVisibility();
+        }).dimensions(layout.tabX(4), layout.tabY(), layout.tabWidth(), 20).build());
 
         // --- Tab 1: General (常規) ---
         this.enabledButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
@@ -445,6 +449,26 @@ final class UniversalTranslatorConfigScreen extends Screen {
         outgoingTargetLanguageButton.active = translateOutgoing;
 
         refreshTabButtons();
+        hudIndicatorButton.setMessage(Text.translatable(
+                "screen.universal_translator.option.hud_indicator", onOff(hudIndicator)));
+        hudCornerButton.setMessage(Text.translatable(
+                "screen.universal_translator.option.hud_corner", hudCornerLabel(hudIndicatorCorner)));
+        hudSizeButton.setMessage(Text.translatable(
+                "screen.universal_translator.option.hud_size", hudIndicatorSize));
+        hudMarginButton.setMessage(Text.translatable(
+                "screen.universal_translator.option.hud_margin", hudIndicatorMargin));
+        hudColorButton.setMessage(Text.translatable(
+                "screen.universal_translator.option.hud_color", hudColorLabel(hudIndicatorColor)));
+        hudContentButton.setMessage(Text.translatable(
+                "screen.universal_translator.option.hud_content", hudContentLabel(hudIndicatorContent)));
+        hudVisibilityButton.setMessage(Text.translatable(
+                "screen.universal_translator.option.hud_visibility", hudVisibilityLabel(hudIndicatorVisibility)));
+        hudCornerButton.active = hudIndicator;
+        hudSizeButton.active = hudIndicator;
+        hudMarginButton.active = hudIndicator;
+        hudColorButton.active = hudIndicator;
+        hudContentButton.active = hudIndicator;
+        hudVisibilityButton.active = hudIndicator;
     }
 
     private void updateTabVisibility() {
@@ -495,6 +519,13 @@ final class UniversalTranslatorConfigScreen extends Screen {
         outgoingButton.visible = isOutgoing;
         outgoingTargetLanguageButton.visible = isOutgoing;
 
+        hudIndicatorButton.visible = isHud;
+        hudCornerButton.visible = isHud;
+        hudSizeButton.visible = isHud;
+        hudMarginButton.visible = isHud;
+        hudColorButton.visible = isHud;
+        hudContentButton.visible = isHud;
+        hudVisibilityButton.visible = isHud;
     }
 
     private void refreshTabButtons() {
