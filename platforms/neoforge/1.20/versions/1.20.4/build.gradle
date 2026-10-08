@@ -50,7 +50,7 @@ tasks.named("processResources", ProcessResources).configure {
     }
     inputs.property "version", project.version
     inputs.property "packFormat", 22
-    filesMatching("META-INF/neoforge.mods.toml") {
+    filesMatching("META-INF/mods.toml") {
         expand "version": project.version
     }
     filesMatching("pack.mcmeta") {
