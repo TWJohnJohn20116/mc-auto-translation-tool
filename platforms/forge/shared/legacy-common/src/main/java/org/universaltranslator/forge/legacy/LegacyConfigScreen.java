@@ -1044,6 +1044,9 @@ final class LegacyConfigScreen extends GuiScreen {
             if (openSelection == SettingsSelectionList.Kind.PROVIDER) {
                 provider = values[selected];
                 loadLlmSettings(provider);
+                fetchedModels = Collections.emptyList();
+                modelListOpen = false;
+                setTestStatus("", false);
                 openSelection = SettingsSelectionList.Kind.NONE;
                 initGui();
                 return true;
