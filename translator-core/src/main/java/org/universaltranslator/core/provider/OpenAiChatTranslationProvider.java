@@ -20,6 +20,8 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
     private static final int OFFLINE_PROMPT_OVERHEAD_TOKENS = 128;
     /** Upper bound for the completion budget of a hosted OpenAI-compatible endpoint. */
     private static final int MAXIMUM_TOKENS_LIMIT = 2048;
+    /** Smallest completion budget a hosted endpoint gets, so a reasoning model can finish. */
+    private static final int MINIMUM_COMPLETION_TOKENS = 512;
 
     private final URI endpoint;
     private final String apiKey;
@@ -86,34 +88,51 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         // long lines mid-sentence, and the clipped result was still short enough to pass
         // TranslationOutputValidator, so it entered the persistent cache.
         int inputLength = request.getText().length();
-        int maximumTokens = Math.max(64,
-                Math.min(inputLength * 2 + 32, MAXIMUM_TOKENS_LIMIT));
+        int requestedTokens = Math.min(inputLength * 2 + 32, MAXIMUM_TOKENS_LIMIT);
+        int maximumTokens;
         if (offline) {
             // The loopback llama.cpp server runs --ctx-size 1024 and shares that window
             // between prompt and completion. Cap the completion to what is left after a
             // conservative prompt estimate, with no floor that could overflow the context.
             int remaining = OFFLINE_CONTEXT_TOKENS - OFFLINE_PROMPT_OVERHEAD_TOKENS
                     - estimatePromptTokens(request.getText());
-            maximumTokens = Math.max(1, Math.min(maximumTokens, remaining));
+            maximumTokens = Math.max(1, Math.min(Math.max(64, requestedTokens), remaining));
+        } else {
+            // Reasoning models spend completion tokens thinking before they write the answer, so
+            // even a short input must leave room to finish. max_tokens is an upper bound rather
+            // than a reservation, so this costs nothing for models that stop early.
+            maximumTokens = Math.max(MINIMUM_COMPLETION_TOKENS, requestedTokens);
         }
-        String body = new StringBuilder(request.getText().length() + 320)
+        String response = post(system, request.getText(), maximumTokens, offline);
+        String translated = extractContent(response);
+        if ((translated == null || translated.trim().isEmpty())
+                && !offline && maximumTokens < MAXIMUM_TOKENS_LIMIT
+                && JsonStrings.readStringField(response, "reasoning_content") != null) {
+            // The model thought until the budget ran out and never wrote the translation; the
+            // answer only appears once the completion is allowed to finish.
+            response = post(system, request.getText(), MAXIMUM_TOKENS_LIMIT, offline);
+            translated = extractContent(response);
+        }
+        if (translated == null || translated.trim().isEmpty()) {
+            throw new IllegalStateException(describeMissingContent(response));
+        }
+        return TranslationOutputValidator.requireValid(request.getText(), translated);
+    }
+
+    /** Posts one chat completion and returns the raw response body. */
+    private String post(String system, String text, int maximumTokens, boolean offline) throws Exception {
+        String body = new StringBuilder(text.length() + 320)
                 .append('{')
                 .append("\"model\":").append(JsonStrings.quote(model)).append(',')
                 .append("\"messages\":[")
                 .append("{\"role\":\"system\",\"content\":").append(JsonStrings.quote(system)).append("},")
-                .append("{\"role\":\"user\",\"content\":")
-                .append(JsonStrings.quote(request.getText())).append("}],")
+                .append("{\"role\":\"user\",\"content\":").append(JsonStrings.quote(text)).append("}],")
                 .append("\"temperature\":0,\"max_tokens\":").append(maximumTokens).append(',')
                 .append(offline ? "\"repeat_penalty\":1.12," : "")
                 .append("\"stream\":false}")
                 .toString();
         String authorization = apiKey.isEmpty() ? null : "Bearer " + apiKey;
-        String response = http.post(endpoint, body, authorization);
-        String translated = extractContent(response);
-        if (translated == null || translated.trim().isEmpty()) {
-            throw new IllegalStateException(describeMissingContent(response));
-        }
-        return TranslationOutputValidator.requireValid(request.getText(), translated);
+        return http.post(endpoint, body, authorization);
     }
 
     /**

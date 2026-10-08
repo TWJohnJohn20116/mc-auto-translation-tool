@@ -52,6 +52,7 @@ public final class ProviderSelfTest {
         probesTheConfiguredChatEndpoint();
         normalizesBaseUrlEndpoints();
         reportsProviderErrorsFromContentlessResponses();
+        retriesReasoningOnlyResponsesWithFullBudget();
         derivesModelCatalogEndpoint();
         fetchesModelCatalogWithGet();
         System.out.println("ProviderSelfTest: all checks passed");
@@ -255,6 +256,54 @@ public final class ProviderSelfTest {
         assertTrue(OpenAiChatTranslationProvider.describeMissingContent(
                 "{\"choices\":[{\"message\":{\"content\":\"\",\"reasoning_content\":\"thinking\"}}]}")
                 .contains("reasoning content"));
+    }
+
+    private static void retriesReasoningOnlyResponsesWithFullBudget() throws Exception {
+        ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        AtomicReference<String> firstBody = new AtomicReference<String>();
+        AtomicReference<String> secondBody = new AtomicReference<String>();
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread thread = new Thread(() -> {
+            try {
+                for (int index = 0; index < 2; index++) {
+                    try (Socket socket = server.accept()) {
+                        HttpRequest request = readRequest(socket.getInputStream(),
+                                "POST /v1/chat/completions HTTP/1.");
+                        if (index == 0) {
+                            firstBody.set(request.body);
+                        } else {
+                            secondBody.set(request.body);
+                        }
+                        writeResponse(socket.getOutputStream(), 200, index == 0
+                                ? "{\"choices\":[{\"message\":{\"content\":\"\","
+                                        + "\"reasoning_content\":\"thinking\"}}]}"
+                                : "{\"choices\":[{\"message\":{\"content\":\"你好\"}}]}");
+                    }
+                }
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-reasoning-retry");
+        thread.setDaemon(true);
+        thread.start();
+        try {
+            OpenAiChatTranslationProvider provider = new OpenAiChatTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v1/chat/completions",
+                    "", "reasoner", "openai-compatible");
+            String translated = provider.translate(
+                    new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT));
+            assertEquals("你好", translated);
+            // A short input still gets the reasoning floor, and the retry spends the full budget.
+            assertTrue(firstBody.get().contains("\"max_tokens\":512"));
+            assertTrue(secondBody.get().contains("\"max_tokens\":2048"));
+        } finally {
+            server.close();
+            thread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local reasoning retry test server failed", serverFailure.get());
+        }
     }
 
     private static void parsesNestedProviderResponses() {
