@@ -50,6 +50,8 @@ public final class ProviderSelfTest {
         reportsNonJsonModelCatalogBodies();
         explainsNonJsonBodies();
         probesTheConfiguredChatEndpoint();
+        normalizesBaseUrlEndpoints();
+        reportsProviderErrorsFromContentlessResponses();
         derivesModelCatalogEndpoint();
         fetchesModelCatalogWithGet();
         System.out.println("ProviderSelfTest: all checks passed");
@@ -166,7 +168,7 @@ public final class ProviderSelfTest {
     }
 
     private static void probesTheConfiguredChatEndpoint() throws Exception {
-        ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
+        ServerSocket server = new ServerSocket(0, 3, InetAddress.getByName("127.0.0.1"));
         server.setSoTimeout(5000);
         AtomicReference<String> requestLine = new AtomicReference<String>();
         AtomicReference<String> requestBody = new AtomicReference<String>();
@@ -174,17 +176,23 @@ public final class ProviderSelfTest {
         AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
         Thread thread = new Thread(() -> {
             try {
-                for (int index = 0; index < 2; index++) {
+                for (int index = 0; index < 3; index++) {
                     try (Socket socket = server.accept()) {
                         HttpRequest request = readRequest(socket.getInputStream(),
                                 "POST /v1/chat/completions HTTP/1.");
                         requestLine.set(request.requestLine);
                         requestBody.set(request.body);
                         authorization.set(request.headers.get("authorization"));
-                        // The second answer is an HTML page behind HTTP 200: the probe must fail.
-                        writeResponse(socket.getOutputStream(), 200, index == 0
-                                ? "{\"choices\":[{\"message\":{\"content\":\"ping\"}}]}"
-                                : "<!DOCTYPE html><html>gateway</html>");
+                        String response;
+                        if (index == 0) {
+                            response = "{\"choices\":[{\"message\":{\"content\":\"ping\"}}]}";
+                        } else if (index == 1) {
+                            // A relay's own error object behind HTTP 200 must not look healthy.
+                            response = "{\"error\":{\"message\":\"Insufficient Balance\"}}";
+                        } else {
+                            response = "<!DOCTYPE html><html>gateway</html>";
+                        }
+                        writeResponse(socket.getOutputStream(), 200, response);
                     }
                 }
             } catch (Throwable failure) {
@@ -204,6 +212,7 @@ public final class ProviderSelfTest {
             assertTrue(requestBody.get().contains("\"max_tokens\":1"));
             assertTrue(requestBody.get().contains("\"stream\":false"));
             assertThrows(provider::probe);
+            assertThrows(provider::probe);
         } finally {
             server.close();
             thread.join(5000);
@@ -211,6 +220,41 @@ public final class ProviderSelfTest {
         if (serverFailure.get() != null) {
             throw new AssertionError("Local probe test server failed", serverFailure.get());
         }
+    }
+
+    private static void normalizesBaseUrlEndpoints() {
+        // A relay's advertised API address is https://host/v1; the chat path is implied.
+        assertEquals("https://relay.example/v1/chat/completions",
+                OpenAiChatTranslationProvider.normalizeEndpoint("https://relay.example/v1"));
+        assertEquals("https://relay.example/v1/chat/completions",
+                OpenAiChatTranslationProvider.normalizeEndpoint("https://relay.example/v1/"));
+        assertEquals("https://relay.example/v1/chat/completions",
+                OpenAiChatTranslationProvider.normalizeEndpoint(" https://relay.example/v1 "));
+        // Everything else passes through untouched.
+        assertEquals("https://api.deepseek.com/chat/completions",
+                OpenAiChatTranslationProvider.normalizeEndpoint("https://api.deepseek.com/chat/completions"));
+        assertEquals("https://azure.example/openai/deployments/d/chat/completions?api-version=2024-10-21",
+                OpenAiChatTranslationProvider.normalizeEndpoint(
+                        "https://azure.example/openai/deployments/d/chat/completions?api-version=2024-10-21"));
+        assertEquals("http://127.0.0.1:8080/v1/chat/completions",
+                OpenAiChatTranslationProvider.normalizeEndpoint("http://127.0.0.1:8080/v1/chat/completions"));
+    }
+
+    private static void reportsProviderErrorsFromContentlessResponses() {
+        // A relay that answers 200 with its own error object must say so, not "no content".
+        assertTrue(OpenAiChatTranslationProvider.describeMissingContent(
+                "{\"error\":{\"message\":\"Insufficient Balance\",\"type\":\"unknown_error\"}}")
+                .contains("Insufficient Balance"));
+        assertTrue(OpenAiChatTranslationProvider.describeMissingContent(
+                "{\"message\":\"model deepseek-v4.1-flash not found\"}")
+                .contains("model deepseek-v4.1-flash not found"));
+        assertTrue(OpenAiChatTranslationProvider.describeMissingContent("{\"unexpected\":true}")
+                .contains("did not contain translated content"));
+        assertTrue(OpenAiChatTranslationProvider.describeMissingContent("<!DOCTYPE html>")
+                .contains("<!DOCTYPE html>"));
+        assertTrue(OpenAiChatTranslationProvider.describeMissingContent(
+                "{\"choices\":[{\"message\":{\"content\":\"\",\"reasoning_content\":\"thinking\"}}]}")
+                .contains("reasoning content"));
     }
 
     private static void parsesNestedProviderResponses() {

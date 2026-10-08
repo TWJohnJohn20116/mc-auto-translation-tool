@@ -48,15 +48,24 @@ public final class JsonStrings {
         }
     }
 
-    /** Bounded single-line excerpt of a body that failed to parse. */
-    private static String bodyPreview(String json) {
-        int limit = Math.min(json.length(), 60);
+    /**
+     * Bounded single-line excerpt of a body, for error messages that must say what came back.
+     *
+     * <p>Sixty characters is enough to tell an HTML error page from a provider JSON error and
+     * short enough to survive a Minecraft chat line.
+     *
+     * @param json raw response body, possibly {@code null}
+     * @return an excerpt prefixed for appending to a sentence, never {@code null}
+     */
+    public static String bodyPreview(String json) {
+        String value = json == null ? "" : json;
+        int limit = Math.min(value.length(), 60);
         StringBuilder excerpt = new StringBuilder(limit + 24);
         for (int index = 0; index < limit; index++) {
-            char character = json.charAt(index);
+            char character = value.charAt(index);
             excerpt.append(character < 0x20 ? ' ' : character);
         }
-        if (json.length() > limit) {
+        if (value.length() > limit) {
             excerpt.append('\u2026');
         }
         return " (body starts with: \"" + excerpt + "\")";
