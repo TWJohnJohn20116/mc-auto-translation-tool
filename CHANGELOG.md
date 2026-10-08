@@ -1,5 +1,79 @@
 # 更新记录
 
+## 1.4-beta - 2026-10-07
+
+- **新增 HUD 翻译状态指示器，7 项全部可自定义**：常驻显示翻译是否开启，并在设置界面新增独立的 🌐 HUD 分页调整全部选项。
+  - **开关与位置**：指示器总开关，四角定位（左上／右上／左下／右下）。
+  - **大小与边距**：尺寸与边距各自独立可调，配置档写入时会被夹在允许区间内。
+  - **颜色**：翻译开启时为可配置的实心方块；翻译关闭时为红色空心框——形状与颜色双重区分，色盲玩家也能分辨。
+  - **显示内容**：圆点、目标语言、当前服务商、翻译中提示，四选一（纯圆点模式不绘制文字）。
+  - **显示时机**：始终显示、仅翻译中显示、仅停用翻译时显示。
+  - **拖拽定位**：在 HUD 分页内直接拖动指示器，偏移量写入配置；旁边有迷你屏幕预览，位置在所有平台上一致。
+  - **覆盖全部 8 个平台家族**：Fabric 1.0–1.8、1.8–1.12、1.13（Ornithe 1.13／1.13.1）、1.14–1.15、1.16–1.20；Forge 1.16.5–1.20.1、1.8.9／1.12.2；以及共用 Forge 源码的 NeoForge 目标。其中 Fabric 1.0–1.8、1.8–1.12、1.13 与 Forge 1.8.9／1.12.2 原本没有任何 HUD 挂勾，本次逐一新建；Forge 1.8.9／1.12.2 改用 `RenderGameOverlayEvent`，不需要 mixin。
+- **新增 Forge／NeoForge 执行期状态与离线模型下载进度通知**：行为比照 Fabric——状态进 Action Bar，失败进聊天并 60 秒去重。
+- **修复四项翻译缺陷**：
+  - Forge 1.21.x／NeoForge 1.21.x 的自有设置与诊断画面被机翻（把 26.x 的判定移植到三个 family，涵盖 Forge 11 个、NeoForge 12 个版本）；
+  - 模组自有消息被再翻译——原本只认带方括号的字面值，繁中「MC 自动翻译工具：…」等漏网，改为语言无关的名称比对；
+  - in-flight 去重键用 `System.identityHashCode`，而玩家名快照每 5 秒换新实例，导致去重失效、同一段文字重复送出请求（付费 API 重复计费），改用内容签名；
+  - 多色 Text 元件翻译后只保留第一段样式，颜色、粗体与点击事件丢失，改为逐段重建。
+- **性能优化**：以下按类别列出。所有改动都只是成本搬移或型别替换，没有放宽任何行为语义。
+
+  **一、热路径（每帧或每次渲染都会跑到）**
+
+  | 项目 | 原本 | 改后 |
+  | --- | --- | --- |
+  | `RecentUserText.shouldPreserve` | 每帧产生约 896 个临时字符串（逐次串接前缀比对） | 在 `remember()` 预存 7 种「前缀＋文字」形式，比对时不再配置字符串，临时字符串降为 0。刻意保留独立的 `equals` 检查、不折进后缀数组，否则 `"Server says hello world"` 会被误判命中 |
+  | 玩家名快照去重（18 个平台 runtime） | `List.contains`，每 5 秒重建一次，n=1000 时约 5×10⁵ 次 `equals`（O(n²)），大型服务器会出现周期性卡顿 | 改用 `LinkedHashSet`（O(n)）。插入顺序、`MAX_PROTECTED_PLAYER_NAMES` 上限、`length() <= 255` 守门与 `synchronized` 范围全部不变 |
+  | `LanguageHeuristics.shouldTranslate` | 每个字符串都要 `toLowerCase` ＋ 26 个片段 ＋ 3 个标记 ＋ regex，并以 `Character.UnicodeBlock.of` 判断汉字 | 先数字母，`letters == 0` 直接返回（`"123 / 456"` 不再付出上述成本）；汉字判断改为精确码点区间（已对 JDK 21 `src.zip` 的 `blockStarts` 核对 3400／4E00／F900） |
+  | `CustomHttpJsonTranslationProvider.id()` | render thread 每个 draw 都对最多 64 KiB 的样版重算 SHA-256 | 改在建构子算一次。`id` 字符串逐字不变，既有磁盘快取不失效 |
+  | `RenderTranslationSession.lookup` | 先跑语言启发式，再查 session 内快取 | 快取探测移到启发式之前。两者等价的理由：该快取唯一的写入点在启发式通过之后，`targetLanguage` 是 session 的 `final` 栏位，且 `shouldTranslate` 是 `(text, targetLanguage)` 的纯函数，所以启发式会拒绝的字符串不可能有快取条目 |
+
+  **二、网络与磁盘**
+
+  | 项目 | 原本 | 改后 |
+  | --- | --- | --- |
+  | HTTP 连线 | 每个请求结束后 `disconnect()` | 成功路径不再 `disconnect()`，socket 回到连线池，省下每个请求一次 TCP＋TLS 握手。3xx 刻意保留 `disconnect()`：`followRedirects=false` 时 JDK 的 `getErrorStream()` 对 3xx 回 `null`，body 未被消费，不断线无法保证还池 |
+  | `ProtectedText` 正则 | 每次 `parse` 重新编译一条最多 1000 条 alternative 的正则，而来源是每 5 秒才变一次的玩家名快照 | 以 `(内容签章, preserveHanText, literals)` 为键的 4 槽有界快取。签章只用于快速排除，正确性由 `List.equals` 保证——签章碰撞不可能回传用不同 literals 编出的 Pattern。编译在锁内进行，一次快照变更只编一次，不是每个 worker 各编一次 |
+  | 磁盘快取落盘 | 每一次 `put` 都复制整个 map（上限 10,000 笔）并重写整份文件 | 单一写者＋dirty 旗标（事件驱动，非计时去抖动）。第一个 `put` 仍同步写完才返回；另加 revision 守卫，避免 `clear()` 期间的 in-flight flush 把已删条目写回去，例外时复位旗标避免写入永久停止 |
+  | 磁盘快取读取 | 整档同步读取发生在客户端执行绪 | 延迟载入：第一次 `get`／`put`／`size` 才读，且发生在 worker 上 |
+  | 离线模型验证 | 每次启动都对数百 MB～GB 的模型重算全档 SHA-256 | 把「已通过全档 SHA-256」的结论写成模型旁的 `.verified` sidecar（大小＋mtime＋期望摘要＋版本化 header）。任何一项不符、读不到、格式错或截断，一律回退全档杂凑；`VerifiedDownloader.sha256` 仍是唯一真实来源。写入是 best-effort，写不进去只会让下次重算 |
+  | 429 `Retry-After` | 读了标头但没有使用 | 真正采用：`wait = min(max(backoff, retryAfter), 30 秒)`（只支援 delta-seconds，HTTP-date 视为未知） |
+
+  **三、渲染与切换**
+
+  | 项目 | 原本 | 改后 |
+  | --- | --- | --- |
+  | 渲染快取淘汰 | 满 4096 笔时整张 `clear()`，导致整个画面同时退回原文、接下来数十帧全部重新翻译 | 沿用同档既有的 `renderedOutputOrder` ＋ `evictOldest`，一次淘汰 512 笔（`MAX/8`），且只在首次插入时入列 |
+  | pending 期限 | 180 秒 | 40 分钟。原本的 180 秒短于 provider 可配置的最坏总耗时（`5 × (60s connect + 300s read + 60s 限流) + 3s 退避 ≈ 35 分`），仍在正常重试中的请求会被误判为废弃而回收 |
+  | 按 F8／保存设置 | 在客户端 tick 执行绪上先 `shutdown()` 再建新的，而 `shutdown()` → `close()` → `awaitTermination(5 秒)` 会等 worker 做完当下的翻译 | 改为「先建 → 再换 → 背景关旧」：旧 session 一路服务到新的建好；建构失败时旧 session 完好无损；`awaitTermination` 移到背景 daemon。切换期间没有翻译空窗，连续切换最多只有一条 reaper 执行绪 |
+  | 建置失败清理 | 建置阶段抛例外时，已建立的 provider 被丢弃（泄漏，含 `llama-server` 子行程） | 建置阶段包上清理：失败时用既有的 `instanceof AutoCloseable` 惯例 `close()` 已建好的 provider，并用 `addSuppressed` 保留清理失败，最后仍抛出原始例外 |
+  | 速率限制睡眠 | 睡在 monitor 上（`ResilientTranslationProvider`、`TencentHunyuanProvider`）——另一条 worker 会卡在不可中断的等待，使 `close()` 的 5 秒 `awaitTermination` 逾时后仍关闭 provider | 改为「锁内原子预约＋锁外睡眠＋醒后重检」。速率上限与 slot 序列不变 |
+
+  **三项行为取舍（使用者可能察觉）**
+
+  - **快取档损毁或不可读时改为静默退化成空快取**（原本建构子会抛 `IOException`，让平台回滚到上一份设定并把错误往上报）。取舍理由是不让游戏起不来，代价是重新翻译；若每次 `cache.get` 都重试读档，等于把磁盘 I/O 放回翻译热路径。
+  - **`.verified` 快取可被同时伪造大小与 mtime（`touch -r`）绕过**。这是所有 mtime 型快取的固有取舍；能写入该目录者本来就能替换被执行的引擎与 JAR。
+  - **磁盘快取在 flush 进行中时进来的 `put` 只存在记忆体**，硬杀或断电会遗失「一次 flush 视窗内的那些」（实务上数笔到数十笔，硬上限 10,000 笔）；正常关闭不遗失。
+- **对外请求的版本号收敛为单一来源**：原本有两份，其中 `VerifiedDownloader` 停在 `1.1`，也就是每次下载模型都对外宣告一个三版前的版本号。现在统一由 `UserAgent.VALUE` 提供，本版为 `MCAutoTranslationTool/1.4`。
+- **发布目标由 33 个增至 48 个**：新增 15 个从未出货的 NeoForge 目标（1.20.4、1.20.6、1.21、1.21.2、1.21.4～1.21.10、26.1、26.1.1、26.1.2、26.2），包含 NeoForge 26.x 全线。NeoForge 1.20.2 因为 `neoFormRuntimeDependenciesNeoForgeClasses` 解析不到依赖而不发布。可安装 JAR 由 16 个增至 **31 个**，Release 资产由 17 个增至 **32 个**。过程中修好三个只有实际建置才会暴露的问题：26.x 的 toolchain 清单漏了 `platform-neoforge-26.`（`release version 25 not supported`）、26.x 的 `neoforge.mods.toml` 少了 `modLoader` 与 `loaderVersion`（建置成功但验证器挡下）。
+- **Fabric 1.16 补回 1.16.0～1.16.4**：原本发布目标指向单一版本子专案，导致已发布的 `fabric-all.jar` 版本清单从 `1.15.2` 直接跳到 `1.16.5`，**这五个版本的玩家装了会载入失败**。已改用涵盖 1.16～1.16.5 的 bundle。
+- **仓库与文件链接改用目前的帐号名称** `TWJohnJohn20116`（原本的旧名称仍会转址，但下载链接统一后较不易混淆）。
+- **安装说明**：本版所有 31 个安装包版本号均为 1.4。安装前请删除 1.3.11 及更早的 JAR，每个游戏实例只保留一个匹配的 JAR。
+
+**已知限制**
+
+- **Fabric 1.13.2 没有指示器**：该版本线使用 yarn 1.13.2+build.604，缺少 `net.minecraft.client.Window`、`MinecraftClient.getWindow()` 与 `TextRenderer.getWidth(String)`，无法建立 HUD 挂勾。设置层、语言键与设置画面在该版本可正常使用，只是看不到指示器本身。Fabric 1.13／1.13.1（Ornithe）正常。
+
+**验证**
+
+- 本次工作阶段（HUD 指示器与旧平台支援）的每一波都以独立 PR 经 GitHub Actions 验证——这是唯一允许的建置途径，本机未执行任何编译或测试。代表结果：
+  - fabric 1.13.x 两层的设置层与指示器：[run 37650905054](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/actions/runs/37650905054)、[run 37653345782](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/actions/runs/37653345782)
+  - forge legacy 1.8.9／1.12.2 的指示器：[run 37659127435](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/actions/runs/37659127435)
+  - forge legacy 1.8.9／1.12.2 的设置画面：[run 37661731368](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/actions/runs/37661731368)
+  - 最后一次 `main` 推送（30/30 通过）：[run 37662932290](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/actions/runs/37662932290)
+- 更早的 1.4 批次（运行时通知、四项翻译修正、性能优化、NeoForge 目标扩充）由各自的 PR 验证；本次工作阶段未重新核对它们的执行结果。
+- **尚未执行**：`prepare-release` 尚未运行，因此 48 个目标的发布资产与 `verify_release_jars.py` 校验、`SHA256SUMS.txt` 都还没产生。发布前必须先跑这一步。
+- **需要游戏内实测**（CI 无法覆盖）：指示器是否遮到原版 HUD 元素、拖拽手感、四个分页在小视窗下的排版；大型服务器下每 5 秒的周期性卡顿是否消失；F8 切换与设置保存是否不再冻结、切换期间译文是否不退回原文；离线翻译第二次启动是否不再卡顿；真实 429 带 `Retry-After` 的等待体感。
 ## 1.3.11 - 2026-09-23
 
 - **新增支持 Minecraft 26.3（Fabric）**：适配 26.3 全新底层架构（SDL3 / InputConstants 按键系统），移除过往 GLFW 依赖。26.3 已纳入 `fabric-all` 的 26.x 族群，同一个 JAR 自动匹配 26.1、26.1.1、26.1.2、26.2 与 26.3。

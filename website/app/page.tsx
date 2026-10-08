@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "MC 自动翻译工具｜1.3.11 正式版",
+  title: "MC 自动翻译工具｜1.4-beta 正式版",
   description:
-    "MC 自动翻译工具 1.3.11 正式版，下载按 Fabric／Forge／NeoForge 分组；Fabric 覆盖 1.13–1.21.11 与 26.1–26.3（不含 1.16.0–1.16.4），并新增 Forge 1.18.2。",
+    "MC 自动翻译工具 1.4-beta 正式版，下载按 Fabric／Forge／NeoForge 分组；Fabric 覆盖 1.13–1.21.11 与 26.1–26.3（Fabric 1.16 已涵盖 1.16.0–1.16.4），并新增 Forge 1.18.2。",
 };
 
 const features = [
@@ -36,12 +36,12 @@ const versions = [
   ["1.20.1", "Fabric / Forge / NeoForge", "正式版已发布", "ready"],
   ["1.21–1.21.11", "Fabric 单一 JAR", "正式版已发布", "ready"],
   ["1.21、1.21.1、1.21.3–1.21.11", "Forge 兼容族群 JAR", "正式版已发布", "ready"],
-  ["1.21.1、1.21.3、1.21.11", "NeoForge", "正式版已发布", "ready"],
+  ["1.20.1–1.21.11、26.1–26.2", "NeoForge 每版本独立 JAR", "正式版已发布", "ready"],
   ["26.1–26.2", "Fabric 单一 JAR / Forge 兼容族群", "正式版已发布", "ready"],
   ["26.3", "Fabric 单一 JAR", "正式版已发布", "ready"],
 ];
 
-const releaseVersion = "1.3.11";
+const releaseVersion = "1.4-beta";
 const githubDownloadBase =
   `https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v${releaseVersion}`;
 
@@ -51,7 +51,7 @@ const releaseFile = (target: string) =>
 const downloadGroups = [
   {
     title: "Fabric",
-    note: "一个 JAR 覆盖 1.13–1.21.11 与 26.1–26.3，但不含 1.16.0–1.16.4：这些版本没有可用的适配实现，加载时会提示缺少依赖。Loader 按游戏版本选择内嵌实现。1.14–1.14.2 为引导实现。",
+    note: "一个 JAR 覆盖 1.13–1.21.11 与 26.1–26.3，并已含 1.16.0–1.16.4。Loader 按游戏版本选择内嵌实现。1.14–1.14.2 为引导实现。",
     featured: true,
     items: [
       {
@@ -92,10 +92,25 @@ const downloadGroups = [
     note: "无法像 Fabric 那样合成单档：FML 不允许同一 JAR 内嵌多套同 modId 实现，且 1.20.1 与 1.21.1 / 1.21.3 / 1.21.11 的 API 互不兼容。",
     featured: false,
     items: [
-      { version: "1.20.1", loader: "NeoForge 47.1.x", java: "Java 17", file: releaseFile("1.20.1-neoforge") },
+      { version: "1.20.1", loader: "NeoForge 47.1.x", java: "Java 21", file: releaseFile("1.20.1-neoforge") },
+      { version: "1.20.4", loader: "NeoForge", java: "Java 21", file: releaseFile("1.20.4-neoforge") },
+      { version: "1.20.6", loader: "NeoForge", java: "Java 21", file: releaseFile("1.20.6-neoforge") },
+      { version: "1.21", loader: "NeoForge", java: "Java 21", file: releaseFile("1.21-neoforge") },
       { version: "1.21.1", loader: "NeoForge 21.1.248", java: "Java 21", file: releaseFile("1.21.1-neoforge") },
+      { version: "1.21.2", loader: "NeoForge", java: "Java 21", file: releaseFile("1.21.2-neoforge") },
       { version: "1.21.3", loader: "NeoForge 21.3.97", java: "Java 21", file: releaseFile("1.21.3-neoforge") },
+      { version: "1.21.4", loader: "NeoForge", java: "Java 21", file: releaseFile("1.21.4-neoforge") },
+      { version: "1.21.5", loader: "NeoForge", java: "Java 21", file: releaseFile("1.21.5-neoforge") },
+      { version: "1.21.6", loader: "NeoForge", java: "Java 21", file: releaseFile("1.21.6-neoforge") },
+      { version: "1.21.7", loader: "NeoForge", java: "Java 21", file: releaseFile("1.21.7-neoforge") },
+      { version: "1.21.8", loader: "NeoForge", java: "Java 21", file: releaseFile("1.21.8-neoforge") },
+      { version: "1.21.9", loader: "NeoForge", java: "Java 21", file: releaseFile("1.21.9-neoforge") },
+      { version: "1.21.10", loader: "NeoForge", java: "Java 21", file: releaseFile("1.21.10-neoforge") },
       { version: "1.21.11", loader: "NeoForge 21.11.45", java: "Java 21", file: releaseFile("1.21.11-neoforge") },
+      { version: "26.1", loader: "NeoForge", java: "Java 25", file: releaseFile("26.1-neoforge") },
+      { version: "26.1.1", loader: "NeoForge", java: "Java 25", file: releaseFile("26.1.1-neoforge") },
+      { version: "26.1.2", loader: "NeoForge", java: "Java 25", file: releaseFile("26.1.2-neoforge") },
+      { version: "26.2", loader: "NeoForge", java: "Java 25", file: releaseFile("26.2-neoforge") },
     ],
   },
 ];
@@ -133,7 +148,7 @@ export default function Home() {
             自动处理聊天、记分板、箱子，以及模组和整合包界面里的英文内容。
           </p>
           <div className="heroActions">
-            <a className="primaryButton" href="#download">下载 1.3.11 正式版 <span>→</span></a>
+            <a className="primaryButton" href="#download">下载 1.4-beta 正式版 <span>→</span></a>
             <a className="textButton" href="#how">查看安装方法</a>
           </div>
           <div className="trustLine">
@@ -251,9 +266,9 @@ export default function Home() {
 
       <section className="downloadSection shell" id="download">
         <div className="downloadIntro">
-          <span className="sectionKicker light">1.3.11 正式版</span>
+          <span className="sectionKicker light">1.4-beta 正式版</span>
           <h2>免费使用，也欢迎一起把它做得更好。</h2>
-          <p>先选加载器，再选 Minecraft 版本。本次提供 16 个经过校验的 JAR。更新前请删除 1.3.10 及更早版本，只保留与你的 Minecraft 版本及加载器完全对应的 1.3.11 文件。</p>
+          <p>先选加载器，再选 Minecraft 版本。本次提供 31 个经过校验的 JAR。更新前请删除 1.3.10 及更早版本，只保留与你的 Minecraft 版本及加载器完全对应的 1.4-beta 文件。</p>
         </div>
         <div className="downloadGroups">
           {downloadGroups.map((group) => (

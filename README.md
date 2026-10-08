@@ -39,7 +39,7 @@
 
 1. 确认游戏使用的 **Minecraft 版本、模组加载器和 Java 版本**。
 2. 打开 [最新 Release](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/latest)，按下表选择 JAR。
-3. 先从该实例的 `mods` 文件夹删除 1.3.10 及更早版本，再放入唯一一个匹配的 1.3.11 JAR。Fabric 还需安装对应版本的 Fabric API。
+3. 先从该实例的 `mods` 文件夹删除 1.3.10 及更早版本，再放入唯一一个匹配的 1.4-beta JAR。Fabric 还需安装对应版本的 Fabric API。
 4. 启动游戏。按 `F8` 开启或关闭自动翻译；主界面右上角「翻译设置」或按 `U` 打开设置。若已安装 Mod Menu，也可在模组列表打开同一设置页。
 5. 首次使用建议选择“离线”与“仅译文”。详细步骤见[安装与使用指南](docs/Zh-cn/USER_GUIDE.md)。
 
@@ -49,7 +49,7 @@ Fabric、Forge 与 NeoForge 均可按 `U` 打开图形设置，直接编辑屏�
 
 ## 下载与版本选择
 
-先确认加载器，再下载对应 JAR。正式版把 33 个构建产物整理为 **16 个可直接安装的 JAR**；
+先确认加载器，再下载对应 JAR。正式版把 48 个构建产物整理为 **31 个可直接安装的 JAR**；
 发布新版本时，这些链接会随 README 一并更新。
 
 源码中另有 Ornithe／早期 Fabric 目标（1.3.1–1.8.8 中的 26 个版本，以及 1.8.9–1.12.2），未打入当前 GitHub 正式版。
@@ -58,9 +58,9 @@ Fabric、Forge 与 NeoForge 均可按 `U` 打开图形设置，直接编辑屏�
 
 覆盖 **1.13–1.21.11** 与 **26.1–26.3**。JAR 内含各版本精确实现，由 Fabric Loader 按当前游戏版本自动选择。Java 随游戏为 8、17、21 或 25。1.14–1.14.2 因 Yarn 无法 remap，仅提供引导实现；完整设置页从 1.14.3 起。
 
-[下载 Fabric JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.3.11/MCAutoTranslationTool-1.3.11-fabric-all.jar)
+[下载 Fabric JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4-beta/MCAutoTranslationTool-1.4-beta-fabric-all.jar)
 
-1.0.0–1.12.2（Fabric / Ornithe）尚未随 v1.3.11 提供。请不要把 `fabric-all` 用在未列出的游戏版本上。
+1.0.0–1.12.2（Fabric / Ornithe）尚未随 v1.4-beta 提供。请不要把 `fabric-all` 用在未列出的游戏版本上。
 
 ### Forge：按 Minecraft 版本选择
 
@@ -68,17 +68,17 @@ Forge 只在已验证兼容的相邻版本间共用 JAR，没有 Fabric 那种�
 
 | Minecraft | Java | 下载 |
 | --- | ---: | --- |
-| 1.8.9 | 8 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.3.11/MCAutoTranslationTool-1.3.11-mc1.8.9-forge.jar) |
-| 1.12.2 | 8 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.3.11/MCAutoTranslationTool-1.3.11-mc1.12.2-forge.jar) |
-| 1.16.5 | 8 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.3.11/MCAutoTranslationTool-1.3.11-mc1.16.5-forge.jar) |
-| 1.18.2 | 17 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.3.11/MCAutoTranslationTool-1.3.11-mc1.18.2-forge.jar) |
-| 1.19.2 | 17 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.3.11/MCAutoTranslationTool-1.3.11-mc1.19.2-forge.jar) |
-| 1.20.1 | 17 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.3.11/MCAutoTranslationTool-1.3.11-mc1.20.1-forge.jar) |
-| 1.21、1.21.1、1.21.3–1.21.5 | 21 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.3.11/MCAutoTranslationTool-1.3.11-mc1.21-1.21.5-forge.jar) |
-| 1.21.6–1.21.8 | 21 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.3.11/MCAutoTranslationTool-1.3.11-mc1.21.6-1.21.8-forge.jar) |
-| 1.21.9–1.21.11 | 21 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.3.11/MCAutoTranslationTool-1.3.11-mc1.21.9-1.21.11-forge.jar) |
-| 26.1–26.1.2 | 25 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.3.11/MCAutoTranslationTool-1.3.11-mc26.1-26.1.2-forge.jar) |
-| 26.2 | 25 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.3.11/MCAutoTranslationTool-1.3.11-mc26.2-forge.jar) |
+| 1.8.9 | 8 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4-beta/MCAutoTranslationTool-1.4-beta-mc1.8.9-forge.jar) |
+| 1.12.2 | 8 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4-beta/MCAutoTranslationTool-1.4-beta-mc1.12.2-forge.jar) |
+| 1.16.5 | 8 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4-beta/MCAutoTranslationTool-1.4-beta-mc1.16.5-forge.jar) |
+| 1.18.2 | 17 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4-beta/MCAutoTranslationTool-1.4-beta-mc1.18.2-forge.jar) |
+| 1.19.2 | 17 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4-beta/MCAutoTranslationTool-1.4-beta-mc1.19.2-forge.jar) |
+| 1.20.1 | 17 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4-beta/MCAutoTranslationTool-1.4-beta-mc1.20.1-forge.jar) |
+| 1.21、1.21.1、1.21.3–1.21.5 | 21 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4-beta/MCAutoTranslationTool-1.4-beta-mc1.21-1.21.5-forge.jar) |
+| 1.21.6–1.21.8 | 21 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4-beta/MCAutoTranslationTool-1.4-beta-mc1.21.6-1.21.8-forge.jar) |
+| 1.21.9–1.21.11 | 21 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4-beta/MCAutoTranslationTool-1.4-beta-mc1.21.9-1.21.11-forge.jar) |
+| 26.1–26.1.2 | 25 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4-beta/MCAutoTranslationTool-1.4-beta-mc26.1-26.1.2-forge.jar) |
+| 26.2 | 25 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4-beta/MCAutoTranslationTool-1.4-beta-mc26.2-forge.jar) |
 
 ### NeoForge：必须按版本分开
 
@@ -86,10 +86,10 @@ NeoForge / FML **不能**像 Fabric Loader 那样，在同一个 JAR 里嵌套�
 
 | Minecraft | NeoForge | Java | 下载 |
 | --- | --- | ---: | --- |
-| 1.20.1 | 47.1.106–47.1.x | 17 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.3.11/MCAutoTranslationTool-1.3.11-mc1.20.1-neoforge.jar) |
-| 1.21.1 | 21.1.248 | 21 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.3.11/MCAutoTranslationTool-1.3.11-mc1.21.1-neoforge.jar) |
-| 1.21.3 | 21.3.97 | 21 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.3.11/MCAutoTranslationTool-1.3.11-mc1.21.3-neoforge.jar) |
-| 1.21.11 | 21.11.45 | 21 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.3.11/MCAutoTranslationTool-1.3.11-mc1.21.11-neoforge.jar) |
+| 1.20.1 | 47.1.106–47.1.x | 17 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4-beta/MCAutoTranslationTool-1.4-beta-mc1.20.1-neoforge.jar) |
+| 1.21.1 | 21.1.248 | 21 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4-beta/MCAutoTranslationTool-1.4-beta-mc1.21.1-neoforge.jar) |
+| 1.21.3 | 21.3.97 | 21 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4-beta/MCAutoTranslationTool-1.4-beta-mc1.21.3-neoforge.jar) |
+| 1.21.11 | 21.11.45 | 21 | [下载 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4-beta/MCAutoTranslationTool-1.4-beta-mc1.21.11-neoforge.jar) |
 
 > **不要跨加载器或超出文件名范围混用 JAR。** 相邻 Minecraft 版本的渲染 API 与 Mixin
 > 目标可能不同；只有完成验证的版本才会写入发布 metadata。
