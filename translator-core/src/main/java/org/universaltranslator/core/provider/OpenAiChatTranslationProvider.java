@@ -92,6 +92,30 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         return TranslationOutputValidator.requireValid(request.getText(), translated);
     }
 
+    /**
+     * Sends a one-token completion through the configured endpoint.
+     *
+     * <p>The settings screen uses this for its connection test. Reading {@code /models} is not
+     * enough: a base URL that lacks the chat path still answers a catalog request while every
+     * translation fails, so the test would report a healthy service that never works.
+     *
+     * @return the raw response body
+     * @throws Exception when the endpoint, credential, model, or response is unusable
+     */
+    public String probe() throws Exception {
+        String body = new StringBuilder(192)
+                .append('{')
+                .append("\"model\":").append(JsonStrings.quote(model)).append(',')
+                .append("\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],")
+                .append("\"temperature\":0,\"max_tokens\":1,\"stream\":false}")
+                .toString();
+        String authorization = apiKey.isEmpty() ? null : "Bearer " + apiKey;
+        String response = http.post(endpoint, body, authorization);
+        // Anything that is not JSON means this endpoint does not speak chat completions.
+        JsonStrings.parse(response);
+        return response;
+    }
+
     static String extractContent(String response) {
         if (response == null || response.trim().isEmpty()) {
             return null;

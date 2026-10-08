@@ -166,7 +166,6 @@
   ,"screen.universal_translator.engine.test": "Test connection"
   ,"screen.universal_translator.engine.check": "Check settings"
   ,"screen.universal_translator.engine.testing": "Testing…"
-  ,"screen.universal_translator.engine.test_ok_models": "Connected (%s models)"
   ,"screen.universal_translator.engine.test_ok_config": "Settings complete"
   ,"screen.universal_translator.engine.summary": "Endpoint %s ・ key %s"
   ,"screen.universal_translator.engine.key_set": "set"
@@ -174,6 +173,8 @@
   ,"screen.universal_translator.engine.config_file": "This service's signing fields live in the config file"
 
   ,"screen.universal_translator.engine.test_not_json": "The endpoint answered, but not with JSON; check the LLM API URL"
-  ,"screen.universal_translator.engine.test_no_models": "The endpoint is JSON, but lists no models"
   ,"screen.universal_translator.engine.test_ok_libre": "Connected"
+
+  ,"screen.universal_translator.engine.test_ok_probe": "Connected (model %s answered)"
+  ,"screen.universal_translator.engine.test_need_model": "Set a model first"
 }

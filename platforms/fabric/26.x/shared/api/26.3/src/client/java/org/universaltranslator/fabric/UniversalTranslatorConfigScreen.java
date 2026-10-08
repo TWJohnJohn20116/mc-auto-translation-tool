@@ -27,6 +27,7 @@ import org.universaltranslator.core.SettingsSelectionList;
 import org.universaltranslator.core.net.EndpointPolicy;
 import org.universaltranslator.core.net.HttpJsonClient;
 import org.universaltranslator.core.net.JsonStrings;
+import org.universaltranslator.core.provider.OpenAiChatTranslationProvider;
 import org.universaltranslator.core.provider.OpenAiModelCatalog;
 
 /** Minimal dependency-free settings screen, opened with U by default. */
@@ -1015,19 +1016,15 @@ final class UniversalTranslatorConfigScreen extends Screen {
             boolean error;
             try {
                 if (llm) {
-                    // A 2xx body that is not JSON is not a working endpoint: an HTML or plain-text
-                    // error page must fail here instead of being reported as a successful connection.
-                    OpenAiModelCatalog.Catalog catalog =
-                            OpenAiModelCatalog.fetchCatalog(endpointValue, keyValue);
-                    if (!catalog.jsonBody()) {
-                        message = tr("screen.universal_translator.engine.test_not_json");
-                        error = true;
-                    } else if (catalog.models().isEmpty()) {
-                        message = tr("screen.universal_translator.engine.test_no_models");
+                    // Probe the endpoint translations actually use. Reading /models can succeed
+                    // while every translation fails on a wrong chat path or an unset model.
+                    String model = llmModel == null ? "" : llmModel.trim();
+                    if (model.isEmpty()) {
+                        message = tr("screen.universal_translator.engine.test_need_model");
                         error = true;
                     } else {
-                        message = tr("screen.universal_translator.engine.test_ok_models",
-                                catalog.models().size());
+                        new OpenAiChatTranslationProvider(endpointValue, keyValue, model, provider).probe();
+                        message = tr("screen.universal_translator.engine.test_ok_probe", model);
                         error = false;
                     }
                 } else if (libre) {

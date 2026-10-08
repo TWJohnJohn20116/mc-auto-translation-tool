@@ -49,6 +49,7 @@ public final class ProviderSelfTest {
         parsesOpenAiModelCatalog();
         reportsNonJsonModelCatalogBodies();
         explainsNonJsonBodies();
+        probesTheConfiguredChatEndpoint();
         derivesModelCatalogEndpoint();
         fetchesModelCatalogWithGet();
         System.out.println("ProviderSelfTest: all checks passed");
@@ -161,6 +162,54 @@ public final class ProviderSelfTest {
         }
         if (serverFailure.get() != null) {
             throw new AssertionError("Local model catalog test server failed", serverFailure.get());
+        }
+    }
+
+    private static void probesTheConfiguredChatEndpoint() throws Exception {
+        ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        AtomicReference<String> requestLine = new AtomicReference<String>();
+        AtomicReference<String> requestBody = new AtomicReference<String>();
+        AtomicReference<String> authorization = new AtomicReference<String>();
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread thread = new Thread(() -> {
+            try {
+                for (int index = 0; index < 2; index++) {
+                    try (Socket socket = server.accept()) {
+                        HttpRequest request = readRequest(socket.getInputStream(),
+                                "POST /v1/chat/completions HTTP/1.");
+                        requestLine.set(request.requestLine);
+                        requestBody.set(request.body);
+                        authorization.set(request.headers.get("authorization"));
+                        // The second answer is an HTML page behind HTTP 200: the probe must fail.
+                        writeResponse(socket.getOutputStream(), 200, index == 0
+                                ? "{\"choices\":[{\"message\":{\"content\":\"ping\"}}]}"
+                                : "<!DOCTYPE html><html>gateway</html>");
+                    }
+                }
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-probe");
+        thread.setDaemon(true);
+        thread.start();
+        try {
+            OpenAiChatTranslationProvider provider = new OpenAiChatTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v1/chat/completions",
+                    "local-secret", "probe-model", "openai-compatible");
+            assertTrue(provider.probe().contains("\"choices\""));
+            assertEquals("POST /v1/chat/completions HTTP/1.1", requestLine.get());
+            assertEquals("Bearer local-secret", authorization.get());
+            assertTrue(requestBody.get().contains("\"model\":\"probe-model\""));
+            assertTrue(requestBody.get().contains("\"max_tokens\":1"));
+            assertTrue(requestBody.get().contains("\"stream\":false"));
+            assertThrows(provider::probe);
+        } finally {
+            server.close();
+            thread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local probe test server failed", serverFailure.get());
         }
     }
 
@@ -339,9 +388,10 @@ public final class ProviderSelfTest {
         assertEquals(1, attempts.get());
     }
 
-    private static HttpRequest readRequest(InputStream input) throws IOException {
+    private static HttpRequest readRequest(InputStream input, String expectedRequestLinePrefix)
+            throws IOException {
         String requestLine = readAsciiLine(input);
-        assertTrue(requestLine.startsWith("PUT /translate HTTP/1."));
+        assertTrue(requestLine.startsWith(expectedRequestLinePrefix));
         Map<String, String> headers = new LinkedHashMap<String, String>();
         String line;
         while (!(line = readAsciiLine(input)).isEmpty()) {
@@ -359,7 +409,11 @@ public final class ProviderSelfTest {
             if (count < 0) throw new IOException("Unexpected end of HTTP request body");
             offset += count;
         }
-        return new HttpRequest(headers, new String(body, StandardCharsets.UTF_8));
+        return new HttpRequest(requestLine, headers, new String(body, StandardCharsets.UTF_8));
+    }
+
+    private static HttpRequest readRequest(InputStream input) throws IOException {
+        return readRequest(input, "PUT /translate HTTP/1.");
     }
 
     private static String readAsciiLine(InputStream input) throws IOException {
@@ -384,10 +438,12 @@ public final class ProviderSelfTest {
     }
 
     private static final class HttpRequest {
+        private final String requestLine;
         private final Map<String, String> headers;
         private final String body;
 
-        private HttpRequest(Map<String, String> headers, String body) {
+        private HttpRequest(String requestLine, Map<String, String> headers, String body) {
+            this.requestLine = requestLine;
             this.headers = headers;
             this.body = body;
         }
