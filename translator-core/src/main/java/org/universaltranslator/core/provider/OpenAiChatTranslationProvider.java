@@ -9,6 +9,8 @@ import org.universaltranslator.core.net.HttpJsonClient;
 import org.universaltranslator.core.net.JsonStrings;
 
 import java.net.URI;
+import java.util.List;
+import java.util.Map;
 
 /** Small OpenAI-compatible chat provider used by local llama.cpp and optional hosted APIs. */
 public final class OpenAiChatTranslationProvider implements TranslationProvider {
@@ -36,11 +38,33 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             String providerId,
             HttpJsonClient http
     ) {
-        this.endpoint = EndpointPolicy.requireSafeEndpoint(endpoint);
+        this.endpoint = EndpointPolicy.requireSafeEndpoint(normalizeEndpoint(endpoint));
         this.apiKey = apiKey == null ? "" : apiKey.trim();
         this.model = requireText("model", model);
         this.providerId = requireText("providerId", providerId);
         this.http = http;
+    }
+
+    /**
+     * Accepts the base-URL form OpenAI-compatible relays advertise.
+     *
+     * <p>{@code https://host/v1} is what those services print as their API address, and posting a
+     * chat request to it answers with the relay's HTML page while {@code /v1/models} still works —
+     * a service that looks healthy and never translates. Only that exact trailing form is
+     * rewritten; custom paths such as Azure deployments with an api-version query pass through.
+     *
+     * @param endpoint configured chat-completions endpoint
+     * @return the endpoint to request, with the chat path filled in when only a base URL was given
+     */
+    static String normalizeEndpoint(String endpoint) {
+        String value = endpoint == null ? "" : endpoint.trim();
+        if (value.endsWith("/v1")) {
+            return value + "/chat/completions";
+        }
+        if (value.endsWith("/v1/")) {
+            return value + "chat/completions";
+        }
+        return value;
     }
 
     @Override
@@ -87,9 +111,35 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         String response = http.post(endpoint, body, authorization);
         String translated = extractContent(response);
         if (translated == null || translated.trim().isEmpty()) {
-            throw new IllegalStateException("OpenAI-compatible response did not contain translated content");
+            throw new IllegalStateException(describeMissingContent(response));
         }
         return TranslationOutputValidator.requireValid(request.getText(), translated);
+    }
+
+    /**
+     * Explains a response that carried no translation.
+     *
+     * <p>Relays answer HTTP 200 with their own JSON error object when the token is out of quota,
+     * the model name is unknown, or the request is rejected. Reporting only "no translated
+     * content" hides the one sentence that tells the user what to fix.
+     *
+     * @param response raw response body
+     * @return the provider's own message when it sent one, otherwise a bounded body excerpt
+     */
+    static String describeMissingContent(String response) {
+        String providerError = JsonStrings.readStringField(response, "message");
+        if (providerError == null) {
+            providerError = JsonStrings.readStringField(response, "error");
+        }
+        if (providerError != null && !providerError.trim().isEmpty()) {
+            return "OpenAI-compatible endpoint reported: " + providerError.trim();
+        }
+        if (JsonStrings.readStringField(response, "reasoning_content") != null) {
+            return "OpenAI-compatible model returned only reasoning content; "
+                    + "pick a non-reasoning model or raise the completion budget";
+        }
+        return "OpenAI-compatible response did not contain translated content"
+                + JsonStrings.bodyPreview(response);
     }
 
     /**
@@ -111,8 +161,12 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
                 .toString();
         String authorization = apiKey.isEmpty() ? null : "Bearer " + apiKey;
         String response = http.post(endpoint, body, authorization);
-        // Anything that is not JSON means this endpoint does not speak chat completions.
-        JsonStrings.parse(response);
+        Object root = JsonStrings.parse(response);
+        // A relay that answers 200 with its own error object would otherwise look healthy here,
+        // and the user would only find out when every translation failed.
+        if (!(root instanceof Map) || !(((Map<?, ?>) root).get("choices") instanceof List)) {
+            throw new IllegalStateException(describeMissingContent(response));
+        }
         return response;
     }
 
