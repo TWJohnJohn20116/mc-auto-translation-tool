@@ -14,7 +14,7 @@ package org.universaltranslator.core;
  */
 public final class UserAgent {
     /** Sent as the {@code User-Agent} header by every outgoing request the core makes. */
-    public static final String VALUE = "MCAutoTranslationTool/1.4-beta";
+    public static final String VALUE = "MCAutoTranslationTool/1.4-beta2";
 
     private UserAgent() {
     }
