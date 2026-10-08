@@ -172,4 +172,8 @@
   ,"screen.universal_translator.engine.key_set": "set"
   ,"screen.universal_translator.engine.key_unset": "not set"
   ,"screen.universal_translator.engine.config_file": "This service's signing fields live in the config file"
+
+  ,"screen.universal_translator.engine.test_not_json": "The endpoint answered, but not with JSON; check the LLM API URL"
+  ,"screen.universal_translator.engine.test_no_models": "The endpoint is JSON, but lists no models"
+  ,"screen.universal_translator.engine.test_ok_libre": "Connected"
 }

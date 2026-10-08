@@ -79,30 +79,47 @@ public final class OpenAiModelCatalog {
      * yields an empty list instead of an exception: the caller only needs to know that nothing
      * usable came back.
      *
+     * <p>Callers that report connectivity must use {@link #readCatalog} instead: this method
+     * collapses "the body was not JSON" and "the body listed no models" into the same empty list.
+     *
      * @param json raw response body, possibly {@code null}
      * @return sorted, de-duplicated model identifiers, never {@code null}
      */
     public static List<String> parse(String json) {
+        return readCatalog(json).models();
+    }
+
+    /**
+     * Parses a catalog response and reports whether the body was JSON at all.
+     *
+     * <p>A server that answers 2xx with an HTML page, a plain-text notice, or a streaming body is
+     * not an OpenAI-compatible endpoint. Reporting that as a successful connection would hide the
+     * real reason translation keeps failing, so the two cases stay distinguishable here.
+     *
+     * @param json raw response body, possibly {@code null}
+     * @return the identifiers plus whether the body parsed as JSON
+     */
+    public static Catalog readCatalog(String json) {
         if (json == null || json.trim().isEmpty()) {
-            return Collections.emptyList();
+            return new Catalog(Collections.<String>emptyList(), false);
         }
         Object root;
         try {
             root = JsonStrings.parse(json);
         } catch (RuntimeException malformed) {
-            return Collections.emptyList();
+            return new Catalog(Collections.<String>emptyList(), false);
         }
         Set<String> identifiers = new LinkedHashSet<String>();
         collectModels(root, identifiers);
         if (identifiers.isEmpty()) {
-            return Collections.emptyList();
+            return new Catalog(Collections.<String>emptyList(), true);
         }
         List<String> models = new ArrayList<String>(identifiers);
         Collections.sort(models, String.CASE_INSENSITIVE_ORDER);
         if (models.size() > MAXIMUM_MODELS) {
-            return new ArrayList<String>(models.subList(0, MAXIMUM_MODELS));
+            models = new ArrayList<String>(models.subList(0, MAXIMUM_MODELS));
         }
-        return models;
+        return new Catalog(models, true);
     }
 
     /**
@@ -114,16 +131,53 @@ public final class OpenAiModelCatalog {
      * @throws IOException when the request fails or the server answers with an error status
      */
     public static List<String> fetch(String chatEndpoint, String apiKey) throws IOException {
-        return fetch(chatEndpoint, apiKey, new HttpJsonClient(CONNECT_TIMEOUT_MILLIS, READ_TIMEOUT_MILLIS));
+        return fetchCatalog(chatEndpoint, apiKey).models();
     }
 
     static List<String> fetch(String chatEndpoint, String apiKey, HttpJsonClient http) throws IOException {
+        return fetchCatalog(chatEndpoint, apiKey, http).models();
+    }
+
+    /**
+     * Fetches the catalog and reports whether the endpoint answered with JSON at all.
+     *
+     * @param chatEndpoint configured chat-completions endpoint
+     * @param apiKey API key to send as a bearer token, or {@code null}/empty for none
+     * @return the identifiers plus whether the body parsed as JSON
+     * @throws IOException when the request fails or the server answers with an error status
+     */
+    public static Catalog fetchCatalog(String chatEndpoint, String apiKey) throws IOException {
+        return fetchCatalog(chatEndpoint, apiKey,
+                new HttpJsonClient(CONNECT_TIMEOUT_MILLIS, READ_TIMEOUT_MILLIS));
+    }
+
+    static Catalog fetchCatalog(String chatEndpoint, String apiKey, HttpJsonClient http) throws IOException {
         String key = apiKey == null ? "" : apiKey.trim();
         Map<String, String> headers = key.isEmpty()
                 ? Collections.<String, String>emptyMap()
                 : Collections.singletonMap("Authorization", "Bearer " + key);
-        String response = http.get(URI.create(modelsEndpoint(chatEndpoint)), headers);
-        return parse(response);
+        return readCatalog(http.get(URI.create(modelsEndpoint(chatEndpoint)), headers));
+    }
+
+    /** Model identifiers plus whether the response body was JSON, not merely an HTTP 200. */
+    public static final class Catalog {
+        private final List<String> models;
+        private final boolean jsonBody;
+
+        Catalog(List<String> models, boolean jsonBody) {
+            this.models = Collections.unmodifiableList(models);
+            this.jsonBody = jsonBody;
+        }
+
+        /** Sorted, de-duplicated identifiers; empty when the body was not JSON or listed none. */
+        public List<String> models() {
+            return models;
+        }
+
+        /** True when the body parsed as JSON, even if it carried no model identifier. */
+        public boolean jsonBody() {
+            return jsonBody;
+        }
     }
 
     private static void collectModels(Object node, Set<String> identifiers) {

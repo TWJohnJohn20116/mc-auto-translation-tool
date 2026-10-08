@@ -38,7 +38,28 @@ public final class JsonStrings {
         if (json == null || json.trim().isEmpty()) {
             throw new IllegalArgumentException("JSON string is empty");
         }
-        return new Parser(json).parse();
+        try {
+            return new Parser(json).parse();
+        } catch (IllegalArgumentException malformed) {
+            // A bare "Invalid JSON value" says nothing about what the server actually sent, which is
+            // the first thing anyone needs when an endpoint answers 200 with a non-JSON body.
+            String reason = malformed.getMessage() == null ? "Invalid JSON" : malformed.getMessage();
+            throw new IllegalArgumentException(reason + bodyPreview(json), malformed);
+        }
+    }
+
+    /** Bounded single-line excerpt of a body that failed to parse. */
+    private static String bodyPreview(String json) {
+        int limit = Math.min(json.length(), 60);
+        StringBuilder excerpt = new StringBuilder(limit + 24);
+        for (int index = 0; index < limit; index++) {
+            char character = json.charAt(index);
+            excerpt.append(character < 0x20 ? ' ' : character);
+        }
+        if (json.length() > limit) {
+            excerpt.append('\u2026');
+        }
+        return " (body starts with: \"" + excerpt + "\")";
     }
 
     /** Reads a string through a small JSON path such as choices[0].message.content. */

@@ -172,4 +172,8 @@
   ,"screen.universal_translator.engine.key_set": "已设置"
   ,"screen.universal_translator.engine.key_unset": "未设置"
   ,"screen.universal_translator.engine.config_file": "该服务的签名字段请在配置文件填写"
+
+  ,"screen.universal_translator.engine.test_not_json": "端点有响应，但回传的不是 JSON；请确认 LLM API 地址"
+  ,"screen.universal_translator.engine.test_no_models": "端点是 JSON，但没有任何模型"
+  ,"screen.universal_translator.engine.test_ok_libre": "连接成功"
 }

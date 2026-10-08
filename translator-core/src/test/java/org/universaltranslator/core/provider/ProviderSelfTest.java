@@ -47,6 +47,8 @@ public final class ProviderSelfTest {
         parsesBaiduMultiLineTransResult();
         parsesOpenAiResponseWithReasoningContent();
         parsesOpenAiModelCatalog();
+        reportsNonJsonModelCatalogBodies();
+        explainsNonJsonBodies();
         derivesModelCatalogEndpoint();
         fetchesModelCatalogWithGet();
         System.out.println("ProviderSelfTest: all checks passed");
@@ -76,6 +78,30 @@ public final class ProviderSelfTest {
         }
         oversized.append("]}");
         assertEquals(OpenAiModelCatalog.MAXIMUM_MODELS, OpenAiModelCatalog.parse(oversized.toString()).size());
+    }
+
+    private static void reportsNonJsonModelCatalogBodies() {
+        // A 2xx body that is not JSON must not be reported as a working endpoint: the settings
+        // screen would otherwise call an HTML error page a successful connection.
+        assertFalse(OpenAiModelCatalog.readCatalog("<!DOCTYPE html><html>502").jsonBody());
+        assertFalse(OpenAiModelCatalog.readCatalog("not json").jsonBody());
+        assertFalse(OpenAiModelCatalog.readCatalog("").jsonBody());
+        assertFalse(OpenAiModelCatalog.readCatalog(null).jsonBody());
+        assertEquals(Collections.emptyList(), OpenAiModelCatalog.readCatalog("<!DOCTYPE html>").models());
+        assertTrue(OpenAiModelCatalog.readCatalog("{\"data\":[]}").jsonBody());
+        assertEquals(Collections.emptyList(), OpenAiModelCatalog.readCatalog("{\"data\":[]}").models());
+        assertTrue(OpenAiModelCatalog.readCatalog("{\"data\":[{\"id\":\"a\"}]}").jsonBody());
+        assertEquals(Collections.singletonList("a"),
+                OpenAiModelCatalog.readCatalog("{\"data\":[{\"id\":\"a\"}]}").models());
+    }
+
+    private static void explainsNonJsonBodies() {
+        try {
+            JsonStrings.parse("<!DOCTYPE html>");
+            throw new AssertionError("Expected a JSON parse failure");
+        } catch (IllegalArgumentException expected) {
+            assertTrue(expected.getMessage().contains("<!DOCTYPE html>"));
+        }
     }
 
     private static void derivesModelCatalogEndpoint() {
