@@ -20,8 +20,10 @@ import java.net.URI;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -44,7 +46,96 @@ public final class ProviderSelfTest {
         doesNotLeakVolcengineSecretsIntoHeaders();
         parsesBaiduMultiLineTransResult();
         parsesOpenAiResponseWithReasoningContent();
+        parsesOpenAiModelCatalog();
+        derivesModelCatalogEndpoint();
+        fetchesModelCatalogWithGet();
         System.out.println("ProviderSelfTest: all checks passed");
+    }
+
+    private static void parsesOpenAiModelCatalog() {
+        String openAi = "{\"object\":\"list\",\"data\":["
+                + "{\"id\":\"deepseek-reasoner\",\"object\":\"model\"},"
+                + "{\"id\":\"deepseek-chat\",\"object\":\"model\"},"
+                + "{\"id\":\"deepseek-chat\",\"object\":\"model\"}]}";
+        assertEquals(Arrays.asList("deepseek-chat", "deepseek-reasoner"),
+                OpenAiModelCatalog.parse(openAi));
+        assertEquals(Arrays.asList("llama3:latest", "qwen2.5:7b"),
+                OpenAiModelCatalog.parse("{\"models\":[{\"name\":\"qwen2.5:7b\"},{\"name\":\"llama3:latest\"}]}"));
+        assertEquals(Arrays.asList("a", "b"), OpenAiModelCatalog.parse("[\"b\",\"a\",\"b\"]"));
+        assertEquals(Collections.singletonList("glm-4"), OpenAiModelCatalog.parse("{\"id\":\" glm-4 \"}"));
+        assertEquals(Collections.emptyList(), OpenAiModelCatalog.parse("not json"));
+        assertEquals(Collections.emptyList(), OpenAiModelCatalog.parse(""));
+        assertEquals(Collections.emptyList(), OpenAiModelCatalog.parse("{\"data\":[]}"));
+
+        StringBuilder oversized = new StringBuilder("{\"data\":[");
+        for (int index = 0; index < OpenAiModelCatalog.MAXIMUM_MODELS + 20; index++) {
+            if (index > 0) {
+                oversized.append(',');
+            }
+            oversized.append("{\"id\":\"model-").append(index).append("\"}");
+        }
+        oversized.append("]}");
+        assertEquals(OpenAiModelCatalog.MAXIMUM_MODELS, OpenAiModelCatalog.parse(oversized.toString()).size());
+    }
+
+    private static void derivesModelCatalogEndpoint() {
+        assertEquals("https://api.deepseek.com/v1/models",
+                OpenAiModelCatalog.modelsEndpoint("https://api.deepseek.com/v1"));
+        assertEquals("https://api.deepseek.com/v1/models",
+                OpenAiModelCatalog.modelsEndpoint("https://api.deepseek.com/v1/chat/completions"));
+        assertEquals("https://api.deepseek.com/v1/models",
+                OpenAiModelCatalog.modelsEndpoint("https://api.deepseek.com/v1/"));
+        assertEquals("https://api.deepseek.com/v1/models",
+                OpenAiModelCatalog.modelsEndpoint("https://api.deepseek.com/v1/models"));
+        assertEquals("https://api.deepseek.com/v1/models?tenant=acme",
+                OpenAiModelCatalog.modelsEndpoint("https://api.deepseek.com/v1/chat/completions?tenant=acme"));
+        assertEquals("http://127.0.0.1:8080/v1/models",
+                OpenAiModelCatalog.modelsEndpoint("http://127.0.0.1:8080/v1/chat/completions"));
+        assertThrows(() -> OpenAiModelCatalog.modelsEndpoint("http://api.example.com/v1"));
+        assertThrows(() -> OpenAiModelCatalog.modelsEndpoint(""));
+    }
+
+    private static void fetchesModelCatalogWithGet() throws Exception {
+        ServerSocket server = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        AtomicReference<String> requestLine = new AtomicReference<String>();
+        AtomicReference<String> authorization = new AtomicReference<String>();
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread thread = new Thread(() -> {
+            try (Socket socket = server.accept()) {
+                InputStream input = socket.getInputStream();
+                requestLine.set(readAsciiLine(input));
+                Map<String, String> headers = new LinkedHashMap<String, String>();
+                String line;
+                while (!(line = readAsciiLine(input)).isEmpty()) {
+                    int colon = line.indexOf(':');
+                    if (colon > 0) {
+                        headers.put(line.substring(0, colon).trim().toLowerCase(java.util.Locale.ROOT),
+                                line.substring(colon + 1).trim());
+                    }
+                }
+                authorization.set(headers.get("authorization"));
+                writeResponse(socket.getOutputStream(), 200,
+                        "{\"object\":\"list\",\"data\":[{\"id\":\"deepseek-chat\"}]}");
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-model-catalog");
+        thread.setDaemon(true);
+        thread.start();
+        try {
+            List<String> models = OpenAiModelCatalog.fetch(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v1/chat/completions", "local-secret");
+            assertEquals(Collections.singletonList("deepseek-chat"), models);
+            assertEquals("GET /v1/models HTTP/1.1", requestLine.get());
+            assertEquals("Bearer local-secret", authorization.get());
+        } finally {
+            server.close();
+            thread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local model catalog test server failed", serverFailure.get());
+        }
     }
 
     private static void parsesNestedProviderResponses() {

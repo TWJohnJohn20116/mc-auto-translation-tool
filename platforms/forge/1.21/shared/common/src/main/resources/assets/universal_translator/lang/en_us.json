@@ -156,4 +156,11 @@
   ,"screen.universal_translator.option.player_names": "Player names: %s"
   ,"screen.universal_translator.blocked_keywords": "Blocked keywords"
   ,"screen.universal_translator.blocked_keywords_hint": "Blocked keywords (comma-separated)"
+  ,"screen.universal_translator.llm.fetch_models": "Fetch model list"
+  ,"screen.universal_translator.llm.fetching": "Fetching model list…"
+  ,"screen.universal_translator.llm.fetch_failed": "Could not fetch model list: %s"
+  ,"screen.universal_translator.llm.select_model": "Select a model (%s available)"
+  ,"screen.universal_translator.llm.select_hint": "Click a model to apply it"
+  ,"screen.universal_translator.llm.fetch_empty": "The server returned no models"
+  ,"screen.universal_translator.llm.select_back": "Back"
 }
