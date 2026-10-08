@@ -154,4 +154,11 @@
   ,"screen.universal_translator.option.player_names": "玩家名稱翻譯：%s"
   ,"screen.universal_translator.blocked_keywords": "翻譯屏蔽關鍵詞"
   ,"screen.universal_translator.blocked_keywords_hint": "屏蔽關鍵詞（逗號分隔）"
+  ,"screen.universal_translator.llm.fetch_models": "獲取模型列表"
+  ,"screen.universal_translator.llm.fetching": "正在獲取模型列表…"
+  ,"screen.universal_translator.llm.fetch_failed": "取得模型列表失敗：%s"
+  ,"screen.universal_translator.llm.select_model": "選擇模型（共 %s 個）"
+  ,"screen.universal_translator.llm.select_hint": "點擊模型即套用"
+  ,"screen.universal_translator.llm.fetch_empty": "伺服器沒有回傳任何模型"
+  ,"screen.universal_translator.llm.select_back": "返回"
 }

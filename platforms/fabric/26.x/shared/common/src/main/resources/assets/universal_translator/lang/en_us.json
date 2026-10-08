@@ -154,4 +154,11 @@
   "screen.universal_translator.tab.outgoing": "Outgoing",
   "screen.universal_translator.tab.hud": "HUD",
   "screen.universal_translator.info.outgoing_hint": "Automatically translates your outgoing chat to the target language"
+  ,"screen.universal_translator.llm.fetch_models": "Fetch model list"
+  ,"screen.universal_translator.llm.fetching": "Fetching model list…"
+  ,"screen.universal_translator.llm.fetch_failed": "Could not fetch model list: %s"
+  ,"screen.universal_translator.llm.select_model": "Select a model (%s available)"
+  ,"screen.universal_translator.llm.select_hint": "Click a model to apply it"
+  ,"screen.universal_translator.llm.fetch_empty": "The server returned no models"
+  ,"screen.universal_translator.llm.select_back": "Back"
 }

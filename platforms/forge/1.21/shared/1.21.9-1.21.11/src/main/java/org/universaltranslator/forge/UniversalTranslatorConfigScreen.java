@@ -62,6 +62,11 @@ final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorLlmCon
         renderLlm(CanvasFactory.create(graphics, font));
         super.render(graphics, mouseX, mouseY, delta);
     }
+
+    @Override
+    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        return handleModelListClick(event.x(), event.y()) || super.mouseClicked(event, doubleClick);
+    }
 }
 
 final class CanvasFactory {

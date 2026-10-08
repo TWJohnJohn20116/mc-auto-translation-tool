@@ -42,6 +42,11 @@ public final class HttpJsonClient {
                 "application/x-www-form-urlencoded; charset=utf-8", headers);
     }
 
+    /** Sends a bodyless GET, used to read small metadata documents such as a model catalog. */
+    public String get(URI endpoint, Map<String, String> headers) throws IOException {
+        return request("GET", endpoint, null, null, headers);
+    }
+
     public String request(
             String method,
             URI endpoint,
@@ -50,8 +55,9 @@ public final class HttpJsonClient {
             Map<String, String> headers
     ) throws IOException {
         String requestMethod = method == null ? "" : method.trim().toUpperCase(java.util.Locale.ROOT);
-        if (!"POST".equals(requestMethod) && !"PUT".equals(requestMethod)) {
-            throw new IllegalArgumentException("Only POST and PUT translation requests are supported");
+        boolean bodyAllowed = "POST".equals(requestMethod) || "PUT".equals(requestMethod);
+        if (!bodyAllowed && !"GET".equals(requestMethod)) {
+            throw new IllegalArgumentException("Only GET, POST and PUT requests are supported");
         }
         String bodyValue = bodyText == null ? "" : bodyText;
         HttpURLConnection connection = (HttpURLConnection) endpoint.toURL().openConnection();
@@ -62,11 +68,13 @@ public final class HttpJsonClient {
             connection.setRequestMethod(requestMethod);
             connection.setConnectTimeout(connectTimeoutMillis);
             connection.setReadTimeout(readTimeoutMillis);
-            connection.setDoOutput(true);
+            connection.setDoOutput(bodyAllowed);
             connection.setInstanceFollowRedirects(false);
             connection.setRequestProperty("Accept", "application/json");
-            connection.setRequestProperty("Content-Type", contentType == null || contentType.trim().isEmpty()
-                    ? "application/json; charset=utf-8" : contentType.trim());
+            if (bodyAllowed) {
+                connection.setRequestProperty("Content-Type", contentType == null || contentType.trim().isEmpty()
+                        ? "application/json; charset=utf-8" : contentType.trim());
+            }
             connection.setRequestProperty("User-Agent", UserAgent.VALUE);
             if (headers != null) {
                 for (Map.Entry<String, String> header : headers.entrySet()) {
@@ -76,10 +84,12 @@ public final class HttpJsonClient {
                 }
             }
 
-            byte[] body = bodyValue.getBytes(StandardCharsets.UTF_8);
-            connection.setFixedLengthStreamingMode(body.length);
-            try (OutputStream output = connection.getOutputStream()) {
-                output.write(body);
+            if (bodyAllowed) {
+                byte[] body = bodyValue.getBytes(StandardCharsets.UTF_8);
+                connection.setFixedLengthStreamingMode(body.length);
+                try (OutputStream output = connection.getOutputStream()) {
+                    output.write(body);
+                }
             }
 
             int status = connection.getResponseCode();

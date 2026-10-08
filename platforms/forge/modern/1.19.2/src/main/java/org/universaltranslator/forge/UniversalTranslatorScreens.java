@@ -1,5 +1,6 @@
 package org.universaltranslator.forge;
 
+import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
@@ -20,6 +21,7 @@ import org.universaltranslator.core.TranslationDisplayMode;
 import org.universaltranslator.core.TranslationProviderCatalog;
 import org.universaltranslator.core.TranslationStatusLocalizer;
 import org.universaltranslator.core.TranslationTextColor;
+import org.universaltranslator.core.provider.OpenAiModelCatalog;
 
 import java.util.Collections;
 import java.util.List;
@@ -953,6 +955,14 @@ abstract class UniversalTranslatorDiagnosticsScreenBase extends Screen {
 }
 
 abstract class UniversalTranslatorLlmConfigScreenBase extends Screen {
+    /** Height of a single catalog row in the model picker overlay. */
+    private static final int LIST_ROW_HEIGHT = 12;
+    /** Y of the first catalog row; the picker title sits above it. */
+    private static final int LIST_TOP = 46;
+    /** Room kept under the rows for the paging, back, and hint lines. */
+    private static final int LIST_FOOTER_HEIGHT = 62;
+    private static final int ESCAPE_KEY = 256;
+
     private final UniversalTranslatorConfigScreenBase parent;
     private final String initialEndpoint;
     private final String initialModel;
@@ -960,7 +970,14 @@ abstract class UniversalTranslatorLlmConfigScreenBase extends Screen {
     private EditBox endpoint;
     private EditBox model;
     private EditBox apiKey;
-    private String status = "";
+    private volatile String status = "";
+    private volatile boolean statusIsError;
+    private volatile List<String> fetchedModels = Collections.emptyList();
+    private volatile boolean fetching;
+    private boolean modelListOpen;
+    private int modelPage;
+    /** Canvas captured by renderLlm so the catalog overlay can be drawn over the widgets. */
+    private ForgeScreenCanvas canvas;
 
     UniversalTranslatorLlmConfigScreenBase(UniversalTranslatorConfigScreenBase parent,
                                             String endpoint, String model, boolean hasStoredKey) {
@@ -975,7 +992,7 @@ abstract class UniversalTranslatorLlmConfigScreenBase extends Screen {
     protected final void init() {
         int formWidth = Math.max(180, Math.min(360, width - 20));
         int left = (width - formWidth) / 2;
-        int top = Math.max(42, (height - 150) / 2);
+        int top = Math.max(42, (height - 174) / 2);
         endpoint = addRenderableWidget(new EditBox(font, left, top, formWidth, 20,
                 Component.translatable("screen.universal_translator.llm.endpoint")));
         endpoint.setMaxLength(512);
@@ -993,12 +1010,16 @@ abstract class UniversalTranslatorLlmConfigScreenBase extends Screen {
                 Component.translatable("screen.universal_translator.llm.save"), button -> save()));
         addRenderableWidget(new Button(left + buttonWidth + gap, top + 108, buttonWidth, 20,
                 Component.translatable("gui.cancel"), button -> onClose()));
+        addRenderableWidget(new Button(left, top + 132, formWidth, 20,
+                Component.translatable("screen.universal_translator.llm.fetch_models"),
+                button -> fetchModels()));
     }
 
     protected final void renderLlm(ForgeScreenCanvas graphics) {
+        canvas = graphics;
         int formWidth = Math.max(180, Math.min(360, width - 20));
         int left = (width - formWidth) / 2;
-        int top = Math.max(42, (height - 150) / 2);
+        int top = Math.max(42, (height - 174) / 2);
         graphics.centered(title, width / 2, 18, 0xFFFFFFFF);
         graphics.text(Component.translatable("screen.universal_translator.llm.endpoint_hint"),
                 left, top - 11, 0xFFA0A0A0);
@@ -1009,7 +1030,8 @@ abstract class UniversalTranslatorLlmConfigScreenBase extends Screen {
                         : "screen.universal_translator.llm.key_empty_hint"),
                 left, top + 61, 0xFFA0A0A0);
         if (!status.isEmpty()) {
-            graphics.centered(Component.literal(status), width / 2, top + 134, 0xFFFF5555);
+            graphics.centered(Component.literal(status), width / 2, top + 158,
+                    statusIsError ? 0xFFFF5555 : 0xFFE0E0E0);
         }
     }
 
@@ -1027,6 +1049,147 @@ abstract class UniversalTranslatorLlmConfigScreenBase extends Screen {
         onClose();
     }
 
+    /** Asks the configured endpoint for its model catalog without blocking the render thread. */
+    private void fetchModels() {
+        if (fetching) {
+            return;
+        }
+        final String endpointValue = endpoint.getValue().trim();
+        if (endpointValue.isEmpty()) {
+            setStatus(tr("error.universal_translator.llm_required"), true);
+            return;
+        }
+        String enteredKey = apiKey.getValue().trim();
+        final String keyValue = enteredKey.isEmpty()
+                ? parent.llmApiKey() : ("-".equals(enteredKey) ? "" : enteredKey);
+        fetching = true;
+        setStatus(tr("screen.universal_translator.llm.fetching"), false);
+        Thread worker = new Thread(() -> {
+            List<String> models = Collections.emptyList();
+            String failure = "";
+            try {
+                models = OpenAiModelCatalog.fetch(endpointValue, keyValue);
+            } catch (Exception error) {
+                failure = describe(error);
+            }
+            fetching = false;
+            if (!failure.isEmpty()) {
+                setStatus(tr("screen.universal_translator.llm.fetch_failed", failure), true);
+                return;
+            }
+            if (models.isEmpty()) {
+                setStatus(tr("screen.universal_translator.llm.fetch_empty"), true);
+                return;
+            }
+            fetchedModels = models;
+            modelPage = 0;
+            modelListOpen = true;
+            setStatus("", false);
+        }, "universal-translator-model-list");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    private void setStatus(String message, boolean error) {
+        status = message;
+        statusIsError = error;
+    }
+
+    private static String describe(Exception error) {
+        String message = error.getMessage();
+        return message == null || message.trim().isEmpty() ? error.getClass().getSimpleName() : message;
+    }
+
+    @Override
+    public void render(PoseStack pose, int mouseX, int mouseY, float delta) {
+        super.render(pose, mouseX, mouseY, delta);
+        if (modelListOpen && canvas != null) {
+            renderModelList(canvas, mouseX, mouseY);
+        }
+    }
+
+    /** Draws the fetched catalog over the form so a served model can be picked instead of typed. */
+    private void renderModelList(ForgeScreenCanvas graphics, int mouseX, int mouseY) {
+        graphics.fill(0, 0, width, height, 0xFF101010);
+        graphics.centered(Component.translatable("screen.universal_translator.llm.select_model",
+                fetchedModels.size()), width / 2, 20, 0xFFFFFFFF);
+        int rows = rowsPerPage();
+        int first = modelPage * rows;
+        for (int row = 0; row < rows && first + row < fetchedModels.size(); row++) {
+            int rowY = LIST_TOP + row * LIST_ROW_HEIGHT;
+            boolean hovered = mouseY >= rowY && mouseY < rowY + LIST_ROW_HEIGHT;
+            graphics.text(Component.literal((hovered ? "> " : "  ") + fetchedModels.get(first + row)),
+                    24, rowY, hovered ? 0xFFFFD060 : 0xFFE0E0E0);
+        }
+        int pages = pageCount(rows);
+        graphics.centered(Component.literal("< " + (modelPage + 1) + "/" + pages + " >"),
+                width / 2, height - 46, 0xFFFFFFFF);
+        graphics.centered(Component.translatable("screen.universal_translator.llm.select_back"),
+                width / 2, height - 30, 0xFFFFD060);
+        graphics.centered(Component.translatable("screen.universal_translator.llm.select_hint"),
+                width / 2, height - 16, 0xFFA0A0A0);
+    }
+
+    @Override
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (modelListOpen) {
+            handleModelListClick(mouseX, mouseY);
+            return true;
+        }
+        return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    private void handleModelListClick(double mouseX, double mouseY) {
+        if (mouseY >= height - 54 && mouseY < height - 38) {
+            int pages = pageCount(rowsPerPage());
+            if (pages > 1) {
+                modelPage = mouseX < width / 2.0
+                        ? (modelPage + pages - 1) % pages : (modelPage + 1) % pages;
+            }
+            return;
+        }
+        if (mouseY >= height - 38 && mouseY < height - 20) {
+            modelListOpen = false;
+            return;
+        }
+        if (mouseY < LIST_TOP) {
+            return;
+        }
+        int rows = rowsPerPage();
+        int row = (int) ((mouseY - LIST_TOP) / LIST_ROW_HEIGHT);
+        int index = modelPage * rows + row;
+        if (row >= rows || index >= fetchedModels.size()) {
+            return;
+        }
+        model.setValue(fetchedModels.get(index));
+        modelListOpen = false;
+        setStatus("", false);
+    }
+
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (modelListOpen) {
+            if (keyCode == ESCAPE_KEY) {
+                modelListOpen = false;
+            }
+            return true;
+        }
+        return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+    @Override
+    public boolean charTyped(char chr, int modifiers) {
+        return modelListOpen || super.charTyped(chr, modifiers);
+    }
+
+    private int rowsPerPage() {
+        return Math.max(3, (height - LIST_TOP - LIST_FOOTER_HEIGHT) / LIST_ROW_HEIGHT);
+    }
+
+    private int pageCount(int rows) {
+        return Math.max(1, (fetchedModels.size() + rows - 1) / rows);
+    }
+
     @Override
     public final void onClose() {
         if (minecraft != null) minecraft.setScreen(parent);
@@ -1035,6 +1198,10 @@ abstract class UniversalTranslatorLlmConfigScreenBase extends Screen {
     @Override
     public final boolean isPauseScreen() {
         return false;
+    }
+
+    private static String tr(String key, Object... arguments) {
+        return Component.translatable(key, arguments).getString();
     }
 }
 
