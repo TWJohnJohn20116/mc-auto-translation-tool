@@ -177,6 +177,11 @@ does not reveal a saved key: leave the field blank to keep it or enter a single 
 The endpoint, model name, and key are stored only in the current game instance's
 `config/universal-translator.properties`. The mod does not install or start third-party LLM services.
 
+The settings screen's “Fetch model list” button queries the configured endpoint's `/models` catalog
+with the current address and key (the endpoint may be either `/v1` or `/v1/chat/completions`), then
+lists the model names the server actually serves; click one to fill in the model field. The request
+runs in the background, so the screen never freezes, and a failure reports its reason.
+
 ### Other online services and custom APIs
 
 Version 1.4-beta includes adapters for Baidu, Tencent Cloud TMT, Alibaba Cloud MT, Youdao,

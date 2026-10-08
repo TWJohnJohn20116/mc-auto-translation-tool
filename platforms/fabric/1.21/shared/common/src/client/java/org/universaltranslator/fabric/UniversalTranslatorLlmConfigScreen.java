@@ -1,13 +1,23 @@
 package org.universaltranslator.fabric;
 
+import java.util.Collections;
+import java.util.List;
+
 import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.text.Text;
+import org.universaltranslator.core.provider.OpenAiModelCatalog;
 
 /** Local-only editor for an OpenAI-compatible hosted or loopback LLM endpoint. */
-final class UniversalTranslatorLlmConfigScreen extends Screen {
+final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorLlmConfigScreenBase {
+    /** Height of a single catalog row in the model picker overlay. */
+    private static final int LIST_ROW_HEIGHT = 12;
+    /** Y of the first catalog row; the picker title sits above it. */
+    private static final int LIST_TOP = 46;
+    /** Room kept under the rows for the paging, back, and hint lines. */
+    private static final int LIST_FOOTER_HEIGHT = 62;
+
     private final UniversalTranslatorConfigScreen parent;
     private final String initialEndpoint;
     private final String initialModel;
@@ -15,7 +25,12 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
     private TextFieldWidget endpoint;
     private TextFieldWidget model;
     private TextFieldWidget apiKey;
-    private String status = "";
+    private volatile String status = "";
+    private volatile boolean statusIsError;
+    private volatile List<String> fetchedModels = Collections.emptyList();
+    private volatile boolean fetching;
+    private boolean modelListOpen;
+    private int modelPage;
 
     UniversalTranslatorLlmConfigScreen(
             UniversalTranslatorConfigScreen parent,
@@ -34,7 +49,7 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
     protected void init() {
         int width = Math.max(180, Math.min(360, this.width - 20));
         int left = (this.width - width) / 2;
-        int top = Math.max(42, (this.height - 150) / 2);
+        int top = Math.max(42, (this.height - 174) / 2);
         endpoint = addDrawableChild(new TextFieldWidget(
                 this.textRenderer, left, top, width, 20, Text.translatable("screen.universal_translator.llm.endpoint")));
         endpoint.setMaxLength(512);
@@ -52,13 +67,16 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
                 .dimensions(left, top + 108, buttonWidth, 20).build());
         addDrawableChild(ButtonWidget.builder(Text.translatable("gui.cancel"), button -> close())
                 .dimensions(left + buttonWidth + gap, top + 108, buttonWidth, 20).build());
+        addDrawableChild(ButtonWidget.builder(
+                        Text.translatable("screen.universal_translator.llm.fetch_models"), button -> fetchModels())
+                .dimensions(left, top + 132, width, 20).build());
     }
 
     private void save() {
         String endpointValue = endpoint.getText().trim();
         String modelValue = model.getText().trim();
         if (endpointValue.isEmpty() || modelValue.isEmpty()) {
-            status = tr("error.universal_translator.llm_required");
+            setStatus(tr("error.universal_translator.llm_required"), true);
             return;
         }
         String enteredKey = apiKey.getText().trim();
@@ -68,11 +86,67 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
         close();
     }
 
+    /** Asks the configured endpoint for its model catalog without blocking the render thread. */
+    private void fetchModels() {
+        if (fetching) {
+            return;
+        }
+        final String endpointValue = endpoint.getText().trim();
+        if (endpointValue.isEmpty()) {
+            setStatus(tr("error.universal_translator.llm_required"), true);
+            return;
+        }
+        String enteredKey = apiKey.getText().trim();
+        final String keyValue = enteredKey.isEmpty()
+                ? parent.llmApiKey() : ("-".equals(enteredKey) ? "" : enteredKey);
+        fetching = true;
+        setStatus(tr("screen.universal_translator.llm.fetching"), false);
+        Thread worker = new Thread(() -> {
+            List<String> models = Collections.emptyList();
+            String failure = "";
+            try {
+                models = OpenAiModelCatalog.fetch(endpointValue, keyValue);
+            } catch (Exception error) {
+                failure = describe(error);
+            }
+            fetching = false;
+            if (!failure.isEmpty()) {
+                setStatus(tr("screen.universal_translator.llm.fetch_failed", failure), true);
+                return;
+            }
+            if (models.isEmpty()) {
+                setStatus(tr("screen.universal_translator.llm.fetch_empty"), true);
+                return;
+            }
+            fetchedModels = models;
+            modelPage = 0;
+            modelListOpen = true;
+            // This version layer cannot intercept typing, so drop focus: a hidden field must not
+            // collect the characters the user types while the picker is open.
+            endpoint.setFocused(false);
+            model.setFocused(false);
+            apiKey.setFocused(false);
+            setStatus("", false);
+        }, "universal-translator-model-list");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    private void setStatus(String message, boolean error) {
+        status = message;
+        statusIsError = error;
+    }
+
+    private static String describe(Exception error) {
+        String message = error.getMessage();
+        return message == null || message.trim().isEmpty() ? error.getClass().getSimpleName() : message;
+    }
+
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         int width = Math.max(180, Math.min(360, this.width - 20));
         int left = (this.width - width) / 2;
-        int top = Math.max(42, (this.height - 150) / 2);
+        int top = Math.max(42, (this.height - 174) / 2);
         context.drawCenteredTextWithShadow(this.textRenderer, this.title, this.width / 2, 18, 0xFFFFFF);
         context.drawTextWithShadow(this.textRenderer,
                 Text.translatable("screen.universal_translator.llm.endpoint_hint"), left, top - 11, 0xA0A0A0);
@@ -85,9 +159,74 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
                 left, top + 61, 0xA0A0A0);
         if (!status.isEmpty()) {
             context.drawCenteredTextWithShadow(this.textRenderer, Text.literal(status),
-                    this.width / 2, top + 134, 0xFF5555);
+                    this.width / 2, top + 158, statusIsError ? 0xFF5555 : 0xFFE0E0E0);
         }
         super.render(context, mouseX, mouseY, delta);
+        if (modelListOpen) {
+            renderModelList(context, mouseX, mouseY);
+        }
+    }
+
+    /** Draws the fetched catalog over the form so a served model can be picked instead of typed. */
+    private void renderModelList(DrawContext context, int mouseX, int mouseY) {
+        context.fill(0, 0, this.width, this.height, 0xFF101010);
+        context.drawCenteredTextWithShadow(this.textRenderer,
+                Text.translatable("screen.universal_translator.llm.select_model", fetchedModels.size()),
+                this.width / 2, 20, 0xFFFFFF);
+        int rows = rowsPerPage();
+        int first = modelPage * rows;
+        for (int row = 0; row < rows && first + row < fetchedModels.size(); row++) {
+            int rowY = LIST_TOP + row * LIST_ROW_HEIGHT;
+            boolean hovered = mouseY >= rowY && mouseY < rowY + LIST_ROW_HEIGHT;
+            context.drawTextWithShadow(this.textRenderer,
+                    Text.literal((hovered ? "> " : "  ") + fetchedModels.get(first + row)),
+                    24, rowY, hovered ? 0xFFFFD060 : 0xFFE0E0E0);
+        }
+        int pages = pageCount(rows);
+        context.drawCenteredTextWithShadow(this.textRenderer,
+                Text.literal("< " + (modelPage + 1) + "/" + pages + " >"), this.width / 2, this.height - 46, 0xFFFFFF);
+        context.drawCenteredTextWithShadow(this.textRenderer,
+                Text.translatable("screen.universal_translator.llm.select_back"), this.width / 2, this.height - 30, 0xFFFFD060);
+        context.drawCenteredTextWithShadow(this.textRenderer,
+                Text.translatable("screen.universal_translator.llm.select_hint"), this.width / 2, this.height - 16, 0xA0A0A0);
+    }
+
+    @Override
+    protected boolean handleModelListClick(double mouseX, double mouseY) {
+        if (!modelListOpen) {
+            return false;
+        }
+        if (mouseY >= this.height - 54 && mouseY < this.height - 38) {
+            int pages = pageCount(rowsPerPage());
+            if (pages > 1) {
+                modelPage = mouseX < this.width / 2.0
+                        ? (modelPage + pages - 1) % pages : (modelPage + 1) % pages;
+            }
+            return true;
+        }
+        if (mouseY >= this.height - 38 && mouseY < this.height - 20) {
+            modelListOpen = false;
+            return true;
+        }
+        if (mouseY >= LIST_TOP) {
+            int rows = rowsPerPage();
+            int row = (int) ((mouseY - LIST_TOP) / LIST_ROW_HEIGHT);
+            int index = modelPage * rows + row;
+            if (row < rows && index < fetchedModels.size()) {
+                model.setText(fetchedModels.get(index));
+                modelListOpen = false;
+                setStatus("", false);
+            }
+        }
+        return true;
+    }
+
+    private int rowsPerPage() {
+        return Math.max(3, (this.height - LIST_TOP - LIST_FOOTER_HEIGHT) / LIST_ROW_HEIGHT);
+    }
+
+    private int pageCount(int rows) {
+        return Math.max(1, (fetchedModels.size() + rows - 1) / rows);
     }
 
     @Override

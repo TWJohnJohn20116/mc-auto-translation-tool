@@ -156,4 +156,11 @@
   "screen.universal_translator.tab.outgoing": "发送",
   "screen.universal_translator.tab.hud": "HUD",
   "screen.universal_translator.info.outgoing_hint": "在聊天栏发言时，自动翻译为目标语言发送"
+  ,"screen.universal_translator.llm.fetch_models": "获取模型列表"
+  ,"screen.universal_translator.llm.fetching": "正在获取模型列表…"
+  ,"screen.universal_translator.llm.fetch_failed": "获取模型列表失败：%s"
+  ,"screen.universal_translator.llm.select_model": "选择模型（共 %s 个）"
+  ,"screen.universal_translator.llm.select_hint": "点击模型即应用"
+  ,"screen.universal_translator.llm.fetch_empty": "服务器没有返回任何模型"
+  ,"screen.universal_translator.llm.select_back": "返回"
 }
