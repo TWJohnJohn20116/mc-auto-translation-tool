@@ -161,4 +161,15 @@
   ,"screen.universal_translator.llm.select_hint": "Click a model to apply it"
   ,"screen.universal_translator.llm.fetch_empty": "The server returned no models"
   ,"screen.universal_translator.llm.select_back": "Back"
+
+  ,"screen.universal_translator.engine.model": "Model: %s"
+  ,"screen.universal_translator.engine.test": "Test connection"
+  ,"screen.universal_translator.engine.check": "Check settings"
+  ,"screen.universal_translator.engine.testing": "Testing…"
+  ,"screen.universal_translator.engine.test_ok_models": "Connected (%s models)"
+  ,"screen.universal_translator.engine.test_ok_config": "Settings complete"
+  ,"screen.universal_translator.engine.summary": "Endpoint %s ・ key %s"
+  ,"screen.universal_translator.engine.key_set": "set"
+  ,"screen.universal_translator.engine.key_unset": "not set"
+  ,"screen.universal_translator.engine.config_file": "This service's signing fields live in the config file"
 }
