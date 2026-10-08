@@ -45,7 +45,7 @@ test("server-renders the public-benefit project home page", async () => {
   assert.match(html, /1\.21\.11/);
   assert.match(html, /26\.2/);
   assert.match(html, new RegExp(`${escapeRe(releaseVersion)} 正式版`));
-  assert.match(html, /16 个经过校验的 JAR/);
+  assert.match(html, /31 个经过校验的 JAR/);
   assert.match(html, /自行配置的 API/);
   assert.match(html, /从 GitHub 下载/);
   const version = escapeRe(releaseVersion);
@@ -55,7 +55,7 @@ test("server-renders the public-benefit project home page", async () => {
       "g",
     ),
   ) ?? [];
-  assert.equal(new Set(releaseDownloads).size, 17);
+  assert.equal(new Set(releaseDownloads).size, 32);
   assert.match(html, new RegExp(`MCAutoTranslationTool-${version}-mc1\\.8\\.9-forge\\.jar`));
   assert.match(html, new RegExp(`MCAutoTranslationTool-${version}-fabric-all\\.jar`));
   assert.match(html, new RegExp(`MCAutoTranslationTool-${version}-mc1\\.21\\.9-1\\.21\\.11-forge\\.jar`));
