@@ -117,45 +117,25 @@ public final class RenderedTextBridge {
     }
 
     /**
-     * Rebuilds the translation as one child per source sibling so every server-provided style
-     * survives; flattening the component into a single literal keeps only the first style.
-     * Returns {@code null} when the source is not a flat sibling list or carries a single
-     * style, so the caller keeps the ordinary path.
+     * Rebuilds the translation as one child per style the source's visible text renders with, so
+     * every server-provided style survives; flattening the component into a single literal keeps
+     * only the style of the node it was flattened from. Returns {@code null} when the visible text
+     * already renders with the root's own style, so the caller keeps the ordinary path.
      */
     private static Text translateStyledSiblings(Text text) {
-        List<Text> siblings = text.getSiblings();
-        if (siblings.isEmpty()) {
+        List<String> texts = new ArrayList<String>();
+        List<Object> styleKeys = new ArrayList<Object>();
+        List<Style> styles = new ArrayList<Style>();
+        collectStyledLeaves(text, texts, styleKeys, styles);
+        if (texts.isEmpty()) {
             return null;
         }
-        List<String> texts = new ArrayList<String>(siblings.size() + 1);
-        List<Object> styleKeys = new ArrayList<Object>(siblings.size() + 1);
-        List<Style> styles = new ArrayList<Style>(siblings.size() + 1);
         boolean sourceHasColor = text.getStyle().getColor() != null;
-        int siblingLength = 0;
-        for (Text sibling : siblings) {
-            if (!sibling.getSiblings().isEmpty()) {
-                return null;
-            }
-            String value = sibling.getString();
-            texts.add(value);
-            styleKeys.add(sibling.getStyle());
-            styles.add(sibling.getStyle());
-            siblingLength += value.length();
-            sourceHasColor |= sibling.getStyle().getColor() != null;
-        }
-        String full = text.getString();
-        if (full.length() < siblingLength) {
-            return null;
-        }
-        // Text the root renders before its siblings keeps the root's own style.
-        String own = full.substring(0, full.length() - siblingLength);
-        if (!own.isEmpty()) {
-            texts.add(0, own);
-            styleKeys.add(0, text.getStyle());
-            styles.add(0, text.getStyle());
+        for (Style style : styles) {
+            sourceHasColor |= style.getColor() != null;
         }
         List<TranslationStyleRuns.Run> runs = TranslationStyleRuns.mergeAdjacent(texts, styleKeys);
-        if (!TranslationStyleRuns.shouldRebuildRuns(runs)) {
+        if (!TranslationStyleRuns.shouldRebuildRuns(runs, text.getStyle())) {
             return null;
         }
         TranslationTextColor color = TranslationStyleRuns.resolveTranslatedColor(
@@ -167,6 +147,41 @@ public final class RenderedTextBridge {
                     .setStyle(applyColor(styles.get(run.sourceIndex()), color)));
         }
         return rebuilt;
+    }
+
+    /**
+     * Collects the visible text of {@code text} together with the style of the node that carries
+     * it, descending into nested children.
+     *
+     * <p>Team prefixes and suffixes and most components a server builds arrive as nested trees, so
+     * reading only the direct children left the caller with the root style alone and dropped the
+     * colour the line is actually drawn with. Every leaf keeps its own style here; the caller
+     * re-attaches the root style and Minecraft merges the two when it renders the component.</p>
+     */
+    private static void collectStyledLeaves(
+            Text node,
+            List<String> texts,
+            List<Object> styleKeys,
+            List<Style> styles
+    ) {
+        List<Text> children = node.getSiblings();
+        String full = node.getString();
+        int childLength = 0;
+        for (Text child : children) {
+            childLength += child.getString().length();
+        }
+        // Text a node renders before its children keeps that node's own style.
+        if (full.length() > childLength) {
+            String own = full.substring(0, full.length() - childLength);
+            if (!own.isEmpty()) {
+                texts.add(own);
+                styleKeys.add(node.getStyle());
+                styles.add(node.getStyle());
+            }
+        }
+        for (Text child : children) {
+            collectStyledLeaves(child, texts, styleKeys, styles);
+        }
     }
 
     private static Style applyColor(Style original, TranslationTextColor color) {
