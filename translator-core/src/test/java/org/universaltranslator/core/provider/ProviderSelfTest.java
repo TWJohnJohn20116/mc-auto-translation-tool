@@ -53,6 +53,7 @@ public final class ProviderSelfTest {
         normalizesBaseUrlEndpoints();
         reportsProviderErrorsFromContentlessResponses();
         retriesReasoningOnlyResponsesWithFullBudget();
+        batchesNearbyTextsIntoOneRequest();
         derivesModelCatalogEndpoint();
         fetchesModelCatalogWithGet();
         System.out.println("ProviderSelfTest: all checks passed");
@@ -259,21 +260,24 @@ public final class ProviderSelfTest {
     }
 
     private static void retriesReasoningOnlyResponsesWithFullBudget() throws Exception {
-        ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
+        ServerSocket server = new ServerSocket(0, 3, InetAddress.getByName("127.0.0.1"));
         server.setSoTimeout(5000);
         AtomicReference<String> firstBody = new AtomicReference<String>();
         AtomicReference<String> secondBody = new AtomicReference<String>();
+        AtomicReference<String> thirdBody = new AtomicReference<String>();
         AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
         Thread thread = new Thread(() -> {
             try {
-                for (int index = 0; index < 2; index++) {
+                for (int index = 0; index < 3; index++) {
                     try (Socket socket = server.accept()) {
                         HttpRequest request = readRequest(socket.getInputStream(),
                                 "POST /v1/chat/completions HTTP/1.");
                         if (index == 0) {
                             firstBody.set(request.body);
-                        } else {
+                        } else if (index == 1) {
                             secondBody.set(request.body);
+                        } else {
+                            thirdBody.set(request.body);
                         }
                         writeResponse(socket.getOutputStream(), 200, index == 0
                                 ? "{\"choices\":[{\"message\":{\"content\":\"\","
@@ -291,18 +295,95 @@ public final class ProviderSelfTest {
             OpenAiChatTranslationProvider provider = new OpenAiChatTranslationProvider(
                     "http://127.0.0.1:" + server.getLocalPort() + "/v1/chat/completions",
                     "", "reasoner", "openai-compatible");
-            String translated = provider.translate(
-                    new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT));
-            assertEquals("你好", translated);
-            // A short input still gets the reasoning floor, and the retry spends the full budget.
+            assertEquals("你好", provider.translate(
+                    new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT)));
+            // A short input still gets the reasoning floor, and the retry spends the larger budget
+            // a thinking model needs before it can reach its answer.
             assertTrue(firstBody.get().contains("\"max_tokens\":512"));
-            assertTrue(secondBody.get().contains("\"max_tokens\":2048"));
+            assertTrue(secondBody.get().contains("\"max_tokens\":16384"));
+            // The endpoint is known to reason now, so the next line starts at that budget instead
+            // of paying for the same discovery round trip again. One request, not two.
+            assertEquals("你好", provider.translate(
+                    new TranslationRequest("Welcome back", "auto", "zh-TW", TextKind.CHAT)));
+            assertTrue(thirdBody.get().contains("\"max_tokens\":16384"));
         } finally {
             server.close();
             thread.join(5000);
         }
         if (serverFailure.get() != null) {
             throw new AssertionError("Local reasoning retry test server failed", serverFailure.get());
+        }
+    }
+
+    /**
+     * Two single-line texts requested at the same time must travel in one request and each caller
+     * must receive the translation belonging to its own line.
+     */
+    private static void batchesNearbyTextsIntoOneRequest() throws Exception {
+        ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        AtomicReference<String> body = new AtomicReference<String>();
+        AtomicReference<Integer> requests = new AtomicReference<Integer>(Integer.valueOf(0));
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread serverThread = new Thread(() -> {
+            try (Socket socket = server.accept()) {
+                HttpRequest request = readRequest(socket.getInputStream(),
+                        "POST /v1/chat/completions HTTP/1.");
+                body.set(request.body);
+                requests.set(Integer.valueOf(requests.get().intValue() + 1));
+                writeResponse(socket.getOutputStream(), 200,
+                        "{\"choices\":[{\"message\":{\"content\":\"1. 你好\\n2. 歡迎回來\"}}]}");
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-batch");
+        serverThread.setDaemon(true);
+        serverThread.start();
+        try {
+            OpenAiChatTranslationProvider provider = new OpenAiChatTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v1/chat/completions",
+                    "", "batch-model", "openai-compatible");
+            // Widen the window so the test measures the batching, not the scheduler.
+            provider.setBatchWindowMillis(300L);
+            AtomicReference<String> first = new AtomicReference<String>();
+            AtomicReference<String> second = new AtomicReference<String>();
+            AtomicReference<Throwable> failure = new AtomicReference<Throwable>();
+            Thread one = new Thread(() -> {
+                try {
+                    first.set(provider.translate(new TranslationRequest(
+                            "Hello", "auto", "zh-TW", TextKind.CHAT)));
+                } catch (Throwable problem) {
+                    failure.compareAndSet(null, problem);
+                }
+            }, "provider-self-test-batch-one");
+            Thread two = new Thread(() -> {
+                try {
+                    second.set(provider.translate(new TranslationRequest(
+                            "Welcome back", "auto", "zh-TW", TextKind.CHAT)));
+                } catch (Throwable problem) {
+                    failure.compareAndSet(null, problem);
+                }
+            }, "provider-self-test-batch-two");
+            one.setDaemon(true);
+            two.setDaemon(true);
+            one.start();
+            two.start();
+            one.join(5000);
+            two.join(5000);
+            if (failure.get() != null) {
+                throw new AssertionError("Batched translation failed", failure.get());
+            }
+            assertEquals("你好", first.get());
+            assertEquals("歡迎回來", second.get());
+            assertEquals(1, requests.get().intValue());
+            assertTrue(body.get().contains("1. Hello"));
+            assertTrue(body.get().contains("2. Welcome back"));
+        } finally {
+            server.close();
+            serverThread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local batch test server failed", serverFailure.get());
         }
     }
 
