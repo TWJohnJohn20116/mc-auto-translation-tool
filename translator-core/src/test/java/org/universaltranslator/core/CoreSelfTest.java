@@ -845,6 +845,13 @@ public final class CoreSelfTest {
         ProtectedText text = ProtectedText.parse("\u00a7aCoins: 12,583 | https://example.org | 75%");
         assertEquals("__UT_0__Coins: __UT_1__ | __UT_2__ | __UT_3__", text.getTemplate());
         assertEquals("\u00a7a\u91d1\u5e01: 12,583 | https://example.org | 75%", text.restore("__UT_0__\u91d1\u5e01: __UT_1__ | __UT_2__ | __UT_3__"));
+        // A leading list bullet is decoration. A model that saw one replaced it with a different
+        // glyph, and because the render bridge re-attaches styling per text run, that replacement
+        // also shifted the colours of the line. Bullets are kept verbatim instead.
+        ProtectedText bulleted = ProtectedText.parse("\u2022 Wins: 0");
+        assertFalse(bulleted.getTemplate().contains("\u2022"));
+        assertTrue(bulleted.getTemplate().startsWith("__UT_0__"));
+        assertEquals("\u2022 \u52dd\u5229: 0", bulleted.restore("__UT_0__\u52dd\u5229: 0"));
     }
 
     private static void skipsAlreadyChineseAndNonTextValues() {
