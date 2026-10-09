@@ -55,6 +55,17 @@ public final class ProtectedText {
     private static final String FORMATTED_VALUE_SOURCE =
             FORMAT_CODE + "(?:" + BRACKETED_IPV6_SOURCE + "|" + IPV4_CORE + "|" + RAW_IPV6_CORE
                     + "|" + DOMAIN_CORE + "|" + LOCALHOST_CORE + "|" + NUMBER_CORE + ")";
+    /**
+     * A leading list bullet ("• ", "» ", "◆ ") is decoration rather than content. A model that
+     * sees one inside a line replaces it with a different glyph of its own choosing, and because
+     * the render bridge re-attaches styling per text run, that replacement also shifts the colours
+     * of the line. Bullets are therefore kept verbatim and never sent for translation.
+     *
+     * <p>The class covers every Unicode symbol and punctuation category on purpose: the common
+     * bullets are split across them ("•" U+2022 is punctuation, "◆" U+25C6 is a symbol, "»" U+00BB
+     * is final punctuation), and a run of leading decoration is never translatable text.
+     */
+    private static final String BULLET_CORE = "^[\\p{S}\\p{P}]+[ \\u3000]*";
     private static final String PROTECTED_SOURCE =
             "(?:" + FORMATTED_VALUE_SOURCE + ")" +
             "|(?:" + FORMAT_CODE + ")" +
@@ -62,13 +73,16 @@ public final class ProtectedText {
             "|(?:" + BRACKETED_IPV6_SOURCE + "|" + IPV4_SOURCE + "|" + RAW_IPV6_SOURCE
                     + "|" + DOMAIN_SOURCE + "|" + LOCALHOST_SOURCE + ")" +
             "|(?:" + NUMBER_SOURCE + ")" +
+            "|(?:" + BULLET_CORE + ")" +
             "|(?:%[A-Za-z0-9_.:-]+%)" +
             "|(?:\\{[A-Za-z0-9_.:-]+})";
     private static final String HAN_SOURCE =
             "(?:[\\u3400-\\u4DBF\\u4E00-\\u9FFF\\uF900-\\uFAFF]+)";
-    private static final Pattern PROTECTED = Pattern.compile(PROTECTED_SOURCE);
+    // MULTILINE so the leading-bullet pattern anchors at the start of every line, not just the
+    // start of the whole text; none of the other patterns use an anchor.
+    private static final Pattern PROTECTED = Pattern.compile(PROTECTED_SOURCE, Pattern.MULTILINE);
     private static final Pattern PROTECTED_WITH_HAN =
-            Pattern.compile("(?:" + PROTECTED_SOURCE + "|" + HAN_SOURCE + ")");
+            Pattern.compile("(?:" + PROTECTED_SOURCE + "|" + HAN_SOURCE + ")", Pattern.MULTILINE);
     private static final Pattern INTERNAL_TOKEN = Pattern.compile("__UT_\\d+__");
     /**
      * How many distinct literal sets keep their compiled pattern alive. The platform publishes a
