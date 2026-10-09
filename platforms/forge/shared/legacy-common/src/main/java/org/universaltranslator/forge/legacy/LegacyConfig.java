@@ -92,7 +92,7 @@ final class LegacyConfig {
         translateEnglishOnly = Boolean.parseBoolean(
                 properties.getProperty("translate-english-only", "true"));
         translatedTextColor = TranslationTextColor.fromConfig(
-                properties.getProperty("translated-text-color", "aqua"));
+                properties.getProperty("translated-text-color", "original"));
         provider = properties.getProperty("provider", "offline").trim();
         endpoint = properties.getProperty(
                 "libretranslate-endpoint", "http://127.0.0.1:5000/translate").trim();
@@ -170,7 +170,7 @@ final class LegacyConfig {
         if (legacyMigration) {
             properties.setProperty("display-mode", "translated-only");
             properties.setProperty("translate-english-only", "true");
-            properties.setProperty("translated-text-color", "aqua");
+            properties.setProperty("translated-text-color", "original");
         }
         properties.setProperty("config-version", "7");
         LocalConfigSecurity.restrictToOwner(file.toPath());
@@ -349,7 +349,7 @@ final class LegacyConfig {
         properties.setProperty("outgoing-target-language", "en");
         properties.setProperty("display-mode", "translated-only");
         properties.setProperty("translate-english-only", "true");
-        properties.setProperty("translated-text-color", "aqua");
+        properties.setProperty("translated-text-color", "original");
         properties.setProperty("provider", "offline");
         properties.setProperty("libretranslate-endpoint", "http://127.0.0.1:5000/translate");
         properties.setProperty("api-key", "");

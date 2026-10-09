@@ -103,7 +103,7 @@ public final class ForgeTranslationRuntime {
                 TranslationStore store = config.diskCache
                         ? new PersistentTranslationCache(config.cacheFile, 10_000)
                         : new TranslationCache(10_000);
-                int workers = provider.id().contains("offline-llama:") ? 1 : 2;
+                int workers = provider.id().contains("offline-llama:") ? 1 : 4;
                 created = new RenderTranslationSession(
                         provider, "auto", config.targetLanguage, store, workers, config.displayMode,
                         config.translateEnglishOnly);
