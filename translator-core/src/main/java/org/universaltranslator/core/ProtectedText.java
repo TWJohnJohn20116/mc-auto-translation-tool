@@ -60,8 +60,12 @@ public final class ProtectedText {
      * sees one inside a line replaces it with a different glyph of its own choosing, and because
      * the render bridge re-attaches styling per text run, that replacement also shifts the colours
      * of the line. Bullets are therefore kept verbatim and never sent for translation.
+     *
+     * <p>The class covers every Unicode symbol and punctuation category on purpose: the common
+     * bullets are split across them ("•" U+2022 is punctuation, "◆" U+25C6 is a symbol, "»" U+00BB
+     * is final punctuation), and a run of leading decoration is never translatable text.
      */
-    private static final String BULLET_CORE = "^[\\p{So}\\p{Sk}]+[ \\u3000]*";
+    private static final String BULLET_CORE = "^[\\p{S}\\p{P}]+[ \\u3000]*";
     private static final String PROTECTED_SOURCE =
             "(?:" + FORMATTED_VALUE_SOURCE + ")" +
             "|(?:" + FORMAT_CODE + ")" +
