@@ -191,7 +191,7 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
    32 個資產），再建立或更新 `v<mod_version>` Release；版本號含 `-` 者視為 prerelease。
    NeoForge **不做**版本範圍合併（同一顆 JAR 塞多個同 `modId` 實作會載入失敗），每個版本各一顆。
    **注意**：`publish-release.yml` 的 `expected` 陣列與數量檢查描述的是**目前 `downloads/` 裡已提交
-   的版本**，現在是 1.4-beta2 的 48 顆／32 個資產。下一個版本用 `prepare-release` 重新產生
+   的版本**，現在是 1.4-beta3 的 48 顆／32 個資產。下一個版本用 `prepare-release` 重新產生
    `downloads/` 時，必須在**同一個 PR** 裡把這兩處改成新的目標清單與數量，否則發布會失敗。
 6. 更新文件與網站：`README.md` 與 `docs/Zh-cn|Zh-tw|en/README.md` 裡的連結是**寫死版本號**的
    （`releases/download/v<版本>/...`），新增或移除目標時四個檔案都要一起改，否則會指向不存在的檔案。
