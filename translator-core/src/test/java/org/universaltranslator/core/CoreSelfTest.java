@@ -851,7 +851,7 @@ public final class CoreSelfTest {
         ProtectedText bulleted = ProtectedText.parse("\u2022 Wins: 0");
         assertFalse(bulleted.getTemplate().contains("\u2022"));
         assertTrue(bulleted.getTemplate().startsWith("__UT_0__"));
-        assertEquals("\u2022\u52dd\u5229: 0", bulleted.restore("__UT_0__\u52dd\u5229: 0"));
+        assertEquals("\u2022 \u52dd\u5229: 0", bulleted.restore("__UT_0__\u52dd\u5229: 0"));
     }
 
     private static void skipsAlreadyChineseAndNonTextValues() {
