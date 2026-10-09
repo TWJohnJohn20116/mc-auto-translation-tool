@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "MC 自动翻译工具｜1.4-beta2 正式版",
+  title: "MC 自动翻译工具｜1.4-beta3 正式版",
   description:
-    "MC 自动翻译工具 1.4-beta2 正式版，下载按 Fabric／Forge／NeoForge 分组；Fabric 覆盖 1.13–1.21.11 与 26.1–26.3（Fabric 1.16 已涵盖 1.16.0–1.16.4），并新增 Forge 1.18.2。",
+    "MC 自动翻译工具 1.4-beta3 正式版，下载按 Fabric／Forge／NeoForge 分组；Fabric 覆盖 1.13–1.21.11 与 26.1–26.3（Fabric 1.16 已涵盖 1.16.0–1.16.4），并新增 Forge 1.18.2。",
 };
 
 const features = [
@@ -41,7 +41,7 @@ const versions = [
   ["26.3", "Fabric 单一 JAR", "正式版已发布", "ready"],
 ];
 
-const releaseVersion = "1.4-beta2";
+const releaseVersion = "1.4-beta3";
 const githubDownloadBase =
   `https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v${releaseVersion}`;
 
@@ -148,7 +148,7 @@ export default function Home() {
             自动处理聊天、记分板、箱子，以及模组和整合包界面里的英文内容。
           </p>
           <div className="heroActions">
-            <a className="primaryButton" href="#download">下载 1.4-beta2 正式版 <span>→</span></a>
+            <a className="primaryButton" href="#download">下载 1.4-beta3 正式版 <span>→</span></a>
             <a className="textButton" href="#how">查看安装方法</a>
           </div>
           <div className="trustLine">
@@ -266,9 +266,9 @@ export default function Home() {
 
       <section className="downloadSection shell" id="download">
         <div className="downloadIntro">
-          <span className="sectionKicker light">1.4-beta2 正式版</span>
+          <span className="sectionKicker light">1.4-beta3 正式版</span>
           <h2>免费使用，也欢迎一起把它做得更好。</h2>
-          <p>先选加载器，再选 Minecraft 版本。本次提供 31 个经过校验的 JAR。更新前请删除 1.3.10 及更早版本，只保留与你的 Minecraft 版本及加载器完全对应的 1.4-beta2 文件。</p>
+          <p>先选加载器，再选 Minecraft 版本。本次提供 31 个经过校验的 JAR。更新前请删除 1.3.10 及更早版本，只保留与你的 Minecraft 版本及加载器完全对应的 1.4-beta3 文件。</p>
         </div>
         <div className="downloadGroups">
           {downloadGroups.map((group) => (
