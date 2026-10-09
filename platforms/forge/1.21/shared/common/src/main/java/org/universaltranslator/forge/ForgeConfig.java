@@ -119,7 +119,7 @@ final class ForgeConfig {
         this.translateEnglishOnly = Boolean.parseBoolean(
                 properties.getProperty("translate-english-only", "true"));
         this.translatedTextColor = TranslationTextColor.fromConfig(
-                properties.getProperty("translated-text-color", "aqua"));
+                properties.getProperty("translated-text-color", "original"));
         this.provider = properties.getProperty("provider", "offline").trim();
         this.endpoint = properties.getProperty(
                 "libretranslate-endpoint", "http://127.0.0.1:5000/translate").trim();
@@ -167,7 +167,7 @@ final class ForgeConfig {
         if (legacyMigration) {
             properties.setProperty("display-mode", "translated-only");
             properties.setProperty("translate-english-only", "true");
-            properties.setProperty("translated-text-color", "aqua");
+            properties.setProperty("translated-text-color", "original");
         }
         properties.setProperty("config-version", "6");
         LocalConfigSecurity.restrictToOwner(file);
@@ -353,7 +353,7 @@ final class ForgeConfig {
         properties.setProperty("outgoing-target-language", "en");
         properties.setProperty("display-mode", "translated-only");
         properties.setProperty("translate-english-only", "true");
-        properties.setProperty("translated-text-color", "aqua");
+        properties.setProperty("translated-text-color", "original");
         properties.setProperty("provider", "offline");
         properties.setProperty("libretranslate-endpoint", "http://127.0.0.1:5000/translate");
         properties.setProperty("api-key", "");

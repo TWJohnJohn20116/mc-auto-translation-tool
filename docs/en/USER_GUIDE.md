@@ -71,7 +71,7 @@ installations use the following defaults:
 provider=offline
 display-mode=translated-only
 translate-english-only=true
-translated-text-color=aqua
+translated-text-color=original
 offline-auto-download=true
 offline-model=lite
 api-fallback=false
