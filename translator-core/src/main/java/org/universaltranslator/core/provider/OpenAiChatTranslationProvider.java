@@ -6,10 +6,12 @@ import org.universaltranslator.core.TranslationOutputValidator;
 import org.universaltranslator.core.TargetLanguage;
 import org.universaltranslator.core.net.EndpointPolicy;
 import org.universaltranslator.core.net.HttpJsonClient;
+import org.universaltranslator.core.net.HttpStatusException;
 import org.universaltranslator.core.net.JsonStrings;
 
 import java.net.URI;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /** Small OpenAI-compatible chat provider used by local llama.cpp and optional hosted APIs. */
@@ -22,12 +24,32 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
     private static final int MAXIMUM_TOKENS_LIMIT = 2048;
     /** Smallest completion budget a hosted endpoint gets, so a reasoning model can finish. */
     private static final int MINIMUM_COMPLETION_TOKENS = 512;
+    /**
+     * Completion budget for a model that spends its budget thinking before it writes the answer.
+     * The 2048 ceiling is enough for a plain model, but a thinking model can exhaust it and return
+     * only {@code reasoning_content} — which is exactly what "returned only reasoning content"
+     * reports. Raising the bound costs nothing for a model that stops early, because
+     * {@code max_tokens} is an upper bound rather than a reservation.
+     */
+    private static final int REASONING_COMPLETION_TOKENS = 8192;
 
     private final URI endpoint;
     private final String apiKey;
     private final String model;
     private final String providerId;
     private final HttpJsonClient http;
+    /**
+     * Set once a response arrives carrying reasoning content but no answer. Every later request
+     * then starts with {@link #REASONING_COMPLETION_TOKENS}: without this the provider paid for
+     * two round trips on every single line of a thinking model, which halved throughput on exactly
+     * the endpoints that are slowest already.
+     */
+    private volatile boolean reasoningModel;
+    /**
+     * Largest completion budget this endpoint has accepted. Lowered when the endpoint rejects a
+     * value, so an endpoint with a smaller output cap is only charged one rejected request.
+     */
+    private volatile int acceptedReasoningTokens = REASONING_COMPLETION_TOKENS;
 
     public OpenAiChatTranslationProvider(String endpoint, String apiKey, String model, String providerId) {
         this(endpoint, apiKey, model, providerId, new HttpJsonClient(5000, 120000));
@@ -97,6 +119,11 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             int remaining = OFFLINE_CONTEXT_TOKENS - OFFLINE_PROMPT_OVERHEAD_TOKENS
                     - estimatePromptTokens(request.getText());
             maximumTokens = Math.max(1, Math.min(Math.max(64, requestedTokens), remaining));
+        } else if (reasoningModel) {
+            // This endpoint already proved it thinks before it answers, so start with the larger
+            // budget instead of spending a round trip rediscovering that on every single line.
+            maximumTokens = Math.max(MINIMUM_COMPLETION_TOKENS,
+                    Math.min(REASONING_COMPLETION_TOKENS, acceptedReasoningTokens));
         } else {
             // Reasoning models spend completion tokens thinking before they write the answer, so
             // even a short input must leave room to finish. max_tokens is an upper bound rather
@@ -105,13 +132,19 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         }
         String response = post(system, request.getText(), maximumTokens, offline);
         String translated = extractContent(response);
-        if ((translated == null || translated.trim().isEmpty())
-                && !offline && maximumTokens < MAXIMUM_TOKENS_LIMIT
+        if ((translated == null || translated.trim().isEmpty()) && !offline
                 && JsonStrings.readStringField(response, "reasoning_content") != null) {
             // The model thought until the budget ran out and never wrote the translation; the
-            // answer only appears once the completion is allowed to finish.
-            response = post(system, request.getText(), MAXIMUM_TOKENS_LIMIT, offline);
-            translated = extractContent(response);
+            // answer only appears once the completion is allowed to finish. Remember the endpoint
+            // reasons, so the next line does not repeat the smaller first attempt.
+            reasoningModel = true;
+            int reasoningBudget = Math.max(MINIMUM_COMPLETION_TOKENS,
+                    Math.min(REASONING_COMPLETION_TOKENS, acceptedReasoningTokens));
+            if (reasoningBudget > maximumTokens) {
+                response = postWithAcceptedBudget(
+                        system, request.getText(), reasoningBudget, maximumTokens, offline);
+                translated = extractContent(response);
+            }
         }
         if (translated == null || translated.trim().isEmpty()) {
             throw new IllegalStateException(describeMissingContent(response));
@@ -133,6 +166,41 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
                 .toString();
         String authorization = apiKey.isEmpty() ? null : "Bearer " + apiKey;
         return http.post(endpoint, body, authorization);
+    }
+
+    /**
+     * Posts with a larger completion budget and falls back to the previous one when the endpoint
+     * rejects the larger value. Endpoints differ in how much output they allow; without the
+     * fallback a rejection would fail the line outright, even though the smaller budget did return
+     * a response. The rejected value is remembered so the same endpoint is charged for it once.
+     */
+    private String postWithAcceptedBudget(String system, String text, int budget, int fallbackBudget,
+            boolean offline) throws Exception {
+        try {
+            return post(system, text, budget, offline);
+        } catch (HttpStatusException rejected) {
+            if (!rejectsCompletionBudget(rejected)) {
+                throw rejected;
+            }
+            acceptedReasoningTokens = fallbackBudget;
+            return post(system, text, fallbackBudget, offline);
+        }
+    }
+
+    /**
+     * Whether a failure looks like "the completion budget you asked for is not allowed". Only
+     * client errors whose message names the token limit qualify, so an authentication or quota
+     * failure is never mistaken for a budget problem and silently retried with a smaller budget.
+     */
+    private static boolean rejectsCompletionBudget(HttpStatusException failure) {
+        if (failure.getStatusCode() < 400 || failure.getStatusCode() >= 500) {
+            return false;
+        }
+        String message = failure.getMessage() == null
+                ? "" : failure.getMessage().toLowerCase(Locale.ROOT);
+        return message.contains("max_tokens") || message.contains("max_completion_tokens")
+                || message.contains("max output") || message.contains("too large")
+                || message.contains("too long") || message.contains("exceed");
     }
 
     /**

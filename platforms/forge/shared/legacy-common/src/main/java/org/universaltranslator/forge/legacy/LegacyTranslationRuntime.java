@@ -93,7 +93,7 @@ public final class LegacyTranslationRuntime {
                 // Record the provider before the session is built around it: a failure here must
                 // not orphan a provider that may already hold resources.
                 createdProvider = provider;
-                int workers = provider.id().contains("offline-llama:") ? 1 : 2;
+                int workers = provider.id().contains("offline-llama:") ? 1 : 4;
                 created = new RenderTranslationSession(
                         provider, "auto", config.targetLanguage, store, workers, config.displayMode,
                         config.translateEnglishOnly);

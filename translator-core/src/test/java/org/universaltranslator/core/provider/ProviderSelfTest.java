@@ -259,21 +259,24 @@ public final class ProviderSelfTest {
     }
 
     private static void retriesReasoningOnlyResponsesWithFullBudget() throws Exception {
-        ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
+        ServerSocket server = new ServerSocket(0, 3, InetAddress.getByName("127.0.0.1"));
         server.setSoTimeout(5000);
         AtomicReference<String> firstBody = new AtomicReference<String>();
         AtomicReference<String> secondBody = new AtomicReference<String>();
+        AtomicReference<String> thirdBody = new AtomicReference<String>();
         AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
         Thread thread = new Thread(() -> {
             try {
-                for (int index = 0; index < 2; index++) {
+                for (int index = 0; index < 3; index++) {
                     try (Socket socket = server.accept()) {
                         HttpRequest request = readRequest(socket.getInputStream(),
                                 "POST /v1/chat/completions HTTP/1.");
                         if (index == 0) {
                             firstBody.set(request.body);
-                        } else {
+                        } else if (index == 1) {
                             secondBody.set(request.body);
+                        } else {
+                            thirdBody.set(request.body);
                         }
                         writeResponse(socket.getOutputStream(), 200, index == 0
                                 ? "{\"choices\":[{\"message\":{\"content\":\"\","
@@ -291,12 +294,17 @@ public final class ProviderSelfTest {
             OpenAiChatTranslationProvider provider = new OpenAiChatTranslationProvider(
                     "http://127.0.0.1:" + server.getLocalPort() + "/v1/chat/completions",
                     "", "reasoner", "openai-compatible");
-            String translated = provider.translate(
-                    new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT));
-            assertEquals("你好", translated);
-            // A short input still gets the reasoning floor, and the retry spends the full budget.
+            assertEquals("你好", provider.translate(
+                    new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT)));
+            // A short input still gets the reasoning floor, and the retry spends the larger budget
+            // a thinking model needs before it can reach its answer.
             assertTrue(firstBody.get().contains("\"max_tokens\":512"));
-            assertTrue(secondBody.get().contains("\"max_tokens\":2048"));
+            assertTrue(secondBody.get().contains("\"max_tokens\":8192"));
+            // The endpoint is known to reason now, so the next line starts at that budget instead
+            // of paying for the same discovery round trip again. One request, not two.
+            assertEquals("你好", provider.translate(
+                    new TranslationRequest("Welcome back", "auto", "zh-TW", TextKind.CHAT)));
+            assertTrue(thirdBody.get().contains("\"max_tokens\":8192"));
         } finally {
             server.close();
             thread.join(5000);
