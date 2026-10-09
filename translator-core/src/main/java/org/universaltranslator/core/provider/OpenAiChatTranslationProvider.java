@@ -28,10 +28,11 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
      * Completion budget for a model that spends its budget thinking before it writes the answer.
      * The 2048 ceiling is enough for a plain model, but a thinking model can exhaust it and return
      * only {@code reasoning_content} — which is exactly what "returned only reasoning content"
-     * reports. Raising the bound costs nothing for a model that stops early, because
-     * {@code max_tokens} is an upper bound rather than a reservation.
+     * reports. A chain of thought for one short line runs into the thousands of tokens, so this is
+     * set well above the 2048 the first attempt used. Raising the bound costs nothing for a model
+     * that stops early, because {@code max_tokens} is an upper bound rather than a reservation.
      */
-    private static final int REASONING_COMPLETION_TOKENS = 8192;
+    private static final int REASONING_COMPLETION_TOKENS = 16384;
 
     private final URI endpoint;
     private final String apiKey;
@@ -141,8 +142,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             int reasoningBudget = Math.max(MINIMUM_COMPLETION_TOKENS,
                     Math.min(REASONING_COMPLETION_TOKENS, acceptedReasoningTokens));
             if (reasoningBudget > maximumTokens) {
-                response = postWithAcceptedBudget(
-                        system, request.getText(), reasoningBudget, maximumTokens, offline);
+                response = postWithAcceptedBudget(system, request.getText(), reasoningBudget, offline);
                 translated = extractContent(response);
             }
         }
@@ -169,21 +169,23 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
     }
 
     /**
-     * Posts with a larger completion budget and falls back to the previous one when the endpoint
-     * rejects the larger value. Endpoints differ in how much output they allow; without the
-     * fallback a rejection would fail the line outright, even though the smaller budget did return
-     * a response. The rejected value is remembered so the same endpoint is charged for it once.
+     * Posts with the larger reasoning budget, remembering the ceiling when the endpoint rejects it.
+     * Endpoints differ in how much output they allow, and without this every later line would ask
+     * for the same rejected value and be charged for the rejection again.
      */
-    private String postWithAcceptedBudget(String system, String text, int budget, int fallbackBudget,
-            boolean offline) throws Exception {
+    private String postWithAcceptedBudget(String system, String text, int budget, boolean offline)
+            throws Exception {
         try {
             return post(system, text, budget, offline);
         } catch (HttpStatusException rejected) {
             if (!rejectsCompletionBudget(rejected)) {
                 throw rejected;
             }
-            acceptedReasoningTokens = fallbackBudget;
-            return post(system, text, fallbackBudget, offline);
+            // The failure is left to surface: repeating the request with a smaller budget would
+            // only spend another call, and a line whose reasoning does not fit in the smaller
+            // budget cannot be translated at it anyway.
+            acceptedReasoningTokens = MAXIMUM_TOKENS_LIMIT;
+            throw rejected;
         }
     }
 

@@ -299,12 +299,12 @@ public final class ProviderSelfTest {
             // A short input still gets the reasoning floor, and the retry spends the larger budget
             // a thinking model needs before it can reach its answer.
             assertTrue(firstBody.get().contains("\"max_tokens\":512"));
-            assertTrue(secondBody.get().contains("\"max_tokens\":8192"));
+            assertTrue(secondBody.get().contains("\"max_tokens\":16384"));
             // The endpoint is known to reason now, so the next line starts at that budget instead
             // of paying for the same discovery round trip again. One request, not two.
             assertEquals("你好", provider.translate(
                     new TranslationRequest("Welcome back", "auto", "zh-TW", TextKind.CHAT)));
-            assertTrue(thirdBody.get().contains("\"max_tokens\":8192"));
+            assertTrue(thirdBody.get().contains("\"max_tokens\":16384"));
         } finally {
             server.close();
             thread.join(5000);
