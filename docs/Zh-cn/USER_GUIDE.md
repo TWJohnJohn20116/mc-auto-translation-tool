@@ -67,7 +67,7 @@ Minecraft 版本的聊天长度限制时会发送原文并在本地提示。
 provider=offline
 display-mode=translated-only
 translate-english-only=true
-translated-text-color=aqua
+translated-text-color=original
 offline-auto-download=true
 offline-model=lite
 api-fallback=false

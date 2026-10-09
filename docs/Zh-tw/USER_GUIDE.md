@@ -67,7 +67,7 @@ Fabric 與 Forge 之間混用。
 provider=offline
 display-mode=translated-only
 translate-english-only=true
-translated-text-color=aqua
+translated-text-color=original
 offline-auto-download=true
 offline-model=lite
 api-fallback=false
