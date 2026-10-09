@@ -932,16 +932,35 @@ public final class CoreSelfTest {
         assertEquals(2, merged.get(1).sourceIndex());
         assertEquals(2, TranslationStyleRuns.distinctStyleCount(merged));
         assertTrue(TranslationStyleRuns.shouldRebuildRuns(merged));
+        assertTrue(TranslationStyleRuns.shouldRebuildRuns(merged, "gold"));
+        assertTrue(TranslationStyleRuns.shouldRebuildRuns(merged, "white"));
+
+        // A single run whose style is not the root's still has to be rebuilt: the colour of such
+        // a line lives on a child component (a team prefix or suffix, or any nested component a
+        // server builds), and a literal flattened with the root style alone drops it and draws
+        // the line in the default colour.
+        java.util.List<TranslationStyleRuns.Run> childStyled = TranslationStyleRuns.mergeAdjacent(
+                Arrays.asList("AS Practice"), Arrays.<Object>asList("light-purple"));
+        assertEquals(1, childStyled.size());
+        assertFalse(TranslationStyleRuns.shouldRebuildRuns(childStyled));
+        assertTrue(TranslationStyleRuns.shouldRebuildRuns(childStyled, "plain"));
+        assertFalse(TranslationStyleRuns.shouldRebuildRuns(childStyled, "light-purple"));
 
         java.util.List<TranslationStyleRuns.Run> flat = TranslationStyleRuns.mergeAdjacent(
                 Arrays.asList("Coins: ", "42"), Arrays.<Object>asList("plain", "plain"));
         assertEquals(1, flat.size());
         assertEquals("Coins: 42", flat.get(0).text());
         assertFalse(TranslationStyleRuns.shouldRebuildRuns(flat));
+        assertFalse(TranslationStyleRuns.shouldRebuildRuns(flat, "plain"));
+        assertTrue(TranslationStyleRuns.shouldRebuildRuns(flat, "light-purple"));
         assertFalse(TranslationStyleRuns.shouldRebuildRuns(TranslationStyleRuns.mergeAdjacent(
                 java.util.Collections.<String>emptyList(),
                 java.util.Collections.<Object>emptyList())));
+        assertFalse(TranslationStyleRuns.shouldRebuildRuns(TranslationStyleRuns.mergeAdjacent(
+                java.util.Collections.<String>emptyList(),
+                java.util.Collections.<Object>emptyList()), "plain"));
         assertFalse(TranslationStyleRuns.shouldRebuildRuns(null));
+        assertFalse(TranslationStyleRuns.shouldRebuildRuns(null, "plain"));
         assertEquals(0, TranslationStyleRuns.distinctStyleCount(null));
 
         assertEquals(TranslationTextColor.AQUA, TranslationStyleRuns.resolveTranslatedColor(
