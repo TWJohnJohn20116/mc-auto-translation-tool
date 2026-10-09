@@ -107,6 +107,32 @@ public final class TranslationStyleRuns {
     }
 
     /**
+     * True when the caller must rebuild the component run by run because the style its visible
+     * text renders with is not the root's own style.
+     *
+     * <p>Besides the multi-style case, a single run still needs the rebuild whenever the style
+     * that actually applies to the visible text differs from {@code rootStyleKey}: the colour,
+     * bold, italic or click event then lives on a child component, and a literal flattened with
+     * the root style alone silently drops it. Team prefixes and suffixes and most components a
+     * server builds arrive exactly that way, so a scoreboard or tab-list line whose colour comes
+     * from the team rather than from the root is drawn in the default colour without this.</p>
+     *
+     * @param runs         runs of the visible text, in render order
+     * @param rootStyleKey opaque style key of the component the runs were collected from
+     */
+    public static boolean shouldRebuildRuns(List<Run> runs, Object rootStyleKey) {
+        if (runs == null || runs.isEmpty()) {
+            return false;
+        }
+        if (distinctStyleCount(runs) > 1) {
+            return true;
+        }
+        // Neighbouring runs always differ after mergeAdjacent, so one distinct style means one
+        // run: the whole visible text renders with that single style.
+        return !equalKeys(runs.get(0).styleKey(), rootStyleKey);
+    }
+
+    /**
      * Colour a translated run should use. Mirrors
      * {@link TranslationTextStyling#applyTranslatedStyle}: a source that already carries a
      * colour keeps its own colours, and only an uncoloured source receives the configured
