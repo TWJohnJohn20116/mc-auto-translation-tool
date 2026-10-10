@@ -357,6 +357,17 @@ public final class ForgeTranslationRuntime {
                 TargetLanguage.nextPreset(current.targetLanguage)));
     }
 
+    /**
+     * The active configuration, or {@code null} before the first load.
+     *
+     * <p>The diagnostics screen edits the prompt, debug-log and statistics settings, so it needs the
+     * same config object the rest of the runtime already holds. Returning it here keeps the
+     * runtime's own API unchanged for every other caller.
+     */
+    static ForgeConfig diagnosticsConfig() {
+        return activeConfig;
+    }
+
     private static ForgeConfig requireActiveConfig() {
         ForgeConfig current = activeConfig;
         if (current == null) {

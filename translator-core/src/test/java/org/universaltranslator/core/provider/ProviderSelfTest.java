@@ -2,6 +2,8 @@ package org.universaltranslator.core.provider;
 
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationProviderCatalog;
+import org.universaltranslator.core.TranslationPrompt;
+import org.universaltranslator.core.TranslationQuality;
 import org.universaltranslator.core.TranslationRequest;
 import org.universaltranslator.core.TranslationStreamListener;
 import org.universaltranslator.core.TextKind;
@@ -17,12 +19,15 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.Writer;
 import java.net.InetAddress;
 import java.net.ConnectException;
 import java.net.URI;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -65,6 +70,11 @@ public final class ProviderSelfTest {
         readsServerSentEventFramingEdgeCases();
         derivesModelCatalogEndpoint();
         fetchesModelCatalogWithGet();
+        keepsTheStandardPromptCharacterForCharacter();
+        separatesTheQualityModes();
+        changesOnlyThePromptWhenTheQualityModeChanges();
+        appliesTheQualityModeToTheBatchPrompt();
+        roundTripsTheQualitySetting();
         System.out.println("ProviderSelfTest: all checks passed");
     }
 
@@ -1016,6 +1026,239 @@ public final class ProviderSelfTest {
         assertTrue(authorization.startsWith("HMAC-SHA256 Credential=ACCESS/20260813/cn-north-1/translate/request"));
         assertFalse(authorization.contains("TOP-SECRET"));
         assertEquals(64, headers.get("X-Content-Sha256").length());
+    }
+
+    /**
+     * The default quality mode must reproduce the historical prompt character for character. The
+     * setting exists to add modes, not to change what an existing configuration already sends.
+     */
+    private static void keepsTheStandardPromptCharacterForCharacter() {
+        TranslationRequest single = new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT);
+        assertEquals(
+                "You are a professional Minecraft game-localization translator. "
+                        + "Translate the user text to Traditional Chinese (Taiwan, zh-TW). "
+                        + "Use Traditional Chinese characters. Reply with only the translation, "
+                        + "without quotes, labels, notes, or explanations. Preserve punctuation, "
+                        + "whitespace, URLs, usernames, placeholders, and Minecraft formatting markers.",
+                TranslationPrompt.single(TranslationPrompt.Settings.standard(), single));
+        TranslationRequest multi = new TranslationRequest(
+                "Hello\nWelcome back", "auto", "zh-TW", TextKind.CHAT);
+        assertTrue(TranslationPrompt.single(TranslationPrompt.Settings.standard(), multi)
+                .endsWith(" Keep exactly the same number and order of lines."));
+        assertEquals(
+                "You are a professional Minecraft game-localization translator. "
+                        + "Translate every numbered line of the user message to Traditional Chinese "
+                        + "(Taiwan, zh-TW). Use Traditional Chinese characters. Reply with the same "
+                        + "numbering: exactly one translated line per input line, in the same order, "
+                        + "without merging, splitting, reordering or omitting lines. Preserve "
+                        + "punctuation, whitespace, URLs, usernames, placeholders and Minecraft "
+                        + "formatting markers. Reply with only the numbered translations, without "
+                        + "quotes, labels, notes or explanations.",
+                TranslationPrompt.batch(TranslationPrompt.Settings.standard(), multi));
+        // A default configuration must not perturb the provider id either: the coordinator derives
+        // its cache key from it, so changing it would invalidate every user's cache on upgrade.
+        assertEquals("", TranslationPrompt.Settings.standard().signature());
+        assertTrue(TranslationPrompt.Settings.standard().isDefault());
+    }
+
+    /** The three modes must be distinct, ordered by strictness, and each keep the output contract. */
+    private static void separatesTheQualityModes() {
+        assertEquals(TranslationQuality.STANDARD, TranslationQuality.fromConfig("STANDARD"));
+        assertEquals(TranslationQuality.HIGH, TranslationQuality.fromConfig(" high "));
+        assertEquals(TranslationQuality.DEFAULT, TranslationQuality.fromConfig("turbo"));
+        assertEquals(TranslationQuality.DEFAULT, TranslationQuality.fromConfig(null));
+        assertEquals(TranslationQuality.HIGH, TranslationQuality.STANDARD.next());
+        assertEquals(TranslationQuality.FAST, TranslationQuality.HIGH.next());
+        assertEquals(TranslationQuality.STANDARD, TranslationQuality.FAST.next());
+
+        TranslationRequest request = new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT);
+        String fast = TranslationPrompt.single(
+                new TranslationPrompt.Settings(TranslationQuality.FAST, ""), request);
+        String standard = TranslationPrompt.single(
+                new TranslationPrompt.Settings(TranslationQuality.STANDARD, ""), request);
+        String high = TranslationPrompt.single(
+                new TranslationPrompt.Settings(TranslationQuality.HIGH, ""), request);
+        assertTrue(fast.length() < standard.length());
+        assertTrue(standard.length() < high.length());
+        assertTrue(high.contains("Preserve the tone, register and terminology of the original"));
+        assertTrue(high.contains("Do not add, remove, reorder or summarize any meaning"));
+        // Every mode still demands the translation alone, which is what ProtectedText relies on.
+        for (String prompt : Arrays.asList(fast, standard, high)) {
+            assertTrue(prompt.contains("only the translation") || prompt.contains("only the numbered"));
+            assertTrue(prompt.contains("Traditional Chinese (Taiwan, zh-TW)"));
+        }
+    }
+
+    /**
+     * A non-default quality mode must change the system message and nothing else: the temperature,
+     * the completion budget and the streaming flag are the same bytes the default sends.
+     */
+    private static void changesOnlyThePromptWhenTheQualityModeChanges() throws Exception {
+        ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        final List<String> bodies = Collections.synchronizedList(new ArrayList<String>());
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread thread = new Thread(() -> {
+            try {
+                for (int index = 0; index < 2; index++) {
+                    try (Socket socket = server.accept()) {
+                        bodies.add(readRequest(socket.getInputStream(),
+                                "POST /v1/chat/completions HTTP/1.").body);
+                        writeResponse(socket.getOutputStream(), 200,
+                                "{\"choices\":[{\"message\":{\"content\":\"你好\"}}]}");
+                    }
+                }
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-quality");
+        thread.setDaemon(true);
+        thread.start();
+        try {
+            String endpoint = "http://127.0.0.1:" + server.getLocalPort() + "/v1/chat/completions";
+            OpenAiChatTranslationProvider standard = new OpenAiChatTranslationProvider(
+                    endpoint, "", "quality-model", "openai-compatible");
+            OpenAiChatTranslationProvider high = new OpenAiChatTranslationProvider(
+                    endpoint, "", "quality-model", "openai-compatible",
+                    new TranslationPrompt.Settings(TranslationQuality.HIGH, ""));
+            assertEquals("你好", standard.translate(
+                    new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT)));
+            assertEquals("你好", high.translate(
+                    new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT)));
+            assertEquals("openai-compatible:quality-model", standard.id());
+            assertFalse(standard.id().equals(high.id()));
+        } finally {
+            server.close();
+            thread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local quality-mode test server failed", serverFailure.get());
+        }
+        assertEquals(2, bodies.size());
+        String standardSystem = JsonStrings.readStringPath(bodies.get(0), "messages[0].content");
+        String highSystem = JsonStrings.readStringPath(bodies.get(1), "messages[0].content");
+        assertFalse(standardSystem.equals(highSystem));
+        assertTrue(highSystem.contains("Preserve the tone, register and terminology"));
+        for (String body : bodies) {
+            assertTrue(body.contains("\"temperature\":0,"));
+            assertTrue(body.contains("\"max_tokens\":512"));
+            assertTrue(body.contains("\"stream\":false"));
+        }
+    }
+
+    /** The numbered batch path builds its own prompt, so the quality mode has to reach it too. */
+    private static void appliesTheQualityModeToTheBatchPrompt() throws Exception {
+        ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        AtomicReference<String> body = new AtomicReference<String>();
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread serverThread = new Thread(() -> {
+            try (Socket socket = server.accept()) {
+                body.set(readRequest(socket.getInputStream(),
+                        "POST /v1/chat/completions HTTP/1.").body);
+                writeResponse(socket.getOutputStream(), 200,
+                        "{\"choices\":[{\"message\":{\"content\":\"1. 你好\\n2. 歡迎回來\"}}]}");
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-batch-quality");
+        serverThread.setDaemon(true);
+        serverThread.start();
+        try {
+            OpenAiChatTranslationProvider provider = new OpenAiChatTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v1/chat/completions",
+                    "", "batch-quality-model", "openai-compatible",
+                    new TranslationPrompt.Settings(TranslationQuality.HIGH, ""));
+            provider.setBatchWindowMillis(300L);
+            AtomicReference<String> first = new AtomicReference<String>();
+            AtomicReference<Throwable> failure = new AtomicReference<Throwable>();
+            Thread one = new Thread(() -> {
+                try {
+                    first.set(provider.translate(new TranslationRequest(
+                            "Hello", "auto", "zh-TW", TextKind.CHAT)));
+                } catch (Throwable problem) {
+                    failure.compareAndSet(null, problem);
+                }
+            }, "provider-self-test-batch-quality-one");
+            Thread two = new Thread(() -> {
+                try {
+                    provider.translate(new TranslationRequest(
+                            "Welcome back", "auto", "zh-TW", TextKind.CHAT));
+                } catch (Throwable problem) {
+                    failure.compareAndSet(null, problem);
+                }
+            }, "provider-self-test-batch-quality-two");
+            one.setDaemon(true);
+            two.setDaemon(true);
+            one.start();
+            two.start();
+            one.join(5000);
+            two.join(5000);
+            if (failure.get() != null) {
+                throw new AssertionError("Batched quality-mode translation failed", failure.get());
+            }
+            assertEquals("你好", first.get());
+            assertTrue(body.get().contains("1. Hello"));
+            assertTrue(body.get().contains("2. Welcome back"));
+        } finally {
+            server.close();
+            serverThread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local batch quality test server failed", serverFailure.get());
+        }
+        String system = JsonStrings.readStringPath(body.get(), "messages[0].content");
+        assertTrue(system.contains("Preserve the tone, register and terminology"));
+        assertTrue(system.contains("Reply with the same numbering"));
+    }
+
+    /**
+     * The quality key must survive the platform configuration round trip, and a settings screen
+     * holding an older snapshot must not be able to write a stale value back over a newer one.
+     */
+    private static void roundTripsTheQualitySetting() throws Exception {
+        Properties values = new Properties();
+        OnlineProviderConfig.applyDefaults(values);
+        assertEquals(TranslationQuality.STANDARD,
+                OnlineProviderConfig.from(values).translationQuality());
+        values.setProperty("translation-quality", "high");
+        assertEquals(TranslationQuality.HIGH,
+                OnlineProviderConfig.from(values).translationQuality());
+        // A configuration written by a newer build, or a typo, must not stop the mod from starting.
+        values.setProperty("translation-quality", "turbo");
+        assertEquals(TranslationQuality.DEFAULT,
+                OnlineProviderConfig.from(values).translationQuality());
+
+        Properties written = new Properties();
+        OnlineProviderConfig.applyPromptSettings(written, TranslationQuality.HIGH, "");
+        assertEquals("high", written.getProperty("translation-quality"));
+        assertEquals(TranslationQuality.HIGH,
+                OnlineProviderConfig.from(written).translationQuality());
+
+        Path file = Files.createTempFile("universal-translator-quality", ".properties");
+        try {
+            Properties onDisk = new Properties();
+            onDisk.setProperty("translation-quality", "high");
+            onDisk.setProperty("target-language", "zh-TW");
+            try (Writer writer = Files.newBufferedWriter(file, StandardCharsets.UTF_8)) {
+                onDisk.store(writer, "test");
+            }
+            Properties stale = new Properties();
+            stale.setProperty("translation-quality", "fast");
+            stale.setProperty("target-language", "en");
+            OnlineProviderConfig.preservePromptSettings(file, stale);
+            // Only the advanced keys are refreshed; the settings screen still owns the rest.
+            assertEquals("high", stale.getProperty("translation-quality"));
+            assertEquals("en", stale.getProperty("target-language"));
+            // An unreadable file leaves the snapshot alone instead of failing the save.
+            OnlineProviderConfig.preservePromptSettings(
+                    file.resolveSibling("universal-translator-missing.properties"), stale);
+            assertEquals("high", stale.getProperty("translation-quality"));
+            OnlineProviderConfig.preservePromptSettings(null, stale);
+            assertEquals("high", stale.getProperty("translation-quality"));
+        } finally {
+            Files.deleteIfExists(file);
+        }
     }
 
     private static void assertTrue(boolean value) {
