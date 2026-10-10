@@ -1450,8 +1450,10 @@ public final class CoreSelfTest {
         // The exported report must not carry an endpoint, which is where a provider id puts one.
         assertTrue(TranslationStats.safeProviderId("libretranslate:https://host:5000/translate")
                 .endsWith("/..."));
+        assertEquals("libretranslate:https://host:5000/...",
+                TranslationStats.safeProviderId("libretranslate:https://host:5000/translate"));
         assertTrue(!TranslationStats.safeProviderId("libretranslate:https://host:5000/translate")
-                .contains("translate"));
+                .contains("/translate"));
         assertEquals("azure-openai:my-deployment",
                 TranslationStats.safeProviderId("azure-openai:my-deployment"));
         assertTrue(TranslationStats.safeProviderId(null).equals("unknown"));
