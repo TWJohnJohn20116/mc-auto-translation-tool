@@ -9,6 +9,7 @@ import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationDisplayMode;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TranslationQuality;
+import org.universaltranslator.core.TranslationStats;
 import org.universaltranslator.core.TextKind;
 import org.universaltranslator.core.LocalConfigSecurity;
 import org.universaltranslator.core.OfflineModel;
@@ -180,6 +181,9 @@ final class FabricConfig {
         if (migrated) {
             loaded.save();
         }
+        // The statistics file sits next to the configuration. Reading it here is the one place every
+        // platform passes through at startup, so no runtime has to know about statistics.
+        TranslationStats.global().attach(file.resolveSibling(TranslationStats.FILE_NAME));
         return loaded;
     }
 

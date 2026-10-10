@@ -243,6 +243,32 @@ for something like "explain first, then translate" or "answer in JSON", the appe
 still applies and the translation will usually be worse; write it on the assumption that only the
 translation and one line per input line may come back.
 
+## Translation statistics
+
+The mod accumulates translation counters across sessions and stores them in:
+
+```text
+config/universal-translator-stats.properties
+```
+
+| Counter | Meaning |
+| --- | --- |
+| requests / success / failure | Provider requests actually issued, and how many succeeded |
+| failure reasons | auth, rate limit, server, request, timeout, network, invalid output, other |
+| cache | hits, misses and the resulting hit rate |
+| latency | average and p95 over the most recent 512 requests |
+| tokens | prompt and completion tokens the service reported (non-streamed responses only) |
+| per provider | requests, successes, failures and average latency for each provider |
+
+The file is read when the game starts, written every 60 seconds while it runs, and written once
+more when the game exits. A failed write — a read-only configuration directory, for instance — is
+ignored and never affects a translation, and the translation path performs no extra disk I/O.
+
+On Fabric 1.20.1 and 1.21 the "diagnostics" screen switches between "Show statistics" and
+"Show diagnostics", and "Reset statistics" clears the totals. Other platforms still record and
+persist the counters, and they are appended to the file produced by "Export diagnostics"
+(`config/universal-translator-diagnostics/`).
+
 ## What can be translated
 
 The mod works at the final text-rendering layer. Even before a world is joined it covers mod settings,
