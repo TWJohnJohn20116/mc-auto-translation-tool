@@ -189,6 +189,60 @@ Volcengine MT, iFlytek, Huawei Cloud, DeepSeek, Qwen, Volcengine Ark, and Zhipu.
 loopback HTTP JSON request templates, headers, and response paths are supported as well. See the
 [online API configuration guide](ONLINE_APIS.md) for provider IDs, properties, examples, and safety limits.
 
+## Translation quality mode and custom system prompt
+
+### Translation quality mode
+
+`translation-quality` controls how long and how strict the system prompt sent to an LLM is. It
+**changes the prompt only**: the model, the `temperature`, the output ceiling, the reasoning-budget
+escalation and the batching protocol are untouched.
+
+```properties
+translation-quality=standard
+```
+
+| Value | Meaning |
+| --- | --- |
+| `fast` | Shortest prompt, fewest instructions, lowest latency. |
+| `standard` | The default; character-for-character identical to the prompt used before this setting existed. |
+| `high` | Adds strictness to the standard prompt: preserve tone and register, translate repeated game terms identically, never add, drop or reorder meaning, and keep line alignment. |
+
+The in-game "diagnostics" screen has a quality-mode cycle button that switches and applies the
+mode immediately. The setting can also be edited in the configuration file with the game closed.
+Each mode uses its own cache key, so switching modes never returns a translation produced under
+different instructions. `fast` and `high` only apply to LLM / OpenAI-compatible services;
+LibreTranslate, Baidu and the other non-LLM services take no system prompt at all.
+
+### Custom system prompt
+
+A non-empty `custom-system-prompt` **replaces** the built-in prompt entirely, for every quality
+mode:
+
+```properties
+custom-system-prompt=You are a Minecraft localization editor. Translate to {target}.
+```
+
+Supported placeholders:
+
+| Placeholder | Expands to |
+| --- | --- |
+| `{target}` | Target language, e.g. `繁體中文 (zh-TW)` |
+| `{source}` | Source language; `auto` expands to `auto-detect` |
+| `{kind}` | Text kind, e.g. `CHAT`, `SCOREBOARD_LINE` |
+| `{mode}` | Active quality mode, e.g. `high` |
+
+Any other `{name}` is left untouched. A multi-line prompt is written with `\n` in
+`.properties`, which `Properties.load` restores to real line breaks; the in-game diagnostics
+field accepts `\n` as well.
+
+**Guardrail and warning**: whatever the custom text says, a fixed requirement is appended to it —
+"reply with only the translation" and "one output line per input line, in the same order, without
+merging or omitting". A custom prompt therefore cannot switch off the restoration of player names,
+URLs, numbers and `§` formatting codes, and cannot switch off line alignment. If your prompt asks
+for something like "explain first, then translate" or "answer in JSON", the appended requirement
+still applies and the translation will usually be worse; write it on the assumption that only the
+translation and one line per input line may come back.
+
 ## What can be translated
 
 The mod works at the final text-rendering layer. Even before a world is joined it covers mod settings,

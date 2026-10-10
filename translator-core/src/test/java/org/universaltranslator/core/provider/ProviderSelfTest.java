@@ -75,6 +75,10 @@ public final class ProviderSelfTest {
         changesOnlyThePromptWhenTheQualityModeChanges();
         appliesTheQualityModeToTheBatchPrompt();
         roundTripsTheQualitySetting();
+        replacesTheBuiltInPromptWithACustomOne();
+        expandsTheSupportedPlaceholders();
+        acceptsEditorNewlineEscapes();
+        sendsAndPersistsTheCustomPrompt();
         System.out.println("ProviderSelfTest: all checks passed");
     }
 
@@ -1259,6 +1263,121 @@ public final class ProviderSelfTest {
         } finally {
             Files.deleteIfExists(file);
         }
+    }
+
+    /**
+     * A non-empty custom prompt replaces the built-in one, but the two contracts the rest of the
+     * pipeline depends on are appended whatever the user wrote: the model must answer with the
+     * translation alone (or {@code ProtectedText} restoration breaks) and must keep one output line
+     * per input line (or the numbered batch protocol breaks).
+     */
+    private static void replacesTheBuiltInPromptWithACustomOne() {
+        TranslationRequest single = new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT);
+        TranslationPrompt.Settings custom = new TranslationPrompt.Settings(
+                TranslationQuality.STANDARD, "Translate to {target} for a Minecraft player.");
+        String prompt = TranslationPrompt.single(custom, single);
+        assertTrue(prompt.startsWith("Translate to 繁體中文 (zh-TW) for a Minecraft player."));
+        assertFalse(prompt.contains("professional Minecraft game-localization translator"));
+        assertTrue(prompt.contains("Reply with only the translation"));
+        assertTrue(prompt.contains("Preserve punctuation"));
+
+        TranslationRequest multi = new TranslationRequest("a\nb", "auto", "zh-TW", TextKind.CHAT);
+        assertTrue(TranslationPrompt.single(custom, multi)
+                .endsWith(" Keep exactly the same number and order of lines."));
+        String batch = TranslationPrompt.batch(custom, multi);
+        assertTrue(batch.startsWith("Translate to 繁體中文 (zh-TW) for a Minecraft player."));
+        assertTrue(batch.contains(
+                "Reply with the same numbering: exactly one translated line per input line"));
+
+        assertTrue(custom.hasCustomSystemPrompt());
+        assertFalse(TranslationPrompt.Settings.standard().hasCustomSystemPrompt());
+        // An all-whitespace value is not an override; it must leave the built-in prompt in place.
+        TranslationPrompt.Settings blank = new TranslationPrompt.Settings(
+                TranslationQuality.STANDARD, "   ");
+        assertEquals("", blank.customSystemPrompt());
+        assertFalse(blank.hasCustomSystemPrompt());
+        assertEquals("", blank.signature());
+        // A custom prompt has to move the cache key, or a later request would be served a
+        // translation produced under the built-in instructions.
+        assertFalse(custom.signature().isEmpty());
+    }
+
+    /** Every documented placeholder is expanded, and an unknown one is left untouched. */
+    private static void expandsTheSupportedPlaceholders() {
+        TranslationRequest request = new TranslationRequest(
+                "Hello", "en", "zh-TW", TextKind.SCOREBOARD_LINE);
+        TranslationPrompt.Settings custom = new TranslationPrompt.Settings(
+                TranslationQuality.HIGH, "{source}->{target} kind={kind} mode={mode} unknown={nope}");
+        String prompt = TranslationPrompt.single(custom, request);
+        assertTrue(prompt.contains("English (en)->繁體中文 (zh-TW)"));
+        assertTrue(prompt.contains("kind=SCOREBOARD_LINE"));
+        assertTrue(prompt.contains("mode=high"));
+        assertTrue(prompt.contains("unknown={nope}"));
+        // An auto-detected source says so instead of naming a language.
+        assertTrue(TranslationPrompt.single(custom, new TranslationRequest(
+                "Hello", "auto", "en", TextKind.CHAT)).contains("auto-detect->English (en)"));
+    }
+
+    /** The in-game editor is single-line, so {@code \n} typed into it means a line break. */
+    private static void acceptsEditorNewlineEscapes() {
+        assertEquals("line one\nline two", TranslationPrompt.fromEditorText("line one\\nline two"));
+        assertEquals("line one\\nline two", TranslationPrompt.toEditorText("line one\nline two"));
+        assertEquals("", TranslationPrompt.fromEditorText(null));
+        assertEquals("", TranslationPrompt.toEditorText(null));
+        assertEquals("", TranslationPrompt.fromEditorText(""));
+    }
+
+    /**
+     * The custom prompt must reach the wire with its line breaks intact, and the key must survive
+     * the platform configuration round trip.
+     */
+    private static void sendsAndPersistsTheCustomPrompt() throws Exception {
+        ServerSocket server = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        AtomicReference<String> body = new AtomicReference<String>();
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread thread = new Thread(() -> {
+            try (Socket socket = server.accept()) {
+                body.set(readRequest(socket.getInputStream(),
+                        "POST /v1/chat/completions HTTP/1.").body);
+                writeResponse(socket.getOutputStream(), 200,
+                        "{\"choices\":[{\"message\":{\"content\":\"你好\"}}]}");
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-custom-prompt");
+        thread.setDaemon(true);
+        thread.start();
+        try {
+            OpenAiChatTranslationProvider provider = new OpenAiChatTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v1/chat/completions",
+                    "", "custom-prompt-model", "openai-compatible",
+                    new TranslationPrompt.Settings(
+                            TranslationQuality.STANDARD, "Only {target} please.\nSecond line."));
+            assertEquals("你好", provider.translate(
+                    new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT)));
+        } finally {
+            server.close();
+            thread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local custom-prompt test server failed", serverFailure.get());
+        }
+        String system = JsonStrings.readStringPath(body.get(), "messages[0].content");
+        assertTrue(system.startsWith("Only 繁體中文 (zh-TW) please.\nSecond line."));
+        assertTrue(system.contains("Reply with only the translation"));
+
+        Properties values = new Properties();
+        OnlineProviderConfig.applyDefaults(values);
+        assertEquals("", OnlineProviderConfig.from(values).customSystemPrompt());
+        OnlineProviderConfig.applyPromptSettings(
+                values, TranslationQuality.HIGH, "Only {target} please.");
+        OnlineProviderConfig stored = OnlineProviderConfig.from(values);
+        assertEquals("Only {target} please.", stored.customSystemPrompt());
+        assertEquals(TranslationQuality.HIGH, stored.translationQuality());
+        assertTrue(TranslationPrompt.single(stored.promptSettings(),
+                new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT))
+                .startsWith("Only 繁體中文 (zh-TW) please. Reply with only the translation"));
     }
 
     private static void assertTrue(boolean value) {
