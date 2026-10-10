@@ -25,12 +25,12 @@ public final class OnlineProviderConfig {
      * pressing Save on a settings screen that was opened before the panel ran cannot write a stale
      * snapshot back over them.
      */
-    private static final String[] PROMPT_KEYS = {"translation-quality"};
+    private static final String[] PROMPT_KEYS = {"translation-quality", "custom-system-prompt"};
     private static final String[] KEYS = {
             "libretranslate-endpoint", "api-key",
             "tencent-secret-id", "tencent-secret-key", "tencent-model",
             "llm-api-endpoint", "llm-api-key", "llm-api-model",
-            "translation-quality",
+            "translation-quality", "custom-system-prompt",
             "api-connect-timeout-ms", "api-read-timeout-ms", "api-max-attempts",
             "api-min-request-interval-ms",
             "baidu-endpoint", "baidu-app-id", "baidu-secret",
@@ -109,6 +109,7 @@ public final class OnlineProviderConfig {
         putDefault(properties, "llm-api-key", "");
         putDefault(properties, "llm-api-model", "local-model");
         putDefault(properties, "translation-quality", TranslationQuality.DEFAULT.configName());
+        putDefault(properties, "custom-system-prompt", "");
         putDefault(properties, "api-connect-timeout-ms", "5000");
         putDefault(properties, "api-read-timeout-ms", "120000");
         putDefault(properties, "api-max-attempts", "3");

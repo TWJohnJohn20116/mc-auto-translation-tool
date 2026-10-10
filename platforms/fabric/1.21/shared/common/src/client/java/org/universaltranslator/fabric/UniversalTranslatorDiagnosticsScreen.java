@@ -3,8 +3,10 @@ package org.universaltranslator.fabric;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
+import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.text.Text;
 import org.universaltranslator.core.TranslationDiagnosticsSnapshot;
+import org.universaltranslator.core.TranslationPrompt;
 import org.universaltranslator.core.TranslationQuality;
 
 import java.util.List;
@@ -12,10 +14,14 @@ import java.util.Collections;
 
 /** Secret-free runtime diagnostics that update while the screen is open. */
 final class UniversalTranslatorDiagnosticsScreen extends Screen {
+    /** Longest custom prompt the editor accepts, matching the settings screens' text field bound. */
+    private static final int MAXIMUM_PROMPT_LENGTH = 4096;
+
     private final Screen parent;
     /** Selected quality mode; read from the live configuration on every {@link #init()}. */
     private TranslationQuality quality;
     private ButtonWidget qualityButton;
+    private TextFieldWidget customPrompt;
     private String exportStatus = "";
     private boolean exportFailed;
 
@@ -35,14 +41,32 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
         if (quality == null) {
             quality = TranslationQuality.DEFAULT;
         }
+        String promptValue = customPrompt == null
+                ? TranslationPrompt.toEditorText(config == null ? "" : config.customSystemPrompt())
+                : customPrompt.getText();
         int totalWidth = Math.max(180, Math.min(320, this.width - 24));
         int gap = 8;
         int buttonWidth = (totalWidth - gap) / 2;
         int left = (this.width - totalWidth) / 2;
+
         this.qualityButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
             quality = quality.next();
-            applyQuality();
-        }).dimensions(left, this.height - 52, totalWidth, 20).build());
+            applyAdvancedSettings();
+        }).dimensions(left, 32, totalWidth, 20).build());
+
+        int applyWidth = Math.max(48, buttonWidth - 24);
+        this.customPrompt = addDrawableChild(new TextFieldWidget(
+                this.textRenderer, left, 56, totalWidth - applyWidth - gap, 20,
+                Text.translatable("screen.universal_translator.diagnostics.prompt")));
+        this.customPrompt.setMaxLength(MAXIMUM_PROMPT_LENGTH);
+        this.customPrompt.setText(promptValue);
+        this.customPrompt.setSuggestion(
+                tr("screen.universal_translator.diagnostics.prompt_hint"));
+        addDrawableChild(ButtonWidget.builder(
+                Text.translatable("screen.universal_translator.diagnostics.prompt_apply"),
+                button -> applyAdvancedSettings())
+                .dimensions(left + totalWidth - applyWidth, 56, applyWidth, 20).build());
+
         addDrawableChild(ButtonWidget.builder(
                 Text.translatable("screen.universal_translator.diagnostics.back"), button -> close())
                 .dimensions(left, this.height - 28, buttonWidth, 20).build());
@@ -62,13 +86,14 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
     }
 
     /**
-     * Applies the selected quality mode to the live configuration and persists it.
+     * Applies the selected quality mode and custom prompt to the live configuration and persists
+     * them.
      *
      * <p>Only the system prompt changes: the provider is rebuilt through exactly the path the
      * settings screen uses, so the new prompt is used by the next request and the cache key moves
      * with it. A failure leaves the previous configuration running and reports it in place.
      */
-    private void applyQuality() {
+    private void applyAdvancedSettings() {
         refreshQualityLabel();
         FabricConfig config = FabricTranslationRuntime.diagnosticsConfig();
         if (config == null) {
@@ -77,7 +102,10 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
             return;
         }
         try {
-            FabricConfig updated = config.withPromptSettings(quality, config.customSystemPrompt());
+            String prompt = customPrompt == null
+                    ? config.customSystemPrompt()
+                    : TranslationPrompt.fromEditorText(customPrompt.getText());
+            FabricConfig updated = config.withPromptSettings(quality, prompt);
             if (updated.enabled) {
                 updated.validateProviderConfiguration();
             }
@@ -102,17 +130,17 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
         context.drawCenteredTextWithShadow(textRenderer, title, width / 2, 18, 0xFFFFFFFF);
         List<String> lines = safeLines();
         int left = Math.max(10, (width - Math.min(360, width - 20)) / 2);
-        int y = 43;
+        int y = 84;
         for (String line : lines) {
             context.drawTextWithShadow(textRenderer, Text.literal(line), left, y, 0xFFD0D0D0);
             y += 17;
         }
         context.drawCenteredTextWithShadow(textRenderer,
                 Text.translatable("screen.universal_translator.diagnostics.note"),
-                width / 2, Math.min(y + 7, height - 84), 0xFF909090);
+                width / 2, Math.min(y + 7, height - 96), 0xFF909090);
         if (!exportStatus.isEmpty()) {
             context.drawCenteredTextWithShadow(textRenderer, Text.literal(exportStatus),
-                    width / 2, height - 70, exportFailed ? 0xFFFF5555 : 0xFF55FF88);
+                    width / 2, height - 88, exportFailed ? 0xFFFF5555 : 0xFF55FF88);
         }
         super.render(context, mouseX, mouseY, delta);
     }

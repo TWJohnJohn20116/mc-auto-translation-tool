@@ -184,6 +184,29 @@ public final class TranslationPrompt {
                 .replace("{mode}", mode);
     }
 
+    /**
+     * Turns the literal two-character {@code \n} a single-line editor produces into a real line
+     * break, so a prompt written in the in-game box reads the same as one written in
+     * {@code universal-translator.properties} (where {@code Properties.load} does the same thing).
+     *
+     * @param value raw editor text, possibly {@code null}
+     * @return the text with {@code \n} sequences replaced by line breaks
+     */
+    public static String fromEditorText(String value) {
+        return value == null ? "" : value.replace("\\n", "\n");
+    }
+
+    /**
+     * The inverse of {@link #fromEditorText}: makes a stored prompt safe to show in a single-line
+     * editor without losing its structure.
+     *
+     * @param value stored prompt, possibly {@code null}
+     * @return the text with line breaks written as {@code \n}
+     */
+    public static String toEditorText(String value) {
+        return value == null ? "" : value.replace("\r\n", "\n").replace("\n", "\\n");
+    }
+
     /** {@code 繁體中文 (zh-TW)} style description; the source side says so when it is auto-detected. */
     private static String describe(String language, boolean allowAuto) {
         if (language == null || language.trim().isEmpty()) {
