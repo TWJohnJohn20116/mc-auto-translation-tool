@@ -46,10 +46,13 @@ public final class DebugLog {
      * {@code DeepL-Auth-Key} and {@code x-goog-api-key} are covered as well as {@code api-key}. A
      * trailing {@code -id} / {@code -key} / {@code -secret} is allowed because several providers
      * name the key {@code aliyun-access-key-id}.
+     *
+     * <p>The value may not start with {@code [} so that a placeholder this file already wrote — or
+     * one the shared rules just wrote — is not redacted a second time.
      */
     private static final Pattern NAMED_SECRET = Pattern.compile(
             "(?i)((?<![A-Za-z0-9_])[a-z0-9_.-]*(?:key|secret|token|password|credential)"
-                    + "(?:[-_](?:id|key|secret))?\\s*[=:]\\s*(?:bearer\\s+)?)(\\S+)");
+                    + "(?:[-_](?:id|key|secret))?\\s*[=:]\\s*(?:bearer\\s+)?)([^\\s\\[]\\S*)");
 
     /**
      * The same names separated by a space rather than a colon. The value has to look like a token
@@ -57,7 +60,7 @@ public final class DebugLog {
      */
     private static final Pattern NAMED_SECRET_SPACED = Pattern.compile(
             "(?i)((?<![A-Za-z0-9_])[a-z0-9_.-]*(?:key|secret|token|password|credential)"
-                    + "(?:[-_](?:id|key|secret))?\\s+)(\\S{16,})");
+                    + "(?:[-_](?:id|key|secret))?\\s+)([^\\s\\[]\\S{15,})");
 
     private static final DateTimeFormatter TIMESTAMP =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS", Locale.ROOT);
