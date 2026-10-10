@@ -1665,7 +1665,10 @@ public final class CoreSelfTest {
             assertTrue(entries.get("environment.txt").contains("fabric-1.21.x"));
             assertTrue(entries.get("diagnostics.txt").contains("diagnostic line"));
             assertTrue(entries.get("diagnostics.txt").contains("Statistics: requests="));
-            assertTrue(entries.get("config.properties").contains("llm-api-key=[key hidden]"));
+            // The shared rules replace an assigned credential with [hidden]; the point is that the
+            // value is gone, whichever placeholder was used.
+            assertTrue(entries.get("config.properties").contains("llm-api-key="));
+            assertTrue(entries.get("config.properties").contains("[hidden]"));
             assertTrue(!entries.get("config.properties").contains(genericKey));
             assertTrue(!entries.get("config.properties").contains("api.example.com"));
             assertTrue(!entries.get("debug.log")
