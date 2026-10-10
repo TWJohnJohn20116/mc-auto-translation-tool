@@ -1,9 +1,16 @@
 package org.universaltranslator.core.provider;
 
+import org.universaltranslator.core.TranslationPrompt;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationProviderCatalog;
+import org.universaltranslator.core.TranslationQuality;
 import org.universaltranslator.core.net.HttpJsonClient;
 
+import java.io.IOException;
+import java.io.Reader;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -11,10 +18,19 @@ import java.util.Properties;
 /** Immutable, whitelisted online-provider settings shared by every loader/version. */
 public final class OnlineProviderConfig {
     private static final String CUSTOM_HEADER_PREFIX = "custom-api-header.";
+    /**
+     * Keys edited by the in-game advanced panel rather than by a settings screen.
+     *
+     * <p>They are re-read from disk before every save (see {@link #preservePromptSettings}) so that
+     * pressing Save on a settings screen that was opened before the panel ran cannot write a stale
+     * snapshot back over them.
+     */
+    private static final String[] PROMPT_KEYS = {"translation-quality"};
     private static final String[] KEYS = {
             "libretranslate-endpoint", "api-key",
             "tencent-secret-id", "tencent-secret-key", "tencent-model",
             "llm-api-endpoint", "llm-api-key", "llm-api-model",
+            "translation-quality",
             "api-connect-timeout-ms", "api-read-timeout-ms", "api-max-attempts",
             "api-min-request-interval-ms",
             "baidu-endpoint", "baidu-app-id", "baidu-secret",
@@ -92,6 +108,7 @@ public final class OnlineProviderConfig {
         putDefault(properties, "llm-api-endpoint", "http://127.0.0.1:8080/v1/chat/completions");
         putDefault(properties, "llm-api-key", "");
         putDefault(properties, "llm-api-model", "local-model");
+        putDefault(properties, "translation-quality", TranslationQuality.DEFAULT.configName());
         putDefault(properties, "api-connect-timeout-ms", "5000");
         putDefault(properties, "api-read-timeout-ms", "120000");
         putDefault(properties, "api-max-attempts", "3");
@@ -165,6 +182,74 @@ public final class OnlineProviderConfig {
     public LlmEditorSettings llmEditorSettings(String provider) {
         String[] keys = llmEditorKeys(provider);
         return new LlmEditorSettings(value(keys[0]), value(keys[1]), value(keys[2]));
+    }
+
+    /** Selected translation quality mode; an unknown value falls back to the historical prompt. */
+    public TranslationQuality translationQuality() {
+        return TranslationQuality.fromConfig(value("translation-quality"));
+    }
+
+    /** Custom system prompt, or an empty string to use the built-in prompt of the active mode. */
+    public String customSystemPrompt() {
+        return value("custom-system-prompt");
+    }
+
+    /** The prompt configuration every chat-completion provider built from here receives. */
+    public TranslationPrompt.Settings promptSettings() {
+        return new TranslationPrompt.Settings(translationQuality(), customSystemPrompt());
+    }
+
+    /**
+     * Writes the prompt settings, leaving every other key untouched.
+     *
+     * <p>Both keys are part of {@link #KEYS}, so they survive the round trip through the platform
+     * configuration classes' {@code toProperties()}/{@code withSettings(...)} path without those
+     * classes having to know about them.
+     */
+    public static void applyPromptSettings(
+            Properties target,
+            TranslationQuality quality,
+            String customSystemPrompt
+    ) {
+        if (target == null) {
+            throw new IllegalArgumentException("Target properties are required");
+        }
+        target.setProperty("translation-quality",
+                (quality == null ? TranslationQuality.DEFAULT : quality).configName());
+        target.setProperty("custom-system-prompt",
+                customSystemPrompt == null ? "" : customSystemPrompt.trim());
+    }
+
+    /**
+     * Copies the advanced settings that are currently stored on disk into {@code target}.
+     *
+     * <p>They are edited by the diagnostics screen, which can run while a settings screen is still
+     * open holding an older snapshot of the whole file. Without this re-read, pressing Save there
+     * would write that stale snapshot back and silently undo the change. Every other key remains
+     * owned by the settings screen, so only {@link #PROMPT_KEYS} are re-read.
+     *
+     * @param configFile configuration file to read; {@code null} does nothing
+     * @param target properties about to be written back
+     */
+    public static void preservePromptSettings(Path configFile, Properties target) {
+        if (configFile == null || target == null) {
+            return;
+        }
+        Properties stored = new Properties();
+        try (Reader reader = Files.newBufferedReader(configFile, StandardCharsets.UTF_8)) {
+            stored.load(reader);
+        } catch (IOException unreadable) {
+            // A file that cannot be read is not a reason to fail a save; the snapshot is written as
+            // it stands, exactly as it was before this method existed.
+            return;
+        } catch (RuntimeException malformed) {
+            return;
+        }
+        for (String key : PROMPT_KEYS) {
+            if (stored.containsKey(key)) {
+                target.setProperty(key, stored.getProperty(key, ""));
+            }
+        }
     }
 
     /**
@@ -260,7 +345,7 @@ public final class OnlineProviderConfig {
             ProviderSupport.requireCredential(providerId + " API key", apiKey);
         }
         return new OpenAiChatTranslationProvider(
-                value(endpointKey), apiKey, value(modelKey), providerId, http);
+                value(endpointKey), apiKey, value(modelKey), providerId, http, promptSettings());
     }
 
     private TranslationProvider custom(HttpJsonClient http) {

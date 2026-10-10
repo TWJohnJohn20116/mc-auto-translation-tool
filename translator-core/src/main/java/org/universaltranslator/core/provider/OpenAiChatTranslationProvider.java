@@ -1,10 +1,10 @@
 package org.universaltranslator.core.provider;
 
 import org.universaltranslator.core.TranslationProvider;
+import org.universaltranslator.core.TranslationPrompt;
 import org.universaltranslator.core.TranslationRequest;
 import org.universaltranslator.core.TranslationStreamListener;
 import org.universaltranslator.core.TranslationOutputValidator;
-import org.universaltranslator.core.TargetLanguage;
 import org.universaltranslator.core.net.EndpointPolicy;
 import org.universaltranslator.core.net.HttpJsonClient;
 import org.universaltranslator.core.net.HttpStatusException;
@@ -44,6 +44,11 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
     private final String model;
     private final String providerId;
     private final HttpJsonClient http;
+    /**
+     * Quality mode and optional custom system prompt. The default is the historical prompt, so a
+     * provider built without this argument sends exactly the bytes it always sent.
+     */
+    private final TranslationPrompt.Settings prompt;
     /**
      * Set once a response arrives carrying reasoning content but no answer. Every later request
      * then starts with {@link #REASONING_COMPLETION_TOKENS}: without this the provider paid for
@@ -97,6 +102,16 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         this(endpoint, apiKey, model, providerId, new HttpJsonClient(5000, 120000));
     }
 
+    public OpenAiChatTranslationProvider(
+            String endpoint,
+            String apiKey,
+            String model,
+            String providerId,
+            TranslationPrompt.Settings prompt
+    ) {
+        this(endpoint, apiKey, model, providerId, new HttpJsonClient(5000, 120000), prompt);
+    }
+
     OpenAiChatTranslationProvider(
             String endpoint,
             String apiKey,
@@ -104,11 +119,23 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             String providerId,
             HttpJsonClient http
     ) {
+        this(endpoint, apiKey, model, providerId, http, TranslationPrompt.Settings.standard());
+    }
+
+    OpenAiChatTranslationProvider(
+            String endpoint,
+            String apiKey,
+            String model,
+            String providerId,
+            HttpJsonClient http,
+            TranslationPrompt.Settings prompt
+    ) {
         this.endpoint = EndpointPolicy.requireSafeEndpoint(normalizeEndpoint(endpoint));
         this.apiKey = apiKey == null ? "" : apiKey.trim();
         this.model = requireText("model", model);
         this.providerId = requireText("providerId", providerId);
         this.http = http;
+        this.prompt = prompt == null ? TranslationPrompt.Settings.standard() : prompt;
     }
 
     /**
@@ -133,9 +160,17 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         return value;
     }
 
+    /**
+     * The provider id, extended with the prompt signature when the prompt is not the historical
+     * one. {@link org.universaltranslator.core.TranslationCoordinator} builds both its cache key and
+     * its in-flight key from this value, so a quality mode or a custom prompt gets its own cache
+     * entries instead of being served a translation produced under different instructions. The
+     * default configuration adds nothing, so its keys are unchanged.
+     */
     @Override
     public String id() {
-        return providerId + ":" + model;
+        String signature = prompt.signature();
+        return signature.isEmpty() ? providerId + ":" + model : providerId + ":" + model + "#" + signature;
     }
 
     /**
@@ -338,15 +373,14 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
                 && contentType.toLowerCase(Locale.ROOT).contains("text/event-stream");
     }
 
-    /** The system prompt of the single-text path; the batch path builds its own. */
-    private static String systemPrompt(TranslationRequest request) {
-        String target = TargetLanguage.translationInstruction(request.getTargetLanguage());
-        return "You are a professional Minecraft game-localization translator. "
-                + "Translate the user text to " + target
-                + ". Reply with only the translation, without quotes, labels, notes, or explanations. "
-                + "Preserve punctuation, whitespace, URLs, usernames, placeholders, and Minecraft formatting markers."
-                + (request.getText().indexOf('\n') >= 0
-                ? " Keep exactly the same number and order of lines." : "");
+    /**
+     * The system prompt of the single-text path; the batch path builds its own.
+     *
+     * <p>The wording lives in {@link TranslationPrompt} so the quality mode and any custom prompt
+     * are applied in exactly one place.
+     */
+    private String systemPrompt(TranslationRequest request) {
+        return TranslationPrompt.single(prompt, request);
     }
 
     /**
@@ -508,15 +542,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             }
             user.append(index + 1).append(". ").append(group.get(index).text);
         }
-        String target = TargetLanguage.translationInstruction(
-                group.get(0).request.getTargetLanguage());
-        String system = "You are a professional Minecraft game-localization translator. "
-                + "Translate every numbered line of the user message to " + target + ". "
-                + "Reply with the same numbering: exactly one translated line per input line, in "
-                + "the same order, without merging, splitting, reordering or omitting lines. "
-                + "Preserve punctuation, whitespace, URLs, usernames, placeholders and Minecraft "
-                + "formatting markers. Reply with only the numbered translations, without quotes, "
-                + "labels, notes or explanations.";
+        String system = TranslationPrompt.batch(prompt, group.get(0).request);
         // The reply carries one translation per line, so the budget scales with the whole message
         // instead of a single line. It stays an upper bound rather than a reservation.
         int requestedTokens = Math.min(user.length() * 2 + 32, REASONING_COMPLETION_TOKENS);

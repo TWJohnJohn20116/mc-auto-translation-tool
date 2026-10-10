@@ -7,6 +7,7 @@ import org.universaltranslator.core.HudIndicatorColor;
 import org.universaltranslator.core.HudIndicatorContent;
 import org.universaltranslator.core.HudIndicatorSettings;
 import org.universaltranslator.core.HudIndicatorVisibility;
+import org.universaltranslator.core.TranslationQuality;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TextKind;
 import org.universaltranslator.core.LocalConfigSecurity;
@@ -262,6 +263,29 @@ final class ForgeConfig {
         return new ForgeConfig(properties, configFile, cacheFile);
     }
 
+    /** Selected translation quality mode; the default reproduces the historical prompt. */
+    TranslationQuality translationQuality() {
+        return onlineProviderConfig.translationQuality();
+    }
+
+    /** Custom system prompt, or an empty string to use the built-in prompt of the active mode. */
+    String customSystemPrompt() {
+        return onlineProviderConfig.customSystemPrompt();
+    }
+
+    /**
+     * Returns a copy with only the prompt settings replaced.
+     *
+     * <p>Kept separate from {@link #withSettings}: the prompt keys are carried by {@link
+     * OnlineProviderConfig} and therefore round-trip through {@code toProperties()} without
+     * widening the positional {@code withSettings} signature every settings screen calls.
+     */
+    ForgeConfig withPromptSettings(TranslationQuality quality, String customSystemPrompt) {
+        Properties properties = toProperties();
+        OnlineProviderConfig.applyPromptSettings(properties, quality, customSystemPrompt);
+        return new ForgeConfig(properties, configFile, cacheFile);
+    }
+
     void save() throws IOException {
         Path temporary = configFile.resolveSibling(configFile.getFileName().toString() + ".tmp");
         try {
@@ -380,6 +404,8 @@ final class ForgeConfig {
     private Properties toProperties() {
         Properties properties = new Properties();
         onlineProviderConfig.writeTo(properties);
+        // Keep the advanced settings the diagnostics panel may have changed after this snapshot.
+        OnlineProviderConfig.preservePromptSettings(configFile, properties);
         properties.setProperty("config-version", "6");
         properties.setProperty("enabled", Boolean.toString(enabled));
         properties.setProperty("translate-chat", Boolean.toString(translateChat));
