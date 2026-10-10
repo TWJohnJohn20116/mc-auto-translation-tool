@@ -1,5 +1,6 @@
 package org.universaltranslator.core.provider;
 
+import org.universaltranslator.core.DebugLog;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationRequest;
 import org.universaltranslator.core.TranslationStreamListener;
@@ -51,7 +52,9 @@ final class ResilientTranslationProvider implements TranslationProvider, AutoClo
                 if (attempt == maximumAttempts || !isRetryable(exception)) {
                     throw exception;
                 }
-                Thread.sleep(retryDelayMillis(exception, attempt));
+                long delay = retryDelayMillis(exception, attempt);
+                DebugLog.global().logRetry(delegate.id(), attempt, delay, exception);
+                Thread.sleep(delay);
             }
         }
         throw last == null ? new IllegalStateException("Translation failed") : last;
@@ -81,7 +84,9 @@ final class ResilientTranslationProvider implements TranslationProvider, AutoClo
                 if (attempt == maximumAttempts || guard.published() || !isRetryable(exception)) {
                     throw exception;
                 }
-                Thread.sleep(retryDelayMillis(exception, attempt));
+                long delay = retryDelayMillis(exception, attempt);
+                DebugLog.global().logRetry(delegate.id(), attempt, delay, exception);
+                Thread.sleep(delay);
             }
         }
         throw last == null ? new IllegalStateException("Translation failed") : last;

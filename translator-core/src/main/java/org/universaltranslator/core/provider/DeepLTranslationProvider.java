@@ -1,5 +1,6 @@
 package org.universaltranslator.core.provider;
 
+import org.universaltranslator.core.DebugLog;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationRequest;
 import org.universaltranslator.core.net.CryptoSupport;
@@ -67,12 +68,15 @@ public final class DeepLTranslationProvider implements TranslationProvider {
         if (!modelType.isEmpty()) {
             fields.put("model_type", modelType);
         }
+        DebugLog.global().logRequest(id(), modelType, endpoint.toString(),
+                request.getKind().name(), request.getText());
         String response = post(fields);
         String translated = JsonStrings.readStringPath(response, "translations[0].text");
         if (translated == null || translated.trim().isEmpty()) {
             throw new IllegalStateException(
                     ProviderJson.describeMissingContent("DeepL", response));
         }
+        DebugLog.global().logResponse(id(), request.getKind().name(), translated);
         return translated;
     }
 

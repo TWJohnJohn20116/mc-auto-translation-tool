@@ -244,6 +244,34 @@ fabric 1.20.1／1.21 的「翻譯診斷」頁面可用「顯示統計／顯示�
 「重設統計」清除累計。其他平台的統計仍會照常記錄與保存，並會附在「匯出診斷記錄」
 產生的檔案中（`config/universal-translator-diagnostics/`）。
 
+## 除錯模式與診斷包
+
+在「翻譯診斷」頁面按「除錯模式」可開啟除錯記錄（預設關閉）。開啟後模組會把請求寫入：
+
+```text
+config/universal-translator-debug.log
+```
+
+每筆記錄包含時間、服務商、僅主機名稱的端點、模型、文字種類、長度與截斷預覽（最多 120 字元）、
+重試與退避毫秒數、串流事件、快取命中或未命中，以及失敗原因。記錄一律先清洗：API 金鑰、
+`Authorization`／`api-key`／`x-api-key`／`x-goog-api-key` 等標頭、`sk-` 開頭的權杖與長 base64
+都會被取代，端點只保留主機名稱。檔案超過 2 MB 時會輪替一次，舊檔為
+`universal-translator-debug.log.1`。
+
+關閉時不會寫入任何內容，翻譯路徑的行為與開啟前完全相同。
+
+按「匯出診斷包」會在 `config/` 產生一個 zip（`universal-translator-diagnostics-<時間>.zip`），
+內含：
+
+| 檔案 | 內容 |
+| --- | --- |
+| `environment.txt` | 模組版本、平台、Java 版本與廠牌、作業系統 |
+| `diagnostics.txt` | 診斷頁面的內容與翻譯統計 |
+| `config.properties` | 設定檔（已清洗，金鑰與端點不會出現） |
+| `debug.log` | 除錯記錄（已清洗；未開啟時只有一行說明） |
+
+匯出的都是清洗後的副本，不會修改遊戲正在使用的設定檔或記錄檔。
+
 ## 可以翻譯哪些內容
 
 模組在最終文字彩現層運作，因此尚未進入世界時也能涵蓋使用 Minecraft 原版字型的

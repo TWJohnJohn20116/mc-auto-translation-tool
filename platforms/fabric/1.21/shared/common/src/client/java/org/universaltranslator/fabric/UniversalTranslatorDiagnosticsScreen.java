@@ -5,28 +5,37 @@ import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.text.Text;
+import org.universaltranslator.core.DebugLog;
+import org.universaltranslator.core.DiagnosticsBundleExporter;
 import org.universaltranslator.core.TranslationDiagnosticsSnapshot;
 import org.universaltranslator.core.TranslationPrompt;
 import org.universaltranslator.core.TranslationQuality;
 import org.universaltranslator.core.TranslationStats;
 
-import java.util.List;
+import java.nio.file.Path;
 import java.util.Collections;
+import java.util.List;
 
 /** Secret-free runtime diagnostics that update while the screen is open. */
 final class UniversalTranslatorDiagnosticsScreen extends Screen {
     /** Longest custom prompt the editor accepts, matching the settings screens' text field bound. */
     private static final int MAXIMUM_PROMPT_LENGTH = 4096;
+    /** Vertical distance between two text lines. */
+    private static final int LINE_STEP = 17;
+    /** First line's y, below the quality and prompt controls. */
+    private static final int LINE_START = 84;
 
     private final Screen parent;
     /** Selected quality mode; read from the live configuration on every {@link #init()}. */
     private TranslationQuality quality;
     private ButtonWidget qualityButton;
     private TextFieldWidget customPrompt;
+    private ButtonWidget debugButton;
     private ButtonWidget pageButton;
     private ButtonWidget resetButton;
     /** Whether the counters page is shown instead of the engine diagnostics page. */
     private boolean statisticsPage;
+    private boolean debugEnabled;
     private String exportStatus = "";
     private boolean exportFailed;
 
@@ -42,6 +51,7 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
             // Re-read here rather than in the constructor so a rebuild after a resize, or a change
             // made by another screen, is reflected instead of showing a stale value.
             quality = config.translationQuality();
+            debugEnabled = config.debugLog();
         }
         if (quality == null) {
             quality = TranslationQuality.DEFAULT;
@@ -72,6 +82,15 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
                 button -> applyAdvancedSettings())
                 .dimensions(left + totalWidth - applyWidth, 56, applyWidth, 20).build());
 
+        this.debugButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+            debugEnabled = !debugEnabled;
+            applyDebugMode();
+        }).dimensions(left, this.height - 76, buttonWidth, 20).build());
+        addDrawableChild(ButtonWidget.builder(
+                Text.translatable("screen.universal_translator.debug.bundle"),
+                button -> exportBundle())
+                .dimensions(left + buttonWidth + gap, this.height - 76, buttonWidth, 20).build());
+
         this.pageButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
             statisticsPage = !statisticsPage;
             refreshPageLabels();
@@ -88,6 +107,7 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
                 Text.translatable("screen.universal_translator.diagnostics.export"), button -> exportLog())
                 .dimensions(left + buttonWidth + gap, this.height - 28, buttonWidth, 20).build());
         refreshQualityLabel();
+        refreshDebugLabel();
         refreshPageLabels();
     }
 
@@ -98,6 +118,15 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
         qualityButton.setMessage(Text.translatable(
                 "screen.universal_translator.option.quality",
                 tr("value.universal_translator.quality." + quality.configName())));
+    }
+
+    private void refreshDebugLabel() {
+        if (debugButton == null) {
+            return;
+        }
+        debugButton.setMessage(Text.translatable("screen.universal_translator.debug.mode",
+                tr(debugEnabled
+                        ? "value.universal_translator.on" : "value.universal_translator.off")));
     }
 
     private void refreshPageLabels() {
@@ -149,6 +178,41 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
         }
     }
 
+    /**
+     * Switches the request trace on or off and persists the switch.
+     *
+     * <p>{@link DebugLog} is reconfigured directly because the switch takes effect immediately; the
+     * configuration write only makes it survive the next launch. With the trace off the log is not
+     * touched at all, so a session that never turns it on behaves exactly as before.
+     */
+    private void applyDebugMode() {
+        refreshDebugLabel();
+        FabricConfig config = FabricTranslationRuntime.diagnosticsConfig();
+        if (config == null) {
+            exportStatus = tr("screen.universal_translator.diagnostics.settings_unavailable");
+            exportFailed = true;
+            return;
+        }
+        try {
+            FabricConfig updated = config.withDebugLog(debugEnabled);
+            FabricTranslationRuntime.initialize(updated);
+            updated.save();
+            Path configFile = updated.configFile();
+            DebugLog.global().configure(
+                    configFile.resolveSibling(DebugLog.FILE_NAME), debugEnabled);
+            exportStatus = tr("screen.universal_translator.debug.changed",
+                    tr(debugEnabled
+                            ? "value.universal_translator.on" : "value.universal_translator.off"));
+            exportFailed = false;
+        } catch (Exception failure) {
+            String message = failure.getMessage();
+            exportStatus = tr("screen.universal_translator.diagnostics.settings_failed",
+                    message == null || message.trim().isEmpty()
+                            ? failure.getClass().getSimpleName() : message);
+            exportFailed = true;
+        }
+    }
+
     /** Clears the process-wide counters and writes the cleared values out. */
     private void resetStatistics() {
         TranslationStats.global().reset();
@@ -166,19 +230,27 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
                 width / 2, 18, 0xFFFFFFFF);
         List<String> lines = displayLines();
         int left = Math.max(10, (width - Math.min(360, width - 20)) / 2);
-        int y = 84;
-        for (String line : lines) {
+        // Stop before the status line and the button rows. A short window shows fewer lines instead
+        // of drawing text on top of a button, and the last visible line says that it was cut.
+        int limit = Math.max(1, (this.height - 96 - LINE_START) / LINE_STEP + 1);
+        int shown = Math.min(lines.size(), limit);
+        int y = LINE_START;
+        for (int index = 0; index < shown; index++) {
+            String line = lines.get(index);
+            if (index == shown - 1 && shown < lines.size()) {
+                line = line + " ...";
+            }
             context.drawTextWithShadow(textRenderer, Text.literal(line), left, y, 0xFFD0D0D0);
-            y += 17;
+            y += LINE_STEP;
         }
         context.drawCenteredTextWithShadow(textRenderer,
                 Text.translatable(statisticsPage
                         ? "screen.universal_translator.stats.note"
                         : "screen.universal_translator.diagnostics.note"),
-                width / 2, Math.min(y + 7, height - 96), 0xFF909090);
+                width / 2, Math.min(y + 7, height - 88), 0xFF909090);
         if (!exportStatus.isEmpty()) {
             context.drawCenteredTextWithShadow(textRenderer, Text.literal(exportStatus),
-                    width / 2, height - 88, exportFailed ? 0xFFFF5555 : 0xFF55FF88);
+                    width / 2, height - 82, exportFailed ? 0xFFFF5555 : 0xFF55FF88);
         }
         super.render(context, mouseX, mouseY, delta);
     }
@@ -216,6 +288,31 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
             exportStatus = tr("screen.universal_translator.diagnostics.exported");
             exportFailed = false;
         } catch (Exception ignored) {
+            exportStatus = tr("screen.universal_translator.diagnostics.export_failed");
+            exportFailed = true;
+        }
+    }
+
+    /**
+     * Writes one archive holding the diagnostics, the debug log, the redacted configuration and the
+     * environment into the configuration directory.
+     */
+    private void exportBundle() {
+        FabricConfig config = FabricTranslationRuntime.diagnosticsConfig();
+        if (config == null) {
+            exportStatus = tr("screen.universal_translator.diagnostics.settings_unavailable");
+            exportFailed = true;
+            return;
+        }
+        try {
+            Path configFile = config.configFile();
+            Path archive = DiagnosticsBundleExporter.export(
+                    configFile.getParent(), configFile,
+                    configFile.resolveSibling(DebugLog.FILE_NAME), "fabric", diagnosticsLines());
+            exportStatus = tr("screen.universal_translator.debug.bundle_exported",
+                    archive.getFileName().toString());
+            exportFailed = false;
+        } catch (Exception failure) {
             exportStatus = tr("screen.universal_translator.diagnostics.export_failed");
             exportFailed = true;
         }

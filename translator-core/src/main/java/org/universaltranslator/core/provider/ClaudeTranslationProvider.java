@@ -5,6 +5,7 @@ import org.universaltranslator.core.TranslationPrompt;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationRequest;
 import org.universaltranslator.core.TranslationStats;
+import org.universaltranslator.core.DebugLog;
 import org.universaltranslator.core.TranslationStreamListener;
 import org.universaltranslator.core.net.EndpointPolicy;
 import org.universaltranslator.core.net.HttpJsonClient;
@@ -86,6 +87,8 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
     @Override
     public String translate(TranslationRequest request) throws Exception {
         String text = request.getText();
+        DebugLog.global().logRequest("claude:" + model, model, endpoint.toString(),
+                request.getKind().name(), text);
         String response = post(text, TranslationPrompt.single(prompt, request),
                 completionBudget(text), false);
         String translated = extractContent(response);
@@ -96,6 +99,7 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
         if (response.indexOf("\"usage\"") >= 0) {
             TranslationStats.global().recordUsage("claude:" + model, response);
         }
+        DebugLog.global().logResponse("claude:" + model, request.getKind().name(), translated);
         return TranslationOutputValidator.requireValid(text, translated);
     }
 

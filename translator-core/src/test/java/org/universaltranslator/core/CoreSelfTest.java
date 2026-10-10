@@ -96,6 +96,9 @@ public final class CoreSelfTest {
         countsTranslationStatistics();
         classifiesTranslationFailures();
         persistsTranslationStatistics();
+        redactsDebugLogSecrets();
+        writesAndRotatesTheDebugLog();
+        exportsADiagnosticsBundle();
         System.out.println("CoreSelfTest: all checks passed");
     }
 
@@ -1539,6 +1542,168 @@ public final class CoreSelfTest {
             Files.deleteIfExists(file);
             Files.deleteIfExists(temporary);
         }
+    }
+
+    /** Every credential shape the debug log can be handed has to come out redacted. */
+    private static void redactsDebugLogSecrets() {
+        String openAiKey = "sk-abcdefghijklmnopqrstuvwxyz012345";
+        String genericKey = "0123456789abcdef0123456789abcdef";
+        String deeplKey = "12345678-1234-1234-1234-123456789012:fx";
+        assertTrue(!DebugLog.redact("Authorization: Bearer " + openAiKey).contains(openAiKey));
+        assertTrue(!DebugLog.redact("Authorization: Bearer " + genericKey).contains(genericKey));
+        assertTrue(!DebugLog.redact("api-key=" + genericKey).contains(genericKey));
+        assertTrue(!DebugLog.redact("x-api-key: " + genericKey).contains(genericKey));
+        assertTrue(!DebugLog.redact("x-goog-api-key=" + genericKey).contains(genericKey));
+        assertTrue(!DebugLog.redact("anthropic-version header, x-api-key " + genericKey)
+                .contains(genericKey));
+        // A credential name that carries a trailing -id, as several providers spell their key.
+        assertTrue(!DebugLog.redact("aliyun-access-key-id=" + genericKey).contains(genericKey));
+        assertTrue(!DebugLog.redact("tencent-secret-id=" + genericKey).contains(genericKey));
+        // A provider-specific name that no shared rule knows about, followed by a token-like value.
+        assertTrue(!DebugLog.redact("DeepL-Auth-Key " + deeplKey).contains(deeplKey));
+        // A bare long base64 run is redacted even without a credential name in front of it.
+        String base64 = "aGVsbG8gd29ybGQgdGhpcyBpcyBhIGxvbmdlciBzZWNyZXQ=";
+        assertTrue(!DebugLog.redact("payload " + base64).contains(base64));
+        // Endpoints are excluded from the log and the bundle, so a URL never survives.
+        assertTrue(!DebugLog.redact("https://api.example.com/v1/chat/completions")
+                .contains("api.example.com"));
+        // Ordinary text stays readable, otherwise the log would be useless.
+        assertEquals("Hello world", DebugLog.redact("Hello world"));
+        assertTrue(DebugLog.redact("the token expired").contains("expired"));
+        // Only the host of an endpoint is kept, never the path or a query.
+        assertEquals("api-free.deepl.com",
+                DebugLog.hostOnly("https://api-free.deepl.com/v2/translate?x=1"));
+        assertEquals("host:5000", DebugLog.hostOnly("http://user:secret@host:5000/translate"));
+        assertEquals("", DebugLog.hostOnly(null));
+        // The preview is flattened and bounded.
+        assertEquals("a b", DebugLog.preview("a\nb"));
+        String longText = new String(new char[400]).replace('\0', 'x');
+        assertCount(DebugLog.MAXIMUM_PREVIEW_CHARS + 3, DebugLog.preview(longText).length());
+    }
+
+    /** The trace is only written when it is on, and it rotates instead of growing without bound. */
+    private static void writesAndRotatesTheDebugLog() throws Exception {
+        Path directory = Files.createTempDirectory("universal-translator-debug");
+        Path log = directory.resolve(DebugLog.FILE_NAME);
+        Path rotated = directory.resolve(DebugLog.ROTATED_FILE_NAME);
+        try {
+            DebugLog off = DebugLog.isolated();
+            off.configure(log, false);
+            assertFalse(off.isEnabled());
+            off.logRequest("libretranslate", "n/a", "https://host/translate", "CHAT", "hello");
+            off.logFailure("libretranslate", new java.io.IOException("connection reset"));
+            off.logStreamEvent("gemini:model", "delta", 3);
+            assertTrue(!Files.exists(log));
+
+            DebugLog on = DebugLog.isolated();
+            on.configure(log, true);
+            assertTrue(on.isEnabled());
+            on.logRequest("deepl", "latency_optimized",
+                    "https://api-free.deepl.com/v2/translate", "CHAT", "Hello world");
+            on.logFailure("deepl",
+                    new org.universaltranslator.core.net.HttpStatusException(429, "slow down"));
+            on.logRetry("deepl", 1, 200L,
+                    new org.universaltranslator.core.net.HttpStatusException(503, "unavailable"));
+            on.logStreamEvent("gemini:model", "delta", 7);
+            String content = new String(Files.readAllBytes(log), StandardCharsets.UTF_8);
+            assertTrue(content.contains("request"));
+            assertTrue(content.contains("provider=deepl"));
+            assertTrue(content.contains("host=api-free.deepl.com"));
+            assertTrue(content.contains("model=latency_optimized"));
+            assertTrue(content.contains("kind=CHAT"));
+            assertTrue(content.contains("length=11"));
+            assertTrue(content.contains("preview=Hello world"));
+            assertTrue(content.contains("reason=rate-limit"));
+            assertTrue(content.contains("reason=server"));
+            assertTrue(content.contains("delay-ms=200"));
+            assertTrue(content.contains("event=delta"));
+            assertTrue(content.contains("characters=7"));
+            // The endpoint's path never reaches the log.
+            assertTrue(!content.contains("/v2/translate"));
+
+            // Once the file passes the limit it is moved aside and a fresh one is started, so a long
+            // session keeps exactly one rotated file.
+            Files.write(log, new byte[(int) DebugLog.MAXIMUM_BYTES + 1]);
+            on.log("after-rotation");
+            assertTrue(Files.exists(rotated));
+            String after = new String(Files.readAllBytes(log), StandardCharsets.UTF_8);
+            assertTrue(after.contains("after-rotation"));
+            assertTrue(!after.contains("preview=Hello world"));
+            assertCount(DebugLog.MAXIMUM_BYTES + 1, Files.size(rotated));
+        } finally {
+            Files.deleteIfExists(log);
+            Files.deleteIfExists(rotated);
+            Files.deleteIfExists(directory);
+        }
+    }
+
+    /** The exported bundle holds the four entries and no credential or endpoint. */
+    private static void exportsADiagnosticsBundle() throws Exception {
+        Path directory = Files.createTempDirectory("universal-translator-bundle");
+        Path configFile = directory.resolve("universal-translator.properties");
+        Path logFile = directory.resolve(DebugLog.FILE_NAME);
+        try {
+            String genericKey = "0123456789abcdef0123456789abcdef";
+            Files.write(configFile, ("llm-api-key=" + genericKey
+                    + "\nllm-api-endpoint=https://api.example.com/v1\n")
+                    .getBytes(StandardCharsets.UTF_8));
+            Files.write(logFile, ("Authorization: Bearer sk-abcdefghijklmnopqrstuvwxyz012345\n")
+                    .getBytes(StandardCharsets.UTF_8));
+
+            Path archive = DiagnosticsBundleExporter.export(directory, configFile, logFile,
+                    "fabric-1.21.x", Collections.singletonList("diagnostic line"));
+            assertTrue(Files.exists(archive));
+            Map<String, String> entries = readArchive(archive);
+            assertEquals(Integer.valueOf(4), Integer.valueOf(entries.size()));
+            for (String name : DiagnosticsBundleExporter.entryNames()) {
+                assertTrue(entries.containsKey(name));
+            }
+            assertTrue(entries.get("environment.txt").contains("Mod version:"));
+            assertTrue(entries.get("environment.txt").contains("fabric-1.21.x"));
+            assertTrue(entries.get("diagnostics.txt").contains("diagnostic line"));
+            assertTrue(entries.get("diagnostics.txt").contains("Statistics: requests="));
+            assertTrue(entries.get("config.properties").contains("llm-api-key=[key hidden]"));
+            assertTrue(!entries.get("config.properties").contains(genericKey));
+            assertTrue(!entries.get("config.properties").contains("api.example.com"));
+            assertTrue(!entries.get("debug.log")
+                    .contains("sk-abcdefghijklmnopqrstuvwxyz012345"));
+
+            // A missing log is reported rather than failing the export.
+            Path withoutLog = DiagnosticsBundleExporter.export(directory, configFile,
+                    directory.resolve("absent.log"), "fabric-1.21.x", null);
+            Map<String, String> second = readArchive(withoutLog);
+            assertTrue(second.get("debug.log").contains("no log was written"));
+            assertTrue(second.get("diagnostics.txt").contains("Diagnostics unavailable"));
+        } finally {
+            File[] leftovers = directory.toFile().listFiles();
+            if (leftovers != null) {
+                for (File leftover : leftovers) {
+                    leftover.delete();
+                }
+            }
+            Files.deleteIfExists(directory);
+        }
+    }
+
+    /** Reads a zip archive into a name to text map. */
+    private static Map<String, String> readArchive(Path archive) throws Exception {
+        Map<String, String> entries = new java.util.LinkedHashMap<String, String>();
+        try (java.util.zip.ZipInputStream zip =
+                     new java.util.zip.ZipInputStream(Files.newInputStream(archive))) {
+            java.util.zip.ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+                byte[] chunk = new byte[1024];
+                int read = zip.read(chunk);
+                while (read > 0) {
+                    buffer.write(chunk, 0, read);
+                    read = zip.read(chunk);
+                }
+                entries.put(entry.getName(),
+                        new String(buffer.toByteArray(), StandardCharsets.UTF_8));
+            }
+        }
+        return entries;
     }
 
     private static void assertCount(long expected, long actual) {
