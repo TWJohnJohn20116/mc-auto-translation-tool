@@ -45,6 +45,13 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
     private final String providerId;
     private final HttpJsonClient http;
     /**
+     * Header the credential travels in, and the prefix its value gets. Every OpenAI-compatible
+     * service uses {@code Authorization: Bearer ...}; Azure OpenAI uses a bare {@code api-key}
+     * header instead, which is the only protocol difference this provider has to absorb.
+     */
+    private final String credentialHeader;
+    private final String credentialPrefix;
+    /**
      * Quality mode and optional custom system prompt. The default is the historical prompt, so a
      * provider built without this argument sends exactly the bytes it always sent.
      */
@@ -130,12 +137,38 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             HttpJsonClient http,
             TranslationPrompt.Settings prompt
     ) {
+        this(endpoint, apiKey, model, providerId, http, prompt, "Authorization", "Bearer ");
+    }
+
+    OpenAiChatTranslationProvider(
+            String endpoint,
+            String apiKey,
+            String model,
+            String providerId,
+            HttpJsonClient http,
+            TranslationPrompt.Settings prompt,
+            String credentialHeader,
+            String credentialPrefix
+    ) {
         this.endpoint = EndpointPolicy.requireSafeEndpoint(normalizeEndpoint(endpoint));
         this.apiKey = apiKey == null ? "" : apiKey.trim();
         this.model = requireText("model", model);
         this.providerId = requireText("providerId", providerId);
         this.http = http;
         this.prompt = prompt == null ? TranslationPrompt.Settings.standard() : prompt;
+        this.credentialHeader = credentialHeader == null || credentialHeader.trim().isEmpty()
+                ? "Authorization" : credentialHeader.trim();
+        this.credentialPrefix = credentialPrefix == null ? "" : credentialPrefix;
+    }
+
+    /**
+     * The credential as the header map this endpoint expects, or an empty map when no key is set
+     * (a local llama.cpp or Ollama server needs none).
+     */
+    private Map<String, String> credentialHeaders() {
+        return apiKey.isEmpty()
+                ? Collections.<String, String>emptyMap()
+                : Collections.singletonMap(credentialHeader, credentialPrefix + apiKey);
     }
 
     /**
@@ -296,10 +329,9 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
     ) throws Exception {
         StreamAttempt attempt = new StreamAttempt();
         String body = requestBody(system, text, maximumTokens, false, true);
-        String authorization = apiKey.isEmpty() ? null : "Bearer " + apiKey;
         StringBuilder accumulated = new StringBuilder(64);
         try (HttpJsonClient.StreamedResponse response =
-                     http.postStreaming(endpoint, body, authorization)) {
+                     http.postStreaming(endpoint, body, credentialHeaders())) {
             if (!isEventStream(response.getContentType())) {
                 // A relay that ignores "stream" answers with an ordinary JSON document. Its body is
                 // deliberately not read here: the plain path re-sends the same request and knows how
@@ -624,9 +656,8 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
 
     /** Posts one chat completion and returns the raw response body. */
     private String post(String system, String text, int maximumTokens, boolean offline) throws Exception {
-        String authorization = apiKey.isEmpty() ? null : "Bearer " + apiKey;
-        return http.post(
-                endpoint, requestBody(system, text, maximumTokens, offline, false), authorization);
+        return http.post(endpoint, requestBody(system, text, maximumTokens, offline, false),
+                credentialHeaders());
     }
 
     /** One chat-completion request body; {@code streaming} selects the event-stream response form. */
@@ -729,8 +760,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
                 .append("\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],")
                 .append("\"temperature\":0,\"max_tokens\":1,\"stream\":false}")
                 .toString();
-        String authorization = apiKey.isEmpty() ? null : "Bearer " + apiKey;
-        String response = http.post(endpoint, body, authorization);
+        String response = http.post(endpoint, body, credentialHeaders());
         Object root = JsonStrings.parse(response);
         // A relay that answers 200 with its own error object would otherwise look healthy here,
         // and the user would only find out when every translation failed.

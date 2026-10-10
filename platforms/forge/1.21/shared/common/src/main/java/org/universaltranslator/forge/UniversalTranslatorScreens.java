@@ -24,8 +24,8 @@ import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.net.EndpointPolicy;
 import org.universaltranslator.core.net.HttpJsonClient;
 import org.universaltranslator.core.net.JsonStrings;
-import org.universaltranslator.core.provider.OpenAiChatTranslationProvider;
 import org.universaltranslator.core.provider.OpenAiModelCatalog;
+import org.universaltranslator.core.provider.ProviderProbe;
 
 import java.net.URI;
 import java.util.Collections;
@@ -871,7 +871,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
             OpenAiModelCatalog.Catalog catalog = null;
             String failure = "";
             try {
-                catalog = OpenAiModelCatalog.fetchCatalog(endpointValue, keyValue);
+                catalog = OpenAiModelCatalog.fetchCatalog(provider, endpointValue, keyValue);
             } catch (Exception error) {
                 failure = describe(error);
             }
@@ -924,7 +924,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                         message = tr("screen.universal_translator.engine.test_need_model");
                         error = true;
                     } else {
-                        new OpenAiChatTranslationProvider(endpointValue, keyValue, model, provider).probe();
+                        ProviderProbe.probe(provider, endpointValue, keyValue, model);
                         message = tr("screen.universal_translator.engine.test_ok_probe", model);
                         error = false;
                     }

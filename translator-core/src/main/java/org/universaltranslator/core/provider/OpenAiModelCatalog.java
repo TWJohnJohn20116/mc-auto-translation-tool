@@ -159,6 +159,66 @@ public final class OpenAiModelCatalog {
         return readCatalog(http.get(URI.create(modelsEndpoint(chatEndpoint)), headers));
     }
 
+    /**
+     * Fetches the catalog for the selected provider, using the URL and the credential that provider
+     * actually publishes.
+     *
+     * <p>Gemini and Claude both expose a catalog, but neither under the OpenAI path or with the
+     * OpenAI credential header: Gemini reads {@code /v1beta/models} with {@code x-goog-api-key} and
+     * Claude reads {@code /v1/models} with {@code x-api-key} plus {@code anthropic-version}. The
+     * remaining providers in the catalog publish no model list at all — DeepL has no model to
+     * choose, and Azure OpenAI's deployments are only visible through the control plane, which needs
+     * an Entra token rather than the deployment key — so they report that instead of querying a URL
+     * that cannot answer.
+     *
+     * @param provider provider id from {@link org.universaltranslator.core.TranslationProviderCatalog}
+     * @param chatEndpoint configured endpoint of that provider
+     * @param apiKey credential, or {@code null}/empty for none
+     * @return the identifiers plus whether the body parsed as JSON
+     * @throws IOException when the request fails or the server answers with an error status
+     * @throws IllegalStateException when the provider publishes no model catalog
+     */
+    public static Catalog fetchCatalog(String provider, String chatEndpoint, String apiKey)
+            throws IOException {
+        return fetchCatalog(provider, chatEndpoint, apiKey,
+                new HttpJsonClient(CONNECT_TIMEOUT_MILLIS, READ_TIMEOUT_MILLIS));
+    }
+
+    static Catalog fetchCatalog(
+            String provider,
+            String chatEndpoint,
+            String apiKey,
+            HttpJsonClient http
+    ) throws IOException {
+        String selected = provider == null ? "" : provider.trim().toLowerCase(java.util.Locale.ROOT);
+        String key = apiKey == null ? "" : apiKey.trim();
+        if ("gemini".equals(selected)) {
+            Map<String, String> headers = key.isEmpty()
+                    ? Collections.<String, String>emptyMap()
+                    : Collections.singletonMap("x-goog-api-key", key);
+            return readCatalog(http.get(
+                    URI.create(GeminiTranslationProvider.modelsUrl(chatEndpoint)), headers));
+        }
+        if ("claude".equals(selected)) {
+            Map<String, String> headers = new java.util.LinkedHashMap<String, String>();
+            if (!key.isEmpty()) {
+                headers.put("x-api-key", key);
+            }
+            headers.put("anthropic-version", ClaudeTranslationProvider.API_VERSION);
+            return readCatalog(http.get(
+                    URI.create(ClaudeTranslationProvider.modelsUrl(chatEndpoint)), headers));
+        }
+        if ("deepl".equals(selected)) {
+            throw new IllegalStateException(
+                    "DeepL has no model catalog; leave the model field empty or set its model_type");
+        }
+        if ("azure-openai".equals(selected)) {
+            throw new IllegalStateException("Azure OpenAI deployments are not listed by the data "
+                    + "plane; type the deployment name directly");
+        }
+        return fetchCatalog(chatEndpoint, apiKey, http);
+    }
+
     /** Model identifiers plus whether the response body was JSON, not merely an HTTP 200. */
     public static final class Catalog {
         private final List<String> models;

@@ -79,6 +79,12 @@ public final class ProviderSelfTest {
         expandsTheSupportedPlaceholders();
         acceptsEditorNewlineEscapes();
         sendsAndPersistsTheCustomPrompt();
+        translatesThroughDeepL();
+        translatesThroughGeminiAndFallsBackFromANonStreamingAnswer();
+        translatesThroughClaude();
+        translatesThroughAzureOpenAi();
+        dispatchesTheConnectionTestPerProtocol();
+        createsEveryNativeProviderFromTheConfiguration();
         System.out.println("ProviderSelfTest: all checks passed");
     }
 
@@ -995,7 +1001,8 @@ public final class ProviderSelfTest {
             provider = TranslationProviderCatalog.next(provider);
             count++;
         } while (!"offline".equals(provider) && count < 100);
-        assertEquals(16, count);
+        // 16 historical providers plus Azure OpenAI, DeepL, Gemini and Claude.
+        assertEquals(20, count);
     }
 
     private static void keepsLlmEditorCredentialsProviderSpecific() {
@@ -1019,6 +1026,10 @@ public final class ProviderSelfTest {
         assertTrue(TranslationProviderCatalog.usesLlmEditor("volcengine-ark"));
         assertTrue(TranslationProviderCatalog.usesLlmEditor("zhipu"));
         assertTrue(TranslationProviderCatalog.usesLlmEditor("openai-compatible"));
+        assertTrue(TranslationProviderCatalog.usesLlmEditor("azure-openai"));
+        assertTrue(TranslationProviderCatalog.usesLlmEditor("deepl"));
+        assertTrue(TranslationProviderCatalog.usesLlmEditor("gemini"));
+        assertTrue(TranslationProviderCatalog.usesLlmEditor("claude"));
         assertFalse(TranslationProviderCatalog.usesLlmEditor("offline"));
     }
 
@@ -1378,6 +1389,347 @@ public final class ProviderSelfTest {
         assertTrue(TranslationPrompt.single(stored.promptSettings(),
                 new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT))
                 .startsWith("Only 繁體中文 (zh-TW) please. Reply with only the translation"));
+    }
+
+    /**
+     * DeepL speaks a form rather than JSON, puts its credential in a {@code DeepL-Auth-Key}
+     * Authorization header, upper-cases and regionalises {@code target_lang}, and omits
+     * {@code source_lang} when the source is auto-detected.
+     */
+    private static void translatesThroughDeepL() throws Exception {
+        ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        final List<HttpRequest> requests = Collections.synchronizedList(new ArrayList<HttpRequest>());
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread thread = new Thread(() -> {
+            try {
+                for (int index = 0; index < 2; index++) {
+                    try (Socket socket = server.accept()) {
+                        requests.add(readRequest(
+                                socket.getInputStream(), "POST /v2/translate HTTP/1."));
+                        if (index == 0) {
+                            writeResponse(socket.getOutputStream(), 200,
+                                    "{\"translations\":[{\"detected_source_language\":\"EN\","
+                                            + "\"text\":\"你好\"}]}");
+                        } else {
+                            writeResponse(socket.getOutputStream(), 200,
+                                    "{\"message\":\"Wrong endpoint. Use api-free.deepl.com\"}");
+                        }
+                    }
+                }
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-deepl");
+        thread.setDaemon(true);
+        thread.start();
+        try {
+            DeepLTranslationProvider provider = new DeepLTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v2/translate",
+                    "deepl-secret", "latency_optimized", new HttpJsonClient(2000, 2000));
+            assertEquals("你好", provider.translate(
+                    new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT)));
+            String failureMessage = "";
+            try {
+                provider.translate(new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT));
+            } catch (Exception expected) {
+                failureMessage = String.valueOf(expected.getMessage());
+            }
+            assertTrue(failureMessage.contains("DeepL reported: Wrong endpoint"));
+            assertTrue(provider.id().startsWith("deepl:127.0.0.1"));
+        } finally {
+            server.close();
+            thread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local DeepL test server failed", serverFailure.get());
+        }
+        HttpRequest first = requests.get(0);
+        assertEquals("DeepL-Auth-Key deepl-secret", first.headers.get("authorization"));
+        assertEquals("application/x-www-form-urlencoded; charset=utf-8",
+                first.headers.get("content-type"));
+        assertTrue(first.body.contains("text=Hello"));
+        assertTrue(first.body.contains("target_lang=ZH-HANT"));
+        assertTrue(first.body.contains("model_type=latency_optimized"));
+        // An auto-detected source is left out entirely: DeepL rejects the literal "auto".
+        assertFalse(first.body.contains("source_lang"));
+    }
+
+    /**
+     * Gemini addresses the model in the request path and the credential in {@code x-goog-api-key},
+     * and an event-stream attempt that answers with an ordinary JSON document has to fall back to
+     * the plain path instead of reporting a failure.
+     */
+    private static void translatesThroughGeminiAndFallsBackFromANonStreamingAnswer() throws Exception {
+        ServerSocket server = new ServerSocket(0, 3, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        final List<HttpRequest> requests = Collections.synchronizedList(new ArrayList<HttpRequest>());
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread thread = new Thread(() -> {
+            try {
+                for (int index = 0; index < 3; index++) {
+                    try (Socket socket = server.accept()) {
+                        requests.add(readRequest(socket.getInputStream(), "POST /v1beta/models/"));
+                        // A relay that ignores the streaming form answers the stream request with a
+                        // JSON document; the provider must recover rather than report a failure.
+                        writeResponse(socket.getOutputStream(), 200,
+                                "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"你\"},"
+                                        + "{\"text\":\"好\"}]}}]}");
+                    }
+                }
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-gemini");
+        thread.setDaemon(true);
+        thread.start();
+        try {
+            GeminiTranslationProvider provider = new GeminiTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v1beta/models",
+                    "gemini-secret", "gemini-test", new HttpJsonClient(2000, 2000),
+                    TranslationPrompt.Settings.standard());
+            PartialCollector collector = new PartialCollector();
+            assertEquals("你好", provider.translateStreaming(
+                    new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT), collector));
+            assertEquals(Collections.singletonList("你好"), collector.snapshot());
+            // The failed attempt is remembered, so the next call goes straight to the plain path.
+            assertEquals("你好", provider.translate(
+                    new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT)));
+            assertTrue(provider.id().startsWith("gemini:gemini-test"));
+        } finally {
+            server.close();
+            thread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local Gemini test server failed", serverFailure.get());
+        }
+        assertEquals(3, requests.size());
+        assertTrue(requests.get(0).requestLine.contains(
+                "/v1beta/models/gemini-test:streamGenerateContent?alt=sse"));
+        assertTrue(requests.get(1).requestLine.contains(
+                "/v1beta/models/gemini-test:generateContent"));
+        assertFalse(requests.get(1).requestLine.contains("streamGenerateContent"));
+        assertEquals("gemini-secret", requests.get(0).headers.get("x-goog-api-key"));
+        assertTrue(requests.get(0).body.contains("\"systemInstruction\":{\"parts\":[{\"text\":"));
+        assertTrue(requests.get(0).body.contains("\"generationConfig\":{\"temperature\":0"));
+        assertTrue(requests.get(0).body.contains("\"maxOutputTokens\":"));
+        assertTrue(requests.get(0).body.contains("\"role\":\"user\""));
+    }
+
+    /**
+     * Claude carries the credential in {@code x-api-key}, requires {@code anthropic-version}, keeps
+     * the system prompt in its own top-level field, and answers with an array of content fragments.
+     */
+    private static void translatesThroughClaude() throws Exception {
+        ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        final List<HttpRequest> requests = Collections.synchronizedList(new ArrayList<HttpRequest>());
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread thread = new Thread(() -> {
+            try {
+                for (int index = 0; index < 2; index++) {
+                    try (Socket socket = server.accept()) {
+                        requests.add(readRequest(
+                                socket.getInputStream(), "POST /v1/messages HTTP/1."));
+                        if (index == 0) {
+                            writeResponse(socket.getOutputStream(), 200,
+                                    "{\"content\":[{\"type\":\"text\",\"text\":\"你\"},"
+                                            + "{\"type\":\"text\",\"text\":\"好\"}]}");
+                        } else {
+                            // Anthropic reports a bad key as an error object; the provider has to
+                            // surface that sentence instead of "no translated content".
+                            writeResponse(socket.getOutputStream(), 200,
+                                    "{\"error\":{\"message\":\"invalid x-api-key\"}}");
+                        }
+                    }
+                }
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-claude");
+        thread.setDaemon(true);
+        thread.start();
+        try {
+            ClaudeTranslationProvider provider = new ClaudeTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v1/messages",
+                    "claude-secret", "claude-test", new HttpJsonClient(2000, 2000),
+                    TranslationPrompt.Settings.standard());
+            assertEquals("你好", provider.translate(
+                    new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT)));
+            String failureMessage = "";
+            try {
+                provider.translate(new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT));
+            } catch (Exception expected) {
+                failureMessage = String.valueOf(expected.getMessage());
+            }
+            assertTrue(failureMessage.contains("Claude reported: invalid x-api-key"));
+            assertTrue(provider.id().startsWith("claude:claude-test"));
+        } finally {
+            server.close();
+            thread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local Claude test server failed", serverFailure.get());
+        }
+        HttpRequest first = requests.get(0);
+        assertEquals("claude-secret", first.headers.get("x-api-key"));
+        assertEquals(ClaudeTranslationProvider.API_VERSION, first.headers.get("anthropic-version"));
+        assertFalse(first.headers.containsKey("authorization"));
+        assertTrue(first.body.contains("\"model\":\"claude-test\""));
+        assertTrue(first.body.contains("\"max_tokens\":"));
+        assertTrue(first.body.contains("\"system\":"));
+        // The system prompt must not be smuggled in as a message with role "system".
+        assertFalse(first.body.contains("\"role\":\"system\""));
+    }
+
+    /**
+     * Azure OpenAI addresses the deployment in the path, requires an {@code api-version} query, and
+     * carries the credential in a bare {@code api-key} header rather than as a bearer token.
+     */
+    private static void translatesThroughAzureOpenAi() throws Exception {
+        assertEquals(
+                "https://resource.openai.azure.com/openai/deployments/dep/chat/completions"
+                        + "?api-version=2024-10-21",
+                AzureOpenAiTranslationProvider.compose(
+                        "https://resource.openai.azure.com/", "dep", ""));
+        // A complete deployment URL is kept as it is, and a version pinned there is respected.
+        assertEquals(
+                "https://resource.openai.azure.com/openai/deployments/dep/chat/completions"
+                        + "?api-version=2025-01-01",
+                AzureOpenAiTranslationProvider.compose(
+                        "https://resource.openai.azure.com/openai/deployments/dep/chat/completions"
+                                + "?api-version=2025-01-01",
+                        "dep", "2024-10-21"));
+        assertEquals(
+                "https://resource.openai.azure.com/openai/deployments/dep/chat/completions"
+                        + "?api-version=2024-10-21",
+                AzureOpenAiTranslationProvider.compose(
+                        "https://resource.openai.azure.com", "dep", null));
+
+        ServerSocket server = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        AtomicReference<HttpRequest> request = new AtomicReference<HttpRequest>();
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread thread = new Thread(() -> {
+            try (Socket socket = server.accept()) {
+                request.set(readRequest(socket.getInputStream(), "POST /openai/deployments/"));
+                writeResponse(socket.getOutputStream(), 200,
+                        "{\"choices\":[{\"message\":{\"content\":\"你好\"}}]}");
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-azure");
+        thread.setDaemon(true);
+        thread.start();
+        try {
+            AzureOpenAiTranslationProvider provider = new AzureOpenAiTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort(), "azure-secret", "my-deployment",
+                    "2024-10-21", new HttpJsonClient(2000, 2000),
+                    TranslationPrompt.Settings.standard());
+            assertEquals("你好", provider.translate(
+                    new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT)));
+            assertTrue(provider.requestUrl().endsWith(
+                    "/openai/deployments/my-deployment/chat/completions"
+                            + "?api-version=2024-10-21"));
+            assertTrue(provider.id().startsWith("azure-openai:my-deployment"));
+        } finally {
+            server.close();
+            thread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local Azure test server failed", serverFailure.get());
+        }
+        assertEquals("azure-secret", request.get().headers.get("api-key"));
+        assertFalse(request.get().headers.containsKey("authorization"));
+        assertTrue(request.get().body.contains("\"model\":\"my-deployment\""));
+        assertTrue(request.get().body.contains("\"messages\":[{\"role\":\"system\""));
+    }
+
+    /**
+     * The settings screens no longer probe every provider with an OpenAI chat request, so the
+     * dispatcher has to build the right protocol for each family.
+     */
+    private static void dispatchesTheConnectionTestPerProtocol() throws Exception {
+        ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        final List<HttpRequest> requests = Collections.synchronizedList(new ArrayList<HttpRequest>());
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread thread = new Thread(() -> {
+            try {
+                for (int index = 0; index < 2; index++) {
+                    try (Socket socket = server.accept()) {
+                        requests.add(readRequest(socket.getInputStream(), "POST "));
+                        if (index == 0) {
+                            writeResponse(socket.getOutputStream(), 200,
+                                    "{\"translations\":[{\"text\":\"ping\"}]}");
+                        } else {
+                            writeResponse(socket.getOutputStream(), 200,
+                                    "{\"content\":[{\"type\":\"text\",\"text\":\"ping\"}]}");
+                        }
+                    }
+                }
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-probe");
+        thread.setDaemon(true);
+        thread.start();
+        try {
+            String host = "http://127.0.0.1:" + server.getLocalPort();
+            ProviderProbe.probe("deepl", host + "/v2/translate", "key", "latency_optimized");
+            ProviderProbe.probe("claude", host + "/v1/messages", "key", "claude-test");
+        } finally {
+            server.close();
+            thread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local probe test server failed", serverFailure.get());
+        }
+        assertEquals(2, requests.size());
+        assertEquals("DeepL-Auth-Key key", requests.get(0).headers.get("authorization"));
+        assertTrue(requests.get(0).body.contains("text=ping"));
+        assertEquals("key", requests.get(1).headers.get("x-api-key"));
+        assertTrue(requests.get(1).body.contains("\"max_tokens\":1"));
+    }
+
+    /**
+     * Every provider id the catalog advertises has to be constructible from the configuration, and
+     * each of the four native ones must build its own protocol rather than the OpenAI-compatible
+     * default. A missing credential is still reported as a missing credential, not as an unknown id.
+     */
+    private static void createsEveryNativeProviderFromTheConfiguration() throws Exception {
+        Properties values = new Properties();
+        OnlineProviderConfig.applyDefaults(values);
+        for (String provider : new String[]{"deepl", "gemini", "claude", "azure-openai"}) {
+            String message = "";
+            try {
+                OnlineProviderConfig.from(values).create(provider);
+            } catch (Exception expected) {
+                message = String.valueOf(expected.getMessage());
+            }
+            assertTrue(message.contains("is required"));
+        }
+        values.setProperty("deepl-api-key", "deepl-key");
+        values.setProperty("gemini-api-key", "gemini-key");
+        values.setProperty("claude-api-key", "claude-key");
+        values.setProperty("azure-openai-api-key", "azure-key");
+        values.setProperty("azure-openai-model", "deployment");
+        OnlineProviderConfig configured = OnlineProviderConfig.from(values);
+        assertTrue(configured.create("deepl").id().startsWith("deepl:api-free.deepl.com"));
+        assertTrue(configured.create("gemini").id().startsWith("gemini:gemini-2.5-flash"));
+        assertTrue(configured.create("claude").id().startsWith("claude:claude-sonnet-4-5"));
+        assertTrue(configured.create("azure-openai").id().startsWith("azure-openai:deployment"));
+        // A quality mode has to move the cache key of the two providers that take a system prompt,
+        // and must leave DeepL's alone because DeepL has no prompt to change.
+        Properties tuned = new Properties();
+        tuned.putAll(values);
+        OnlineProviderConfig.applyPromptSettings(tuned, TranslationQuality.HIGH, "");
+        OnlineProviderConfig high = OnlineProviderConfig.from(tuned);
+        assertTrue(high.create("gemini").id().contains("#"));
+        assertTrue(high.create("claude").id().contains("#"));
+        assertTrue(high.create("deepl").id().equals(configured.create("deepl").id()));
+        // An unknown id is still refused rather than silently falling back to a default provider.
+        assertThrows(() -> OnlineProviderConfig.from(values).create("not-a-provider"));
     }
 
     private static void assertTrue(boolean value) {

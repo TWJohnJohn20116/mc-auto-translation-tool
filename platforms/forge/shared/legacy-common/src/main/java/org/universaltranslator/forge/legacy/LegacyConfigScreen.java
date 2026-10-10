@@ -27,8 +27,8 @@ import org.universaltranslator.core.HudIndicatorVisibility;
 import org.universaltranslator.core.net.EndpointPolicy;
 import org.universaltranslator.core.net.HttpJsonClient;
 import org.universaltranslator.core.net.JsonStrings;
-import org.universaltranslator.core.provider.OpenAiChatTranslationProvider;
 import org.universaltranslator.core.provider.OpenAiModelCatalog;
+import org.universaltranslator.core.provider.ProviderProbe;
 
 /** Dependency-free settings UI shared by Forge 1.8.9 and 1.12.2. */
 final class LegacyConfigScreen extends GuiScreen {
@@ -1149,7 +1149,7 @@ final class LegacyConfigScreen extends GuiScreen {
             OpenAiModelCatalog.Catalog catalog = null;
             String failure = "";
             try {
-                catalog = OpenAiModelCatalog.fetchCatalog(endpointValue, keyValue);
+                catalog = OpenAiModelCatalog.fetchCatalog(provider, endpointValue, keyValue);
             } catch (Exception error) {
                 failure = describe(error);
             }
@@ -1202,7 +1202,7 @@ final class LegacyConfigScreen extends GuiScreen {
                         message = tr("screen.universal_translator.engine.test_need_model");
                         error = true;
                     } else {
-                        new OpenAiChatTranslationProvider(endpointValue, keyValue, model, provider).probe();
+                        ProviderProbe.probe(provider, endpointValue, keyValue, model);
                         message = tr("screen.universal_translator.engine.test_ok_probe", model);
                         error = false;
                     }

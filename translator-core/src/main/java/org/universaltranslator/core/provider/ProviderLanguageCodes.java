@@ -66,4 +66,33 @@ final class ProviderLanguageCodes {
         if ("zh-TW".equals(common)) return "cht";
         return common;
     }
+
+    /**
+     * DeepL's {@code target_lang}, which is upper case and, unlike its {@code source_lang}, has to
+     * name a regional variant for the languages that have one.
+     */
+    static String deeplTarget(String language) {
+        String common = common(language, false);
+        if ("zh".equals(common)) return "ZH-HANS";
+        if ("zh-TW".equals(common)) return "ZH-HANT";
+        if ("en".equals(common)) return "EN-US";
+        if ("pt".equals(common)) return "PT-BR";
+        return common.toUpperCase(Locale.ROOT);
+    }
+
+    /**
+     * DeepL's {@code source_lang}, which rejects the regional variants its {@code target_lang}
+     * requires; an empty result means "let DeepL detect the language", which is also what an
+     * omitted parameter does.
+     */
+    static String deeplSource(String language) {
+        if (language == null || language.trim().isEmpty()
+                || "auto".equalsIgnoreCase(language.trim())) {
+            return "";
+        }
+        String common = common(language, false);
+        if ("zh".equals(common) || "zh-TW".equals(common)) return "ZH";
+        if ("pt".equals(common)) return "PT";
+        return common.toUpperCase(Locale.ROOT);
+    }
 }

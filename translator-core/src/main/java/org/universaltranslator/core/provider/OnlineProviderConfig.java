@@ -45,6 +45,11 @@ public final class OnlineProviderConfig {
             "dashscope-endpoint", "dashscope-api-key", "dashscope-model",
             "volcengine-ark-endpoint", "volcengine-ark-api-key", "volcengine-ark-model",
             "zhipu-endpoint", "zhipu-api-key", "zhipu-model",
+            "azure-openai-endpoint", "azure-openai-api-key", "azure-openai-model",
+            "azure-openai-api-version",
+            "deepl-endpoint", "deepl-api-key", "deepl-model",
+            "gemini-endpoint", "gemini-api-key", "gemini-model",
+            "claude-endpoint", "claude-api-key", "claude-model",
             "custom-api-endpoint", "custom-api-method", "custom-api-content-type",
             "custom-api-key", "custom-api-auth-header", "custom-api-auth-prefix",
             "custom-api-request-template", "custom-api-response-path"
@@ -156,6 +161,25 @@ public final class OnlineProviderConfig {
                 "https://open.bigmodel.cn/api/paas/v4/chat/completions");
         putDefault(properties, "zhipu-api-key", "");
         putDefault(properties, "zhipu-model", "glm-5.2");
+
+        putDefault(properties, "azure-openai-endpoint", AzureOpenAiTranslationProvider.DEFAULT_ENDPOINT);
+        putDefault(properties, "azure-openai-api-key", "");
+        // The deployment name is the user's own, so there is no useful default to ship.
+        putDefault(properties, "azure-openai-model", "");
+        putDefault(properties, "azure-openai-api-version",
+                AzureOpenAiTranslationProvider.DEFAULT_API_VERSION);
+        putDefault(properties, "deepl-endpoint", DeepLTranslationProvider.DEFAULT_ENDPOINT);
+        putDefault(properties, "deepl-api-key", "");
+        // This field is DeepL's model_type, not a model name. The mod is latency sensitive, and the
+        // settings screen's connection test needs a non-empty value, so the latency variant ships as
+        // the default; "quality_optimized" or an empty value are both accepted.
+        putDefault(properties, "deepl-model", "latency_optimized");
+        putDefault(properties, "gemini-endpoint", GeminiTranslationProvider.DEFAULT_ENDPOINT);
+        putDefault(properties, "gemini-api-key", "");
+        putDefault(properties, "gemini-model", "gemini-2.5-flash");
+        putDefault(properties, "claude-endpoint", ClaudeTranslationProvider.DEFAULT_ENDPOINT);
+        putDefault(properties, "claude-api-key", "");
+        putDefault(properties, "claude-model", "claude-sonnet-4-5");
 
         putDefault(properties, "custom-api-endpoint", "http://127.0.0.1:5000/translate");
         putDefault(properties, "custom-api-method", "POST");
@@ -324,6 +348,19 @@ public final class OnlineProviderConfig {
             raw = openAi("zhipu", "zhipu-endpoint", "zhipu-api-key", "zhipu-model", http);
         } else if ("openai-compatible".equals(selected)) {
             raw = openAi("openai-compatible", "llm-api-endpoint", "llm-api-key", "llm-api-model", http);
+        } else if ("azure-openai".equals(selected)) {
+            raw = new AzureOpenAiTranslationProvider(value("azure-openai-endpoint"),
+                    value("azure-openai-api-key"), value("azure-openai-model"),
+                    value("azure-openai-api-version"), http, promptSettings());
+        } else if ("deepl".equals(selected)) {
+            raw = new DeepLTranslationProvider(value("deepl-endpoint"), value("deepl-api-key"),
+                    value("deepl-model"), http);
+        } else if ("gemini".equals(selected)) {
+            raw = new GeminiTranslationProvider(value("gemini-endpoint"), value("gemini-api-key"),
+                    value("gemini-model"), http, promptSettings());
+        } else if ("claude".equals(selected)) {
+            raw = new ClaudeTranslationProvider(value("claude-endpoint"), value("claude-api-key"),
+                    value("claude-model"), http, promptSettings());
         } else if ("custom-http-json".equals(selected)) {
             raw = custom(http);
         } else {
@@ -407,6 +444,19 @@ public final class OnlineProviderConfig {
         }
         if ("zhipu".equals(selected)) {
             return new String[]{"zhipu-endpoint", "zhipu-api-key", "zhipu-model"};
+        }
+        if ("azure-openai".equals(selected)) {
+            return new String[]{"azure-openai-endpoint", "azure-openai-api-key",
+                    "azure-openai-model"};
+        }
+        if ("deepl".equals(selected)) {
+            return new String[]{"deepl-endpoint", "deepl-api-key", "deepl-model"};
+        }
+        if ("gemini".equals(selected)) {
+            return new String[]{"gemini-endpoint", "gemini-api-key", "gemini-model"};
+        }
+        if ("claude".equals(selected)) {
+            return new String[]{"claude-endpoint", "claude-api-key", "claude-model"};
         }
         // Keep the historical generic values available while offline or another provider is selected.
         return new String[]{"llm-api-endpoint", "llm-api-key", "llm-api-model"};
