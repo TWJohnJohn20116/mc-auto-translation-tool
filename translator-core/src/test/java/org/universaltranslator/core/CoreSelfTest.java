@@ -854,7 +854,8 @@ public final class CoreSelfTest {
     }
 
     private static void laysOutInPlaceSettingsLists() {
-        assertEquals(16, SettingsSelectionList.values(
+        // 16 historical providers plus Azure OpenAI, DeepL, Gemini and Claude.
+        assertEquals(20, SettingsSelectionList.values(
                 SettingsSelectionList.Kind.PROVIDER).length);
         assertEquals(10, SettingsSelectionList.values(
                 SettingsSelectionList.Kind.TARGET_LANGUAGE).length);
