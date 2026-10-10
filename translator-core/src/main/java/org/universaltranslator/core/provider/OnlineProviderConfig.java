@@ -1,9 +1,16 @@
 package org.universaltranslator.core.provider;
 
+import org.universaltranslator.core.TranslationPrompt;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationProviderCatalog;
+import org.universaltranslator.core.TranslationQuality;
 import org.universaltranslator.core.net.HttpJsonClient;
 
+import java.io.IOException;
+import java.io.Reader;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -11,10 +18,20 @@ import java.util.Properties;
 /** Immutable, whitelisted online-provider settings shared by every loader/version. */
 public final class OnlineProviderConfig {
     private static final String CUSTOM_HEADER_PREFIX = "custom-api-header.";
+    /**
+     * Keys edited by the in-game advanced panel rather than by a settings screen.
+     *
+     * <p>They are re-read from disk before every save (see {@link #preservePromptSettings}) so that
+     * pressing Save on a settings screen that was opened before the panel ran cannot write a stale
+     * snapshot back over them.
+     */
+    private static final String[] PROMPT_KEYS = {
+            "translation-quality", "custom-system-prompt", "debug-log"};
     private static final String[] KEYS = {
             "libretranslate-endpoint", "api-key",
             "tencent-secret-id", "tencent-secret-key", "tencent-model",
             "llm-api-endpoint", "llm-api-key", "llm-api-model",
+            "translation-quality", "custom-system-prompt", "debug-log",
             "api-connect-timeout-ms", "api-read-timeout-ms", "api-max-attempts",
             "api-min-request-interval-ms",
             "baidu-endpoint", "baidu-app-id", "baidu-secret",
@@ -29,6 +46,11 @@ public final class OnlineProviderConfig {
             "dashscope-endpoint", "dashscope-api-key", "dashscope-model",
             "volcengine-ark-endpoint", "volcengine-ark-api-key", "volcengine-ark-model",
             "zhipu-endpoint", "zhipu-api-key", "zhipu-model",
+            "azure-openai-endpoint", "azure-openai-api-key", "azure-openai-model",
+            "azure-openai-api-version",
+            "deepl-endpoint", "deepl-api-key", "deepl-model",
+            "gemini-endpoint", "gemini-api-key", "gemini-model",
+            "claude-endpoint", "claude-api-key", "claude-model",
             "custom-api-endpoint", "custom-api-method", "custom-api-content-type",
             "custom-api-key", "custom-api-auth-header", "custom-api-auth-prefix",
             "custom-api-request-template", "custom-api-response-path"
@@ -92,6 +114,10 @@ public final class OnlineProviderConfig {
         putDefault(properties, "llm-api-endpoint", "http://127.0.0.1:8080/v1/chat/completions");
         putDefault(properties, "llm-api-key", "");
         putDefault(properties, "llm-api-model", "local-model");
+        putDefault(properties, "translation-quality", TranslationQuality.DEFAULT.configName());
+        putDefault(properties, "custom-system-prompt", "");
+        // Off by default: the trace records text previews, so it is only written when asked for.
+        putDefault(properties, "debug-log", "false");
         putDefault(properties, "api-connect-timeout-ms", "5000");
         putDefault(properties, "api-read-timeout-ms", "120000");
         putDefault(properties, "api-max-attempts", "3");
@@ -139,6 +165,25 @@ public final class OnlineProviderConfig {
         putDefault(properties, "zhipu-api-key", "");
         putDefault(properties, "zhipu-model", "glm-5.2");
 
+        putDefault(properties, "azure-openai-endpoint", AzureOpenAiTranslationProvider.DEFAULT_ENDPOINT);
+        putDefault(properties, "azure-openai-api-key", "");
+        // The deployment name is the user's own, so there is no useful default to ship.
+        putDefault(properties, "azure-openai-model", "");
+        putDefault(properties, "azure-openai-api-version",
+                AzureOpenAiTranslationProvider.DEFAULT_API_VERSION);
+        putDefault(properties, "deepl-endpoint", DeepLTranslationProvider.DEFAULT_ENDPOINT);
+        putDefault(properties, "deepl-api-key", "");
+        // This field is DeepL's model_type, not a model name. The mod is latency sensitive, and the
+        // settings screen's connection test needs a non-empty value, so the latency variant ships as
+        // the default; "quality_optimized" or an empty value are both accepted.
+        putDefault(properties, "deepl-model", "latency_optimized");
+        putDefault(properties, "gemini-endpoint", GeminiTranslationProvider.DEFAULT_ENDPOINT);
+        putDefault(properties, "gemini-api-key", "");
+        putDefault(properties, "gemini-model", "gemini-2.5-flash");
+        putDefault(properties, "claude-endpoint", ClaudeTranslationProvider.DEFAULT_ENDPOINT);
+        putDefault(properties, "claude-api-key", "");
+        putDefault(properties, "claude-model", "claude-sonnet-4-5");
+
         putDefault(properties, "custom-api-endpoint", "http://127.0.0.1:5000/translate");
         putDefault(properties, "custom-api-method", "POST");
         putDefault(properties, "custom-api-content-type", "application/json; charset=utf-8");
@@ -165,6 +210,99 @@ public final class OnlineProviderConfig {
     public LlmEditorSettings llmEditorSettings(String provider) {
         String[] keys = llmEditorKeys(provider);
         return new LlmEditorSettings(value(keys[0]), value(keys[1]), value(keys[2]));
+    }
+
+    /** Selected translation quality mode; an unknown value falls back to the historical prompt. */
+    public TranslationQuality translationQuality() {
+        return TranslationQuality.fromConfig(value("translation-quality"));
+    }
+
+    /** Custom system prompt, or an empty string to use the built-in prompt of the active mode. */
+    public String customSystemPrompt() {
+        return value("custom-system-prompt");
+    }
+
+    /** The prompt configuration every chat-completion provider built from here receives. */
+    public TranslationPrompt.Settings promptSettings() {
+        return new TranslationPrompt.Settings(translationQuality(), customSystemPrompt());
+    }
+
+    /**
+     * Whether the opt-in request trace is written to {@code config/universal-translator-debug.log}.
+     *
+     * <p>Off by default. The trace records provider, model, host, text kind, length and a bounded
+     * text preview, so it is only ever written when a user turns it on; with it off every logging
+     * call returns immediately and the translation path is unchanged.
+     */
+    public boolean debugLog() {
+        return Boolean.parseBoolean(value("debug-log"));
+    }
+
+    /**
+     * Writes the debug-mode switch, leaving every other key untouched.
+     *
+     * <p>Like the prompt settings it is edited by the diagnostics screen, so it is part of
+     * {@link #PROMPT_KEYS} and survives a settings screen that is still holding a stale snapshot of
+     * the whole file.
+     */
+    public static void applyDebugLog(Properties target, boolean debugEnabled) {
+        if (target == null) {
+            throw new IllegalArgumentException("Target properties are required");
+        }
+        target.setProperty("debug-log", Boolean.toString(debugEnabled));
+    }
+
+    /**
+     * Writes the prompt settings, leaving every other key untouched.
+     *
+     * <p>Both keys are part of {@link #KEYS}, so they survive the round trip through the platform
+     * configuration classes' {@code toProperties()}/{@code withSettings(...)} path without those
+     * classes having to know about them.
+     */
+    public static void applyPromptSettings(
+            Properties target,
+            TranslationQuality quality,
+            String customSystemPrompt
+    ) {
+        if (target == null) {
+            throw new IllegalArgumentException("Target properties are required");
+        }
+        target.setProperty("translation-quality",
+                (quality == null ? TranslationQuality.DEFAULT : quality).configName());
+        target.setProperty("custom-system-prompt",
+                customSystemPrompt == null ? "" : customSystemPrompt.trim());
+    }
+
+    /**
+     * Copies the advanced settings that are currently stored on disk into {@code target}.
+     *
+     * <p>They are edited by the diagnostics screen, which can run while a settings screen is still
+     * open holding an older snapshot of the whole file. Without this re-read, pressing Save there
+     * would write that stale snapshot back and silently undo the change. Every other key remains
+     * owned by the settings screen, so only {@link #PROMPT_KEYS} are re-read.
+     *
+     * @param configFile configuration file to read; {@code null} does nothing
+     * @param target properties about to be written back
+     */
+    public static void preservePromptSettings(Path configFile, Properties target) {
+        if (configFile == null || target == null) {
+            return;
+        }
+        Properties stored = new Properties();
+        try (Reader reader = Files.newBufferedReader(configFile, StandardCharsets.UTF_8)) {
+            stored.load(reader);
+        } catch (IOException unreadable) {
+            // A file that cannot be read is not a reason to fail a save; the snapshot is written as
+            // it stands, exactly as it was before this method existed.
+            return;
+        } catch (RuntimeException malformed) {
+            return;
+        }
+        for (String key : PROMPT_KEYS) {
+            if (stored.containsKey(key)) {
+                target.setProperty(key, stored.getProperty(key, ""));
+            }
+        }
     }
 
     /**
@@ -238,6 +376,19 @@ public final class OnlineProviderConfig {
             raw = openAi("zhipu", "zhipu-endpoint", "zhipu-api-key", "zhipu-model", http);
         } else if ("openai-compatible".equals(selected)) {
             raw = openAi("openai-compatible", "llm-api-endpoint", "llm-api-key", "llm-api-model", http);
+        } else if ("azure-openai".equals(selected)) {
+            raw = new AzureOpenAiTranslationProvider(value("azure-openai-endpoint"),
+                    value("azure-openai-api-key"), value("azure-openai-model"),
+                    value("azure-openai-api-version"), http, promptSettings());
+        } else if ("deepl".equals(selected)) {
+            raw = new DeepLTranslationProvider(value("deepl-endpoint"), value("deepl-api-key"),
+                    value("deepl-model"), http);
+        } else if ("gemini".equals(selected)) {
+            raw = new GeminiTranslationProvider(value("gemini-endpoint"), value("gemini-api-key"),
+                    value("gemini-model"), http, promptSettings());
+        } else if ("claude".equals(selected)) {
+            raw = new ClaudeTranslationProvider(value("claude-endpoint"), value("claude-api-key"),
+                    value("claude-model"), http, promptSettings());
         } else if ("custom-http-json".equals(selected)) {
             raw = custom(http);
         } else {
@@ -260,7 +411,7 @@ public final class OnlineProviderConfig {
             ProviderSupport.requireCredential(providerId + " API key", apiKey);
         }
         return new OpenAiChatTranslationProvider(
-                value(endpointKey), apiKey, value(modelKey), providerId, http);
+                value(endpointKey), apiKey, value(modelKey), providerId, http, promptSettings());
     }
 
     private TranslationProvider custom(HttpJsonClient http) {
@@ -321,6 +472,19 @@ public final class OnlineProviderConfig {
         }
         if ("zhipu".equals(selected)) {
             return new String[]{"zhipu-endpoint", "zhipu-api-key", "zhipu-model"};
+        }
+        if ("azure-openai".equals(selected)) {
+            return new String[]{"azure-openai-endpoint", "azure-openai-api-key",
+                    "azure-openai-model"};
+        }
+        if ("deepl".equals(selected)) {
+            return new String[]{"deepl-endpoint", "deepl-api-key", "deepl-model"};
+        }
+        if ("gemini".equals(selected)) {
+            return new String[]{"gemini-endpoint", "gemini-api-key", "gemini-model"};
+        }
+        if ("claude".equals(selected)) {
+            return new String[]{"claude-endpoint", "claude-api-key", "claude-model"};
         }
         // Keep the historical generic values available while offline or another provider is selected.
         return new String[]{"llm-api-endpoint", "llm-api-key", "llm-api-model"};

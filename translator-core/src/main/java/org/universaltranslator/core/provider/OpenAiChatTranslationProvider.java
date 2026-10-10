@@ -1,10 +1,12 @@
 package org.universaltranslator.core.provider;
 
 import org.universaltranslator.core.TranslationProvider;
+import org.universaltranslator.core.DebugLog;
+import org.universaltranslator.core.TranslationPrompt;
 import org.universaltranslator.core.TranslationRequest;
 import org.universaltranslator.core.TranslationStreamListener;
 import org.universaltranslator.core.TranslationOutputValidator;
-import org.universaltranslator.core.TargetLanguage;
+import org.universaltranslator.core.TranslationStats;
 import org.universaltranslator.core.net.EndpointPolicy;
 import org.universaltranslator.core.net.HttpJsonClient;
 import org.universaltranslator.core.net.HttpStatusException;
@@ -44,6 +46,18 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
     private final String model;
     private final String providerId;
     private final HttpJsonClient http;
+    /**
+     * Header the credential travels in, and the prefix its value gets. Every OpenAI-compatible
+     * service uses {@code Authorization: Bearer ...}; Azure OpenAI uses a bare {@code api-key}
+     * header instead, which is the only protocol difference this provider has to absorb.
+     */
+    private final String credentialHeader;
+    private final String credentialPrefix;
+    /**
+     * Quality mode and optional custom system prompt. The default is the historical prompt, so a
+     * provider built without this argument sends exactly the bytes it always sent.
+     */
+    private final TranslationPrompt.Settings prompt;
     /**
      * Set once a response arrives carrying reasoning content but no answer. Every later request
      * then starts with {@link #REASONING_COMPLETION_TOKENS}: without this the provider paid for
@@ -97,6 +111,16 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         this(endpoint, apiKey, model, providerId, new HttpJsonClient(5000, 120000));
     }
 
+    public OpenAiChatTranslationProvider(
+            String endpoint,
+            String apiKey,
+            String model,
+            String providerId,
+            TranslationPrompt.Settings prompt
+    ) {
+        this(endpoint, apiKey, model, providerId, new HttpJsonClient(5000, 120000), prompt);
+    }
+
     OpenAiChatTranslationProvider(
             String endpoint,
             String apiKey,
@@ -104,11 +128,49 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             String providerId,
             HttpJsonClient http
     ) {
+        this(endpoint, apiKey, model, providerId, http, TranslationPrompt.Settings.standard());
+    }
+
+    OpenAiChatTranslationProvider(
+            String endpoint,
+            String apiKey,
+            String model,
+            String providerId,
+            HttpJsonClient http,
+            TranslationPrompt.Settings prompt
+    ) {
+        this(endpoint, apiKey, model, providerId, http, prompt, "Authorization", "Bearer ");
+    }
+
+    OpenAiChatTranslationProvider(
+            String endpoint,
+            String apiKey,
+            String model,
+            String providerId,
+            HttpJsonClient http,
+            TranslationPrompt.Settings prompt,
+            String credentialHeader,
+            String credentialPrefix
+    ) {
         this.endpoint = EndpointPolicy.requireSafeEndpoint(normalizeEndpoint(endpoint));
         this.apiKey = apiKey == null ? "" : apiKey.trim();
         this.model = requireText("model", model);
         this.providerId = requireText("providerId", providerId);
         this.http = http;
+        this.prompt = prompt == null ? TranslationPrompt.Settings.standard() : prompt;
+        this.credentialHeader = credentialHeader == null || credentialHeader.trim().isEmpty()
+                ? "Authorization" : credentialHeader.trim();
+        this.credentialPrefix = credentialPrefix == null ? "" : credentialPrefix;
+    }
+
+    /**
+     * The credential as the header map this endpoint expects, or an empty map when no key is set
+     * (a local llama.cpp or Ollama server needs none).
+     */
+    private Map<String, String> credentialHeaders() {
+        return apiKey.isEmpty()
+                ? Collections.<String, String>emptyMap()
+                : Collections.singletonMap(credentialHeader, credentialPrefix + apiKey);
     }
 
     /**
@@ -133,9 +195,17 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         return value;
     }
 
+    /**
+     * The provider id, extended with the prompt signature when the prompt is not the historical
+     * one. {@link org.universaltranslator.core.TranslationCoordinator} builds both its cache key and
+     * its in-flight key from this value, so a quality mode or a custom prompt gets its own cache
+     * entries instead of being served a translation produced under different instructions. The
+     * default configuration adds nothing, so its keys are unchanged.
+     */
     @Override
     public String id() {
-        return providerId + ":" + model;
+        String signature = prompt.signature();
+        return signature.isEmpty() ? providerId + ":" + model : providerId + ":" + model + "#" + signature;
     }
 
     /**
@@ -160,6 +230,8 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         String system = systemPrompt(request);
         boolean offline = providerId.startsWith("offline-loopback");
         int maximumTokens = completionBudget(request.getText(), offline);
+        DebugLog.global().logRequest(providerId, model, endpoint.toString(),
+                request.getKind().name(), request.getText());
         String response = post(system, request.getText(), maximumTokens, offline);
         String translated = extractContent(response);
         if ((translated == null || translated.trim().isEmpty()) && !offline
@@ -177,7 +249,22 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         if (translated == null || translated.trim().isEmpty()) {
             throw new IllegalStateException(describeMissingContent(response));
         }
+        recordUsage(response);
+        DebugLog.global().logResponse(providerId, request.getKind().name(), translated);
         return TranslationOutputValidator.requireValid(request.getText(), translated);
+    }
+
+    /**
+     * Adds the token counts this endpoint reported to the process-wide statistics.
+     *
+     * <p>Only the ordinary response body carries {@code usage}; the event stream of a streamed
+     * request does not, so a streamed line contributes to the request and latency counters but not
+     * to the token totals.
+     */
+    private void recordUsage(String response) {
+        if (response != null && response.indexOf("\"usage\"") >= 0) {
+            TranslationStats.global().recordUsage(providerId, response);
+        }
     }
 
     /**
@@ -261,10 +348,9 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
     ) throws Exception {
         StreamAttempt attempt = new StreamAttempt();
         String body = requestBody(system, text, maximumTokens, false, true);
-        String authorization = apiKey.isEmpty() ? null : "Bearer " + apiKey;
         StringBuilder accumulated = new StringBuilder(64);
         try (HttpJsonClient.StreamedResponse response =
-                     http.postStreaming(endpoint, body, authorization)) {
+                     http.postStreaming(endpoint, body, credentialHeaders())) {
             if (!isEventStream(response.getContentType())) {
                 // A relay that ignores "stream" answers with an ordinary JSON document. Its body is
                 // deliberately not read here: the plain path re-sends the same request and knows how
@@ -273,7 +359,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
                 return attempt;
             }
             ServerSentEvents.read(response.getBody(), payload ->
-                    readEvent(payload, accumulated, listener, attempt));
+                    readEvent(providerId, payload, accumulated, listener, attempt));
         } catch (HttpStatusException rejected) {
             if (rejected.isRetryable()) {
                 // A rate limit or a server error is transient. Retrying it is the resilient
@@ -296,12 +382,14 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
      * @return {@code false} to stop reading, after the sentinel or a relay-side error
      */
     private static boolean readEvent(
+            String provider,
             String payload,
             StringBuilder accumulated,
             TranslationStreamListener listener,
             StreamAttempt attempt
     ) {
         if ("[DONE]".equals(payload.trim())) {
+            DebugLog.global().logStreamEvent(provider, "done", 0);
             return false;
         }
         String delta = JsonStrings.readStringPath(payload, "choices[0].delta.content");
@@ -310,17 +398,20 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         }
         if (delta != null && !delta.isEmpty()) {
             accumulated.append(delta);
+            DebugLog.global().logStreamEvent(provider, "delta", delta.length());
             listener.onPartialText(accumulated.toString());
             return true;
         }
         if (JsonStrings.readStringPath(payload, "choices[0].delta.reasoning_content") != null) {
             attempt.sawReasoning = true;
+            DebugLog.global().logStreamEvent(provider, "reasoning", 0);
             return true;
         }
         if (JsonStrings.readStringField(payload, "error") != null
                 || JsonStrings.readStringField(payload, "message") != null) {
             // Relays report a failure as an ordinary event behind HTTP 200. Stop reading and let the
             // plain path produce the message the user has always seen.
+            DebugLog.global().logStreamEvent(provider, "error-event", 0);
             return false;
         }
         return true;
@@ -338,15 +429,14 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
                 && contentType.toLowerCase(Locale.ROOT).contains("text/event-stream");
     }
 
-    /** The system prompt of the single-text path; the batch path builds its own. */
-    private static String systemPrompt(TranslationRequest request) {
-        String target = TargetLanguage.translationInstruction(request.getTargetLanguage());
-        return "You are a professional Minecraft game-localization translator. "
-                + "Translate the user text to " + target
-                + ". Reply with only the translation, without quotes, labels, notes, or explanations. "
-                + "Preserve punctuation, whitespace, URLs, usernames, placeholders, and Minecraft formatting markers."
-                + (request.getText().indexOf('\n') >= 0
-                ? " Keep exactly the same number and order of lines." : "");
+    /**
+     * The system prompt of the single-text path; the batch path builds its own.
+     *
+     * <p>The wording lives in {@link TranslationPrompt} so the quality mode and any custom prompt
+     * are applied in exactly one place.
+     */
+    private String systemPrompt(TranslationRequest request) {
+        return TranslationPrompt.single(prompt, request);
     }
 
     /**
@@ -508,15 +598,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             }
             user.append(index + 1).append(". ").append(group.get(index).text);
         }
-        String target = TargetLanguage.translationInstruction(
-                group.get(0).request.getTargetLanguage());
-        String system = "You are a professional Minecraft game-localization translator. "
-                + "Translate every numbered line of the user message to " + target + ". "
-                + "Reply with the same numbering: exactly one translated line per input line, in "
-                + "the same order, without merging, splitting, reordering or omitting lines. "
-                + "Preserve punctuation, whitespace, URLs, usernames, placeholders and Minecraft "
-                + "formatting markers. Reply with only the numbered translations, without quotes, "
-                + "labels, notes or explanations.";
+        String system = TranslationPrompt.batch(prompt, group.get(0).request);
         // The reply carries one translation per line, so the budget scales with the whole message
         // instead of a single line. It stays an upper bound rather than a reservation.
         int requestedTokens = Math.min(user.length() * 2 + 32, REASONING_COMPLETION_TOKENS);
@@ -525,6 +607,9 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             maximumTokens = Math.max(maximumTokens,
                     Math.min(REASONING_COMPLETION_TOKENS, acceptedReasoningTokens));
         }
+        DebugLog.global().logRequest(providerId, model, endpoint.toString(),
+                group.get(0).request.getKind().name(),
+                user.length() + " chars in " + group.size() + " lines");
         String response = post(system, user.toString(), maximumTokens, false);
         List<String> parsed = parseBatch(response, group.size());
         if (parsed == null && maximumTokens < REASONING_COMPLETION_TOKENS
@@ -539,6 +624,9 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         if (parsed == null) {
             throw new IllegalStateException(describeMissingContent(response));
         }
+        recordUsage(response);
+        DebugLog.global().logResponse(providerId, group.get(0).request.getKind().name(),
+                parsed.size() + " lines");
         return parsed;
     }
 
@@ -598,9 +686,8 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
 
     /** Posts one chat completion and returns the raw response body. */
     private String post(String system, String text, int maximumTokens, boolean offline) throws Exception {
-        String authorization = apiKey.isEmpty() ? null : "Bearer " + apiKey;
-        return http.post(
-                endpoint, requestBody(system, text, maximumTokens, offline, false), authorization);
+        return http.post(endpoint, requestBody(system, text, maximumTokens, offline, false),
+                credentialHeaders());
     }
 
     /** One chat-completion request body; {@code streaming} selects the event-stream response form. */
@@ -703,8 +790,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
                 .append("\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],")
                 .append("\"temperature\":0,\"max_tokens\":1,\"stream\":false}")
                 .toString();
-        String authorization = apiKey.isEmpty() ? null : "Bearer " + apiKey;
-        String response = http.post(endpoint, body, authorization);
+        String response = http.post(endpoint, body, credentialHeaders());
         Object root = JsonStrings.parse(response);
         // A relay that answers 200 with its own error object would otherwise look healthy here,
         // and the user would only find out when every translation failed.

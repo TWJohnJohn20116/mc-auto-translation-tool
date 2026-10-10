@@ -6,10 +6,11 @@
 再启动游戏；支持设置页的版本也可以按 `U` 重新载入。密钥只填在自己的游戏实例中，
 不要把真实密钥发到聊天、Issue、截图或仓库。
 
-在带图形设置页的版本中，DeepSeek、通义千问、火山方舟、智谱和
-`openai-compatible` 都可通过“LLM API 设置…”直接填写端点、模型和密钥；每个服务
+在带图形设置页的版本中，DeepSeek、通义千问、火山方舟、智谱、`openai-compatible`、Azure OpenAI、
+DeepL、Gemini 和 Claude 都可通过“LLM API 设置…”直接填写端点、模型和密钥；每个服务
 独立保存自己的三项配置。设置页的“获取模型列表”会请求该端点的 `/models`，列出
-服务实际提供的模型名并可直接点选填入。其他在线服务的专用签名字段仍按下表在本地
+服务实际提供的模型名并可直接点选填入（Gemini 与 Claude 查询各自的模型接口；
+DeepL 与 Azure OpenAI 不提供列表，会直接提示）。其他在线服务的专用签名字段仍按下表在本地
 配置文件中填写。
 
 ## 支持的服务
@@ -31,6 +32,10 @@
 | `volcengine-ark` | 火山方舟 | `volcengine-ark-api-key`、`volcengine-ark-model` |
 | `zhipu` | 智谱 GLM | `zhipu-api-key` |
 | `openai-compatible` | 任意 OpenAI Chat Completions 兼容服务 | `llm-api-endpoint`、`llm-api-model`，按需填写 `llm-api-key` |
+| `azure-openai` | Azure OpenAI 部署 | `azure-openai-api-key`、`azure-openai-model`（部署名） |
+| `deepl` | DeepL 翻译 API | `deepl-api-key` |
+| `gemini` | Google Gemini `generateContent` | `gemini-api-key`、`gemini-model` |
+| `claude` | Anthropic Claude Messages | `claude-api-key`、`claude-model` |
 | `custom-http-json` | 自定义 HTTP JSON API | 见下文 |
 
 专用机器翻译接口通常延迟和费用更稳定；大模型接口更适合需要上下文润色的内容。
@@ -130,6 +135,59 @@ llm-api-model=模型名
 
 本机兼容服务可以使用 `http://127.0.0.1:端口/v1/chat/completions` 并留空密钥。
 模组只调用 Chat Completions 文本接口，不会执行工具调用，也不会向模型开放本机文件或游戏控制权。
+
+## 原生服务：Azure OpenAI、DeepL、Gemini、Claude
+
+这四个服务使用各自的原生协议，而不是 OpenAI 兼容接口，因此需要各自的配置键。
+它们都可以在设置页的“LLM API 设置…”中填写端点、模型和密钥（每个服务独立保存），
+也可以在配置文件中填写：
+
+```properties
+# Azure OpenAI：model 填部署名，不是模型名
+provider=azure-openai
+azure-openai-endpoint=https://你的资源名.openai.azure.com
+azure-openai-api-key=你的APIKey
+azure-openai-model=你的部署名
+azure-openai-api-version=2024-10-21
+
+# DeepL：免费版与付费版端点不同
+provider=deepl
+deepl-endpoint=https://api-free.deepl.com/v2/translate
+deepl-api-key=你的APIKey
+deepl-model=latency_optimized
+
+# Google Gemini
+provider=gemini
+gemini-endpoint=https://generativelanguage.googleapis.com/v1beta/models
+gemini-api-key=你的APIKey
+gemini-model=gemini-2.5-flash
+
+# Anthropic Claude
+provider=claude
+claude-endpoint=https://api.anthropic.com/v1/messages
+claude-api-key=你的APIKey
+claude-model=claude-sonnet-4-5
+```
+
+- **Azure OpenAI**：`azure-openai-endpoint` 填资源根地址
+  （`https://<资源名>.openai.azure.com`），模组会补上
+  `/openai/deployments/<部署名>/chat/completions?api-version=...`；也可以直接粘贴完整部署
+  地址，此时会原样使用，并尊重你写在里面的 `api-version`。凭据走 `api-key` 请求头，
+  不是 `Authorization`。请求与响应格式和 OpenAI 兼容接口一致，因此同样支持批量与串流。
+- **DeepL**：`deepl-model` 是 DeepL 的 `model_type`，默认 `latency_optimized`，可改为
+  `quality_optimized` 或留空由 DeepL 决定。目标语言会转成 DeepL 要求的大写区域码
+  （繁中为 `ZH-HANT`，简中为 `ZH-HANS`），来源为自动侦测时省略 `source_lang`。
+  DeepL 没有系统提示词，翻译质量模式对它无效；它也不提供模型列表。
+- **Gemini**：`gemini-endpoint` 填模型集合地址，模组会补上 `/<模型>:generateContent`。
+  支持 SSE 串流（`/<模型>:streamGenerateContent?alt=sse`），端点若不支持会自动回退到
+  非串流。“获取模型列表”会请求同级的 `/models`。
+- **Claude**：`claude-endpoint` 默认是 Messages 接口；系统提示词放在顶层的 `system` 字段，
+  凭据走 `x-api-key` 并强制带 `anthropic-version: 2023-06-01`。支持 `"stream": true` 的
+  SSE 串流，不支持时自动回退。“获取模型列表”会请求同级的 `/v1/models`。
+
+设置页的“测试连接”会用各自的协议发一个最小请求（DeepL 发一个表单、Gemini 发一次
+`generateContent`、Claude 发一条最小 Messages 请求），而不是一律套用 OpenAI 聊天请求。
+Gemini 与 Claude 同样受“翻译质量模式”和“自定义系统提示词”影响。
 
 ## 自定义 HTTP JSON API
 

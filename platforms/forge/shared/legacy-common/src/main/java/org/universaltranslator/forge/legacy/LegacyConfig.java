@@ -2,6 +2,9 @@ package org.universaltranslator.forge.legacy;
 
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationDisplayMode;
+import org.universaltranslator.core.TranslationQuality;
+import org.universaltranslator.core.TranslationStats;
+import org.universaltranslator.core.DebugLog;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.HudIndicatorColor;
 import org.universaltranslator.core.HudIndicatorContent;
@@ -182,6 +185,12 @@ final class LegacyConfig {
         if (migrated) {
             loaded.save();
         }
+        // The statistics file sits next to the configuration. Reading it here is the one place every
+        // platform passes through at startup, so no runtime has to know about statistics.
+        TranslationStats.global().attach(
+                file.toPath().resolveSibling(TranslationStats.FILE_NAME));
+        DebugLog.global().configure(
+                file.toPath().resolveSibling(DebugLog.FILE_NAME), loaded.debugLog());
         return loaded;
     }
 
@@ -263,6 +272,52 @@ final class LegacyConfig {
         properties.setProperty("translate-vanilla", Boolean.toString(translateVanilla));
         properties.setProperty("target-language", targetLanguage.trim());
         return new LegacyConfig(properties, configFile, cacheFile);
+    }
+
+    /** Selected translation quality mode; the default reproduces the historical prompt. */
+    TranslationQuality translationQuality() {
+        return onlineProviderConfig.translationQuality();
+    }
+
+    /** Custom system prompt, or an empty string to use the built-in prompt of the active mode. */
+    String customSystemPrompt() {
+        return onlineProviderConfig.customSystemPrompt();
+    }
+
+    /**
+     * Returns a copy with only the prompt settings replaced.
+     *
+     * <p>Kept separate from {@link #withSettings}: the prompt keys are carried by {@link
+     * OnlineProviderConfig} and therefore round-trip through {@code toProperties()} without
+     * widening the positional {@code withSettings} signature every settings screen calls.
+     */
+    LegacyConfig withPromptSettings(TranslationQuality quality, String customSystemPrompt) {
+        Properties properties = toProperties();
+        OnlineProviderConfig.applyPromptSettings(properties, quality, customSystemPrompt);
+        return new LegacyConfig(properties, configFile, cacheFile);
+    }
+
+    /** Whether the opt-in request trace is written; off by default. */
+    boolean debugLog() {
+        return onlineProviderConfig.debugLog();
+    }
+
+    /**
+     * Returns a copy with only the debug-mode switch replaced.
+     *
+     * <p>Kept separate from {@link #withSettings} for the same reason as {@link
+     * #withPromptSettings}: the switch lives in {@link OnlineProviderConfig} and round-trips through
+     * {@code toProperties()} on its own.
+     */
+    LegacyConfig withDebugLog(boolean debugEnabled) {
+        Properties properties = toProperties();
+        OnlineProviderConfig.applyDebugLog(properties, debugEnabled);
+        return new LegacyConfig(properties, configFile, cacheFile);
+    }
+
+    /** The configuration file this instance was loaded from, for the diagnostics export. */
+    Path configFile() {
+        return configFile.toPath();
     }
 
     void save() throws IOException {
@@ -376,6 +431,8 @@ final class LegacyConfig {
     private Properties toProperties() {
         Properties properties = new Properties();
         onlineProviderConfig.writeTo(properties);
+        // Keep the advanced settings the diagnostics panel may have changed after this snapshot.
+        OnlineProviderConfig.preservePromptSettings(configFile.toPath(), properties);
         properties.setProperty("config-version", "7");
         properties.setProperty("enabled", Boolean.toString(enabled));
         properties.setProperty("translate-chat", Boolean.toString(translateChat));

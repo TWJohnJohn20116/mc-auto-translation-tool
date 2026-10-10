@@ -189,6 +189,117 @@ Volcengine MT, iFlytek, Huawei Cloud, DeepSeek, Qwen, Volcengine Ark, and Zhipu.
 loopback HTTP JSON request templates, headers, and response paths are supported as well. See the
 [online API configuration guide](ONLINE_APIS.md) for provider IDs, properties, examples, and safety limits.
 
+## Translation quality mode and custom system prompt
+
+### Translation quality mode
+
+`translation-quality` controls how long and how strict the system prompt sent to an LLM is. It
+**changes the prompt only**: the model, the `temperature`, the output ceiling, the reasoning-budget
+escalation and the batching protocol are untouched.
+
+```properties
+translation-quality=standard
+```
+
+| Value | Meaning |
+| --- | --- |
+| `fast` | Shortest prompt, fewest instructions, lowest latency. |
+| `standard` | The default; character-for-character identical to the prompt used before this setting existed. |
+| `high` | Adds strictness to the standard prompt: preserve tone and register, translate repeated game terms identically, never add, drop or reorder meaning, and keep line alignment. |
+
+The in-game "diagnostics" screen has a quality-mode cycle button that switches and applies the
+mode immediately. The setting can also be edited in the configuration file with the game closed.
+Each mode uses its own cache key, so switching modes never returns a translation produced under
+different instructions. `fast` and `high` only apply to LLM / OpenAI-compatible services;
+LibreTranslate, Baidu and the other non-LLM services take no system prompt at all.
+
+### Custom system prompt
+
+A non-empty `custom-system-prompt` **replaces** the built-in prompt entirely, for every quality
+mode:
+
+```properties
+custom-system-prompt=You are a Minecraft localization editor. Translate to {target}.
+```
+
+Supported placeholders:
+
+| Placeholder | Expands to |
+| --- | --- |
+| `{target}` | Target language, e.g. `繁體中文 (zh-TW)` |
+| `{source}` | Source language; `auto` expands to `auto-detect` |
+| `{kind}` | Text kind, e.g. `CHAT`, `SCOREBOARD_LINE` |
+| `{mode}` | Active quality mode, e.g. `high` |
+
+Any other `{name}` is left untouched. A multi-line prompt is written with `\n` in
+`.properties`, which `Properties.load` restores to real line breaks; the in-game diagnostics
+field accepts `\n` as well.
+
+**Guardrail and warning**: whatever the custom text says, a fixed requirement is appended to it —
+"reply with only the translation" and "one output line per input line, in the same order, without
+merging or omitting". A custom prompt therefore cannot switch off the restoration of player names,
+URLs, numbers and `§` formatting codes, and cannot switch off line alignment. If your prompt asks
+for something like "explain first, then translate" or "answer in JSON", the appended requirement
+still applies and the translation will usually be worse; write it on the assumption that only the
+translation and one line per input line may come back.
+
+## Translation statistics
+
+The mod accumulates translation counters across sessions and stores them in:
+
+```text
+config/universal-translator-stats.properties
+```
+
+| Counter | Meaning |
+| --- | --- |
+| requests / success / failure | Provider requests actually issued, and how many succeeded |
+| failure reasons | auth, rate limit, server, request, timeout, network, invalid output, other |
+| cache | hits, misses and the resulting hit rate |
+| latency | average and p95 over the most recent 512 requests |
+| tokens | prompt and completion tokens the service reported (non-streamed responses only) |
+| per provider | requests, successes, failures and average latency for each provider |
+
+The file is read when the game starts, written every 60 seconds while it runs, and written once
+more when the game exits. A failed write — a read-only configuration directory, for instance — is
+ignored and never affects a translation, and the translation path performs no extra disk I/O.
+
+On Fabric 1.20.1 and 1.21 the "diagnostics" screen switches between "Show statistics" and
+"Show diagnostics", and "Reset statistics" clears the totals. Other platforms still record and
+persist the counters, and they are appended to the file produced by "Export diagnostics"
+(`config/universal-translator-diagnostics/`).
+
+## Debug mode and the diagnostics bundle
+
+"Debug mode" on the diagnostics screen turns the request trace on (it is off by default). While it
+is on the mod appends requests to:
+
+```text
+config/universal-translator-debug.log
+```
+
+Each entry carries the time, provider, host-only endpoint, model, text kind, length and a truncated
+preview (at most 120 characters), retries with their backoff in milliseconds, streaming events,
+cache hits and misses, and the failure reason. Every value is redacted first: API keys, the
+`Authorization` / `api-key` / `x-api-key` / `x-goog-api-key` headers, `sk-` tokens and long base64
+runs are all replaced, and only the host of an endpoint survives. Once the file passes 2 MB it is
+rotated once, to `universal-translator-debug.log.1`.
+
+With the mode off nothing is written at all, so the translation path behaves exactly as before.
+
+"Export bundle" writes a zip into `config/` (`universal-translator-diagnostics-<time>.zip`)
+containing:
+
+| Entry | Contents |
+| --- | --- |
+| `environment.txt` | Mod version, platform, Java version and vendor, operating system |
+| `diagnostics.txt` | The diagnostics screen's lines plus the translation statistics |
+| `config.properties` | The configuration, redacted — no key and no endpoint |
+| `debug.log` | The debug log, redacted (a single note when the mode was off) |
+
+Everything is exported as a redacted copy, so the configuration and log the game is using are never
+altered.
+
 ## What can be translated
 
 The mod works at the final text-rendering layer. Even before a world is joined it covers mod settings,
