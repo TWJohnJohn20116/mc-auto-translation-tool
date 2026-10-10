@@ -61,6 +61,7 @@ public final class ProviderSelfTest {
         streamsOpenAiResponsesAsTheyArrive();
         fallsBackWhenTheEndpointCannotStream();
         upgradesTheBudgetWhenAStreamCarriesOnlyReasoning();
+        skipsStreamingWhenThereIsNoListener();
         readsServerSentEventFramingEdgeCases();
         derivesModelCatalogEndpoint();
         fetchesModelCatalogWithGet();
@@ -723,6 +724,43 @@ public final class ProviderSelfTest {
         }
         if (serverFailure.get() != null) {
             throw new AssertionError("Local reasoning stream test server failed", serverFailure.get());
+        }
+    }
+
+    /**
+     * A caller with nothing to publish must not pay for a streaming attempt, and must not be handed a
+     * null listener to dereference either: it gets the plain path and its single request.
+     */
+    private static void skipsStreamingWhenThereIsNoListener() throws Exception {
+        ServerSocket server = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        AtomicReference<String> body = new AtomicReference<String>();
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread thread = new Thread(() -> {
+            try (Socket socket = server.accept()) {
+                body.set(readRequest(socket.getInputStream(),
+                        "POST /v1/chat/completions HTTP/1.").body);
+                writeResponse(socket.getOutputStream(), 200,
+                        "{\"choices\":[{\"message\":{\"content\":\"你好\"}}]}");
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-null-listener");
+        thread.setDaemon(true);
+        thread.start();
+        try {
+            OpenAiChatTranslationProvider provider = new OpenAiChatTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v1/chat/completions",
+                    "", "plain-model", "openai-compatible");
+            assertEquals("你好", provider.translateStreaming(new TranslationRequest(
+                    "Hello", "auto", "zh-TW", TextKind.CHAT), null));
+            assertTrue(body.get().contains("\"stream\":false"));
+        } finally {
+            server.close();
+            thread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local null-listener test server failed", serverFailure.get());
         }
     }
 
