@@ -269,6 +269,37 @@ On Fabric 1.20.1 and 1.21 the "diagnostics" screen switches between "Show statis
 persist the counters, and they are appended to the file produced by "Export diagnostics"
 (`config/universal-translator-diagnostics/`).
 
+## Debug mode and the diagnostics bundle
+
+"Debug mode" on the diagnostics screen turns the request trace on (it is off by default). While it
+is on the mod appends requests to:
+
+```text
+config/universal-translator-debug.log
+```
+
+Each entry carries the time, provider, host-only endpoint, model, text kind, length and a truncated
+preview (at most 120 characters), retries with their backoff in milliseconds, streaming events,
+cache hits and misses, and the failure reason. Every value is redacted first: API keys, the
+`Authorization` / `api-key` / `x-api-key` / `x-goog-api-key` headers, `sk-` tokens and long base64
+runs are all replaced, and only the host of an endpoint survives. Once the file passes 2 MB it is
+rotated once, to `universal-translator-debug.log.1`.
+
+With the mode off nothing is written at all, so the translation path behaves exactly as before.
+
+"Export bundle" writes a zip into `config/` (`universal-translator-diagnostics-<time>.zip`)
+containing:
+
+| Entry | Contents |
+| --- | --- |
+| `environment.txt` | Mod version, platform, Java version and vendor, operating system |
+| `diagnostics.txt` | The diagnostics screen's lines plus the translation statistics |
+| `config.properties` | The configuration, redacted — no key and no endpoint |
+| `debug.log` | The debug log, redacted (a single note when the mode was off) |
+
+Everything is exported as a redacted copy, so the configuration and log the game is using are never
+altered.
+
 ## What can be translated
 
 The mod works at the final text-rendering layer. Even before a world is joined it covers mod settings,

@@ -5,6 +5,7 @@ import org.universaltranslator.core.TranslationPrompt;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationRequest;
 import org.universaltranslator.core.TranslationStats;
+import org.universaltranslator.core.DebugLog;
 import org.universaltranslator.core.TranslationStreamListener;
 import org.universaltranslator.core.net.EndpointPolicy;
 import org.universaltranslator.core.net.HttpJsonClient;
@@ -94,6 +95,8 @@ public final class GeminiTranslationProvider implements TranslationProvider {
     @Override
     public String translate(TranslationRequest request) throws Exception {
         String text = request.getText();
+        DebugLog.global().logRequest("gemini:" + model, model, base,
+                request.getKind().name(), text);
         String response = post(text, TranslationPrompt.single(prompt, request),
                 completionBudget(text), false);
         String translated = extractContent(response);
@@ -104,6 +107,7 @@ public final class GeminiTranslationProvider implements TranslationProvider {
         if (response.indexOf("\"usageMetadata\"") >= 0) {
             TranslationStats.global().recordUsage("gemini:" + model, response);
         }
+        DebugLog.global().logResponse("gemini:" + model, request.getKind().name(), translated);
         return TranslationOutputValidator.requireValid(text, translated);
     }
 

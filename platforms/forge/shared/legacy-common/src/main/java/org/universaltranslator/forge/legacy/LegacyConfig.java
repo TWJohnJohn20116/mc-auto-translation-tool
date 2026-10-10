@@ -4,6 +4,7 @@ import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationDisplayMode;
 import org.universaltranslator.core.TranslationQuality;
 import org.universaltranslator.core.TranslationStats;
+import org.universaltranslator.core.DebugLog;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.HudIndicatorColor;
 import org.universaltranslator.core.HudIndicatorContent;
@@ -188,6 +189,8 @@ final class LegacyConfig {
         // platform passes through at startup, so no runtime has to know about statistics.
         TranslationStats.global().attach(
                 file.toPath().resolveSibling(TranslationStats.FILE_NAME));
+        DebugLog.global().configure(
+                file.toPath().resolveSibling(DebugLog.FILE_NAME), loaded.debugLog());
         return loaded;
     }
 
@@ -292,6 +295,29 @@ final class LegacyConfig {
         Properties properties = toProperties();
         OnlineProviderConfig.applyPromptSettings(properties, quality, customSystemPrompt);
         return new LegacyConfig(properties, configFile, cacheFile);
+    }
+
+    /** Whether the opt-in request trace is written; off by default. */
+    boolean debugLog() {
+        return onlineProviderConfig.debugLog();
+    }
+
+    /**
+     * Returns a copy with only the debug-mode switch replaced.
+     *
+     * <p>Kept separate from {@link #withSettings} for the same reason as {@link
+     * #withPromptSettings}: the switch lives in {@link OnlineProviderConfig} and round-trips through
+     * {@code toProperties()} on its own.
+     */
+    LegacyConfig withDebugLog(boolean debugEnabled) {
+        Properties properties = toProperties();
+        OnlineProviderConfig.applyDebugLog(properties, debugEnabled);
+        return new LegacyConfig(properties, configFile, cacheFile);
+    }
+
+    /** The configuration file this instance was loaded from, for the diagnostics export. */
+    Path configFile() {
+        return configFile.toPath();
     }
 
     void save() throws IOException {

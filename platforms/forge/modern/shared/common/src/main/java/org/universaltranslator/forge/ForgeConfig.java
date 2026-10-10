@@ -9,6 +9,7 @@ import org.universaltranslator.core.HudIndicatorSettings;
 import org.universaltranslator.core.HudIndicatorVisibility;
 import org.universaltranslator.core.TranslationQuality;
 import org.universaltranslator.core.TranslationStats;
+import org.universaltranslator.core.DebugLog;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TextKind;
 import org.universaltranslator.core.LocalConfigSecurity;
@@ -184,6 +185,7 @@ final class ForgeConfig {
         // The statistics file sits next to the configuration. Reading it here is the one place every
         // platform passes through at startup, so no runtime has to know about statistics.
         TranslationStats.global().attach(file.resolveSibling(TranslationStats.FILE_NAME));
+        DebugLog.global().configure(file.resolveSibling(DebugLog.FILE_NAME), loaded.debugLog());
         return loaded;
     }
 
@@ -288,6 +290,29 @@ final class ForgeConfig {
         Properties properties = toProperties();
         OnlineProviderConfig.applyPromptSettings(properties, quality, customSystemPrompt);
         return new ForgeConfig(properties, configFile, cacheFile);
+    }
+
+    /** Whether the opt-in request trace is written; off by default. */
+    boolean debugLog() {
+        return onlineProviderConfig.debugLog();
+    }
+
+    /**
+     * Returns a copy with only the debug-mode switch replaced.
+     *
+     * <p>Kept separate from {@link #withSettings} for the same reason as {@link
+     * #withPromptSettings}: the switch lives in {@link OnlineProviderConfig} and round-trips through
+     * {@code toProperties()} on its own.
+     */
+    ForgeConfig withDebugLog(boolean debugEnabled) {
+        Properties properties = toProperties();
+        OnlineProviderConfig.applyDebugLog(properties, debugEnabled);
+        return new ForgeConfig(properties, configFile, cacheFile);
+    }
+
+    /** The configuration file this instance was loaded from, for the diagnostics export. */
+    Path configFile() {
+        return configFile;
     }
 
     void save() throws IOException {

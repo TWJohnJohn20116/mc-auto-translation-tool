@@ -1,6 +1,7 @@
 package org.universaltranslator.core.provider;
 
 import org.universaltranslator.core.TranslationProvider;
+import org.universaltranslator.core.DebugLog;
 import org.universaltranslator.core.TranslationPrompt;
 import org.universaltranslator.core.TranslationRequest;
 import org.universaltranslator.core.TranslationStreamListener;
@@ -229,6 +230,8 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         String system = systemPrompt(request);
         boolean offline = providerId.startsWith("offline-loopback");
         int maximumTokens = completionBudget(request.getText(), offline);
+        DebugLog.global().logRequest(providerId, model, endpoint.toString(),
+                request.getKind().name(), request.getText());
         String response = post(system, request.getText(), maximumTokens, offline);
         String translated = extractContent(response);
         if ((translated == null || translated.trim().isEmpty()) && !offline
@@ -247,6 +250,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             throw new IllegalStateException(describeMissingContent(response));
         }
         recordUsage(response);
+        DebugLog.global().logResponse(providerId, request.getKind().name(), translated);
         return TranslationOutputValidator.requireValid(request.getText(), translated);
     }
 
@@ -355,7 +359,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
                 return attempt;
             }
             ServerSentEvents.read(response.getBody(), payload ->
-                    readEvent(payload, accumulated, listener, attempt));
+                    readEvent(providerId, payload, accumulated, listener, attempt));
         } catch (HttpStatusException rejected) {
             if (rejected.isRetryable()) {
                 // A rate limit or a server error is transient. Retrying it is the resilient
@@ -378,12 +382,14 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
      * @return {@code false} to stop reading, after the sentinel or a relay-side error
      */
     private static boolean readEvent(
+            String provider,
             String payload,
             StringBuilder accumulated,
             TranslationStreamListener listener,
             StreamAttempt attempt
     ) {
         if ("[DONE]".equals(payload.trim())) {
+            DebugLog.global().logStreamEvent(provider, "done", 0);
             return false;
         }
         String delta = JsonStrings.readStringPath(payload, "choices[0].delta.content");
@@ -392,17 +398,20 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         }
         if (delta != null && !delta.isEmpty()) {
             accumulated.append(delta);
+            DebugLog.global().logStreamEvent(provider, "delta", delta.length());
             listener.onPartialText(accumulated.toString());
             return true;
         }
         if (JsonStrings.readStringPath(payload, "choices[0].delta.reasoning_content") != null) {
             attempt.sawReasoning = true;
+            DebugLog.global().logStreamEvent(provider, "reasoning", 0);
             return true;
         }
         if (JsonStrings.readStringField(payload, "error") != null
                 || JsonStrings.readStringField(payload, "message") != null) {
             // Relays report a failure as an ordinary event behind HTTP 200. Stop reading and let the
             // plain path produce the message the user has always seen.
+            DebugLog.global().logStreamEvent(provider, "error-event", 0);
             return false;
         }
         return true;
@@ -598,6 +607,9 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             maximumTokens = Math.max(maximumTokens,
                     Math.min(REASONING_COMPLETION_TOKENS, acceptedReasoningTokens));
         }
+        DebugLog.global().logRequest(providerId, model, endpoint.toString(),
+                group.get(0).request.getKind().name(),
+                user.length() + " chars in " + group.size() + " lines");
         String response = post(system, user.toString(), maximumTokens, false);
         List<String> parsed = parseBatch(response, group.size());
         if (parsed == null && maximumTokens < REASONING_COMPLETION_TOKENS
@@ -613,6 +625,8 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             throw new IllegalStateException(describeMissingContent(response));
         }
         recordUsage(response);
+        DebugLog.global().logResponse(providerId, group.get(0).request.getKind().name(),
+                parsed.size() + " lines");
         return parsed;
     }
 

@@ -339,6 +339,7 @@ public final class TranslationCoordinator implements AutoCloseable {
         }
         if (translated == null) {
             stats.recordCacheMiss();
+            DebugLog.global().logCache(false, providerId, kind.name(), core);
             TranslationRequest request = new TranslationRequest(
                     core, sourceLanguage, targetLanguage, kind);
             TranslationStreamListener segmentListener = null;
@@ -360,12 +361,14 @@ public final class TranslationCoordinator implements AutoCloseable {
             } catch (Exception failure) {
                 stats.recordFailure(providerId, TranslationStats.reasonOf(failure),
                         elapsedMillis(startedAt));
+                DebugLog.global().logFailure(providerId, failure);
                 throw failure;
             }
             stats.recordSuccess(providerId, elapsedMillis(startedAt));
             cache.put(cacheKey, translated);
         } else {
             stats.recordCacheHit();
+            DebugLog.global().logCache(true, providerId, kind.name(), core);
         }
         return segment.substring(0, start) + translated + segment.substring(end);
     }

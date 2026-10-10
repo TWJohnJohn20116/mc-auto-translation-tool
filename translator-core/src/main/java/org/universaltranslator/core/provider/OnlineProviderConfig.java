@@ -25,12 +25,13 @@ public final class OnlineProviderConfig {
      * pressing Save on a settings screen that was opened before the panel ran cannot write a stale
      * snapshot back over them.
      */
-    private static final String[] PROMPT_KEYS = {"translation-quality", "custom-system-prompt"};
+    private static final String[] PROMPT_KEYS = {
+            "translation-quality", "custom-system-prompt", "debug-log"};
     private static final String[] KEYS = {
             "libretranslate-endpoint", "api-key",
             "tencent-secret-id", "tencent-secret-key", "tencent-model",
             "llm-api-endpoint", "llm-api-key", "llm-api-model",
-            "translation-quality", "custom-system-prompt",
+            "translation-quality", "custom-system-prompt", "debug-log",
             "api-connect-timeout-ms", "api-read-timeout-ms", "api-max-attempts",
             "api-min-request-interval-ms",
             "baidu-endpoint", "baidu-app-id", "baidu-secret",
@@ -115,6 +116,8 @@ public final class OnlineProviderConfig {
         putDefault(properties, "llm-api-model", "local-model");
         putDefault(properties, "translation-quality", TranslationQuality.DEFAULT.configName());
         putDefault(properties, "custom-system-prompt", "");
+        // Off by default: the trace records text previews, so it is only written when asked for.
+        putDefault(properties, "debug-log", "false");
         putDefault(properties, "api-connect-timeout-ms", "5000");
         putDefault(properties, "api-read-timeout-ms", "120000");
         putDefault(properties, "api-max-attempts", "3");
@@ -222,6 +225,31 @@ public final class OnlineProviderConfig {
     /** The prompt configuration every chat-completion provider built from here receives. */
     public TranslationPrompt.Settings promptSettings() {
         return new TranslationPrompt.Settings(translationQuality(), customSystemPrompt());
+    }
+
+    /**
+     * Whether the opt-in request trace is written to {@code config/universal-translator-debug.log}.
+     *
+     * <p>Off by default. The trace records provider, model, host, text kind, length and a bounded
+     * text preview, so it is only ever written when a user turns it on; with it off every logging
+     * call returns immediately and the translation path is unchanged.
+     */
+    public boolean debugLog() {
+        return Boolean.parseBoolean(value("debug-log"));
+    }
+
+    /**
+     * Writes the debug-mode switch, leaving every other key untouched.
+     *
+     * <p>Like the prompt settings it is edited by the diagnostics screen, so it is part of
+     * {@link #PROMPT_KEYS} and survives a settings screen that is still holding a stale snapshot of
+     * the whole file.
+     */
+    public static void applyDebugLog(Properties target, boolean debugEnabled) {
+        if (target == null) {
+            throw new IllegalArgumentException("Target properties are required");
+        }
+        target.setProperty("debug-log", Boolean.toString(debugEnabled));
     }
 
     /**

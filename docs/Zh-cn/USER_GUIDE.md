@@ -248,6 +248,34 @@ fabric 1.20.1／1.21 的「翻译诊断」页面可用「显示统计／显示�
 「重置统计」清除累计。其他平台的统计仍会照常记录与保存，并会附在「导出诊断记录」
 产生的文件中（`config/universal-translator-diagnostics/`）。
 
+## 调试模式与诊断包
+
+在「翻译诊断」页面按「调试模式」可开启调试记录（默认关闭）。开启后模块会把请求写入：
+
+```text
+config/universal-translator-debug.log
+```
+
+每条记录包含时间、服务商、仅主机名的端点、模型、文字种类、长度与截断预览（最多 120 个字符）、
+重试与退避毫秒数、流式事件、缓存命中或未命中，以及失败原因。记录一律先清洗：API 密钥、
+`Authorization`／`api-key`／`x-api-key`／`x-goog-api-key` 等请求头、`sk-` 开头的令牌与长 base64
+都会被替换，端点只保留主机名。文件超过 2 MB 时会轮换一次，旧文件为
+`universal-translator-debug.log.1`。
+
+关闭时不会写入任何内容，翻译路径的行为与开启前完全相同。
+
+按「导出诊断包」会在 `config/` 生成一个 zip（`universal-translator-diagnostics-<时间>.zip`），
+内含：
+
+| 文件 | 内容 |
+| --- | --- |
+| `environment.txt` | 模组版本、平台、Java 版本与厂商、操作系统 |
+| `diagnostics.txt` | 诊断页面的内容与翻译统计 |
+| `config.properties` | 配置文件（已清洗，密钥与端点不会出现） |
+| `debug.log` | 调试记录（已清洗；未开启时只有一行说明） |
+
+导出的都是清洗后的副本，不会修改游戏正在使用的配置文件或记录文件。
+
 ## 能翻译什么
 
 模组在最终文字渲染层工作，因此即使尚未进入世界，也能覆盖使用 Minecraft 原版字体
