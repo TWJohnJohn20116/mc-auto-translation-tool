@@ -18,6 +18,7 @@ import org.lwjgl.input.Keyboard;
 import org.universaltranslator.core.HudIndicatorContent;
 import org.universaltranslator.core.HudIndicatorCorner;
 import org.universaltranslator.core.HudIndicatorSettings;
+import org.universaltranslator.core.OutgoingTranslationPreview;
 import org.universaltranslator.core.TranslationActivity;
 import org.universaltranslator.core.TranslationResult;
 import org.universaltranslator.core.TranslationStatusLocalizer;
@@ -291,6 +292,21 @@ public final class LegacyClientEvents {
             Gui.drawRect(left, top + 1, left + 1, bottom - 1, disabledColor);
             Gui.drawRect(right - 1, top + 1, right, bottom - 1, disabledColor);
         }
+        // The outgoing chat translation as far as it has been generated. Drawn from the same
+        // render path as the indicator and only while that translation is still running, so the
+        // player sees the answer arrive instead of waiting for the whole line.
+        String outgoingPreview = OutgoingTranslationPreview.text();
+        if (outgoingPreview != null) {
+            LegacyRenderContext.pushTextInput();
+            try {
+                int previewY = Math.max(0, windowHeight - 60);
+                int previewX = windowWidth / 2 - LegacyVersionAccess.fontRenderer().getStringWidth(outgoingPreview) / 2;
+                LegacyVersionAccess.fontRenderer().drawStringWithShadow(outgoingPreview, (float) previewX, (float) previewY, 0xFFFFFFFF);
+            } finally {
+                LegacyRenderContext.popTextInput();
+            }
+        }
+
         // The label is drawn in both states: the target language and the provider are settings, so
         // they stay informative even while translation is off.
         HudIndicatorContent content = settings.getContent();

@@ -11,6 +11,7 @@ import org.universaltranslator.core.provider.FallbackTranslationProvider;
 import org.universaltranslator.core.provider.LlamaCppOfflineProvider;
 
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -21,7 +22,10 @@ import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.StandardOpenOption;
 import java.io.File;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.io.OutputStream;
 import java.util.zip.GZIPOutputStream;
@@ -50,6 +54,8 @@ public final class CoreSelfTest {
         updatesRenderLookupsWithoutBlocking();
         translatesRelatedTooltipLinesTogether();
         translatesOutgoingChatAsynchronously();
+        publishesOutgoingTranslationWhileItIsGenerated();
+        boundsOutgoingPreviewState();
         exposesRenderTranslationFailures();
         sanitizesProviderLabelsForLogs();
         protectsLiteralsOffTheRenderThread();
@@ -114,6 +120,131 @@ public final class CoreSelfTest {
                     .get(2, TimeUnit.SECONDS);
             assertTrue(result.isTranslated());
             assertEquals("Hello Steve_42", result.getTranslatedText());
+        }
+    }
+
+    /**
+     * The outgoing line has to show the translation while it is still being generated, and the
+     * half-finished text must never reach the cache: a later request for the same text would then be
+     * served a fragment. The provider blocks in the middle of the stream so both states are observed
+     * instead of being raced against.
+     */
+    private static void publishesOutgoingTranslationWhileItIsGenerated() throws Exception {
+        final CountDownLatch firstPartial = new CountDownLatch(1);
+        final CountDownLatch resume = new CountDownLatch(1);
+        final List<String> stored = Collections.synchronizedList(new ArrayList<String>());
+        TranslationStore store = new TranslationStore() {
+            @Override
+            public String get(String key) {
+                return null;
+            }
+
+            @Override
+            public void put(String key, String value) {
+                stored.add(value);
+            }
+
+            @Override
+            public void clear() {
+                stored.clear();
+            }
+        };
+        TranslationProvider provider = new TranslationProvider() {
+            @Override
+            public String id() {
+                return "streaming-outgoing-test";
+            }
+
+            @Override
+            public String translate(TranslationRequest request) {
+                throw new AssertionError("the outgoing line must use the streaming entry point");
+            }
+
+            @Override
+            public String translateStreaming(
+                    TranslationRequest request, TranslationStreamListener listener) {
+                listener.onPartialText("Hel");
+                firstPartial.countDown();
+                awaitLatch(resume);
+                listener.onPartialText("Hello");
+                return "Hello";
+            }
+        };
+        try (RenderTranslationSession session = new RenderTranslationSession(
+                provider, "auto", "zh-CN", store, 1)) {
+            session.setProtectedLiteralsSupplier(() -> Arrays.asList("Steve_42"));
+            CompletableFuture<TranslationResult> pending = session.translateInteractive(
+                    "你好 Steve_42", TextKind.CHAT, "en", false, true);
+            assertTrue(firstPartial.await(5, TimeUnit.SECONDS));
+            // The partial translation is on the HUD line while the provider is still working.
+            assertEquals("Hel", OutgoingTranslationPreview.text());
+            // Nothing partial was cached: only the validated final translation is written.
+            assertTrue(stored.isEmpty());
+            resume.countDown();
+            TranslationResult result = pending.get(5, TimeUnit.SECONDS);
+            assertTrue(result.isTranslated());
+            assertEquals("Hello Steve_42", result.getTranslatedText());
+            assertEquals(Collections.singletonList("Hello"), new ArrayList<String>(stored));
+            // The line is released once the request settles, so it cannot outlive its own message.
+            long deadline = System.currentTimeMillis() + 5_000L;
+            while (OutgoingTranslationPreview.text() != null && System.currentTimeMillis() < deadline) {
+                Thread.sleep(10L);
+            }
+            assertEquals(null, OutgoingTranslationPreview.text());
+        }
+    }
+
+    /** The preview holder is shared by every platform, so its ownership rules are checked here. */
+    private static void boundsOutgoingPreviewState() throws Exception {
+        OutgoingTranslationPreview.setStaleMillisForTesting(50L);
+        try {
+            OutgoingTranslationPreview.Handle first = OutgoingTranslationPreview.begin();
+            // Nothing is shown until the first fragment arrives.
+            assertEquals(null, OutgoingTranslationPreview.text());
+            // Formatting codes and control characters cannot reach a single-line HUD draw.
+            first.onPartialText("  \u00a7a你好\n世界  ");
+            assertEquals("你好 世界", OutgoingTranslationPreview.text());
+            // A newer outgoing translation takes the line over, and the older one can neither
+            // overwrite it nor release it.
+            OutgoingTranslationPreview.Handle second = OutgoingTranslationPreview.begin();
+            second.onPartialText("second");
+            assertEquals("second", OutgoingTranslationPreview.text());
+            first.onPartialText("late");
+            assertEquals("second", OutgoingTranslationPreview.text());
+            first.finish();
+            assertEquals("second", OutgoingTranslationPreview.text());
+            second.finish();
+            assertEquals(null, OutgoingTranslationPreview.text());
+            // A preview nobody released goes stale instead of pinning the line for the session.
+            OutgoingTranslationPreview.Handle third = OutgoingTranslationPreview.begin();
+            third.onPartialText("stale");
+            assertEquals("stale", OutgoingTranslationPreview.text());
+            Thread.sleep(150L);
+            assertEquals(null, OutgoingTranslationPreview.text());
+            // An endpoint that never stops talking cannot grow the line without bound, and a code
+            // that arrives without its letter still leaves no dangling character behind.
+            OutgoingTranslationPreview.Handle fourth = OutgoingTranslationPreview.begin();
+            fourth.onPartialText("0123456789012345678901234567890123456789012345678901234567890");
+            String bounded = OutgoingTranslationPreview.text();
+            assertEquals(48, bounded.length());
+            assertTrue(bounded.endsWith("..."));
+            fourth.onPartialText("abc\u00a7");
+            assertEquals("abc", OutgoingTranslationPreview.text());
+            fourth.finish();
+        } finally {
+            OutgoingTranslationPreview.setStaleMillisForTesting(
+                    OutgoingTranslationPreview.DEFAULT_STALE_MILLIS);
+        }
+    }
+
+    private static void awaitLatch(CountDownLatch latch) {
+        try {
+            if (!latch.await(5, TimeUnit.SECONDS)) {
+                throw new AssertionError("timed out waiting for the test to continue");
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError("interrupted while waiting for the test to continue", interrupted);
         }
     }
 

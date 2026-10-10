@@ -16,6 +16,7 @@ import org.universaltranslator.core.HudIndicatorContent;
 import org.universaltranslator.core.HudIndicatorCorner;
 import org.universaltranslator.core.HudIndicatorSettings;
 import org.universaltranslator.core.HudIndicatorVisibility;
+import org.universaltranslator.core.OutgoingTranslationPreview;
 import org.universaltranslator.core.TranslationActivity;
 import org.universaltranslator.forge.ForgeTranslationRuntime;
 
@@ -92,6 +93,16 @@ abstract class InGameHudStatusIndicatorMixin {
             AbstractGui.fill(pose, left, top + 1, left + 1, bottom - 1, disabledColor);
             AbstractGui.fill(pose, right - 1, top + 1, right, bottom - 1, disabledColor);
         }
+        // The outgoing chat translation as far as it has been generated. Drawn from the same
+        // render path as the indicator and only while that translation is still running, so the
+        // player sees the answer arrive instead of waiting for the whole line.
+        String outgoingPreview = OutgoingTranslationPreview.text();
+        if (outgoingPreview != null) {
+            int previewCenterX = screenWidth / 2;
+            int previewY = Math.max(0, screenHeight - 60);
+            AbstractGui.drawCenteredString(pose, Minecraft.getInstance().font, outgoingPreview, previewCenterX, previewY, 0xFFFFFFFF);
+        }
+
         // The label is drawn in both states: the target language and the provider are settings, so
         // they stay informative even while translation is off.
         HudIndicatorContent content = settings.getContent();
