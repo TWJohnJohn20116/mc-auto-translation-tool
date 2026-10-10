@@ -203,7 +203,12 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
     @Override
     public String translateStreaming(TranslationRequest request, TranslationStreamListener listener)
             throws Exception {
-        if (listener == null || streamingUnsupported
+        if (listener == null) {
+            // Nothing to publish, so the plain path is both cheaper and exactly what was asked for.
+            // Falling through to the default method would dereference the null listener instead.
+            return translate(request);
+        }
+        if (streamingUnsupported
                 || providerId.startsWith("offline-loopback")
                 || request.getText().indexOf('\n') >= 0) {
             return TranslationProvider.super.translateStreaming(request, listener);
