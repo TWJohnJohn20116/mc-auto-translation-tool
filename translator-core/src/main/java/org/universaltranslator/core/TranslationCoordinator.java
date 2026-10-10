@@ -322,8 +322,13 @@ public final class TranslationCoordinator implements AutoCloseable {
         if (!LanguageHeuristics.shouldTranslate(core, targetLanguage)) {
             return segment;
         }
-        String cacheKey = CACHE_FORMAT_VERSION + "\n" + provider.id()
+        String providerId = provider.id();
+        String cacheKey = CACHE_FORMAT_VERSION + "\n" + providerId
                 + "\n" + sourceLanguage + "\n" + targetLanguage + "\n" + kind + "\n" + core;
+        // Statistics are counted here because this is the one place a cache lookup and a provider
+        // request both happen. The counters are a few additions under one short lock; nothing is
+        // written to disk on this path.
+        TranslationStats stats = TranslationStats.global();
         String translated = cache.get(cacheKey);
         if (translated != null) {
             try {
@@ -333,6 +338,7 @@ public final class TranslationCoordinator implements AutoCloseable {
             }
         }
         if (translated == null) {
+            stats.recordCacheMiss();
             TranslationRequest request = new TranslationRequest(
                     core, sourceLanguage, targetLanguage, kind);
             TranslationStreamListener segmentListener = null;
@@ -342,16 +348,31 @@ public final class TranslationCoordinator implements AutoCloseable {
                 final String prefix = alreadyBuilt + segment.substring(0, start);
                 segmentListener = partialText -> listener.onPartialText(prefix + partialText);
             }
-            translated = segmentListener == null
-                    ? provider.translate(request)
-                    : provider.translateStreaming(request, segmentListener);
-            if (translated == null || translated.trim().isEmpty()) {
-                throw new IllegalStateException("Provider returned an empty translation");
+            long startedAt = System.nanoTime();
+            try {
+                translated = segmentListener == null
+                        ? provider.translate(request)
+                        : provider.translateStreaming(request, segmentListener);
+                if (translated == null || translated.trim().isEmpty()) {
+                    throw new IllegalStateException("Provider returned an empty translation");
+                }
+                translated = TranslationOutputValidator.requireValid(core, translated);
+            } catch (Exception failure) {
+                stats.recordFailure(providerId, TranslationStats.reasonOf(failure),
+                        elapsedMillis(startedAt));
+                throw failure;
             }
-            translated = TranslationOutputValidator.requireValid(core, translated);
+            stats.recordSuccess(providerId, elapsedMillis(startedAt));
             cache.put(cacheKey, translated);
+        } else {
+            stats.recordCacheHit();
         }
         return segment.substring(0, start) + translated + segment.substring(end);
+    }
+
+    /** Wall-clock milliseconds since {@code startedAtNanos}, never negative. */
+    private static long elapsedMillis(long startedAtNanos) {
+        return Math.max(0L, (System.nanoTime() - startedAtNanos) / 1_000_000L);
     }
 
     @Override

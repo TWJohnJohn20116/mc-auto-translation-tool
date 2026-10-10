@@ -4,6 +4,7 @@ import org.universaltranslator.core.TranslationOutputValidator;
 import org.universaltranslator.core.TranslationPrompt;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationRequest;
+import org.universaltranslator.core.TranslationStats;
 import org.universaltranslator.core.TranslationStreamListener;
 import org.universaltranslator.core.net.EndpointPolicy;
 import org.universaltranslator.core.net.HttpJsonClient;
@@ -99,6 +100,9 @@ public final class GeminiTranslationProvider implements TranslationProvider {
         if (translated == null || translated.trim().isEmpty()) {
             throw new IllegalStateException(
                     ProviderJson.describeMissingContent("Gemini", response));
+        }
+        if (response.indexOf("\"usageMetadata\"") >= 0) {
+            TranslationStats.global().recordUsage("gemini:" + model, response);
         }
         return TranslationOutputValidator.requireValid(text, translated);
     }

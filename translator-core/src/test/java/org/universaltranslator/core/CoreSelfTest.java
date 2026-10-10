@@ -44,8 +44,7 @@ public final class CoreSelfTest {
         validatesSmallModelOutputs();
         preservesRecentUserMessages();
         cachesDynamicTemplates();
-        deduplicatesConcurrentRequests();
-        deduplicatesRefreshedProtectedLiterals();
+        deduplicatesConcurrentRequests();        deduplicatesRefreshedProtectedLiterals();
         separatesRequestsWithDifferentProtectedLiterals();
         completesQueuedRequestsWhenClosed();
         fallsBackToOriginalOnFailure();
@@ -94,6 +93,9 @@ public final class CoreSelfTest {
         formatsSecretFreeDiagnostics();
         localizesDiagnosticsAndRuntimeStatus();
         handlesMalformedPlaceholderTokensGracefully();
+        countsTranslationStatistics();
+        classifiesTranslationFailures();
+        persistsTranslationStatistics();
         System.out.println("CoreSelfTest: all checks passed");
     }
 
@@ -1396,6 +1398,152 @@ public final class CoreSelfTest {
             return request.getText()
                     .replace("Welcome", "欢迎")
                     .replace("coins", "硬币");
+        }
+    }
+
+    /**
+     * The counters, the cache rate, the percentiles and the failure classification are pure logic
+     * and are checked directly.
+     */
+    private static void countsTranslationStatistics() {
+        TranslationStats stats = TranslationStats.isolated();
+        assertCount(0L, stats.snapshot().requests());
+        assertCount(0L, stats.snapshot().cacheHitRate());
+        stats.recordCacheHit();
+        stats.recordCacheMiss();
+        stats.recordSuccess("deepl:host/path", 100L);
+        stats.recordSuccess("deepl:host/path", 300L);
+        stats.recordFailure("deepl:host/path", TranslationStats.REASON_AUTH, 200L);
+        TranslationStats.Snapshot snapshot = stats.snapshot();
+        assertCount(3L, snapshot.requests());
+        assertCount(2L, snapshot.successes());
+        assertCount(1L, snapshot.failures());
+        assertCount(1L, snapshot.cacheHits());
+        assertCount(1L, snapshot.cacheMisses());
+        assertCount(50L, snapshot.cacheHitRate());
+        // Samples are 100, 200 and 300 ms.
+        assertCount(200L, snapshot.averageLatencyMillis());
+        assertCount(200L, snapshot.percentileLatencyMillis(50));
+        assertCount(300L, snapshot.percentileLatencyMillis(95));
+        assertCount(3, snapshot.latencySampleCount());
+        assertEquals(Long.valueOf(1L),
+                snapshot.failuresByReason().get(TranslationStats.REASON_AUTH));
+        assertCount(1, snapshot.providers().size());
+        assertCount(3L, snapshot.providers().get(0).requests());
+        assertCount(200L, snapshot.providers().get(0).averageLatencyMillis());
+        // A provider that was never recorded is simply absent rather than invented.
+        assertTrue(!snapshot.failuresByReason().containsKey(TranslationStats.REASON_TIMEOUT));
+        // The token totals come from the protocol-specific usage shapes.
+        stats.recordUsage("deepl:host/path",
+                "{\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":7}}");
+        stats.recordUsage("gemini:model",
+                "{\"usageMetadata\":{\"promptTokenCount\":5,\"candidatesTokenCount\":3}}");
+        stats.recordUsage("claude:model",
+                "{\"usage\":{\"input_tokens\":2,\"output_tokens\":9}}");
+        stats.recordUsage("deepl:host/path", "{\"not\":\"a usage object\"}");
+        assertCount(18L, stats.snapshot().promptTokens());
+        assertCount(19L, stats.snapshot().completionTokens());
+        // The exported report must not carry an endpoint, which is where a provider id puts one.
+        assertTrue(TranslationStats.safeProviderId("libretranslate:https://host:5000/translate")
+                .endsWith("/..."));
+        assertTrue(!TranslationStats.safeProviderId("libretranslate:https://host:5000/translate")
+                .contains("translate"));
+        assertEquals("azure-openai:my-deployment",
+                TranslationStats.safeProviderId("azure-openai:my-deployment"));
+        assertTrue(TranslationStats.safeProviderId(null).equals("unknown"));
+        stats.reset();
+        assertCount(0L, stats.snapshot().requests());
+        assertCount(0L, stats.snapshot().promptTokens());
+        assertCount(0, stats.snapshot().providers().size());
+    }
+
+    /** Every failure kind the coordinator can see has to land in exactly one bucket. */
+    private static void classifiesTranslationFailures() {
+        assertEquals(TranslationStats.REASON_AUTH,
+                TranslationStats.reasonOf(new org.universaltranslator.core.net.HttpStatusException(
+                        401, "unauthorized")));
+        assertEquals(TranslationStats.REASON_AUTH,
+                TranslationStats.reasonOf(new org.universaltranslator.core.net.HttpStatusException(
+                        403, "forbidden")));
+        assertEquals(TranslationStats.REASON_RATE_LIMIT,
+                TranslationStats.reasonOf(new org.universaltranslator.core.net.HttpStatusException(
+                        429, "slow down")));
+        assertEquals(TranslationStats.REASON_SERVER,
+                TranslationStats.reasonOf(new org.universaltranslator.core.net.HttpStatusException(
+                        503, "unavailable")));
+        assertEquals(TranslationStats.REASON_CLIENT,
+                TranslationStats.reasonOf(new org.universaltranslator.core.net.HttpStatusException(
+                        400, "bad request")));
+        assertEquals(TranslationStats.REASON_TIMEOUT, TranslationStats.reasonOf(
+                new java.net.SocketTimeoutException("read timed out")));
+        assertEquals(TranslationStats.REASON_NETWORK,
+                TranslationStats.reasonOf(new java.io.IOException("connection reset")));
+        assertEquals(TranslationStats.REASON_INVALID_OUTPUT,
+                TranslationStats.reasonOf(new IllegalArgumentException("too long")));
+        assertEquals(TranslationStats.REASON_OTHER,
+                TranslationStats.reasonOf(new IllegalStateException("no content")));
+        // A wrapped cause is classified by what is inside it, and a null has its own bucket.
+        assertEquals(TranslationStats.REASON_AUTH, TranslationStats.reasonOf(new RuntimeException(
+                new org.universaltranslator.core.net.HttpStatusException(401, "unauthorized"))));
+        assertEquals(TranslationStats.REASON_OTHER, TranslationStats.reasonOf(null));
+    }
+
+    /** The counters survive a restart, and an unusable file never becomes a translation failure. */
+    private static void persistsTranslationStatistics() throws Exception {
+        Path file = Files.createTempFile("universal-translator-stats", ".properties");
+        Files.deleteIfExists(file);
+        Path temporary = file.resolveSibling(file.getFileName().toString() + ".tmp");
+        try {
+            TranslationStats first = TranslationStats.isolated();
+            first.attach(file);
+            first.recordCacheHit();
+            first.recordCacheMiss();
+            first.recordSuccess("libretranslate:https://host/translate", 120L);
+            first.recordFailure("libretranslate:https://host/translate",
+                    TranslationStats.REASON_RATE_LIMIT, 80L);
+            first.recordUsage("libretranslate:https://host/translate",
+                    "{\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":7}}");
+            first.flush();
+            assertTrue(Files.exists(file));
+
+            TranslationStats second = TranslationStats.isolated();
+            second.attach(file);
+            TranslationStats.Snapshot snapshot = second.snapshot();
+            assertCount(2L, snapshot.requests());
+            assertCount(1L, snapshot.successes());
+            assertCount(1L, snapshot.failures());
+            assertCount(1L, snapshot.cacheHits());
+            assertCount(1L, snapshot.cacheMisses());
+            assertCount(11L, snapshot.promptTokens());
+            assertCount(7L, snapshot.completionTokens());
+            assertCount(1, snapshot.providers().size());
+            assertEquals("libretranslate:https://host/translate", snapshot.providers().get(0).id());
+            assertCount(100L, snapshot.providers().get(0).averageLatencyMillis());
+            assertEquals(Long.valueOf(1L),
+                    snapshot.failuresByReason().get(TranslationStats.REASON_RATE_LIMIT));
+
+            // A malformed file starts the counters at zero rather than failing the platform.
+            String malformed = "bad=" + '\\' + "uZZZZ";
+            Files.write(file, malformed.getBytes(StandardCharsets.UTF_8));
+            TranslationStats third = TranslationStats.isolated();
+            third.attach(file);
+            assertCount(0L, third.snapshot().requests());
+
+            // An unwritable target and an unattached accumulator are both no-ops, not failures.
+            TranslationStats unattached = TranslationStats.isolated();
+            unattached.attach(null);
+            unattached.recordSuccess("offline-llama:1", 5L);
+            unattached.flush();
+            assertCount(1L, unattached.snapshot().requests());
+        } finally {
+            Files.deleteIfExists(file);
+            Files.deleteIfExists(temporary);
+        }
+    }
+
+    private static void assertCount(long expected, long actual) {
+        if (expected != actual) {
+            throw new AssertionError("Expected <" + expected + "> but was <" + actual + ">");
         }
     }
 

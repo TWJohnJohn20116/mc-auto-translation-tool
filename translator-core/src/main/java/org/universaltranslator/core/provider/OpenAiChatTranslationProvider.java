@@ -5,6 +5,7 @@ import org.universaltranslator.core.TranslationPrompt;
 import org.universaltranslator.core.TranslationRequest;
 import org.universaltranslator.core.TranslationStreamListener;
 import org.universaltranslator.core.TranslationOutputValidator;
+import org.universaltranslator.core.TranslationStats;
 import org.universaltranslator.core.net.EndpointPolicy;
 import org.universaltranslator.core.net.HttpJsonClient;
 import org.universaltranslator.core.net.HttpStatusException;
@@ -245,7 +246,21 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         if (translated == null || translated.trim().isEmpty()) {
             throw new IllegalStateException(describeMissingContent(response));
         }
+        recordUsage(response);
         return TranslationOutputValidator.requireValid(request.getText(), translated);
+    }
+
+    /**
+     * Adds the token counts this endpoint reported to the process-wide statistics.
+     *
+     * <p>Only the ordinary response body carries {@code usage}; the event stream of a streamed
+     * request does not, so a streamed line contributes to the request and latency counters but not
+     * to the token totals.
+     */
+    private void recordUsage(String response) {
+        if (response != null && response.indexOf("\"usage\"") >= 0) {
+            TranslationStats.global().recordUsage(providerId, response);
+        }
     }
 
     /**
@@ -597,6 +612,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         if (parsed == null) {
             throw new IllegalStateException(describeMissingContent(response));
         }
+        recordUsage(response);
         return parsed;
     }
 

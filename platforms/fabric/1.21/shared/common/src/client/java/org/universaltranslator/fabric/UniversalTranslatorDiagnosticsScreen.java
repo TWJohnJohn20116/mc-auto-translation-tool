@@ -8,6 +8,7 @@ import net.minecraft.text.Text;
 import org.universaltranslator.core.TranslationDiagnosticsSnapshot;
 import org.universaltranslator.core.TranslationPrompt;
 import org.universaltranslator.core.TranslationQuality;
+import org.universaltranslator.core.TranslationStats;
 
 import java.util.List;
 import java.util.Collections;
@@ -22,6 +23,10 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
     private TranslationQuality quality;
     private ButtonWidget qualityButton;
     private TextFieldWidget customPrompt;
+    private ButtonWidget pageButton;
+    private ButtonWidget resetButton;
+    /** Whether the counters page is shown instead of the engine diagnostics page. */
+    private boolean statisticsPage;
     private String exportStatus = "";
     private boolean exportFailed;
 
@@ -67,6 +72,15 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
                 button -> applyAdvancedSettings())
                 .dimensions(left + totalWidth - applyWidth, 56, applyWidth, 20).build());
 
+        this.pageButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+            statisticsPage = !statisticsPage;
+            refreshPageLabels();
+        }).dimensions(left, this.height - 52, buttonWidth, 20).build());
+        this.resetButton = addDrawableChild(ButtonWidget.builder(
+                Text.translatable("screen.universal_translator.stats.reset"),
+                button -> resetStatistics())
+                .dimensions(left + buttonWidth + gap, this.height - 52, buttonWidth, 20).build());
+
         addDrawableChild(ButtonWidget.builder(
                 Text.translatable("screen.universal_translator.diagnostics.back"), button -> close())
                 .dimensions(left, this.height - 28, buttonWidth, 20).build());
@@ -74,6 +88,7 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
                 Text.translatable("screen.universal_translator.diagnostics.export"), button -> exportLog())
                 .dimensions(left + buttonWidth + gap, this.height - 28, buttonWidth, 20).build());
         refreshQualityLabel();
+        refreshPageLabels();
     }
 
     private void refreshQualityLabel() {
@@ -83,6 +98,18 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
         qualityButton.setMessage(Text.translatable(
                 "screen.universal_translator.option.quality",
                 tr("value.universal_translator.quality." + quality.configName())));
+    }
+
+    private void refreshPageLabels() {
+        if (pageButton != null) {
+            pageButton.setMessage(Text.translatable(statisticsPage
+                    ? "screen.universal_translator.stats.show_diagnostics"
+                    : "screen.universal_translator.stats.show"));
+        }
+        if (resetButton != null) {
+            // Only the counters page can be cleared, so the button says so by going flat.
+            resetButton.active = statisticsPage;
+        }
     }
 
     /**
@@ -122,13 +149,22 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
         }
     }
 
+    /** Clears the process-wide counters and writes the cleared values out. */
+    private void resetStatistics() {
+        TranslationStats.global().reset();
+        exportStatus = tr("screen.universal_translator.stats.reset_done");
+        exportFailed = false;
+    }
+
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         context.fill(0, 0, width, height, 0xE510151C);
         context.fill(Math.max(5, width / 2 - 190), 8,
                 Math.min(width - 5, width / 2 + 190), height - 34, 0xD51A232E);
-        context.drawCenteredTextWithShadow(textRenderer, title, width / 2, 18, 0xFFFFFFFF);
-        List<String> lines = safeLines();
+        context.drawCenteredTextWithShadow(textRenderer,
+                statisticsPage ? Text.translatable("screen.universal_translator.stats.title") : title,
+                width / 2, 18, 0xFFFFFFFF);
+        List<String> lines = displayLines();
         int left = Math.max(10, (width - Math.min(360, width - 20)) / 2);
         int y = 84;
         for (String line : lines) {
@@ -136,7 +172,9 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
             y += 17;
         }
         context.drawCenteredTextWithShadow(textRenderer,
-                Text.translatable("screen.universal_translator.diagnostics.note"),
+                Text.translatable(statisticsPage
+                        ? "screen.universal_translator.stats.note"
+                        : "screen.universal_translator.diagnostics.note"),
                 width / 2, Math.min(y + 7, height - 96), 0xFF909090);
         if (!exportStatus.isEmpty()) {
             context.drawCenteredTextWithShadow(textRenderer, Text.literal(exportStatus),
@@ -145,20 +183,36 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
         super.render(context, mouseX, mouseY, delta);
     }
 
-    private List<String> safeLines() {
+    /** The lines the current page shows. */
+    private List<String> displayLines() {
+        try {
+            return statisticsPage
+                    ? TranslationStats.global().localizedLines(
+                            UniversalTranslatorDiagnosticsScreen::tr)
+                    : diagnosticsLines();
+        } catch (RuntimeException ignored) {
+            return Collections.singletonList(
+                    tr("screen.universal_translator.diagnostics.unavailable"));
+        }
+    }
+
+    /** The engine diagnostics lines, which are also what the exported report contains. */
+    private List<String> diagnosticsLines() {
         try {
             TranslationDiagnosticsSnapshot snapshot = FabricTranslationRuntime.diagnostics();
             return snapshot == null
-                    ? Collections.singletonList(tr("screen.universal_translator.diagnostics.unavailable"))
+                    ? Collections.singletonList(
+                            tr("screen.universal_translator.diagnostics.unavailable"))
                     : snapshot.localizedLines(UniversalTranslatorDiagnosticsScreen::tr);
         } catch (RuntimeException ignored) {
-            return Collections.singletonList(tr("screen.universal_translator.diagnostics.unavailable"));
+            return Collections.singletonList(
+                    tr("screen.universal_translator.diagnostics.unavailable"));
         }
     }
 
     private void exportLog() {
         try {
-            FabricTranslationRuntime.exportDiagnostics(safeLines());
+            FabricTranslationRuntime.exportDiagnostics(diagnosticsLines());
             exportStatus = tr("screen.universal_translator.diagnostics.exported");
             exportFailed = false;
         } catch (Exception ignored) {
