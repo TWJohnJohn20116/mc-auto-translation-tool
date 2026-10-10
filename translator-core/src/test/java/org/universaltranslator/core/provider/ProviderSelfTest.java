@@ -3,13 +3,16 @@ package org.universaltranslator.core.provider;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationProviderCatalog;
 import org.universaltranslator.core.TranslationRequest;
+import org.universaltranslator.core.TranslationStreamListener;
 import org.universaltranslator.core.TextKind;
 import org.universaltranslator.core.net.CryptoSupport;
 import org.universaltranslator.core.net.HttpJsonClient;
 import org.universaltranslator.core.net.JsonStrings;
+import org.universaltranslator.core.net.ServerSentEvents;
 import org.universaltranslator.core.net.TranslationEndpointUnavailableException;
 import org.universaltranslator.core.net.VolcengineV4Signer;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -20,6 +23,7 @@ import java.net.URI;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -54,6 +58,10 @@ public final class ProviderSelfTest {
         reportsProviderErrorsFromContentlessResponses();
         retriesReasoningOnlyResponsesWithFullBudget();
         batchesNearbyTextsIntoOneRequest();
+        streamsOpenAiResponsesAsTheyArrive();
+        fallsBackWhenTheEndpointCannotStream();
+        upgradesTheBudgetWhenAStreamCarriesOnlyReasoning();
+        readsServerSentEventFramingEdgeCases();
         derivesModelCatalogEndpoint();
         fetchesModelCatalogWithGet();
         System.out.println("ProviderSelfTest: all checks passed");
@@ -560,6 +568,267 @@ public final class ProviderSelfTest {
         assertThrows(() -> resilient.translate(new TranslationRequest(
                 "Server restarting", "auto", "zh-CN", TextKind.CHAT)));
         assertEquals(1, attempts.get());
+    }
+
+    /**
+     * A streaming answer must be reported piece by piece, and the assembled result must be exactly
+     * the concatenation of those pieces. The server writes seven bytes at a time, so a read boundary
+     * lands inside a line and inside a multi-byte character — which is what a real network does to
+     * the stream, and what the reader has to survive.
+     */
+    private static void streamsOpenAiResponsesAsTheyArrive() throws Exception {
+        ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        AtomicReference<String> body = new AtomicReference<String>();
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread thread = new Thread(() -> {
+            try (Socket socket = server.accept()) {
+                HttpRequest request = readRequest(socket.getInputStream(),
+                        "POST /v1/chat/completions HTTP/1.");
+                body.set(request.body);
+                writeEventStream(socket.getOutputStream(),
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"你\"}}]}\n\n"
+                        + "data: {\"choices\":[{\"delta\":{\"content\":\"好，世\"}}]}\n\n"
+                        + "data: {\"choices\":[{\"delta\":{\"content\":\"界\"}}]}\n\n"
+                        + "data: [DONE]\n\n");
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-stream");
+        thread.setDaemon(true);
+        thread.start();
+        try {
+            OpenAiChatTranslationProvider provider = new OpenAiChatTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v1/chat/completions",
+                    "", "stream-model", "openai-compatible");
+            PartialCollector collector = new PartialCollector();
+            String translated = provider.translateStreaming(new TranslationRequest(
+                    "Hello", "auto", "zh-TW", TextKind.CHAT), collector);
+            // (b) the result is the whole translation, and the last partial is that same string.
+            assertEquals("你好，世界", translated);
+            // (a) several partial texts arrived, each one carrying the text so far.
+            assertEquals(Arrays.asList("你", "你好，世", "你好，世界"), collector.snapshot());
+            assertTrue(body.get().contains("\"stream\":true"));
+        } finally {
+            server.close();
+            thread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local streaming test server failed", serverFailure.get());
+        }
+    }
+
+    /**
+     * An endpoint that answers with an ordinary JSON document instead of an event stream must still
+     * translate: the plain path takes over and produces exactly what a non-streaming caller has
+     * always received. The endpoint is then remembered, so the next line does not pay for the same
+     * discovery again.
+     */
+    private static void fallsBackWhenTheEndpointCannotStream() throws Exception {
+        ServerSocket server = new ServerSocket(0, 3, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        final List<String> bodies = Collections.synchronizedList(new ArrayList<String>());
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread thread = new Thread(() -> {
+            try {
+                for (int index = 0; index < 3; index++) {
+                    try (Socket socket = server.accept()) {
+                        HttpRequest request = readRequest(socket.getInputStream(),
+                                "POST /v1/chat/completions HTTP/1.");
+                        bodies.add(request.body);
+                        writeResponse(socket.getOutputStream(), 200,
+                                "{\"choices\":[{\"message\":{\"content\":\"你好\"}}]}");
+                    }
+                }
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-no-stream");
+        thread.setDaemon(true);
+        thread.start();
+        try {
+            OpenAiChatTranslationProvider provider = new OpenAiChatTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v1/chat/completions",
+                    "", "plain-model", "openai-compatible");
+            PartialCollector collector = new PartialCollector();
+            // (c) the streaming attempt is abandoned and the fallback result is correct.
+            assertEquals("你好", provider.translateStreaming(new TranslationRequest(
+                    "Hello", "auto", "zh-TW", TextKind.CHAT), collector));
+            assertEquals(Collections.singletonList("你好"), collector.snapshot());
+            assertEquals("你好", provider.translate(new TranslationRequest(
+                    "Hello", "auto", "zh-TW", TextKind.CHAT)));
+            assertEquals(3, bodies.size());
+            assertTrue(bodies.get(0).contains("\"stream\":true"));
+            assertTrue(bodies.get(1).contains("\"stream\":false"));
+            // The endpoint is known not to stream now, so the third request never asks again.
+            assertTrue(bodies.get(2).contains("\"stream\":false"));
+        } finally {
+            server.close();
+            thread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local non-streaming test server failed", serverFailure.get());
+        }
+    }
+
+    /**
+     * A thinking model that streams only its chain of thought has produced no translation. That is
+     * exactly the case the non-streaming path repairs by raising the completion budget, and streaming
+     * must not bypass the repair: the follow-up request carries the larger budget, and the reasoning
+     * text is never shown or returned as the answer.
+     */
+    private static void upgradesTheBudgetWhenAStreamCarriesOnlyReasoning() throws Exception {
+        ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        AtomicReference<String> streamedBody = new AtomicReference<String>();
+        AtomicReference<String> retryBody = new AtomicReference<String>();
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread thread = new Thread(() -> {
+            try {
+                try (Socket socket = server.accept()) {
+                    streamedBody.set(readRequest(socket.getInputStream(),
+                            "POST /v1/chat/completions HTTP/1.").body);
+                    writeEventStream(socket.getOutputStream(),
+                            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"thinking\"}}]}\n\n"
+                            + "data: [DONE]\n\n");
+                }
+                try (Socket socket = server.accept()) {
+                    retryBody.set(readRequest(socket.getInputStream(),
+                            "POST /v1/chat/completions HTTP/1.").body);
+                    writeResponse(socket.getOutputStream(), 200,
+                            "{\"choices\":[{\"message\":{\"content\":\"你好\"}}]}");
+                }
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-reasoning-stream");
+        thread.setDaemon(true);
+        thread.start();
+        try {
+            OpenAiChatTranslationProvider provider = new OpenAiChatTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v1/chat/completions",
+                    "", "thinking-model", "openai-compatible");
+            PartialCollector collector = new PartialCollector();
+            assertEquals("你好", provider.translateStreaming(new TranslationRequest(
+                    "Hello", "auto", "zh-TW", TextKind.CHAT), collector));
+            assertEquals(Collections.singletonList("你好"), collector.snapshot());
+            assertTrue(streamedBody.get().contains("\"stream\":true"));
+            assertTrue(streamedBody.get().contains("\"max_tokens\":512"));
+            // (d) the budget was raised for the retry, exactly as the non-streaming path raises it.
+            assertTrue(retryBody.get().contains("\"stream\":false"));
+            assertTrue(retryBody.get().contains("\"max_tokens\":16384"));
+        } finally {
+            server.close();
+            thread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local reasoning stream test server failed", serverFailure.get());
+        }
+    }
+
+    /**
+     * Everything a real stream does to framing: comment lines, fields that are not payloads, CRLF,
+     * a payload without the optional space after the colon, a payload split across reads, a
+     * multi-byte character whose bytes straddle two reads, and a stream that ends without a trailing
+     * newline.
+     */
+    private static void readsServerSentEventFramingEdgeCases() throws Exception {
+        String stream = ": keep-alive\n"
+                + "event: message\n"
+                + "id: 7\n"
+                + "data: {\"choices\":[{\"delta\":{\"content\":\"你\"}}]}\r\n"
+                + "\r\n"
+                + "data:{\"choices\":[{\"delta\":{\"content\":\"好\"}}]}\n"
+                + "\n"
+                + "data: [DONE]\n"
+                + "\n";
+        final List<String> payloads = new ArrayList<String>();
+        int characters = ServerSentEvents.read(
+                new SingleByteInputStream(stream.getBytes(StandardCharsets.UTF_8)),
+                new ServerSentEvents.PayloadHandler() {
+                    @Override
+                    public boolean onData(String payload) {
+                        payloads.add(payload);
+                        return !"[DONE]".equals(payload);
+                    }
+                });
+        assertEquals(2, payloads.size());
+        assertEquals("{\"choices\":[{\"delta\":{\"content\":\"你\"}}]}", payloads.get(0));
+        assertEquals("{\"choices\":[{\"delta\":{\"content\":\"好\"}}]}", payloads.get(1));
+        assertTrue(characters > 0);
+
+        final List<String> trailing = new ArrayList<String>();
+        ServerSentEvents.read(
+                new ByteArrayInputStream("data: last".getBytes(StandardCharsets.UTF_8)),
+                new ServerSentEvents.PayloadHandler() {
+                    @Override
+                    public boolean onData(String payload) {
+                        trailing.add(payload);
+                        return true;
+                    }
+                });
+        assertEquals(Collections.singletonList("last"), trailing);
+    }
+
+    /** Collects the partial texts one streaming translation publishes. */
+    private static final class PartialCollector implements TranslationStreamListener {
+        private final List<String> partials = Collections.synchronizedList(new ArrayList<String>());
+
+        @Override
+        public void onPartialText(String partialText) {
+            partials.add(partialText);
+        }
+
+        private List<String> snapshot() {
+            synchronized (partials) {
+                return new ArrayList<String>(partials);
+            }
+        }
+    }
+
+    /** Serves at most one byte per read, so every framing boundary is exercised. */
+    private static final class SingleByteInputStream extends InputStream {
+        private final byte[] content;
+        private int offset;
+
+        private SingleByteInputStream(byte[] content) {
+            this.content = content;
+        }
+
+        @Override
+        public int read() {
+            return offset < content.length ? content[offset++] & 0xFF : -1;
+        }
+
+        @Override
+        public int read(byte[] target, int start, int length) {
+            if (offset >= content.length) {
+                return -1;
+            }
+            target[start] = content[offset++];
+            return 1;
+        }
+    }
+
+    /** Writes an event-stream response in seven-byte slices, so reads never align with events. */
+    private static void writeEventStream(OutputStream output, String body) throws IOException {
+        output.write(("HTTP/1.1 200 OK\r\n"
+                + "Content-Type: text/event-stream; charset=utf-8\r\n"
+                + "Cache-Control: no-cache\r\n"
+                + "Connection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        int slice = 7;
+        for (int offset = 0; offset < bytes.length; offset += slice) {
+            output.write(bytes, offset, Math.min(slice, bytes.length - offset));
+            output.flush();
+            try {
+                Thread.sleep(1L);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+        output.flush();
     }
 
     private static HttpRequest readRequest(InputStream input, String expectedRequestLinePrefix)

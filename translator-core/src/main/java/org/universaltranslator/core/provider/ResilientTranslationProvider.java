@@ -2,6 +2,7 @@ package org.universaltranslator.core.provider;
 
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationRequest;
+import org.universaltranslator.core.TranslationStreamListener;
 import org.universaltranslator.core.net.HttpStatusException;
 import org.universaltranslator.core.net.TranslationEndpointUnavailableException;
 
@@ -54,6 +55,56 @@ final class ResilientTranslationProvider implements TranslationProvider, AutoClo
             }
         }
         throw last == null ? new IllegalStateException("Translation failed") : last;
+    }
+
+    /**
+     * The streaming twin of {@link #translate(TranslationRequest)}: same interval, same bounded
+     * retries, same decisions about what may be retried at all.
+     *
+     * <p>One case is deliberately different. Once a partial text has been shown, retrying would
+     * restart the preview from a shorter string and then race the failure against it, so the attempt
+     * that published something is the last one: the failure surfaces and the caller replaces the
+     * preview with its error handling. Nothing has been cached at that point either way, because the
+     * coordinator only stores a validated final result.
+     */
+    @Override
+    public String translateStreaming(TranslationRequest request, TranslationStreamListener listener)
+            throws Exception {
+        PartialTextGuard guard = new PartialTextGuard(listener);
+        Exception last = null;
+        for (int attempt = 1; attempt <= maximumAttempts; attempt++) {
+            awaitRateLimit();
+            try {
+                return delegate.translateStreaming(request, guard);
+            } catch (Exception exception) {
+                last = exception;
+                if (attempt == maximumAttempts || guard.published() || !isRetryable(exception)) {
+                    throw exception;
+                }
+                Thread.sleep(retryDelayMillis(exception, attempt));
+            }
+        }
+        throw last == null ? new IllegalStateException("Translation failed") : last;
+    }
+
+    /** Forwards partial texts and remembers whether any of them arrived. */
+    private static final class PartialTextGuard implements TranslationStreamListener {
+        private final TranslationStreamListener delegate;
+        private volatile boolean published;
+
+        private PartialTextGuard(TranslationStreamListener delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void onPartialText(String partialText) {
+            published = true;
+            delegate.onPartialText(partialText);
+        }
+
+        private boolean published() {
+            return published;
+        }
     }
 
     private void awaitRateLimit() throws InterruptedException {
