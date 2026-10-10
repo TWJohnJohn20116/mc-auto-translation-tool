@@ -2,15 +2,18 @@ package org.universaltranslator.core.provider;
 
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationRequest;
+import org.universaltranslator.core.TranslationStreamListener;
 import org.universaltranslator.core.TranslationOutputValidator;
 import org.universaltranslator.core.TargetLanguage;
 import org.universaltranslator.core.net.EndpointPolicy;
 import org.universaltranslator.core.net.HttpJsonClient;
 import org.universaltranslator.core.net.HttpStatusException;
 import org.universaltranslator.core.net.JsonStrings;
+import org.universaltranslator.core.net.ServerSentEvents;
 
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
@@ -53,6 +56,13 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
      * value, so an endpoint with a smaller output cap is only charged one rejected request.
      */
     private volatile int acceptedReasoningTokens = REASONING_COMPLETION_TOKENS;
+    /**
+     * Set once this endpoint proved it cannot answer with an event stream, either by rejecting
+     * {@code "stream": true} or by answering with an ordinary JSON document. Without this memory
+     * every outgoing line would pay for the same discovery round trip before falling back, which is
+     * exactly the cost that made streaming unsafe to enable by default.
+     */
+    private volatile boolean streamingUnsupported;
 
     /** How long a request waits for siblings to batch with, in milliseconds. */
     private static final long BATCH_WINDOW_MILLIS = 30L;
@@ -147,38 +157,9 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
 
     /** Translates exactly one text with one request. */
     private String translateOne(TranslationRequest request) throws Exception {
-        String target = TargetLanguage.translationInstruction(request.getTargetLanguage());
-        String system = "You are a professional Minecraft game-localization translator. "
-                + "Translate the user text to " + target
-                + ". Reply with only the translation, without quotes, labels, notes, or explanations. "
-                + "Preserve punctuation, whitespace, URLs, usernames, placeholders, and Minecraft formatting markers."
-                + (request.getText().indexOf('\n') >= 0
-                ? " Keep exactly the same number and order of lines." : "");
+        String system = systemPrompt(request);
         boolean offline = providerId.startsWith("offline-loopback");
-        // Budget the completion from the input length. A fixed 512-token cap truncated
-        // long lines mid-sentence, and the clipped result was still short enough to pass
-        // TranslationOutputValidator, so it entered the persistent cache.
-        int inputLength = request.getText().length();
-        int requestedTokens = Math.min(inputLength * 2 + 32, MAXIMUM_TOKENS_LIMIT);
-        int maximumTokens;
-        if (offline) {
-            // The loopback llama.cpp server runs --ctx-size 1024 and shares that window
-            // between prompt and completion. Cap the completion to what is left after a
-            // conservative prompt estimate, with no floor that could overflow the context.
-            int remaining = OFFLINE_CONTEXT_TOKENS - OFFLINE_PROMPT_OVERHEAD_TOKENS
-                    - estimatePromptTokens(request.getText());
-            maximumTokens = Math.max(1, Math.min(Math.max(64, requestedTokens), remaining));
-        } else if (reasoningModel) {
-            // This endpoint already proved it thinks before it answers, so start with the larger
-            // budget instead of spending a round trip rediscovering that on every single line.
-            maximumTokens = Math.max(MINIMUM_COMPLETION_TOKENS,
-                    Math.min(REASONING_COMPLETION_TOKENS, acceptedReasoningTokens));
-        } else {
-            // Reasoning models spend completion tokens thinking before they write the answer, so
-            // even a short input must leave room to finish. max_tokens is an upper bound rather
-            // than a reservation, so this costs nothing for models that stop early.
-            maximumTokens = Math.max(MINIMUM_COMPLETION_TOKENS, requestedTokens);
-        }
+        int maximumTokens = completionBudget(request.getText(), offline);
         String response = post(system, request.getText(), maximumTokens, offline);
         String translated = extractContent(response);
         if ((translated == null || translated.trim().isEmpty()) && !offline
@@ -187,10 +168,9 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             // answer only appears once the completion is allowed to finish. Remember the endpoint
             // reasons, so the next line does not repeat the smaller first attempt.
             reasoningModel = true;
-            int reasoningBudget = Math.max(MINIMUM_COMPLETION_TOKENS,
-                    Math.min(REASONING_COMPLETION_TOKENS, acceptedReasoningTokens));
-            if (reasoningBudget > maximumTokens) {
-                response = postWithAcceptedBudget(system, request.getText(), reasoningBudget, offline);
+            int escalatedBudget = reasoningBudget();
+            if (escalatedBudget > maximumTokens) {
+                response = postWithAcceptedBudget(system, request.getText(), escalatedBudget, offline);
                 translated = extractContent(response);
             }
         }
@@ -198,6 +178,204 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             throw new IllegalStateException(describeMissingContent(response));
         }
         return TranslationOutputValidator.requireValid(request.getText(), translated);
+    }
+
+    /**
+     * Translates one text while reporting it as it is generated.
+     *
+     * <p>Only the outgoing-chat path asks for this: it is the one request whose latency the player
+     * waits on with the chat box already closed, and it is always a single line.
+     *
+     * <p>Every case that could make streaming behave differently from the plain path is refused up
+     * front, so the feature can only ever add an early preview:
+     *
+     * <ul>
+     *   <li>the offline loopback server serves one request at a time out of a 1024-token context and
+     *       has no streaming form here, so it keeps the existing path;
+     *   <li>a multi-line text is carried by the numbered batch format, which a stream cannot replace;
+     *   <li>an endpoint that has already proved it cannot stream is never asked again.
+     * </ul>
+     *
+     * <p>When the stream produces nothing usable the plain path takes over — it is also the path that
+     * explains why — so the result stays identical to the non-streaming behaviour on every endpoint
+     * that does not stream, and finding that out costs one extra request, once per endpoint.
+     */
+    @Override
+    public String translateStreaming(TranslationRequest request, TranslationStreamListener listener)
+            throws Exception {
+        if (listener == null || streamingUnsupported
+                || providerId.startsWith("offline-loopback")
+                || request.getText().indexOf('\n') >= 0) {
+            return TranslationProvider.super.translateStreaming(request, listener);
+        }
+        String text = request.getText();
+        String system = systemPrompt(request);
+        // The same budget the plain single-text path would ask for, so an endpoint that ignores
+        // "stream" cannot end up producing a different answer here than it gives there.
+        int maximumTokens = completionBudget(text, false);
+        StreamAttempt attempt = postStreamingAttempt(system, text, maximumTokens, listener);
+        if (attempt.unsupported) {
+            streamingUnsupported = true;
+            return TranslationProvider.super.translateStreaming(request, listener);
+        }
+        if (attempt.content == null && attempt.sawReasoning) {
+            // A thinking model streamed only its chain of thought and never wrote the answer inside
+            // the smaller budget. The plain path already knows how to repair exactly that: once the
+            // endpoint is known to reason it starts from the larger completion budget. Remember it
+            // and let that path do the work instead of reporting a failure.
+            reasoningModel = true;
+            return TranslationProvider.super.translateStreaming(request, listener);
+        }
+        if (attempt.content == null) {
+            // The stream stopped early, carried a relay error object, or was empty. A partial text is
+            // never shown as the answer: the plain path is the one that recovers from all of those,
+            // and its result is what callers have always received.
+            return TranslationProvider.super.translateStreaming(request, listener);
+        }
+        return TranslationOutputValidator.requireValid(text, attempt.content);
+    }
+
+    /** What one streaming request produced, and whether the endpoint can stream at all. */
+    private static final class StreamAttempt {
+        private String content;
+        private boolean sawReasoning;
+        private boolean unsupported;
+    }
+
+    /**
+     * Sends one request with {@code "stream": true} and assembles the translation from its events.
+     *
+     * <p>Returns as soon as the endpoint shows it cannot stream, so the caller can fall back without
+     * waiting for a body that was never going to be an event stream.
+     */
+    private StreamAttempt postStreamingAttempt(
+            String system,
+            String text,
+            int maximumTokens,
+            TranslationStreamListener listener
+    ) throws Exception {
+        StreamAttempt attempt = new StreamAttempt();
+        String body = requestBody(system, text, maximumTokens, false, true);
+        String authorization = apiKey.isEmpty() ? null : "Bearer " + apiKey;
+        StringBuilder accumulated = new StringBuilder(64);
+        try (HttpJsonClient.StreamedResponse response =
+                     http.postStreaming(endpoint, body, authorization)) {
+            if (!isEventStream(response.getContentType())) {
+                // A relay that ignores "stream" answers with an ordinary JSON document. Its body is
+                // deliberately not read here: the plain path re-sends the same request and knows how
+                // to read, report and recover from it.
+                attempt.unsupported = true;
+                return attempt;
+            }
+            ServerSentEvents.read(response.getBody(), payload ->
+                    readEvent(payload, accumulated, listener, attempt));
+        } catch (HttpStatusException rejected) {
+            if (rejected.isRetryable()) {
+                // A rate limit or a server error is transient. Retrying it is the resilient
+                // provider's job, and it must not be mistaken for "this endpoint cannot stream".
+                throw rejected;
+            }
+            attempt.unsupported = true;
+            return attempt;
+        }
+        if (accumulated.length() > 0) {
+            attempt.content = accumulated.toString();
+        }
+        return attempt;
+    }
+
+    /**
+     * Handles one event. Only {@code delta.content} is translation: {@code delta.reasoning_content}
+     * is the model's chain of thought and must never be shown as the answer.
+     *
+     * @return {@code false} to stop reading, after the sentinel or a relay-side error
+     */
+    private static boolean readEvent(
+            String payload,
+            StringBuilder accumulated,
+            TranslationStreamListener listener,
+            StreamAttempt attempt
+    ) {
+        if ("[DONE]".equals(payload.trim())) {
+            return false;
+        }
+        String delta = JsonStrings.readStringPath(payload, "choices[0].delta.content");
+        if (delta == null) {
+            delta = JsonStrings.readStringPath(payload, "choices[0].message.content");
+        }
+        if (delta != null && !delta.isEmpty()) {
+            accumulated.append(delta);
+            listener.onPartialText(accumulated.toString());
+            return true;
+        }
+        if (JsonStrings.readStringPath(payload, "choices[0].delta.reasoning_content") != null) {
+            attempt.sawReasoning = true;
+            return true;
+        }
+        if (JsonStrings.readStringField(payload, "error") != null
+                || JsonStrings.readStringField(payload, "message") != null) {
+            // Relays report a failure as an ordinary event behind HTTP 200. Stop reading and let the
+            // plain path produce the message the user has always seen.
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Whether the response really is an event stream.
+     *
+     * <p>A missing content type counts as "not streaming": every endpoint that supports SSE
+     * announces it, and guessing the other way would make the client parse an ordinary JSON body as
+     * a stream.
+     */
+    private static boolean isEventStream(String contentType) {
+        return contentType != null
+                && contentType.toLowerCase(Locale.ROOT).contains("text/event-stream");
+    }
+
+    /** The system prompt of the single-text path; the batch path builds its own. */
+    private static String systemPrompt(TranslationRequest request) {
+        String target = TargetLanguage.translationInstruction(request.getTargetLanguage());
+        return "You are a professional Minecraft game-localization translator. "
+                + "Translate the user text to " + target
+                + ". Reply with only the translation, without quotes, labels, notes, or explanations. "
+                + "Preserve punctuation, whitespace, URLs, usernames, placeholders, and Minecraft formatting markers."
+                + (request.getText().indexOf('\n') >= 0
+                ? " Keep exactly the same number and order of lines." : "");
+    }
+
+    /**
+     * Completion budget for one text.
+     *
+     * <p>A fixed 512-token cap truncated long lines mid-sentence, and the clipped result was still
+     * short enough to pass {@link TranslationOutputValidator}, so it entered the persistent cache —
+     * the budget therefore scales with the input.
+     */
+    private int completionBudget(String text, boolean offline) {
+        int requestedTokens = Math.min(text.length() * 2 + 32, MAXIMUM_TOKENS_LIMIT);
+        if (offline) {
+            // The loopback llama.cpp server runs --ctx-size 1024 and shares that window
+            // between prompt and completion. Cap the completion to what is left after a
+            // conservative prompt estimate, with no floor that could overflow the context.
+            int remaining = OFFLINE_CONTEXT_TOKENS - OFFLINE_PROMPT_OVERHEAD_TOKENS
+                    - estimatePromptTokens(text);
+            return Math.max(1, Math.min(Math.max(64, requestedTokens), remaining));
+        }
+        if (reasoningModel) {
+            // This endpoint already proved it thinks before it answers, so start with the larger
+            // budget instead of spending a round trip rediscovering that on every single line.
+            return reasoningBudget();
+        }
+        // Reasoning models spend completion tokens thinking before they write the answer, so
+        // even a short input must leave room to finish. max_tokens is an upper bound rather
+        // than a reservation, so this costs nothing for models that stop early.
+        return Math.max(MINIMUM_COMPLETION_TOKENS, requestedTokens);
+    }
+
+    /** Completion budget for an endpoint that has proved it thinks before it answers. */
+    private int reasoningBudget() {
+        return Math.max(MINIMUM_COMPLETION_TOKENS,
+                Math.min(REASONING_COMPLETION_TOKENS, acceptedReasoningTokens));
     }
 
     /**
@@ -415,7 +593,20 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
 
     /** Posts one chat completion and returns the raw response body. */
     private String post(String system, String text, int maximumTokens, boolean offline) throws Exception {
-        String body = new StringBuilder(text.length() + 320)
+        String authorization = apiKey.isEmpty() ? null : "Bearer " + apiKey;
+        return http.post(
+                endpoint, requestBody(system, text, maximumTokens, offline, false), authorization);
+    }
+
+    /** One chat-completion request body; {@code streaming} selects the event-stream response form. */
+    private String requestBody(
+            String system,
+            String text,
+            int maximumTokens,
+            boolean offline,
+            boolean streaming
+    ) {
+        return new StringBuilder(text.length() + 320)
                 .append('{')
                 .append("\"model\":").append(JsonStrings.quote(model)).append(',')
                 .append("\"messages\":[")
@@ -423,10 +614,8 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
                 .append("{\"role\":\"user\",\"content\":").append(JsonStrings.quote(text)).append("}],")
                 .append("\"temperature\":0,\"max_tokens\":").append(maximumTokens).append(',')
                 .append(offline ? "\"repeat_penalty\":1.12," : "")
-                .append("\"stream\":false}")
+                .append(streaming ? "\"stream\":true}" : "\"stream\":false}")
                 .toString();
-        String authorization = apiKey.isEmpty() ? null : "Bearer " + apiKey;
-        return http.post(endpoint, body, authorization);
     }
 
     /**

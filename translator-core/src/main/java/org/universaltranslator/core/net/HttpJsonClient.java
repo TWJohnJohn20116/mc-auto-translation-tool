@@ -1,6 +1,8 @@
 package org.universaltranslator.core.net;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -116,6 +118,147 @@ public final class HttpJsonClient {
             throw TranslationEndpointUnavailableException.connectionRefused(endpoint, refused);
         } finally {
             if (!connectionReusable) {
+                connection.disconnect();
+            }
+        }
+    }
+
+    /**
+     * Posts one request and hands back the response without reading its body, with an optional
+     * {@code Authorization} header. The {@link #post} entry points come in the same two shapes.
+     *
+     * @param endpoint destination
+     * @param jsonBody request body
+     * @param authorizationHeader value of the {@code Authorization} header, or {@code null} for none
+     * @return the open response
+     * @throws IOException on a transport failure, a non-2xx status, or a refused connection
+     */
+    public StreamedResponse postStreaming(URI endpoint, String jsonBody, String authorizationHeader)
+            throws IOException {
+        Map<String, String> headers = authorizationHeader == null || authorizationHeader.isEmpty()
+                ? Collections.<String, String>emptyMap()
+                : Collections.singletonMap("Authorization", authorizationHeader);
+        return postStreaming(endpoint, jsonBody, headers);
+    }
+
+    /**
+     * Posts one request and hands back the response without reading its body.
+     *
+     * <p>Used for {@code text/event-stream} answers, which are only useful while they are still
+     * arriving. The caller owns the returned stream and must close it; until then the socket is
+     * held open.
+     *
+     * <p>A non-2xx status is reported exactly like {@link #post} reports it — the error body is read
+     * to its bound and an {@link HttpStatusException} is thrown — so a caller that falls back to the
+     * ordinary path sees the same failure type it would have seen there.
+     *
+     * @param endpoint destination
+     * @param jsonBody request body
+     * @param headers extra request headers, never {@code null}
+     * @return the open response
+     * @throws IOException on a transport failure, a non-2xx status, or a refused connection
+     */
+    public StreamedResponse postStreaming(URI endpoint, String jsonBody, Map<String, String> headers)
+            throws IOException {
+        HttpURLConnection connection = (HttpURLConnection) endpoint.toURL().openConnection();
+        boolean handedOver = false;
+        try {
+            connection.setRequestMethod("POST");
+            connection.setConnectTimeout(connectTimeoutMillis);
+            connection.setReadTimeout(readTimeoutMillis);
+            connection.setDoOutput(true);
+            connection.setInstanceFollowRedirects(false);
+            // Announced before the body is sent so a server that can stream does not fall back to
+            // buffering the answer just because the client did not say it could read it.
+            connection.setRequestProperty("Accept", "text/event-stream");
+            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            connection.setRequestProperty("User-Agent", UserAgent.VALUE);
+            if (headers != null) {
+                for (Map.Entry<String, String> header : headers.entrySet()) {
+                    if (header.getKey() != null && header.getValue() != null) {
+                        connection.setRequestProperty(header.getKey(), header.getValue());
+                    }
+                }
+            }
+            byte[] body = (jsonBody == null ? "" : jsonBody).getBytes(StandardCharsets.UTF_8);
+            connection.setFixedLengthStreamingMode(body.length);
+            try (OutputStream output = connection.getOutputStream()) {
+                output.write(body);
+            }
+
+            int status = connection.getResponseCode();
+            if (status < 200 || status >= 300) {
+                InputStream error = connection.getErrorStream();
+                String response = error == null ? "" : readBounded(error);
+                String providerError = JsonStrings.readStringField(response, "error");
+                if (providerError == null) {
+                    providerError = JsonStrings.readStringField(response, "Message");
+                }
+                throw new HttpStatusException(status, "Translation service returned HTTP " + status
+                        + (providerError == null ? "" : ": " + providerError),
+                        parseRetryAfterSeconds(connection.getHeaderField("Retry-After")));
+            }
+            InputStream stream = connection.getInputStream();
+            StreamedResponse response = new StreamedResponse(
+                    connection, status, connection.getContentType(),
+                    stream == null ? new ByteArrayInputStream(new byte[0]) : stream);
+            handedOver = true;
+            return response;
+        } catch (ConnectException refused) {
+            throw TranslationEndpointUnavailableException.connectionRefused(endpoint, refused);
+        } finally {
+            // The connection stays open only while the caller still holds the response stream.
+            if (!handedOver) {
+                connection.disconnect();
+            }
+        }
+    }
+
+    /** A response whose body is still open, so a server-sent event stream can be read as it arrives. */
+    public static final class StreamedResponse implements Closeable {
+        private final HttpURLConnection connection;
+        private final int statusCode;
+        private final String contentType;
+        private final InputStream body;
+        private boolean closed;
+
+        private StreamedResponse(
+                HttpURLConnection connection,
+                int statusCode,
+                String contentType,
+                InputStream body
+        ) {
+            this.connection = connection;
+            this.statusCode = statusCode;
+            this.contentType = contentType;
+            this.body = body;
+        }
+
+        public int getStatusCode() {
+            return statusCode;
+        }
+
+        /** Raw {@code Content-Type} header value, or {@code null} when the server sent none. */
+        public String getContentType() {
+            return contentType;
+        }
+
+        public InputStream getBody() {
+            return body;
+        }
+
+        @Override
+        public void close() throws IOException {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            try {
+                body.close();
+            } finally {
+                // The body was not necessarily read to the end — a caller that stops at [DONE] never
+                // reads the rest — so the socket cannot go back to the keep-alive pool. Tearing the
+                // connection down also releases it if the endpoint keeps the stream open.
                 connection.disconnect();
             }
         }

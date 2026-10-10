@@ -36,6 +36,7 @@ final class LegacyConfig {
     final boolean translateOther;
     final boolean translateVanilla;
     final boolean translateOutgoing;
+    final boolean streamOutgoing;
     final boolean translatePlayerNames;
     final boolean animatedUi;
     final String blockedKeywords;
@@ -80,6 +81,8 @@ final class LegacyConfig {
                 properties.getProperty("translate-vanilla", "true"));
         translateOutgoing = Boolean.parseBoolean(
                 properties.getProperty("translate-outgoing", "false"));
+        streamOutgoing = Boolean.parseBoolean(
+                properties.getProperty("stream-outgoing", "true"));
         translatePlayerNames = Boolean.parseBoolean(
                 properties.getProperty("translate-player-names", "false"));
         animatedUi = Boolean.parseBoolean(properties.getProperty("animated-ui", "true"));
@@ -213,6 +216,7 @@ final class LegacyConfig {
         properties.setProperty("translate-other", Boolean.toString(translateOther));
         properties.setProperty("translate-vanilla", Boolean.toString(translateVanilla));
         properties.setProperty("translate-outgoing", Boolean.toString(translateOutgoing));
+        properties.setProperty("stream-outgoing", Boolean.toString(streamOutgoing));
         properties.setProperty("translate-player-names", Boolean.toString(translatePlayerNames));
         properties.setProperty("blocked-keywords", boundedKeywords(blockedKeywords));
         properties.setProperty("target-language", targetLanguage.trim());
@@ -342,6 +346,7 @@ final class LegacyConfig {
         properties.setProperty("translate-other", "true");
         properties.setProperty("translate-vanilla", "true");
         properties.setProperty("translate-outgoing", "false");
+        properties.setProperty("stream-outgoing", "true");
         properties.setProperty("translate-player-names", "false");
         properties.setProperty("animated-ui", "true");
         properties.setProperty("blocked-keywords", "");
@@ -377,6 +382,7 @@ final class LegacyConfig {
         properties.setProperty("translate-other", Boolean.toString(translateOther));
         properties.setProperty("translate-vanilla", Boolean.toString(translateVanilla));
         properties.setProperty("translate-outgoing", Boolean.toString(translateOutgoing));
+        properties.setProperty("stream-outgoing", Boolean.toString(streamOutgoing));
         properties.setProperty("translate-player-names", Boolean.toString(translatePlayerNames));
         properties.setProperty("animated-ui", Boolean.toString(animatedUi));
         properties.setProperty("blocked-keywords", blockedKeywords);
