@@ -44,8 +44,7 @@ public final class CoreSelfTest {
         validatesSmallModelOutputs();
         preservesRecentUserMessages();
         cachesDynamicTemplates();
-        deduplicatesConcurrentRequests();
-        deduplicatesRefreshedProtectedLiterals();
+        deduplicatesConcurrentRequests();        deduplicatesRefreshedProtectedLiterals();
         separatesRequestsWithDifferentProtectedLiterals();
         completesQueuedRequestsWhenClosed();
         fallsBackToOriginalOnFailure();
@@ -94,6 +93,12 @@ public final class CoreSelfTest {
         formatsSecretFreeDiagnostics();
         localizesDiagnosticsAndRuntimeStatus();
         handlesMalformedPlaceholderTokensGracefully();
+        countsTranslationStatistics();
+        classifiesTranslationFailures();
+        persistsTranslationStatistics();
+        redactsDebugLogSecrets();
+        writesAndRotatesTheDebugLog();
+        exportsADiagnosticsBundle();
         System.out.println("CoreSelfTest: all checks passed");
     }
 
@@ -849,7 +854,8 @@ public final class CoreSelfTest {
     }
 
     private static void laysOutInPlaceSettingsLists() {
-        assertEquals(16, SettingsSelectionList.values(
+        // 16 historical providers plus Azure OpenAI, DeepL, Gemini and Claude.
+        assertEquals(20, SettingsSelectionList.values(
                 SettingsSelectionList.Kind.PROVIDER).length);
         assertEquals(10, SettingsSelectionList.values(
                 SettingsSelectionList.Kind.TARGET_LANGUAGE).length);
@@ -1396,6 +1402,319 @@ public final class CoreSelfTest {
             return request.getText()
                     .replace("Welcome", "欢迎")
                     .replace("coins", "硬币");
+        }
+    }
+
+    /**
+     * The counters, the cache rate, the percentiles and the failure classification are pure logic
+     * and are checked directly.
+     */
+    private static void countsTranslationStatistics() {
+        TranslationStats stats = TranslationStats.isolated();
+        assertCount(0L, stats.snapshot().requests());
+        assertCount(0L, stats.snapshot().cacheHitRate());
+        stats.recordCacheHit();
+        stats.recordCacheMiss();
+        stats.recordSuccess("deepl:host/path", 100L);
+        stats.recordSuccess("deepl:host/path", 300L);
+        stats.recordFailure("deepl:host/path", TranslationStats.REASON_AUTH, 200L);
+        TranslationStats.Snapshot snapshot = stats.snapshot();
+        assertCount(3L, snapshot.requests());
+        assertCount(2L, snapshot.successes());
+        assertCount(1L, snapshot.failures());
+        assertCount(1L, snapshot.cacheHits());
+        assertCount(1L, snapshot.cacheMisses());
+        assertCount(50L, snapshot.cacheHitRate());
+        // Samples are 100, 200 and 300 ms.
+        assertCount(200L, snapshot.averageLatencyMillis());
+        assertCount(200L, snapshot.percentileLatencyMillis(50));
+        assertCount(300L, snapshot.percentileLatencyMillis(95));
+        assertCount(3, snapshot.latencySampleCount());
+        assertEquals(Long.valueOf(1L),
+                snapshot.failuresByReason().get(TranslationStats.REASON_AUTH));
+        assertCount(1, snapshot.providers().size());
+        assertCount(3L, snapshot.providers().get(0).requests());
+        assertCount(200L, snapshot.providers().get(0).averageLatencyMillis());
+        // A provider that was never recorded is simply absent rather than invented.
+        assertTrue(!snapshot.failuresByReason().containsKey(TranslationStats.REASON_TIMEOUT));
+        // The token totals come from the protocol-specific usage shapes.
+        stats.recordUsage("deepl:host/path",
+                "{\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":7}}");
+        stats.recordUsage("gemini:model",
+                "{\"usageMetadata\":{\"promptTokenCount\":5,\"candidatesTokenCount\":3}}");
+        stats.recordUsage("claude:model",
+                "{\"usage\":{\"input_tokens\":2,\"output_tokens\":9}}");
+        stats.recordUsage("deepl:host/path", "{\"not\":\"a usage object\"}");
+        assertCount(18L, stats.snapshot().promptTokens());
+        assertCount(19L, stats.snapshot().completionTokens());
+        // The exported report must not carry an endpoint, which is where a provider id puts one.
+        assertTrue(TranslationStats.safeProviderId("libretranslate:https://host:5000/translate")
+                .endsWith("/..."));
+        assertEquals("libretranslate:https://host:5000/...",
+                TranslationStats.safeProviderId("libretranslate:https://host:5000/translate"));
+        assertTrue(!TranslationStats.safeProviderId("libretranslate:https://host:5000/translate")
+                .contains("/translate"));
+        assertEquals("azure-openai:my-deployment",
+                TranslationStats.safeProviderId("azure-openai:my-deployment"));
+        assertTrue(TranslationStats.safeProviderId(null).equals("unknown"));
+        stats.reset();
+        assertCount(0L, stats.snapshot().requests());
+        assertCount(0L, stats.snapshot().promptTokens());
+        assertCount(0, stats.snapshot().providers().size());
+    }
+
+    /** Every failure kind the coordinator can see has to land in exactly one bucket. */
+    private static void classifiesTranslationFailures() {
+        assertEquals(TranslationStats.REASON_AUTH,
+                TranslationStats.reasonOf(new org.universaltranslator.core.net.HttpStatusException(
+                        401, "unauthorized")));
+        assertEquals(TranslationStats.REASON_AUTH,
+                TranslationStats.reasonOf(new org.universaltranslator.core.net.HttpStatusException(
+                        403, "forbidden")));
+        assertEquals(TranslationStats.REASON_RATE_LIMIT,
+                TranslationStats.reasonOf(new org.universaltranslator.core.net.HttpStatusException(
+                        429, "slow down")));
+        assertEquals(TranslationStats.REASON_SERVER,
+                TranslationStats.reasonOf(new org.universaltranslator.core.net.HttpStatusException(
+                        503, "unavailable")));
+        assertEquals(TranslationStats.REASON_CLIENT,
+                TranslationStats.reasonOf(new org.universaltranslator.core.net.HttpStatusException(
+                        400, "bad request")));
+        assertEquals(TranslationStats.REASON_TIMEOUT, TranslationStats.reasonOf(
+                new java.net.SocketTimeoutException("read timed out")));
+        assertEquals(TranslationStats.REASON_NETWORK,
+                TranslationStats.reasonOf(new java.io.IOException("connection reset")));
+        assertEquals(TranslationStats.REASON_INVALID_OUTPUT,
+                TranslationStats.reasonOf(new IllegalArgumentException("too long")));
+        assertEquals(TranslationStats.REASON_OTHER,
+                TranslationStats.reasonOf(new IllegalStateException("no content")));
+        // A wrapped cause is classified by what is inside it, and a null has its own bucket.
+        assertEquals(TranslationStats.REASON_AUTH, TranslationStats.reasonOf(new RuntimeException(
+                new org.universaltranslator.core.net.HttpStatusException(401, "unauthorized"))));
+        assertEquals(TranslationStats.REASON_OTHER, TranslationStats.reasonOf(null));
+    }
+
+    /** The counters survive a restart, and an unusable file never becomes a translation failure. */
+    private static void persistsTranslationStatistics() throws Exception {
+        Path file = Files.createTempFile("universal-translator-stats", ".properties");
+        Files.deleteIfExists(file);
+        Path temporary = file.resolveSibling(file.getFileName().toString() + ".tmp");
+        try {
+            TranslationStats first = TranslationStats.isolated();
+            first.attach(file);
+            first.recordCacheHit();
+            first.recordCacheMiss();
+            first.recordSuccess("libretranslate:https://host/translate", 120L);
+            first.recordFailure("libretranslate:https://host/translate",
+                    TranslationStats.REASON_RATE_LIMIT, 80L);
+            first.recordUsage("libretranslate:https://host/translate",
+                    "{\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":7}}");
+            first.flush();
+            assertTrue(Files.exists(file));
+
+            TranslationStats second = TranslationStats.isolated();
+            second.attach(file);
+            TranslationStats.Snapshot snapshot = second.snapshot();
+            assertCount(2L, snapshot.requests());
+            assertCount(1L, snapshot.successes());
+            assertCount(1L, snapshot.failures());
+            assertCount(1L, snapshot.cacheHits());
+            assertCount(1L, snapshot.cacheMisses());
+            assertCount(11L, snapshot.promptTokens());
+            assertCount(7L, snapshot.completionTokens());
+            assertCount(1, snapshot.providers().size());
+            assertEquals("libretranslate:https://host/translate", snapshot.providers().get(0).id());
+            assertCount(100L, snapshot.providers().get(0).averageLatencyMillis());
+            assertEquals(Long.valueOf(1L),
+                    snapshot.failuresByReason().get(TranslationStats.REASON_RATE_LIMIT));
+
+            // A malformed file starts the counters at zero rather than failing the platform.
+            String malformed = "bad=" + '\\' + "uZZZZ";
+            Files.write(file, malformed.getBytes(StandardCharsets.UTF_8));
+            TranslationStats third = TranslationStats.isolated();
+            third.attach(file);
+            assertCount(0L, third.snapshot().requests());
+
+            // An unwritable target and an unattached accumulator are both no-ops, not failures.
+            TranslationStats unattached = TranslationStats.isolated();
+            unattached.attach(null);
+            unattached.recordSuccess("offline-llama:1", 5L);
+            unattached.flush();
+            assertCount(1L, unattached.snapshot().requests());
+        } finally {
+            Files.deleteIfExists(file);
+            Files.deleteIfExists(temporary);
+        }
+    }
+
+    /** Every credential shape the debug log can be handed has to come out redacted. */
+    private static void redactsDebugLogSecrets() {
+        String openAiKey = "sk-abcdefghijklmnopqrstuvwxyz012345";
+        String genericKey = "0123456789abcdef0123456789abcdef";
+        String deeplKey = "12345678-1234-1234-1234-123456789012:fx";
+        assertTrue(!DebugLog.redact("Authorization: Bearer " + openAiKey).contains(openAiKey));
+        assertTrue(!DebugLog.redact("Authorization: Bearer " + genericKey).contains(genericKey));
+        assertTrue(!DebugLog.redact("api-key=" + genericKey).contains(genericKey));
+        assertTrue(!DebugLog.redact("x-api-key: " + genericKey).contains(genericKey));
+        assertTrue(!DebugLog.redact("x-goog-api-key=" + genericKey).contains(genericKey));
+        assertTrue(!DebugLog.redact("anthropic-version header, x-api-key " + genericKey)
+                .contains(genericKey));
+        // A credential name that carries a trailing -id, as several providers spell their key.
+        assertTrue(!DebugLog.redact("aliyun-access-key-id=" + genericKey).contains(genericKey));
+        assertTrue(!DebugLog.redact("tencent-secret-id=" + genericKey).contains(genericKey));
+        // A provider-specific name that no shared rule knows about, followed by a token-like value.
+        assertTrue(!DebugLog.redact("DeepL-Auth-Key " + deeplKey).contains(deeplKey));
+        // A bare long base64 run is redacted even without a credential name in front of it.
+        String base64 = "aGVsbG8gd29ybGQgdGhpcyBpcyBhIGxvbmdlciBzZWNyZXQ=";
+        assertTrue(!DebugLog.redact("payload " + base64).contains(base64));
+        // Endpoints are excluded from the log and the bundle, so a URL never survives.
+        assertTrue(!DebugLog.redact("https://api.example.com/v1/chat/completions")
+                .contains("api.example.com"));
+        // Ordinary text stays readable, otherwise the log would be useless.
+        assertEquals("Hello world", DebugLog.redact("Hello world"));
+        assertTrue(DebugLog.redact("the token expired").contains("expired"));
+        // Only the host of an endpoint is kept, never the path or a query.
+        assertEquals("api-free.deepl.com",
+                DebugLog.hostOnly("https://api-free.deepl.com/v2/translate?x=1"));
+        assertEquals("host:5000", DebugLog.hostOnly("http://user:secret@host:5000/translate"));
+        assertEquals("", DebugLog.hostOnly(null));
+        // The preview is flattened and bounded.
+        assertEquals("a b", DebugLog.preview("a\nb"));
+        String longText = new String(new char[400]).replace('\0', 'x');
+        assertCount(DebugLog.MAXIMUM_PREVIEW_CHARS + 3, DebugLog.preview(longText).length());
+    }
+
+    /** The trace is only written when it is on, and it rotates instead of growing without bound. */
+    private static void writesAndRotatesTheDebugLog() throws Exception {
+        Path directory = Files.createTempDirectory("universal-translator-debug");
+        Path log = directory.resolve(DebugLog.FILE_NAME);
+        Path rotated = directory.resolve(DebugLog.ROTATED_FILE_NAME);
+        try {
+            DebugLog off = DebugLog.isolated();
+            off.configure(log, false);
+            assertFalse(off.isEnabled());
+            off.logRequest("libretranslate", "n/a", "https://host/translate", "CHAT", "hello");
+            off.logFailure("libretranslate", new java.io.IOException("connection reset"));
+            off.logStreamEvent("gemini:model", "delta", 3);
+            assertTrue(!Files.exists(log));
+
+            DebugLog on = DebugLog.isolated();
+            on.configure(log, true);
+            assertTrue(on.isEnabled());
+            on.logRequest("deepl", "latency_optimized",
+                    "https://api-free.deepl.com/v2/translate", "CHAT", "Hello world");
+            on.logFailure("deepl",
+                    new org.universaltranslator.core.net.HttpStatusException(429, "slow down"));
+            on.logRetry("deepl", 1, 200L,
+                    new org.universaltranslator.core.net.HttpStatusException(503, "unavailable"));
+            on.logStreamEvent("gemini:model", "delta", 7);
+            String content = new String(Files.readAllBytes(log), StandardCharsets.UTF_8);
+            assertTrue(content.contains("request"));
+            assertTrue(content.contains("provider=deepl"));
+            assertTrue(content.contains("host=api-free.deepl.com"));
+            assertTrue(content.contains("model=latency_optimized"));
+            assertTrue(content.contains("kind=CHAT"));
+            assertTrue(content.contains("length=11"));
+            assertTrue(content.contains("preview=Hello world"));
+            assertTrue(content.contains("reason=rate-limit"));
+            assertTrue(content.contains("reason=server"));
+            assertTrue(content.contains("delay-ms=200"));
+            assertTrue(content.contains("event=delta"));
+            assertTrue(content.contains("characters=7"));
+            // The endpoint's path never reaches the log.
+            assertTrue(!content.contains("/v2/translate"));
+
+            // Once the file passes the limit it is moved aside and a fresh one is started, so a long
+            // session keeps exactly one rotated file.
+            Files.write(log, new byte[(int) DebugLog.MAXIMUM_BYTES + 1]);
+            on.log("after-rotation");
+            assertTrue(Files.exists(rotated));
+            String after = new String(Files.readAllBytes(log), StandardCharsets.UTF_8);
+            assertTrue(after.contains("after-rotation"));
+            assertTrue(!after.contains("preview=Hello world"));
+            assertCount(DebugLog.MAXIMUM_BYTES + 1, Files.size(rotated));
+        } finally {
+            Files.deleteIfExists(log);
+            Files.deleteIfExists(rotated);
+            Files.deleteIfExists(directory);
+        }
+    }
+
+    /** The exported bundle holds the four entries and no credential or endpoint. */
+    private static void exportsADiagnosticsBundle() throws Exception {
+        Path directory = Files.createTempDirectory("universal-translator-bundle");
+        Path configFile = directory.resolve("universal-translator.properties");
+        Path logFile = directory.resolve(DebugLog.FILE_NAME);
+        try {
+            String genericKey = "0123456789abcdef0123456789abcdef";
+            Files.write(configFile, ("llm-api-key=" + genericKey
+                    + "\nllm-api-endpoint=https://api.example.com/v1\n")
+                    .getBytes(StandardCharsets.UTF_8));
+            Files.write(logFile, ("Authorization: Bearer sk-abcdefghijklmnopqrstuvwxyz012345\n")
+                    .getBytes(StandardCharsets.UTF_8));
+
+            Path archive = DiagnosticsBundleExporter.export(directory, configFile, logFile,
+                    "fabric-1.21.x", Collections.singletonList("diagnostic line"));
+            assertTrue(Files.exists(archive));
+            Map<String, String> entries = readArchive(archive);
+            assertEquals(Integer.valueOf(4), Integer.valueOf(entries.size()));
+            for (String name : DiagnosticsBundleExporter.entryNames()) {
+                assertTrue(entries.containsKey(name));
+            }
+            assertTrue(entries.get("environment.txt").contains("Mod version:"));
+            assertTrue(entries.get("environment.txt").contains("fabric-1.21.x"));
+            assertTrue(entries.get("diagnostics.txt").contains("diagnostic line"));
+            assertTrue(entries.get("diagnostics.txt").contains("Statistics: requests="));
+            // The shared rules replace an assigned credential with [hidden]; the point is that the
+            // value is gone, whichever placeholder was used.
+            assertTrue(entries.get("config.properties").contains("llm-api-key="));
+            assertTrue(entries.get("config.properties").contains("[hidden]"));
+            assertTrue(!entries.get("config.properties").contains(genericKey));
+            assertTrue(!entries.get("config.properties").contains("api.example.com"));
+            assertTrue(!entries.get("debug.log")
+                    .contains("sk-abcdefghijklmnopqrstuvwxyz012345"));
+
+            // A missing log is reported rather than failing the export.
+            Path withoutLog = DiagnosticsBundleExporter.export(directory, configFile,
+                    directory.resolve("absent.log"), "fabric-1.21.x", null);
+            Map<String, String> second = readArchive(withoutLog);
+            assertTrue(second.get("debug.log").contains("no log was written"));
+            assertTrue(second.get("diagnostics.txt").contains("Diagnostics unavailable"));
+        } finally {
+            File[] leftovers = directory.toFile().listFiles();
+            if (leftovers != null) {
+                for (File leftover : leftovers) {
+                    leftover.delete();
+                }
+            }
+            Files.deleteIfExists(directory);
+        }
+    }
+
+    /** Reads a zip archive into a name to text map. */
+    private static Map<String, String> readArchive(Path archive) throws Exception {
+        Map<String, String> entries = new java.util.LinkedHashMap<String, String>();
+        try (java.util.zip.ZipInputStream zip =
+                     new java.util.zip.ZipInputStream(Files.newInputStream(archive))) {
+            java.util.zip.ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+                byte[] chunk = new byte[1024];
+                int read = zip.read(chunk);
+                while (read > 0) {
+                    buffer.write(chunk, 0, read);
+                    read = zip.read(chunk);
+                }
+                entries.put(entry.getName(),
+                        new String(buffer.toByteArray(), StandardCharsets.UTF_8));
+            }
+        }
+        return entries;
+    }
+
+    private static void assertCount(long expected, long actual) {
+        if (expected != actual) {
+            throw new AssertionError("Expected <" + expected + "> but was <" + actual + ">");
         }
     }
 

@@ -2,6 +2,8 @@ package org.universaltranslator.core.provider;
 
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationProviderCatalog;
+import org.universaltranslator.core.TranslationPrompt;
+import org.universaltranslator.core.TranslationQuality;
 import org.universaltranslator.core.TranslationRequest;
 import org.universaltranslator.core.TranslationStreamListener;
 import org.universaltranslator.core.TextKind;
@@ -17,12 +19,15 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.Writer;
 import java.net.InetAddress;
 import java.net.ConnectException;
 import java.net.URI;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -65,6 +70,21 @@ public final class ProviderSelfTest {
         readsServerSentEventFramingEdgeCases();
         derivesModelCatalogEndpoint();
         fetchesModelCatalogWithGet();
+        keepsTheStandardPromptCharacterForCharacter();
+        separatesTheQualityModes();
+        changesOnlyThePromptWhenTheQualityModeChanges();
+        appliesTheQualityModeToTheBatchPrompt();
+        roundTripsTheQualitySetting();
+        replacesTheBuiltInPromptWithACustomOne();
+        expandsTheSupportedPlaceholders();
+        acceptsEditorNewlineEscapes();
+        sendsAndPersistsTheCustomPrompt();
+        translatesThroughDeepL();
+        translatesThroughGeminiAndFallsBackFromANonStreamingAnswer();
+        translatesThroughClaude();
+        translatesThroughAzureOpenAi();
+        dispatchesTheConnectionTestPerProtocol();
+        createsEveryNativeProviderFromTheConfiguration();
         System.out.println("ProviderSelfTest: all checks passed");
     }
 
@@ -981,7 +1001,8 @@ public final class ProviderSelfTest {
             provider = TranslationProviderCatalog.next(provider);
             count++;
         } while (!"offline".equals(provider) && count < 100);
-        assertEquals(16, count);
+        // 16 historical providers plus Azure OpenAI, DeepL, Gemini and Claude.
+        assertEquals(20, count);
     }
 
     private static void keepsLlmEditorCredentialsProviderSpecific() {
@@ -1005,6 +1026,10 @@ public final class ProviderSelfTest {
         assertTrue(TranslationProviderCatalog.usesLlmEditor("volcengine-ark"));
         assertTrue(TranslationProviderCatalog.usesLlmEditor("zhipu"));
         assertTrue(TranslationProviderCatalog.usesLlmEditor("openai-compatible"));
+        assertTrue(TranslationProviderCatalog.usesLlmEditor("azure-openai"));
+        assertTrue(TranslationProviderCatalog.usesLlmEditor("deepl"));
+        assertTrue(TranslationProviderCatalog.usesLlmEditor("gemini"));
+        assertTrue(TranslationProviderCatalog.usesLlmEditor("claude"));
         assertFalse(TranslationProviderCatalog.usesLlmEditor("offline"));
     }
 
@@ -1016,6 +1041,695 @@ public final class ProviderSelfTest {
         assertTrue(authorization.startsWith("HMAC-SHA256 Credential=ACCESS/20260813/cn-north-1/translate/request"));
         assertFalse(authorization.contains("TOP-SECRET"));
         assertEquals(64, headers.get("X-Content-Sha256").length());
+    }
+
+    /**
+     * The default quality mode must reproduce the historical prompt character for character. The
+     * setting exists to add modes, not to change what an existing configuration already sends.
+     */
+    private static void keepsTheStandardPromptCharacterForCharacter() {
+        TranslationRequest single = new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT);
+        assertEquals(
+                "You are a professional Minecraft game-localization translator. "
+                        + "Translate the user text to Traditional Chinese (Taiwan, zh-TW). "
+                        + "Use Traditional Chinese characters. Reply with only the translation, "
+                        + "without quotes, labels, notes, or explanations. Preserve punctuation, "
+                        + "whitespace, URLs, usernames, placeholders, and Minecraft formatting markers.",
+                TranslationPrompt.single(TranslationPrompt.Settings.standard(), single));
+        TranslationRequest multi = new TranslationRequest(
+                "Hello\nWelcome back", "auto", "zh-TW", TextKind.CHAT);
+        assertTrue(TranslationPrompt.single(TranslationPrompt.Settings.standard(), multi)
+                .endsWith(" Keep exactly the same number and order of lines."));
+        assertEquals(
+                "You are a professional Minecraft game-localization translator. "
+                        + "Translate every numbered line of the user message to Traditional Chinese "
+                        + "(Taiwan, zh-TW). Use Traditional Chinese characters. Reply with the same "
+                        + "numbering: exactly one translated line per input line, in the same order, "
+                        + "without merging, splitting, reordering or omitting lines. Preserve "
+                        + "punctuation, whitespace, URLs, usernames, placeholders and Minecraft "
+                        + "formatting markers. Reply with only the numbered translations, without "
+                        + "quotes, labels, notes or explanations.",
+                TranslationPrompt.batch(TranslationPrompt.Settings.standard(), multi));
+        // A default configuration must not perturb the provider id either: the coordinator derives
+        // its cache key from it, so changing it would invalidate every user's cache on upgrade.
+        assertEquals("", TranslationPrompt.Settings.standard().signature());
+        assertTrue(TranslationPrompt.Settings.standard().isDefault());
+    }
+
+    /** The three modes must be distinct, ordered by strictness, and each keep the output contract. */
+    private static void separatesTheQualityModes() {
+        assertEquals(TranslationQuality.STANDARD, TranslationQuality.fromConfig("STANDARD"));
+        assertEquals(TranslationQuality.HIGH, TranslationQuality.fromConfig(" high "));
+        assertEquals(TranslationQuality.DEFAULT, TranslationQuality.fromConfig("turbo"));
+        assertEquals(TranslationQuality.DEFAULT, TranslationQuality.fromConfig(null));
+        assertEquals(TranslationQuality.HIGH, TranslationQuality.STANDARD.next());
+        assertEquals(TranslationQuality.FAST, TranslationQuality.HIGH.next());
+        assertEquals(TranslationQuality.STANDARD, TranslationQuality.FAST.next());
+
+        TranslationRequest request = new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT);
+        String fast = TranslationPrompt.single(
+                new TranslationPrompt.Settings(TranslationQuality.FAST, ""), request);
+        String standard = TranslationPrompt.single(
+                new TranslationPrompt.Settings(TranslationQuality.STANDARD, ""), request);
+        String high = TranslationPrompt.single(
+                new TranslationPrompt.Settings(TranslationQuality.HIGH, ""), request);
+        assertTrue(fast.length() < standard.length());
+        assertTrue(standard.length() < high.length());
+        assertTrue(high.contains("Preserve the tone, register and terminology of the original"));
+        assertTrue(high.contains("Do not add, remove, reorder or summarize any meaning"));
+        // Every mode still demands the translation alone, which is what ProtectedText relies on.
+        for (String prompt : Arrays.asList(fast, standard, high)) {
+            assertTrue(prompt.contains("only the translation") || prompt.contains("only the numbered"));
+            assertTrue(prompt.contains("Traditional Chinese (Taiwan, zh-TW)"));
+        }
+    }
+
+    /**
+     * A non-default quality mode must change the system message and nothing else: the temperature,
+     * the completion budget and the streaming flag are the same bytes the default sends.
+     */
+    private static void changesOnlyThePromptWhenTheQualityModeChanges() throws Exception {
+        ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        final List<String> bodies = Collections.synchronizedList(new ArrayList<String>());
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread thread = new Thread(() -> {
+            try {
+                for (int index = 0; index < 2; index++) {
+                    try (Socket socket = server.accept()) {
+                        bodies.add(readRequest(socket.getInputStream(),
+                                "POST /v1/chat/completions HTTP/1.").body);
+                        writeResponse(socket.getOutputStream(), 200,
+                                "{\"choices\":[{\"message\":{\"content\":\"你好\"}}]}");
+                    }
+                }
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-quality");
+        thread.setDaemon(true);
+        thread.start();
+        try {
+            String endpoint = "http://127.0.0.1:" + server.getLocalPort() + "/v1/chat/completions";
+            OpenAiChatTranslationProvider standard = new OpenAiChatTranslationProvider(
+                    endpoint, "", "quality-model", "openai-compatible");
+            OpenAiChatTranslationProvider high = new OpenAiChatTranslationProvider(
+                    endpoint, "", "quality-model", "openai-compatible",
+                    new TranslationPrompt.Settings(TranslationQuality.HIGH, ""));
+            assertEquals("你好", standard.translate(
+                    new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT)));
+            assertEquals("你好", high.translate(
+                    new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT)));
+            assertEquals("openai-compatible:quality-model", standard.id());
+            assertFalse(standard.id().equals(high.id()));
+        } finally {
+            server.close();
+            thread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local quality-mode test server failed", serverFailure.get());
+        }
+        assertEquals(2, bodies.size());
+        String standardSystem = JsonStrings.readStringPath(bodies.get(0), "messages[0].content");
+        String highSystem = JsonStrings.readStringPath(bodies.get(1), "messages[0].content");
+        assertFalse(standardSystem.equals(highSystem));
+        assertTrue(highSystem.contains("Preserve the tone, register and terminology"));
+        for (String body : bodies) {
+            assertTrue(body.contains("\"temperature\":0,"));
+            assertTrue(body.contains("\"max_tokens\":512"));
+            assertTrue(body.contains("\"stream\":false"));
+        }
+    }
+
+    /** The numbered batch path builds its own prompt, so the quality mode has to reach it too. */
+    private static void appliesTheQualityModeToTheBatchPrompt() throws Exception {
+        ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        AtomicReference<String> body = new AtomicReference<String>();
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread serverThread = new Thread(() -> {
+            try (Socket socket = server.accept()) {
+                body.set(readRequest(socket.getInputStream(),
+                        "POST /v1/chat/completions HTTP/1.").body);
+                writeResponse(socket.getOutputStream(), 200,
+                        "{\"choices\":[{\"message\":{\"content\":\"1. 你好\\n2. 歡迎回來\"}}]}");
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-batch-quality");
+        serverThread.setDaemon(true);
+        serverThread.start();
+        try {
+            OpenAiChatTranslationProvider provider = new OpenAiChatTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v1/chat/completions",
+                    "", "batch-quality-model", "openai-compatible",
+                    new TranslationPrompt.Settings(TranslationQuality.HIGH, ""));
+            provider.setBatchWindowMillis(300L);
+            AtomicReference<String> first = new AtomicReference<String>();
+            AtomicReference<Throwable> failure = new AtomicReference<Throwable>();
+            Thread one = new Thread(() -> {
+                try {
+                    first.set(provider.translate(new TranslationRequest(
+                            "Hello", "auto", "zh-TW", TextKind.CHAT)));
+                } catch (Throwable problem) {
+                    failure.compareAndSet(null, problem);
+                }
+            }, "provider-self-test-batch-quality-one");
+            Thread two = new Thread(() -> {
+                try {
+                    provider.translate(new TranslationRequest(
+                            "Welcome back", "auto", "zh-TW", TextKind.CHAT));
+                } catch (Throwable problem) {
+                    failure.compareAndSet(null, problem);
+                }
+            }, "provider-self-test-batch-quality-two");
+            one.setDaemon(true);
+            two.setDaemon(true);
+            one.start();
+            two.start();
+            one.join(5000);
+            two.join(5000);
+            if (failure.get() != null) {
+                throw new AssertionError("Batched quality-mode translation failed", failure.get());
+            }
+            assertEquals("你好", first.get());
+            assertTrue(body.get().contains("1. Hello"));
+            assertTrue(body.get().contains("2. Welcome back"));
+        } finally {
+            server.close();
+            serverThread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local batch quality test server failed", serverFailure.get());
+        }
+        String system = JsonStrings.readStringPath(body.get(), "messages[0].content");
+        assertTrue(system.contains("Preserve the tone, register and terminology"));
+        assertTrue(system.contains("Reply with the same numbering"));
+    }
+
+    /**
+     * The quality key must survive the platform configuration round trip, and a settings screen
+     * holding an older snapshot must not be able to write a stale value back over a newer one.
+     */
+    private static void roundTripsTheQualitySetting() throws Exception {
+        Properties values = new Properties();
+        OnlineProviderConfig.applyDefaults(values);
+        assertEquals(TranslationQuality.STANDARD,
+                OnlineProviderConfig.from(values).translationQuality());
+        values.setProperty("translation-quality", "high");
+        assertEquals(TranslationQuality.HIGH,
+                OnlineProviderConfig.from(values).translationQuality());
+        // A configuration written by a newer build, or a typo, must not stop the mod from starting.
+        values.setProperty("translation-quality", "turbo");
+        assertEquals(TranslationQuality.DEFAULT,
+                OnlineProviderConfig.from(values).translationQuality());
+
+        Properties written = new Properties();
+        OnlineProviderConfig.applyPromptSettings(written, TranslationQuality.HIGH, "");
+        assertEquals("high", written.getProperty("translation-quality"));
+        assertEquals(TranslationQuality.HIGH,
+                OnlineProviderConfig.from(written).translationQuality());
+
+        Path file = Files.createTempFile("universal-translator-quality", ".properties");
+        try {
+            Properties onDisk = new Properties();
+            onDisk.setProperty("translation-quality", "high");
+            onDisk.setProperty("target-language", "zh-TW");
+            try (Writer writer = Files.newBufferedWriter(file, StandardCharsets.UTF_8)) {
+                onDisk.store(writer, "test");
+            }
+            Properties stale = new Properties();
+            stale.setProperty("translation-quality", "fast");
+            stale.setProperty("target-language", "en");
+            OnlineProviderConfig.preservePromptSettings(file, stale);
+            // Only the advanced keys are refreshed; the settings screen still owns the rest.
+            assertEquals("high", stale.getProperty("translation-quality"));
+            assertEquals("en", stale.getProperty("target-language"));
+            // An unreadable file leaves the snapshot alone instead of failing the save.
+            OnlineProviderConfig.preservePromptSettings(
+                    file.resolveSibling("universal-translator-missing.properties"), stale);
+            assertEquals("high", stale.getProperty("translation-quality"));
+            OnlineProviderConfig.preservePromptSettings(null, stale);
+            assertEquals("high", stale.getProperty("translation-quality"));
+        } finally {
+            Files.deleteIfExists(file);
+        }
+    }
+
+    /**
+     * A non-empty custom prompt replaces the built-in one, but the two contracts the rest of the
+     * pipeline depends on are appended whatever the user wrote: the model must answer with the
+     * translation alone (or {@code ProtectedText} restoration breaks) and must keep one output line
+     * per input line (or the numbered batch protocol breaks).
+     */
+    private static void replacesTheBuiltInPromptWithACustomOne() {
+        TranslationRequest single = new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT);
+        TranslationPrompt.Settings custom = new TranslationPrompt.Settings(
+                TranslationQuality.STANDARD, "Translate to {target} for a Minecraft player.");
+        String prompt = TranslationPrompt.single(custom, single);
+        assertTrue(prompt.startsWith("Translate to 繁體中文 (zh-TW) for a Minecraft player."));
+        assertFalse(prompt.contains("professional Minecraft game-localization translator"));
+        assertTrue(prompt.contains("Reply with only the translation"));
+        assertTrue(prompt.contains("Preserve punctuation"));
+
+        TranslationRequest multi = new TranslationRequest("a\nb", "auto", "zh-TW", TextKind.CHAT);
+        assertTrue(TranslationPrompt.single(custom, multi)
+                .endsWith(" Keep exactly the same number and order of lines."));
+        String batch = TranslationPrompt.batch(custom, multi);
+        assertTrue(batch.startsWith("Translate to 繁體中文 (zh-TW) for a Minecraft player."));
+        assertTrue(batch.contains(
+                "Reply with the same numbering: exactly one translated line per input line"));
+
+        assertTrue(custom.hasCustomSystemPrompt());
+        assertFalse(TranslationPrompt.Settings.standard().hasCustomSystemPrompt());
+        // An all-whitespace value is not an override; it must leave the built-in prompt in place.
+        TranslationPrompt.Settings blank = new TranslationPrompt.Settings(
+                TranslationQuality.STANDARD, "   ");
+        assertEquals("", blank.customSystemPrompt());
+        assertFalse(blank.hasCustomSystemPrompt());
+        assertEquals("", blank.signature());
+        // A custom prompt has to move the cache key, or a later request would be served a
+        // translation produced under the built-in instructions.
+        assertFalse(custom.signature().isEmpty());
+    }
+
+    /** Every documented placeholder is expanded, and an unknown one is left untouched. */
+    private static void expandsTheSupportedPlaceholders() {
+        TranslationRequest request = new TranslationRequest(
+                "Hello", "en", "zh-TW", TextKind.SCOREBOARD_LINE);
+        TranslationPrompt.Settings custom = new TranslationPrompt.Settings(
+                TranslationQuality.HIGH, "{source}->{target} kind={kind} mode={mode} unknown={nope}");
+        String prompt = TranslationPrompt.single(custom, request);
+        assertTrue(prompt.contains("English (en)->繁體中文 (zh-TW)"));
+        assertTrue(prompt.contains("kind=SCOREBOARD_LINE"));
+        assertTrue(prompt.contains("mode=high"));
+        assertTrue(prompt.contains("unknown={nope}"));
+        // An auto-detected source says so instead of naming a language.
+        assertTrue(TranslationPrompt.single(custom, new TranslationRequest(
+                "Hello", "auto", "en", TextKind.CHAT)).contains("auto-detect->English (en)"));
+    }
+
+    /** The in-game editor is single-line, so {@code \n} typed into it means a line break. */
+    private static void acceptsEditorNewlineEscapes() {
+        assertEquals("line one\nline two", TranslationPrompt.fromEditorText("line one\\nline two"));
+        assertEquals("line one\\nline two", TranslationPrompt.toEditorText("line one\nline two"));
+        assertEquals("", TranslationPrompt.fromEditorText(null));
+        assertEquals("", TranslationPrompt.toEditorText(null));
+        assertEquals("", TranslationPrompt.fromEditorText(""));
+    }
+
+    /**
+     * The custom prompt must reach the wire with its line breaks intact, and the key must survive
+     * the platform configuration round trip.
+     */
+    private static void sendsAndPersistsTheCustomPrompt() throws Exception {
+        ServerSocket server = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        AtomicReference<String> body = new AtomicReference<String>();
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread thread = new Thread(() -> {
+            try (Socket socket = server.accept()) {
+                body.set(readRequest(socket.getInputStream(),
+                        "POST /v1/chat/completions HTTP/1.").body);
+                writeResponse(socket.getOutputStream(), 200,
+                        "{\"choices\":[{\"message\":{\"content\":\"你好\"}}]}");
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-custom-prompt");
+        thread.setDaemon(true);
+        thread.start();
+        try {
+            OpenAiChatTranslationProvider provider = new OpenAiChatTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v1/chat/completions",
+                    "", "custom-prompt-model", "openai-compatible",
+                    new TranslationPrompt.Settings(
+                            TranslationQuality.STANDARD, "Only {target} please.\nSecond line."));
+            assertEquals("你好", provider.translate(
+                    new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT)));
+        } finally {
+            server.close();
+            thread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local custom-prompt test server failed", serverFailure.get());
+        }
+        String system = JsonStrings.readStringPath(body.get(), "messages[0].content");
+        assertTrue(system.startsWith("Only 繁體中文 (zh-TW) please.\nSecond line."));
+        assertTrue(system.contains("Reply with only the translation"));
+
+        Properties values = new Properties();
+        OnlineProviderConfig.applyDefaults(values);
+        assertEquals("", OnlineProviderConfig.from(values).customSystemPrompt());
+        OnlineProviderConfig.applyPromptSettings(
+                values, TranslationQuality.HIGH, "Only {target} please.");
+        OnlineProviderConfig stored = OnlineProviderConfig.from(values);
+        assertEquals("Only {target} please.", stored.customSystemPrompt());
+        assertEquals(TranslationQuality.HIGH, stored.translationQuality());
+        assertTrue(TranslationPrompt.single(stored.promptSettings(),
+                new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT))
+                .startsWith("Only 繁體中文 (zh-TW) please. Reply with only the translation"));
+    }
+
+    /**
+     * DeepL speaks a form rather than JSON, puts its credential in a {@code DeepL-Auth-Key}
+     * Authorization header, upper-cases and regionalises {@code target_lang}, and omits
+     * {@code source_lang} when the source is auto-detected.
+     */
+    private static void translatesThroughDeepL() throws Exception {
+        ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        final List<HttpRequest> requests = Collections.synchronizedList(new ArrayList<HttpRequest>());
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread thread = new Thread(() -> {
+            try {
+                for (int index = 0; index < 2; index++) {
+                    try (Socket socket = server.accept()) {
+                        requests.add(readRequest(
+                                socket.getInputStream(), "POST /v2/translate HTTP/1."));
+                        if (index == 0) {
+                            writeResponse(socket.getOutputStream(), 200,
+                                    "{\"translations\":[{\"detected_source_language\":\"EN\","
+                                            + "\"text\":\"你好\"}]}");
+                        } else {
+                            writeResponse(socket.getOutputStream(), 200,
+                                    "{\"message\":\"Wrong endpoint. Use api-free.deepl.com\"}");
+                        }
+                    }
+                }
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-deepl");
+        thread.setDaemon(true);
+        thread.start();
+        try {
+            DeepLTranslationProvider provider = new DeepLTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v2/translate",
+                    "deepl-secret", "latency_optimized", new HttpJsonClient(2000, 2000));
+            assertEquals("你好", provider.translate(
+                    new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT)));
+            String failureMessage = "";
+            try {
+                provider.translate(new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT));
+            } catch (Exception expected) {
+                failureMessage = String.valueOf(expected.getMessage());
+            }
+            assertTrue(failureMessage.contains("DeepL reported: Wrong endpoint"));
+            assertTrue(provider.id().startsWith("deepl:127.0.0.1"));
+        } finally {
+            server.close();
+            thread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local DeepL test server failed", serverFailure.get());
+        }
+        HttpRequest first = requests.get(0);
+        assertEquals("DeepL-Auth-Key deepl-secret", first.headers.get("authorization"));
+        assertEquals("application/x-www-form-urlencoded; charset=utf-8",
+                first.headers.get("content-type"));
+        assertTrue(first.body.contains("text=Hello"));
+        assertTrue(first.body.contains("target_lang=ZH-HANT"));
+        assertTrue(first.body.contains("model_type=latency_optimized"));
+        // An auto-detected source is left out entirely: DeepL rejects the literal "auto".
+        assertFalse(first.body.contains("source_lang"));
+    }
+
+    /**
+     * Gemini addresses the model in the request path and the credential in {@code x-goog-api-key},
+     * and an event-stream attempt that answers with an ordinary JSON document has to fall back to
+     * the plain path instead of reporting a failure.
+     */
+    private static void translatesThroughGeminiAndFallsBackFromANonStreamingAnswer() throws Exception {
+        ServerSocket server = new ServerSocket(0, 3, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        final List<HttpRequest> requests = Collections.synchronizedList(new ArrayList<HttpRequest>());
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread thread = new Thread(() -> {
+            try {
+                for (int index = 0; index < 3; index++) {
+                    try (Socket socket = server.accept()) {
+                        requests.add(readRequest(socket.getInputStream(), "POST /v1beta/models/"));
+                        // A relay that ignores the streaming form answers the stream request with a
+                        // JSON document; the provider must recover rather than report a failure.
+                        writeResponse(socket.getOutputStream(), 200,
+                                "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"你\"},"
+                                        + "{\"text\":\"好\"}]}}]}");
+                    }
+                }
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-gemini");
+        thread.setDaemon(true);
+        thread.start();
+        try {
+            GeminiTranslationProvider provider = new GeminiTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v1beta/models",
+                    "gemini-secret", "gemini-test", new HttpJsonClient(2000, 2000),
+                    TranslationPrompt.Settings.standard());
+            PartialCollector collector = new PartialCollector();
+            assertEquals("你好", provider.translateStreaming(
+                    new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT), collector));
+            assertEquals(Collections.singletonList("你好"), collector.snapshot());
+            // The failed attempt is remembered, so the next call goes straight to the plain path.
+            assertEquals("你好", provider.translate(
+                    new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT)));
+            assertTrue(provider.id().startsWith("gemini:gemini-test"));
+        } finally {
+            server.close();
+            thread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local Gemini test server failed", serverFailure.get());
+        }
+        assertEquals(3, requests.size());
+        assertTrue(requests.get(0).requestLine.contains(
+                "/v1beta/models/gemini-test:streamGenerateContent?alt=sse"));
+        assertTrue(requests.get(1).requestLine.contains(
+                "/v1beta/models/gemini-test:generateContent"));
+        assertFalse(requests.get(1).requestLine.contains("streamGenerateContent"));
+        assertEquals("gemini-secret", requests.get(0).headers.get("x-goog-api-key"));
+        assertTrue(requests.get(0).body.contains("\"systemInstruction\":{\"parts\":[{\"text\":"));
+        assertTrue(requests.get(0).body.contains("\"generationConfig\":{\"temperature\":0"));
+        assertTrue(requests.get(0).body.contains("\"maxOutputTokens\":"));
+        assertTrue(requests.get(0).body.contains("\"role\":\"user\""));
+    }
+
+    /**
+     * Claude carries the credential in {@code x-api-key}, requires {@code anthropic-version}, keeps
+     * the system prompt in its own top-level field, and answers with an array of content fragments.
+     */
+    private static void translatesThroughClaude() throws Exception {
+        ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        final List<HttpRequest> requests = Collections.synchronizedList(new ArrayList<HttpRequest>());
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread thread = new Thread(() -> {
+            try {
+                for (int index = 0; index < 2; index++) {
+                    try (Socket socket = server.accept()) {
+                        requests.add(readRequest(
+                                socket.getInputStream(), "POST /v1/messages HTTP/1."));
+                        if (index == 0) {
+                            writeResponse(socket.getOutputStream(), 200,
+                                    "{\"content\":[{\"type\":\"text\",\"text\":\"你\"},"
+                                            + "{\"type\":\"text\",\"text\":\"好\"}]}");
+                        } else {
+                            // Anthropic reports a bad key as an error object; the provider has to
+                            // surface that sentence instead of "no translated content".
+                            writeResponse(socket.getOutputStream(), 200,
+                                    "{\"error\":{\"message\":\"invalid x-api-key\"}}");
+                        }
+                    }
+                }
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-claude");
+        thread.setDaemon(true);
+        thread.start();
+        try {
+            ClaudeTranslationProvider provider = new ClaudeTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v1/messages",
+                    "claude-secret", "claude-test", new HttpJsonClient(2000, 2000),
+                    TranslationPrompt.Settings.standard());
+            assertEquals("你好", provider.translate(
+                    new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT)));
+            String failureMessage = "";
+            try {
+                provider.translate(new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT));
+            } catch (Exception expected) {
+                failureMessage = String.valueOf(expected.getMessage());
+            }
+            assertTrue(failureMessage.contains("Claude reported: invalid x-api-key"));
+            assertTrue(provider.id().startsWith("claude:claude-test"));
+        } finally {
+            server.close();
+            thread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local Claude test server failed", serverFailure.get());
+        }
+        HttpRequest first = requests.get(0);
+        assertEquals("claude-secret", first.headers.get("x-api-key"));
+        assertEquals(ClaudeTranslationProvider.API_VERSION, first.headers.get("anthropic-version"));
+        assertFalse(first.headers.containsKey("authorization"));
+        assertTrue(first.body.contains("\"model\":\"claude-test\""));
+        assertTrue(first.body.contains("\"max_tokens\":"));
+        assertTrue(first.body.contains("\"system\":"));
+        // The system prompt must not be smuggled in as a message with role "system".
+        assertFalse(first.body.contains("\"role\":\"system\""));
+    }
+
+    /**
+     * Azure OpenAI addresses the deployment in the path, requires an {@code api-version} query, and
+     * carries the credential in a bare {@code api-key} header rather than as a bearer token.
+     */
+    private static void translatesThroughAzureOpenAi() throws Exception {
+        assertEquals(
+                "https://resource.openai.azure.com/openai/deployments/dep/chat/completions"
+                        + "?api-version=2024-10-21",
+                AzureOpenAiTranslationProvider.compose(
+                        "https://resource.openai.azure.com/", "dep", ""));
+        // A complete deployment URL is kept as it is, and a version pinned there is respected.
+        assertEquals(
+                "https://resource.openai.azure.com/openai/deployments/dep/chat/completions"
+                        + "?api-version=2025-01-01",
+                AzureOpenAiTranslationProvider.compose(
+                        "https://resource.openai.azure.com/openai/deployments/dep/chat/completions"
+                                + "?api-version=2025-01-01",
+                        "dep", "2024-10-21"));
+        assertEquals(
+                "https://resource.openai.azure.com/openai/deployments/dep/chat/completions"
+                        + "?api-version=2024-10-21",
+                AzureOpenAiTranslationProvider.compose(
+                        "https://resource.openai.azure.com", "dep", null));
+
+        ServerSocket server = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        AtomicReference<HttpRequest> request = new AtomicReference<HttpRequest>();
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread thread = new Thread(() -> {
+            try (Socket socket = server.accept()) {
+                request.set(readRequest(socket.getInputStream(), "POST /openai/deployments/"));
+                writeResponse(socket.getOutputStream(), 200,
+                        "{\"choices\":[{\"message\":{\"content\":\"你好\"}}]}");
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-azure");
+        thread.setDaemon(true);
+        thread.start();
+        try {
+            AzureOpenAiTranslationProvider provider = new AzureOpenAiTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort(), "azure-secret", "my-deployment",
+                    "2024-10-21", new HttpJsonClient(2000, 2000),
+                    TranslationPrompt.Settings.standard());
+            assertEquals("你好", provider.translate(
+                    new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT)));
+            assertTrue(provider.requestUrl().endsWith(
+                    "/openai/deployments/my-deployment/chat/completions"
+                            + "?api-version=2024-10-21"));
+            assertTrue(provider.id().startsWith("azure-openai:my-deployment"));
+        } finally {
+            server.close();
+            thread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local Azure test server failed", serverFailure.get());
+        }
+        assertEquals("azure-secret", request.get().headers.get("api-key"));
+        assertFalse(request.get().headers.containsKey("authorization"));
+        assertTrue(request.get().body.contains("\"model\":\"my-deployment\""));
+        assertTrue(request.get().body.contains("\"messages\":[{\"role\":\"system\""));
+    }
+
+    /**
+     * The settings screens no longer probe every provider with an OpenAI chat request, so the
+     * dispatcher has to build the right protocol for each family.
+     */
+    private static void dispatchesTheConnectionTestPerProtocol() throws Exception {
+        ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        final List<HttpRequest> requests = Collections.synchronizedList(new ArrayList<HttpRequest>());
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread thread = new Thread(() -> {
+            try {
+                for (int index = 0; index < 2; index++) {
+                    try (Socket socket = server.accept()) {
+                        requests.add(readRequest(socket.getInputStream(), "POST "));
+                        if (index == 0) {
+                            writeResponse(socket.getOutputStream(), 200,
+                                    "{\"translations\":[{\"text\":\"ping\"}]}");
+                        } else {
+                            writeResponse(socket.getOutputStream(), 200,
+                                    "{\"content\":[{\"type\":\"text\",\"text\":\"ping\"}]}");
+                        }
+                    }
+                }
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-probe");
+        thread.setDaemon(true);
+        thread.start();
+        try {
+            String host = "http://127.0.0.1:" + server.getLocalPort();
+            ProviderProbe.probe("deepl", host + "/v2/translate", "key", "latency_optimized");
+            ProviderProbe.probe("claude", host + "/v1/messages", "key", "claude-test");
+        } finally {
+            server.close();
+            thread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local probe test server failed", serverFailure.get());
+        }
+        assertEquals(2, requests.size());
+        assertEquals("DeepL-Auth-Key key", requests.get(0).headers.get("authorization"));
+        assertTrue(requests.get(0).body.contains("text=ping"));
+        assertEquals("key", requests.get(1).headers.get("x-api-key"));
+        assertTrue(requests.get(1).body.contains("\"max_tokens\":1"));
+    }
+
+    /**
+     * Every provider id the catalog advertises has to be constructible from the configuration, and
+     * each of the four native ones must build its own protocol rather than the OpenAI-compatible
+     * default. A missing credential is still reported as a missing credential, not as an unknown id.
+     */
+    private static void createsEveryNativeProviderFromTheConfiguration() throws Exception {
+        Properties values = new Properties();
+        OnlineProviderConfig.applyDefaults(values);
+        for (String provider : new String[]{"deepl", "gemini", "claude", "azure-openai"}) {
+            String message = "";
+            try {
+                OnlineProviderConfig.from(values).create(provider);
+            } catch (Exception expected) {
+                message = String.valueOf(expected.getMessage());
+            }
+            assertTrue(message.contains("is required"));
+        }
+        values.setProperty("deepl-api-key", "deepl-key");
+        values.setProperty("gemini-api-key", "gemini-key");
+        values.setProperty("claude-api-key", "claude-key");
+        values.setProperty("azure-openai-api-key", "azure-key");
+        values.setProperty("azure-openai-model", "deployment");
+        OnlineProviderConfig configured = OnlineProviderConfig.from(values);
+        assertTrue(configured.create("deepl").id().startsWith("deepl:api-free.deepl.com"));
+        assertTrue(configured.create("gemini").id().startsWith("gemini:gemini-2.5-flash"));
+        assertTrue(configured.create("claude").id().startsWith("claude:claude-sonnet-4-5"));
+        assertTrue(configured.create("azure-openai").id().startsWith("azure-openai:deployment"));
+        // A quality mode has to move the cache key of the two providers that take a system prompt,
+        // and must leave DeepL's alone because DeepL has no prompt to change.
+        Properties tuned = new Properties();
+        tuned.putAll(values);
+        OnlineProviderConfig.applyPromptSettings(tuned, TranslationQuality.HIGH, "");
+        OnlineProviderConfig high = OnlineProviderConfig.from(tuned);
+        assertTrue(high.create("gemini").id().contains("#"));
+        assertTrue(high.create("claude").id().contains("#"));
+        assertTrue(high.create("deepl").id().equals(configured.create("deepl").id()));
+        // An unknown id is still refused rather than silently falling back to a default provider.
+        assertThrows(() -> OnlineProviderConfig.from(values).create("not-a-provider"));
     }
 
     private static void assertTrue(boolean value) {

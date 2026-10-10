@@ -4,8 +4,14 @@
 
 Version 1.4-beta3 supports `offline`, `libretranslate`, `baidu`, `tencent-tmt`, `tencent-hunyuan`,
 `aliyun-mt`, `youdao`, `volcengine-mt`, `iflytek-niutrans`, `huawei-cloud-mt`, `deepseek`,
-`dashscope`, `volcengine-ark`, `zhipu`, `openai-compatible`, and `custom-http-json` in
-`config/universal-translator.properties`.
+`dashscope`, `volcengine-ark`, `zhipu`, `openai-compatible`, `azure-openai`, `deepl`, `gemini`,
+`claude`, and `custom-http-json` in `config/universal-translator.properties`.
+
+Azure OpenAI, DeepL, Gemini and Claude speak their own protocols rather than the OpenAI-compatible
+one, and each has its own property keys (`azure-openai-*`, `deepl-*`, `gemini-*`, `claude-*`).
+All four are configured through the settings screen's "LLM API settings…" editor — endpoint, model
+and key are stored per service — or directly in the configuration file. The connection test uses
+each service's own protocol instead of posting an OpenAI chat request.
 
 The canonical list of provider-specific property names and safe custom-JSON examples is maintained in
 the [Simplified Chinese API guide](../Zh-cn/ONLINE_APIS.md). Never publish real credentials. Remote

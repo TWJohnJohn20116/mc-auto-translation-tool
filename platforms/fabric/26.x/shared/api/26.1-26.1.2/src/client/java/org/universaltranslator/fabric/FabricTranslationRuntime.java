@@ -355,6 +355,17 @@ public final class FabricTranslationRuntime {
                 TargetLanguage.nextPreset(current.targetLanguage)));
     }
 
+    /**
+     * The active configuration, or {@code null} before the first load.
+     *
+     * <p>The diagnostics screen edits the prompt, debug-log and statistics settings, so it needs the
+     * same config object the rest of the runtime already holds. Returning it here keeps the
+     * runtime's own API unchanged for every other caller.
+     */
+    static FabricConfig diagnosticsConfig() {
+        return activeConfig;
+    }
+
     private static FabricConfig requireActiveConfig() {
         FabricConfig current = activeConfig;
         if (current == null) {

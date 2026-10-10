@@ -54,6 +54,12 @@ public final class DiagnosticsLogExporter {
                 report.append(sanitize(line)).append('\n');
             }
         }
+        // The statistics travel with the report, so a user on a platform whose diagnostics screen
+        // has no statistics page can still send them in. They carry no text, endpoints or keys.
+        report.append('\n');
+        for (String line : TranslationStats.global().plainLines()) {
+            report.append(sanitize(line)).append('\n');
+        }
         Files.write(output, report.toString().getBytes(StandardCharsets.UTF_8),
                 StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
         return output;
