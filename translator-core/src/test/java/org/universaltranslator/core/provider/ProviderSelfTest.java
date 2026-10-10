@@ -752,9 +752,11 @@ public final class ProviderSelfTest {
                         return !"[DONE]".equals(payload);
                     }
                 });
-        assertEquals(2, payloads.size());
+        assertEquals(3, payloads.size());
         assertEquals("{\"choices\":[{\"delta\":{\"content\":\"你\"}}]}", payloads.get(0));
         assertEquals("{\"choices\":[{\"delta\":{\"content\":\"好\"}}]}", payloads.get(1));
+        // The sentinel is delivered like any other payload; the handler is what stops the read.
+        assertEquals("[DONE]", payloads.get(2));
         assertTrue(characters > 0);
 
         final List<String> trailing = new ArrayList<String>();

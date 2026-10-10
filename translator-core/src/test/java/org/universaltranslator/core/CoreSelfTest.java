@@ -221,12 +221,15 @@ public final class CoreSelfTest {
             assertEquals("stale", OutgoingTranslationPreview.text());
             Thread.sleep(150L);
             assertEquals(null, OutgoingTranslationPreview.text());
-            // An endpoint that never stops talking cannot grow the line without bound.
+            // An endpoint that never stops talking cannot grow the line without bound, and a code
+            // that arrives without its letter still leaves no dangling character behind.
             OutgoingTranslationPreview.Handle fourth = OutgoingTranslationPreview.begin();
             fourth.onPartialText("0123456789012345678901234567890123456789012345678901234567890");
             String bounded = OutgoingTranslationPreview.text();
             assertEquals(48, bounded.length());
             assertTrue(bounded.endsWith("..."));
+            fourth.onPartialText("abc\u00a7");
+            assertEquals("abc", OutgoingTranslationPreview.text());
             fourth.finish();
         } finally {
             OutgoingTranslationPreview.setStaleMillisForTesting(

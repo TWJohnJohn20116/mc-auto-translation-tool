@@ -133,8 +133,10 @@ public final class OutgoingTranslationPreview {
      * Makes one endpoint fragment safe to draw as a single literal HUD line.
      *
      * <p>Legacy formatting codes are removed rather than escaped: a {@code \u00a7} coming from the
-     * endpoint would otherwise recolour, or hide, the rest of the line. Control characters are
-     * dropped because the HUD draws one line and a stray newline would move the caret.
+     * endpoint would otherwise recolour, or hide, the rest of the line. A code is two characters —
+     * the section sign and the code letter — and both have to go, or the leftover letter is drawn.
+     * Control characters are dropped because the HUD draws one line and a stray newline would move
+     * the caret.
      */
     private static String sanitize(String partialText) {
         if (partialText == null) {
@@ -144,6 +146,7 @@ public final class OutgoingTranslationPreview {
         for (int index = 0; index < partialText.length(); index++) {
             char character = partialText.charAt(index);
             if (character == '\u00a7') {
+                index++;
                 continue;
             }
             sanitized.append(character < 0x20 || character == 0x7f ? ' ' : character);
