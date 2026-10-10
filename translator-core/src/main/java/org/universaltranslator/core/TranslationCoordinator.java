@@ -83,6 +83,50 @@ public final class TranslationCoordinator implements AutoCloseable {
             final Iterable<String> protectedLiterals,
             final boolean preserveHanText
     ) {
+        return translate(text, sourceLanguage, targetLanguage, kind, protectedLiterals, preserveHanText,
+                null);
+    }
+
+    /**
+     * Translates one text and reports it while the provider is still generating it.
+     *
+     * <p>Used by the outgoing-chat path, where the player is looking at the world and waiting for a
+     * single line. Everything else about the request is unchanged: the same de-duplication, the same
+     * protection of player names and addresses, and the same result — a preview is not a result.
+     *
+     * <p>Partial texts are never cached. Only the final translation reaches {@code cache.put}, and
+     * only after the same validation the non-streaming path applies, so a truncated or empty preview
+     * can never be served to a later request.
+     *
+     * @param listener receives the accumulated translation as it grows, including the final value
+     */
+    public CompletableFuture<TranslationResult> translateStreaming(
+            final String text,
+            final String sourceLanguage,
+            final String targetLanguage,
+            final TextKind kind,
+            final Iterable<String> protectedLiterals,
+            final boolean preserveHanText,
+            final TranslationStreamListener listener
+    ) {
+        Objects.requireNonNull(listener, "listener");
+        return translate(text, sourceLanguage, targetLanguage, kind, protectedLiterals, preserveHanText,
+                listener);
+    }
+
+    /**
+     * Shared body of both entry points. {@code listener} is {@code null} for the ordinary path, which
+     * must not pay for any of the preview bookkeeping.
+     */
+    private CompletableFuture<TranslationResult> translate(
+            final String text,
+            final String sourceLanguage,
+            final String targetLanguage,
+            final TextKind kind,
+            final Iterable<String> protectedLiterals,
+            final boolean preserveHanText,
+            final TranslationStreamListener listener
+    ) {
         Objects.requireNonNull(text, "text");
         if (targetLanguage == null || targetLanguage.trim().isEmpty()) {
             throw new IllegalArgumentException("targetLanguage is required");
@@ -135,7 +179,8 @@ public final class TranslationCoordinator implements AutoCloseable {
                             return;
                         }
                         String restored = TranslationOutputValidator.requireDisplaySafe(
-                                text, translateSegments(protectedText, effectiveSource, targetLanguage, effectiveKind));
+                                text, translateSegments(protectedText, effectiveSource, targetLanguage,
+                                        effectiveKind, listener));
                         created.complete(TranslationResult.success(
                                 text, restored));
                     } catch (Exception exception) {
@@ -163,7 +208,19 @@ public final class TranslationCoordinator implements AutoCloseable {
                 }
             }
         }
-        return existing;
+        final CompletableFuture<TranslationResult> settled = existing;
+        if (listener != null) {
+            // The completed translation is published last, so the preview always ends on exactly the
+            // text the caller receives. It also covers the request that lost the de-duplication race
+            // above and was answered by a provider call another thread had already started: that
+            // caller still sees the translation arrive, it just arrives complete.
+            settled.whenComplete((result, failure) -> {
+                if (result != null && result.isTranslated()) {
+                    listener.onPartialText(result.getTranslatedText());
+                }
+            });
+        }
+        return settled;
     }
 
     /**
@@ -214,19 +271,32 @@ public final class TranslationCoordinator implements AutoCloseable {
         return size + ":" + Long.toHexString(hash);
     }
 
+    /**
+     * Translates the unprotected segments of one text and reports the whole text as it is generated.
+     *
+     * <p>{@code listener} is {@code null} on the ordinary path. What it receives is the message built
+     * so far — the segments already translated, the protected values copied through, and the segment
+     * currently being generated — because that is the text the HUD line has to show. Nothing here is
+     * cached: {@code cache.put} still only ever sees a validated final segment translation, so a
+     * partial text can never be served to a later request.
+     */
     private String translateSegments(
             ProtectedText protectedText,
             String sourceLanguage,
             String targetLanguage,
-            TextKind kind
+            TextKind kind,
+            TranslationStreamListener listener
     ) throws Exception {
         StringBuilder output = new StringBuilder(protectedText.getOriginal().length() + 16);
         for (ProtectedText.Segment segment : protectedText.getSegments()) {
             if (segment.isProtectedValue()) {
                 output.append(segment.text());
             } else {
+                // Only built when a preview is being published: the render path runs through this
+                // method for every line the game draws and must not start allocating per segment.
+                String alreadyBuilt = listener == null ? null : output.toString();
                 output.append(translateSegment(
-                        segment.text(), sourceLanguage, targetLanguage, kind));
+                        segment.text(), sourceLanguage, targetLanguage, kind, listener, alreadyBuilt));
             }
         }
         return output.toString();
@@ -236,7 +306,9 @@ public final class TranslationCoordinator implements AutoCloseable {
             String segment,
             String sourceLanguage,
             String targetLanguage,
-            TextKind kind
+            TextKind kind,
+            TranslationStreamListener listener,
+            String alreadyBuilt
     ) throws Exception {
         int start = 0;
         int end = segment.length();
@@ -261,8 +333,18 @@ public final class TranslationCoordinator implements AutoCloseable {
             }
         }
         if (translated == null) {
-            translated = provider.translate(new TranslationRequest(
-                    core, sourceLanguage, targetLanguage, kind));
+            TranslationRequest request = new TranslationRequest(
+                    core, sourceLanguage, targetLanguage, kind);
+            TranslationStreamListener segmentListener = null;
+            if (listener != null) {
+                // Leading whitespace of this segment is not part of what the provider sees, so it is
+                // prepended to the preview instead of being lost from it.
+                final String prefix = alreadyBuilt + segment.substring(0, start);
+                segmentListener = partialText -> listener.onPartialText(prefix + partialText);
+            }
+            translated = segmentListener == null
+                    ? provider.translate(request)
+                    : provider.translateStreaming(request, segmentListener);
             if (translated == null || translated.trim().isEmpty()) {
                 throw new IllegalStateException("Provider returned an empty translation");
             }

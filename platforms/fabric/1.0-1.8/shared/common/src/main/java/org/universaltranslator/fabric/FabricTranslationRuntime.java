@@ -328,7 +328,8 @@ public final class FabricTranslationRuntime {
         // Capture the tab-list/server literals on Minecraft's calling thread. The translation
         // itself may finish on a worker, but must not inspect client network state there.
         CompletableFuture<TranslationResult> translated = active.translateInteractive(
-                message, TextKind.CHAT, config.outgoingTargetLanguage, false);
+                message, TextKind.CHAT, config.outgoingTargetLanguage, false,
+                config.streamOutgoing);
         CompletableFuture<TranslationResult> next = outgoingTail
                 .handle((ignored, failure) -> null)
                 .thenCompose(ignored -> translated);

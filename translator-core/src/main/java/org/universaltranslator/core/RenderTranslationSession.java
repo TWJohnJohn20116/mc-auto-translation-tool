@@ -408,6 +408,26 @@ public final class RenderTranslationSession implements AutoCloseable {
             String requestedTargetLanguage,
             boolean preserveHanText
     ) {
+        return translateInteractive(original, kind, requestedTargetLanguage, preserveHanText, false);
+    }
+
+    /**
+     * Same request, optionally publishing the translation while the provider is still generating it.
+     *
+     * <p>Streaming is opt-in per call because it only pays off for the one text the player is waiting
+     * on: the outgoing chat line. Everything else — the lines the render hooks ask for — is drawn from
+     * the cache and has no visible latency to hide.
+     *
+     * @param streaming when true, the partial translation is published to
+     *                  {@link OutgoingTranslationPreview} for the HUD until the request settles
+     */
+    public CompletableFuture<TranslationResult> translateInteractive(
+            String original,
+            TextKind kind,
+            String requestedTargetLanguage,
+            boolean preserveHanText,
+            boolean streaming
+    ) {
         if (original == null) {
             throw new IllegalArgumentException("original cannot be null");
         }
@@ -424,13 +444,19 @@ public final class RenderTranslationSession implements AutoCloseable {
         } catch (RuntimeException ignored) {
             literals = Collections.emptyList();
         }
-        return coordinator.translate(
-                original,
-                sourceLanguage,
-                target,
-                kind == null ? TextKind.CHAT : kind,
-                literals,
-                preserveHanText);
+        TextKind effectiveKind = kind == null ? TextKind.CHAT : kind;
+        if (!streaming) {
+            return coordinator.translate(
+                    original, sourceLanguage, target, effectiveKind, literals, preserveHanText);
+        }
+        OutgoingTranslationPreview.Handle preview = OutgoingTranslationPreview.begin();
+        CompletableFuture<TranslationResult> pending = coordinator.translateStreaming(
+                original, sourceLanguage, target, effectiveKind, literals, preserveHanText, preview);
+        // The preview must not outlive its request. whenComplete (not thenRun) so a failure, a
+        // cancellation and the session closing all release the HUD line too; the returned future is
+        // the one callers already hold, so this callback is attached to it and not chained onto it.
+        pending.whenComplete((result, failure) -> preview.finish());
+        return pending;
     }
 
     private boolean isCompletedOutput(String text) {

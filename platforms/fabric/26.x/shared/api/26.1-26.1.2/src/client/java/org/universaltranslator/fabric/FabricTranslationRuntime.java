@@ -323,7 +323,8 @@ public final class FabricTranslationRuntime {
         }
         RECENT_USER_TEXT.remember(message);
         CompletableFuture<TranslationResult> translated = active.translateInteractive(
-                message, TextKind.CHAT, config.outgoingTargetLanguage, false);
+                message, TextKind.CHAT, config.outgoingTargetLanguage, false,
+                config.streamOutgoing);
         CompletableFuture<TranslationResult> next = outgoingTail
                 .handle((ignored, failure) -> null)
                 .thenCompose(ignored -> translated);
