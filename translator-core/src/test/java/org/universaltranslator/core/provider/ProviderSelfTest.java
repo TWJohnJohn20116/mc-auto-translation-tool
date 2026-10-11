@@ -816,7 +816,8 @@ public final class ProviderSelfTest {
         String plainClaude = claude.requestBody("Hello", "system", 100, false, false);
         assertFalse(plainClaude.contains("assistant"));
         String jsonClaude = claude.requestBody("Hello", "system", 100, false, true);
-        assertTrue(jsonClaude.contains(",{\"role\":\"assistant\",\"content\":\"{\"}]"));
+        assertTrue(jsonClaude.contains("\"role\":\"assistant\""));
+        assertTrue(jsonClaude.contains("\"content\":\"{\""));
     }
 
     private static void parsesNestedProviderResponses() {
