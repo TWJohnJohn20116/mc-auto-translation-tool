@@ -291,11 +291,9 @@ public final class OnlineProviderConfig {
         }
         target.setProperty("translation-workers",
                 Integer.toString(TranslationTuning.clamp(workers,
-                        TranslationTuning.DEFAULT_WORKERS,
                         TranslationTuning.MINIMUM_WORKERS, TranslationTuning.MAXIMUM_WORKERS)));
         target.setProperty("batch-size",
                 Integer.toString(TranslationTuning.clamp(batchSize,
-                        TranslationTuning.DEFAULT_BATCH_SIZE,
                         TranslationTuning.MINIMUM_BATCH_SIZE, TranslationTuning.MAXIMUM_BATCH_SIZE)));
     }
 
