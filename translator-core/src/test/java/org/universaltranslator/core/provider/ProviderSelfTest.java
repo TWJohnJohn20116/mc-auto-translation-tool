@@ -1320,6 +1320,19 @@ public final class ProviderSelfTest {
         assertEquals(500, TranslationTuning.clamp("501", 30, 0, 500));
         assertEquals(30, TranslationTuning.clamp("", 30, 0, 500));
 
+        // The tuning constructor clamps as well, and 500 is the largest window a tuning can hold:
+        // asking for more silently yields a shorter wait, so that boundary is pinned here.
+        assertEquals(16, new TranslationTuning(99, 99, 99).workers());
+        assertEquals(16, new TranslationTuning(99, 99, 99).batchSize());
+        assertEquals(99, new TranslationTuning(99, 99, 99).batchWindowMillis());
+        assertEquals(1, new TranslationTuning(0, 0, -5).workers());
+        assertEquals(1, new TranslationTuning(0, 0, -5).batchSize());
+        assertEquals(0, new TranslationTuning(0, 0, -5).batchWindowMillis());
+        assertEquals(TranslationTuning.MAXIMUM_BATCH_WINDOW_MILLIS,
+                new TranslationTuning(4, 8, 1200).batchWindowMillis());
+        assertTrue(!new TranslationTuning(4, 1, 30).batching());
+        assertTrue(new TranslationTuning(4, 2, 30).batching());
+
         // The shipped defaults have to stay exactly what they were before this became configurable.
         Properties shipped = new Properties();
         OnlineProviderConfig.applyDefaults(shipped);
@@ -1418,12 +1431,17 @@ public final class ProviderSelfTest {
     /**
      * {@code batch-window-ms = 0} does not wait: a lone text is sent immediately instead of parking
      * its worker in the collection window.
+     *
+     * <p>The window is compared against itself rather than against a fixed budget, so a slow runner
+     * cannot make this flaky. 500 is the documented maximum, so it is also the largest wait the
+     * tuning can actually produce.
      */
     private static void skipsTheCollectionWaitWhenTheWindowIsZero() throws Exception {
         long immediate = millisForOneRequest(new TranslationTuning(4, 8, 0));
-        long waiting = millisForOneRequest(new TranslationTuning(4, 8, 1200));
-        assertTrue(immediate < 600L);
-        assertTrue(waiting >= 900L);
+        long waiting = millisForOneRequest(new TranslationTuning(
+                4, 8, TranslationTuning.MAXIMUM_BATCH_WINDOW_MILLIS));
+        assertTrue(waiting >= 400L);
+        assertTrue(immediate < waiting - 200L);
     }
 
     /** Wall-clock milliseconds one lone request takes under the given tuning. */
