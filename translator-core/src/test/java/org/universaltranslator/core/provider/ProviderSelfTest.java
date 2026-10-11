@@ -1466,15 +1466,15 @@ public final class ProviderSelfTest {
         assertEquals(
                 "You are a professional Minecraft game-localization translator. "
                         + "Translate every value of the user JSON object to Traditional Chinese "
-                        + "(Taiwan, zh-TW). Reply with one JSON object, for example "
-                        + "{\"1\": \"translation of value 1\", \"2\": \"translation of value 2\"}: "
-                        + "each key is the same line number as the user object, written as a string, "
-                        + "and each value is the translation of that line. Every key of the user "
-                        + "object must appear exactly once, with no extra keys and no missing keys. "
-                        + "Write a line break inside a translation as \\n. Preserve punctuation, "
-                        + "whitespace, URLs, usernames, placeholders and Minecraft formatting markers. "
-                        + "Reply with only the JSON object, without quotes around it, labels, notes "
-                        + "or explanations.",
+                        + "(Taiwan, zh-TW). Use Traditional Chinese characters. Reply with one JSON "
+                        + "object, for example {\"1\": \"translation of value 1\", \"2\": "
+                        + "\"translation of value 2\"}: each key is the same line number as the user "
+                        + "object, written as a string, and each value is the translation of that "
+                        + "line. Every key of the user object must appear exactly once, with no extra "
+                        + "keys and no missing keys. Write a line break inside a translation as \\n. "
+                        + "Preserve punctuation, whitespace, URLs, usernames, placeholders and "
+                        + "Minecraft formatting markers. Reply with only the JSON object, without "
+                        + "quotes around it, labels, notes or explanations.",
                 TranslationPrompt.batch(TranslationPrompt.Settings.standard(), multi));
         // A default configuration must not perturb the provider id either: the coordinator derives
         // its cache key from it, so changing it would invalidate every user's cache on upgrade.
