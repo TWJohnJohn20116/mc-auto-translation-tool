@@ -11,6 +11,8 @@ import java.util.Collections;
 import java.util.List;
 
 import org.universaltranslator.core.TranslationDisplayMode;
+import org.universaltranslator.core.TranslationPrompt;
+import org.universaltranslator.core.TranslationQuality;
 import org.universaltranslator.core.OfflineModel;
 import org.universaltranslator.core.TargetLanguage;
 import org.universaltranslator.core.TranslationStatusLocalizer;
@@ -64,6 +66,10 @@ final class LegacyConfigScreen extends GuiScreen {
     private static final int FETCH_MODELS = 31;
     private static final int TEST_CONNECTION = 32;
     private static final int CHECK_SETTINGS = 33;
+    private static final int QUALITY = 34;
+    private static final int PROMPT_APPLY = 35;
+    /** The prompt editor's own id; GuiTextField ids are a separate namespace from button ids. */
+    private static final int PROMPT_FIELD = 36;
     private static final int TAB_GENERAL = 101;
     private static final int TAB_SCOPES = 102;
     private static final int TAB_ENGINE = 103;
@@ -87,6 +93,8 @@ final class LegacyConfigScreen extends GuiScreen {
     private static final int MODEL_LIST_TOP = 46;
     /** Room kept under the model rows for the paging, back, and hint lines. */
     private static final int MODEL_LIST_FOOTER_HEIGHT = 62;
+    /** Longest custom prompt the engine tab's text field accepts. */
+    private static final int MAXIMUM_PROMPT_LENGTH = 4096;
     private static final String LIBRETRANSLATE_PROVIDER = "libretranslate";
     private static final String TRANSLATE_PATH = "/translate";
     private static final String LANGUAGES_PATH = "/languages";
@@ -157,6 +165,11 @@ final class LegacyConfigScreen extends GuiScreen {
     private GuiButton testConnectionButton;
     private GuiButton checkSettingsButton;
     private GuiTextField endpoint;
+    /** Selected quality mode; the shared Save writes it and Apply commits it immediately. */
+    private TranslationQuality quality;
+    private GuiButton qualityButton;
+    private GuiTextField customPrompt;
+    private GuiButton applyPromptButton;
 
     private GuiButton outgoingButton;
     private GuiButton outgoingTargetButton;
@@ -206,6 +219,7 @@ final class LegacyConfigScreen extends GuiScreen {
         this.llmEndpoint = config.editorEndpoint(config.provider);
         this.llmApiKey = config.editorApiKey(config.provider);
         this.llmModel = config.editorModel(config.provider);
+        this.quality = config.translationQuality();
         HudIndicatorSettings hud = config.hudIndicatorSettings();
         this.hudIndicator = hud.isIndicator();
         this.hudIndicatorCorner = hud.getCorner();
@@ -236,6 +250,9 @@ final class LegacyConfigScreen extends GuiScreen {
         int right = layout.right();
         int buttonWidth = layout.buttonWidth();
         int totalWidth = layout.totalWidth();
+        // The same gap the shared layout puts between its two columns, so the prompt field and its
+        // Apply button line up with the rows above them.
+        int gap = 8;
 
         // 5 Navigation Tabs
         tabGeneralButton = new GuiButton(TAB_GENERAL, layout.tabX(0), layout.tabY(), layout.tabWidth(), 20,
@@ -319,6 +336,26 @@ final class LegacyConfigScreen extends GuiScreen {
         buttonList.add(checkSettingsButton);
         buttonList.add(fallbackButton);
 
+        // Quality and the custom system prompt are engine settings, so they belong on this tab
+        // rather than on the diagnostics screen. They take the two rows under the existing three,
+        // which leaves every other engine control exactly where it was; the prompt shares its row
+        // with its own Apply button.
+        qualityButton = new GuiButton(QUALITY, left, engineRow(3), totalWidth, 20, "");
+        buttonList.add(qualityButton);
+
+        String promptValue = customPrompt == null
+                ? TranslationPrompt.toEditorText(original.customSystemPrompt())
+                : customPrompt.getText();
+        int promptApplyWidth = Math.max(48, buttonWidth - 24);
+        customPrompt = new GuiTextField(PROMPT_FIELD, renderer, left, engineRow(4),
+                totalWidth - promptApplyWidth - gap, 20);
+        customPrompt.setMaxStringLength(MAXIMUM_PROMPT_LENGTH);
+        customPrompt.setText(promptValue);
+        applyPromptButton = new GuiButton(PROMPT_APPLY, right + buttonWidth - promptApplyWidth,
+                engineRow(4), promptApplyWidth, 20,
+                tr("screen.universal_translator.diagnostics.prompt_apply"));
+        buttonList.add(applyPromptButton);
+
         // Tab 4: Outgoing (傳送)
         outgoingButton = new GuiButton(OUTGOING, left, layout.contentRow(0), buttonWidth, 20, "");
         outgoingTargetButton = new GuiButton(OUTGOING_TARGET_LANGUAGE, right, layout.contentRow(0), buttonWidth, 20, "");
@@ -387,6 +424,9 @@ final class LegacyConfigScreen extends GuiScreen {
         // Engine
         boolean isEng = activeTab == Tab.ENGINE;
         providerButton.visible = isEng;
+        qualityButton.visible = isEng;
+        customPrompt.setVisible(isEng);
+        applyPromptButton.visible = isEng;
         boolean offline = isOffline();
         boolean llm = isLlm();
         modelButton.visible = isEng && offline;
@@ -484,6 +524,11 @@ final class LegacyConfigScreen extends GuiScreen {
             return;
         } else if (button.id == FALLBACK) {
             apiFallback = !apiFallback;
+        } else if (button.id == QUALITY) {
+            quality = quality.next();
+            refreshQualityLabel();
+        } else if (button.id == PROMPT_APPLY) {
+            applyPromptSettings();
         } else if (button.id == OUTGOING) {
             translateOutgoing = !translateOutgoing;
             outgoingTargetButton.enabled = translateOutgoing;
@@ -596,6 +641,7 @@ final class LegacyConfigScreen extends GuiScreen {
             fallbackButton.displayString = tr("screen.universal_translator.option.fallback", onOff(apiFallback));
             fallbackButton.enabled = isOffline();
         }
+        refreshQualityLabel();
         if (outgoingButton != null) {
             outgoingButton.displayString = tr("screen.universal_translator.option.outgoing", onOff(translateOutgoing));
         }
@@ -626,6 +672,48 @@ final class LegacyConfigScreen extends GuiScreen {
             hudColorButton.enabled = hudIndicator;
             hudContentButton.enabled = hudIndicator;
             hudVisibilityButton.enabled = hudIndicator;
+        }
+    }
+
+    /**
+     * Re-renders the quality button from the pending selection.
+     *
+     * <p>Like the other engine rows the button only changes what the shared Save writes; the Apply
+     * button beside the prompt is there for users who want the change to take effect without
+     * closing the screen.
+     */
+    private void refreshQualityLabel() {
+        if (qualityButton == null) {
+            return;
+        }
+        qualityButton.displayString = tr("screen.universal_translator.option.quality",
+                tr("value.universal_translator.quality." + quality.configName()));
+    }
+
+    /**
+     * Applies the quality mode and the custom prompt to the running configuration without closing
+     * the screen.
+     *
+     * <p>The provider is rebuilt through exactly the path Save uses, so the new prompt is used by
+     * the next request and the cache key moves with it. A failure leaves the previous configuration
+     * running and reports it on the engine tab's own status line.
+     */
+    private void applyPromptSettings() {
+        refreshQualityLabel();
+        try {
+            String prompt = customPrompt == null
+                    ? original.customSystemPrompt()
+                    : TranslationPrompt.fromEditorText(customPrompt.getText());
+            LegacyConfig updated = original.withPromptSettings(quality, prompt);
+            if (updated.enabled) {
+                updated.validateProviderConfiguration();
+            }
+            LegacyTranslationRuntime.initialize(updated);
+            updated.save();
+            setTestStatus(tr("screen.universal_translator.diagnostics.settings_saved"), false);
+        } catch (Exception exception) {
+            setTestStatus(tr("screen.universal_translator.diagnostics.settings_failed",
+                    describe(exception)), true);
         }
     }
 
@@ -830,7 +918,11 @@ final class LegacyConfigScreen extends GuiScreen {
                     animatedUi,
                     new HudIndicatorSettings(hudIndicator, hudIndicatorCorner, hudIndicatorSize,
                             hudIndicatorMargin, hudIndicatorColor, hudIndicatorContent,
-                            hudIndicatorVisibility, hudIndicatorOffsetX, hudIndicatorOffsetY));
+                            hudIndicatorVisibility, hudIndicatorOffsetX, hudIndicatorOffsetY))
+                    // Save writes the engine tab's prompt controls too, so applying the prompt and
+                    // then saving cannot silently restore the value the screen was opened with.
+                    .withPromptSettings(quality, TranslationPrompt.fromEditorText(
+                            customPrompt == null ? "" : customPrompt.getText()));
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
                     && (updated.tencentSecretId.isEmpty() || updated.tencentSecretKey.isEmpty())) {
                 throw new IllegalArgumentException(tr("error.universal_translator.tencent_credentials"));
@@ -859,6 +951,9 @@ final class LegacyConfigScreen extends GuiScreen {
         if (activeTab == Tab.ENGINE && isLibreTranslate() && endpoint != null) {
             endpoint.updateCursorCounter();
         }
+        if (activeTab == Tab.ENGINE && customPrompt != null) {
+            customPrompt.updateCursorCounter();
+        }
         if (activeTab == Tab.SCOPES && blockedKeywords != null) {
             blockedKeywords.updateCursorCounter();
         }
@@ -867,6 +962,9 @@ final class LegacyConfigScreen extends GuiScreen {
     @Override
     protected void keyTyped(char typedChar, int keyCode) throws IOException {
         if (activeTab == Tab.ENGINE && isLibreTranslate() && endpoint != null && endpoint.textboxKeyTyped(typedChar, keyCode)) {
+            return;
+        }
+        if (activeTab == Tab.ENGINE && customPrompt != null && customPrompt.textboxKeyTyped(typedChar, keyCode)) {
             return;
         }
         if (activeTab == Tab.SCOPES && blockedKeywords != null && blockedKeywords.textboxKeyTyped(typedChar, keyCode)) {
@@ -891,6 +989,9 @@ final class LegacyConfigScreen extends GuiScreen {
         super.mouseClicked(mouseX, mouseY, mouseButton);
         if (activeTab == Tab.ENGINE && isLibreTranslate() && endpoint != null) {
             endpoint.mouseClicked(mouseX, mouseY, mouseButton);
+        }
+        if (activeTab == Tab.ENGINE && customPrompt != null) {
+            customPrompt.mouseClicked(mouseX, mouseY, mouseButton);
         }
         if (activeTab == Tab.SCOPES && blockedKeywords != null) {
             blockedKeywords.mouseClicked(mouseX, mouseY, mouseButton);
@@ -968,6 +1069,13 @@ final class LegacyConfigScreen extends GuiScreen {
                 renderer.drawStringWithShadow(
                         tr("screen.universal_translator.endpoint"),
                         layout.left(), engineRow(1) - 11, 0xFFAAAAAA);
+            }
+            customPrompt.drawTextBox();
+            if (customPrompt.getText().isEmpty()) {
+                // The field carries no placeholder text on this version, so its own label is drawn
+                // inside it while it is empty, the way the blocked-keywords box does.
+                renderer.drawStringWithShadow(tr("screen.universal_translator.diagnostics.prompt"),
+                        layout.left() + 4, engineRow(4) + 6, 0x70A0A0A0);
             }
             renderEngineInfo();
         } else if (activeTab == Tab.OUTGOING) {
@@ -1101,7 +1209,7 @@ final class LegacyConfigScreen extends GuiScreen {
      */
     private int engineBlockTop() {
         SettingsScreenLayout.Geometry layout = layout();
-        int blockHeight = layout.contentRowStep() * 2 + 20 + 46;
+        int blockHeight = layout.contentRowStep() * 4 + 20 + 46;
         int available = layout.saveY() - 6 - layout.contentTop();
         return layout.contentTop() + Math.max(0, (available - blockHeight) / 2);
     }
@@ -1116,7 +1224,11 @@ final class LegacyConfigScreen extends GuiScreen {
 
     /** Read-only engine facts plus the always-visible privacy hint. */
     private void renderEngineInfo() {
-        int y = engineRow(2) + 24;
+        int y = engineRow(4) + 24;
+        // The prompt field's hint is drawn as a label just above it, the same way the endpoint box
+        // is labelled; the field's own name goes inside the box while it is empty.
+        renderer.drawStringWithShadow(tr("screen.universal_translator.diagnostics.prompt_hint"),
+                layout().left(), engineRow(4) - 11, 0xFFAAAAAA);
         if (isLlm()) {
             drawCenteredString(renderer,
                     tr("screen.universal_translator.engine.summary",
