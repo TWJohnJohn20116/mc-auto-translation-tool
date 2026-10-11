@@ -1071,6 +1071,12 @@ final class LegacyConfigScreen extends GuiScreen {
                         layout.left(), engineRow(1) - 11, 0xFFAAAAAA);
             }
             customPrompt.drawTextBox();
+            if (customPrompt.getText().isEmpty()) {
+                // The field carries no placeholder text on this version, so its own label is drawn
+                // inside it while it is empty, the way the blocked-keywords box does.
+                renderer.drawStringWithShadow(tr("screen.universal_translator.diagnostics.prompt"),
+                        layout.left() + 4, engineRow(4) + 6, 0x70A0A0A0);
+            }
             renderEngineInfo();
         } else if (activeTab == Tab.OUTGOING) {
             int tipY = layout.contentRow(2);
@@ -1219,8 +1225,8 @@ final class LegacyConfigScreen extends GuiScreen {
     /** Read-only engine facts plus the always-visible privacy hint. */
     private void renderEngineInfo() {
         int y = engineRow(4) + 24;
-        // The prompt field carries no placeholder text on this version, so its hint is drawn as a
-        // label just above it, the same way the endpoint box is labelled.
+        // The prompt field's hint is drawn as a label just above it, the same way the endpoint box
+        // is labelled; the field's own name goes inside the box while it is empty.
         renderer.drawStringWithShadow(tr("screen.universal_translator.diagnostics.prompt_hint"),
                 layout().left(), engineRow(4) - 11, 0xFFAAAAAA);
         if (isLlm()) {
