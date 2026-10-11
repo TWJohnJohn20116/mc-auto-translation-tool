@@ -11,7 +11,10 @@ import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 
@@ -34,6 +37,7 @@ public final class OnlineProviderConfig {
             "translation-quality", "custom-system-prompt", "debug-log",
             "api-connect-timeout-ms", "api-read-timeout-ms", "api-max-attempts",
             "api-min-request-interval-ms",
+            "translation-workers", "batch-size", "batch-window-ms",
             "baidu-endpoint", "baidu-app-id", "baidu-secret",
             "tencent-tmt-endpoint", "tencent-tmt-secret-id", "tencent-tmt-secret-key",
             "aliyun-mt-endpoint", "aliyun-access-key-id", "aliyun-access-key-secret",
@@ -122,6 +126,13 @@ public final class OnlineProviderConfig {
         putDefault(properties, "api-read-timeout-ms", "120000");
         putDefault(properties, "api-max-attempts", "3");
         putDefault(properties, "api-min-request-interval-ms", "60");
+        // Throughput settings. They are clamped rather than rejected, so a hand-edited typo falls
+        // back to these defaults instead of breaking translation.
+        putDefault(properties, "translation-workers",
+                Integer.toString(TranslationTuning.DEFAULT_WORKERS));
+        putDefault(properties, "batch-size", Integer.toString(TranslationTuning.DEFAULT_BATCH_SIZE));
+        putDefault(properties, "batch-window-ms",
+                Integer.toString(TranslationTuning.DEFAULT_BATCH_WINDOW_MILLIS));
 
         putDefault(properties, "baidu-endpoint", "https://fanyi-api.baidu.com/api/trans/vip/translate");
         putDefault(properties, "baidu-app-id", "");
@@ -225,6 +236,136 @@ public final class OnlineProviderConfig {
     /** The prompt configuration every chat-completion provider built from here receives. */
     public TranslationPrompt.Settings promptSettings() {
         return new TranslationPrompt.Settings(translationQuality(), customSystemPrompt());
+    }
+
+    /**
+     * Concurrent translation threads; 1 means fully serial.
+     *
+     * <p>Out-of-range values are pulled into range and an unparseable one falls back to
+     * {@link TranslationTuning#DEFAULT_WORKERS}, so a hand-edited configuration can never stop
+     * translation from working. The offline llama.cpp provider ignores this entirely and always
+     * runs one worker, because its local server is single-threaded.
+     */
+    public int translationWorkers() {
+        return TranslationTuning.clamp(value("translation-workers"),
+                TranslationTuning.DEFAULT_WORKERS,
+                TranslationTuning.MINIMUM_WORKERS, TranslationTuning.MAXIMUM_WORKERS);
+    }
+
+    /**
+     * Largest number of texts one request may carry.
+     *
+     * <p>1 disables batching: the provider translates every text with a request of its own. The
+     * offline llama.cpp provider ignores this and always uses 1.
+     */
+    public int batchSize() {
+        return TranslationTuning.clamp(value("batch-size"),
+                TranslationTuning.DEFAULT_BATCH_SIZE,
+                TranslationTuning.MINIMUM_BATCH_SIZE, TranslationTuning.MAXIMUM_BATCH_SIZE);
+    }
+
+    /** How long a request waits for siblings to batch with, in milliseconds; 0 does not wait. */
+    public int batchWindowMillis() {
+        return TranslationTuning.clamp(value("batch-window-ms"),
+                TranslationTuning.DEFAULT_BATCH_WINDOW_MILLIS,
+                TranslationTuning.MINIMUM_BATCH_WINDOW_MILLIS,
+                TranslationTuning.MAXIMUM_BATCH_WINDOW_MILLIS);
+    }
+
+    /** The throughput settings every provider built from here receives. */
+    public TranslationTuning tuning() {
+        return new TranslationTuning(translationWorkers(), batchSize(), batchWindowMillis());
+    }
+
+    /**
+     * Writes the two throughput settings the settings screens expose, leaving every other key
+     * untouched.
+     *
+     * <p>Like {@link #applyPromptSettings} the values go straight into the properties, so the
+     * platform configuration classes do not have to know about them. {@code batch-window-ms} has no
+     * in-game control and is deliberately left alone here.
+     */
+    public static void applyTranslationTuning(Properties target, int workers, int batchSize) {
+        if (target == null) {
+            throw new IllegalArgumentException("Target properties are required");
+        }
+        target.setProperty("translation-workers",
+                Integer.toString(TranslationTuning.clamp(workers,
+                        TranslationTuning.DEFAULT_WORKERS,
+                        TranslationTuning.MINIMUM_WORKERS, TranslationTuning.MAXIMUM_WORKERS)));
+        target.setProperty("batch-size",
+                Integer.toString(TranslationTuning.clamp(batchSize,
+                        TranslationTuning.DEFAULT_BATCH_SIZE,
+                        TranslationTuning.MINIMUM_BATCH_SIZE, TranslationTuning.MAXIMUM_BATCH_SIZE)));
+    }
+
+    /**
+     * The effective throughput settings, with a note for every value that had to be clamped.
+     *
+     * <p>Read back from the configuration file so the diagnostics bundle can show what the mod is
+     * really running with. The file itself still holds whatever the user typed, and an unusable
+     * value is silently replaced rather than reported at load time, so without these lines a
+     * surprising worker count or a batch that never forms would be impossible to explain.
+     *
+     * @param configFile configuration file to read; {@code null} reports the defaults
+     */
+    public static List<String> effectiveSettingsLines(Path configFile) {
+        Properties stored = new Properties();
+        if (configFile != null) {
+            try (Reader reader = Files.newBufferedReader(configFile, StandardCharsets.UTF_8)) {
+                stored.load(reader);
+            } catch (IOException unreadable) {
+                return Collections.singletonList(
+                        "Translation settings: configuration file could not be read");
+            } catch (RuntimeException malformed) {
+                return Collections.singletonList(
+                        "Translation settings: configuration file could not be parsed");
+            }
+        }
+        OnlineProviderConfig config = from(stored);
+        List<String> lines = new ArrayList<String>(3);
+        lines.add(settingLine("Translation workers", "translation-workers",
+                stored.getProperty("translation-workers"),
+                config.translationWorkers(), TranslationTuning.DEFAULT_WORKERS,
+                TranslationTuning.MINIMUM_WORKERS, TranslationTuning.MAXIMUM_WORKERS));
+        lines.add(settingLine("Batch size", "batch-size",
+                stored.getProperty("batch-size"),
+                config.batchSize(), TranslationTuning.DEFAULT_BATCH_SIZE,
+                TranslationTuning.MINIMUM_BATCH_SIZE, TranslationTuning.MAXIMUM_BATCH_SIZE));
+        lines.add(settingLine("Batch window (ms)", "batch-window-ms",
+                stored.getProperty("batch-window-ms"),
+                config.batchWindowMillis(), TranslationTuning.DEFAULT_BATCH_WINDOW_MILLIS,
+                TranslationTuning.MINIMUM_BATCH_WINDOW_MILLIS,
+                TranslationTuning.MAXIMUM_BATCH_WINDOW_MILLIS));
+        return lines;
+    }
+
+    /** One diagnostics line: the effective value plus why it is not simply what the file holds. */
+    private static String settingLine(
+            String label,
+            String key,
+            String raw,
+            int effective,
+            int fallback,
+            int minimum,
+            int maximum
+    ) {
+        String trimmed = raw == null ? "" : raw.trim();
+        StringBuilder line = new StringBuilder(80);
+        line.append(label).append(": ").append(effective);
+        int parsed;
+        try {
+            parsed = Integer.parseInt(trimmed);
+        } catch (NumberFormatException notANumber) {
+            return line.append(" (default ").append(fallback).append("; ").append(key)
+                    .append("=\"").append(trimmed).append("\" is not a number)").toString();
+        }
+        if (parsed != effective) {
+            return line.append(" (clamped from ").append(parsed).append("; ").append(key)
+                    .append(" must be between ").append(minimum).append(" and ").append(maximum)
+                    .append(')').toString();
+        }
+        return line.append(" (").append(key).append('=').append(parsed).append(')').toString();
     }
 
     /**
@@ -411,7 +552,8 @@ public final class OnlineProviderConfig {
             ProviderSupport.requireCredential(providerId + " API key", apiKey);
         }
         return new OpenAiChatTranslationProvider(
-                value(endpointKey), apiKey, value(modelKey), providerId, http, promptSettings());
+                value(endpointKey), apiKey, value(modelKey), providerId, http, promptSettings(),
+                tuning());
     }
 
     private TranslationProvider custom(HttpJsonClient http) {

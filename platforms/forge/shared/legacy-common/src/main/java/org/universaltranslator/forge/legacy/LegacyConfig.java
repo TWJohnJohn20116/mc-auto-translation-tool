@@ -284,6 +284,16 @@ final class LegacyConfig {
         return onlineProviderConfig.customSystemPrompt();
     }
 
+    /** Configured concurrent translation threads; clamped by {@link OnlineProviderConfig}. */
+    int translationWorkers() {
+        return onlineProviderConfig.translationWorkers();
+    }
+
+    /** Configured texts per request; 1 disables batching. Clamped by {@link OnlineProviderConfig}. */
+    int batchSize() {
+        return onlineProviderConfig.batchSize();
+    }
+
     /**
      * Returns a copy with only the prompt settings replaced.
      *
@@ -294,6 +304,19 @@ final class LegacyConfig {
     LegacyConfig withPromptSettings(TranslationQuality quality, String customSystemPrompt) {
         Properties properties = toProperties();
         OnlineProviderConfig.applyPromptSettings(properties, quality, customSystemPrompt);
+        return new LegacyConfig(properties, configFile, cacheFile);
+    }
+
+    /**
+     * Returns a copy with only the translation worker count and batch size replaced.
+     *
+     * <p>Kept separate from {@link #withSettings} for the same reason as {@link
+     * #withPromptSettings}: the keys live in {@link OnlineProviderConfig} and round-trip through
+     * {@code toProperties()} on their own.
+     */
+    LegacyConfig withTranslationTuning(int workers, int batchSize) {
+        Properties properties = toProperties();
+        OnlineProviderConfig.applyTranslationTuning(properties, workers, batchSize);
         return new LegacyConfig(properties, configFile, cacheFile);
     }
 

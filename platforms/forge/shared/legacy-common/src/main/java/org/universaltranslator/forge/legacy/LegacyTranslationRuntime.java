@@ -93,7 +93,9 @@ public final class LegacyTranslationRuntime {
                 // Record the provider before the session is built around it: a failure here must
                 // not orphan a provider that may already hold resources.
                 createdProvider = provider;
-                int workers = provider.id().contains("offline-llama:") ? 1 : 4;
+                // The offline llama.cpp server is single threaded, so it always gets one worker no
+                // matter what the configuration asks for.
+                int workers = provider.id().contains("offline-llama:") ? 1 : config.translationWorkers();
                 created = new RenderTranslationSession(
                         provider, "auto", config.targetLanguage, store, workers, config.displayMode,
                         config.translateEnglishOnly);

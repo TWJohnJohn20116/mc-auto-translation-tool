@@ -177,6 +177,8 @@
   ,"screen.universal_translator.engine.test_ok_probe": "連線成功（模型 %s 有回應）"
   ,"screen.universal_translator.engine.testing": "正在測試…"
   ,"screen.universal_translator.option.quality": "品質模式：%s"
+  ,"screen.universal_translator.option.workers": "併發數：%s"
+  ,"screen.universal_translator.option.batch_size": "批次大小：%s"
   ,"value.universal_translator.quality.fast": "快速"
   ,"value.universal_translator.quality.standard": "標準"
   ,"value.universal_translator.quality.high": "高品質"
