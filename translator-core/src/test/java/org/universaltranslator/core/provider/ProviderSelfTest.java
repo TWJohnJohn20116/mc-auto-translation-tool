@@ -63,6 +63,10 @@ public final class ProviderSelfTest {
         reportsProviderErrorsFromContentlessResponses();
         retriesReasoningOnlyResponsesWithFullBudget();
         batchesNearbyTextsIntoOneRequest();
+        parsesJsonBatchReplies();
+        batchesMultiLineTextsWithJsonEscapes();
+        retriesOnlyTheLinesTheBatchMissed();
+        asksForAJsonObjectAndStopsAskingWhenRefused();
         streamsOpenAiResponsesAsTheyArrive();
         fallsBackWhenTheEndpointCannotStream();
         upgradesTheBudgetWhenAStreamCarriesOnlyReasoning();
@@ -74,6 +78,8 @@ public final class ProviderSelfTest {
         separatesTheQualityModes();
         changesOnlyThePromptWhenTheQualityModeChanges();
         appliesTheQualityModeToTheBatchPrompt();
+        describesTheJsonBatchProtocolInEveryQualityMode();
+        declaresTheJsonOutputModeOfEachProvider();
         roundTripsTheQualitySetting();
         replacesTheBuiltInPromptWithACustomOne();
         expandsTheSupportedPlaceholders();
@@ -405,8 +411,14 @@ public final class ProviderSelfTest {
             assertEquals("你好", first.get());
             assertEquals("歡迎回來", second.get());
             assertEquals(1, requests.get().intValue());
-            assertTrue(body.get().contains("1. Hello"));
-            assertTrue(body.get().contains("2. Welcome back"));
+            // The request is one JSON object keyed by line number, so the order of the entries
+            // follows the order in which the two threads reached the batch.
+            String user = JsonStrings.readStringPath(body.get(), "messages[1].content");
+            assertTrue(user.startsWith("{") && user.endsWith("}"));
+            assertTrue(user.contains("\"Hello\""));
+            assertTrue(user.contains("\"Welcome back\""));
+            assertTrue(user.contains("\"1\":") && user.contains("\"2\":"));
+            assertTrue(body.get().contains("\"response_format\":{\"type\":\"json_object\"}"));
         } finally {
             server.close();
             serverThread.join(5000);
@@ -414,6 +426,398 @@ public final class ProviderSelfTest {
         if (serverFailure.get() != null) {
             throw new AssertionError("Local batch test server failed", serverFailure.get());
         }
+    }
+
+    /**
+     * The batch reply is a JSON object keyed by input line number. That is what stops a translation
+     * beginning with a number, or one containing a line break, from being read as another entry — the
+     * two ways the numbered list used to hand back the wrong line.
+     */
+    private static void parsesJsonBatchReplies() {
+        List<String> parsed = OpenAiChatTranslationProvider.parseJsonBatch(
+                "{\"1\": \"3 apples\", \"2\": \"line one\\nline two\\n\\\"quoted\\\" C:\\\\path\"}", 2);
+        assertEquals("3 apples", parsed.get(0));
+        assertEquals("line one\nline two\n\"quoted\" C:\\path", parsed.get(1));
+
+        // A model that introduces or explains its answer is still read.
+        assertEquals("你好", OpenAiChatTranslationProvider.parseJsonBatch(
+                "Sure! Here it is:\n{\"1\": \"你好\"}\nLet me know if you need anything else.", 1)
+                .get(0));
+
+        // A missing key leaves a hole for that line only; an extra key is ignored rather than
+        // failing a reply that answered every line.
+        List<String> missing = OpenAiChatTranslationProvider.parseJsonBatch(
+                "{\"1\": \"一\", \"3\": \"三\"}", 3);
+        assertEquals("一", missing.get(0));
+        assertEquals(null, missing.get(1));
+        assertEquals("三", missing.get(2));
+        List<String> extra = OpenAiChatTranslationProvider.parseJsonBatch(
+                "{\"1\": \"一\", \"2\": \"二\", \"99\": \"多\"}", 2);
+        assertEquals("一", extra.get(0));
+        assertEquals("二", extra.get(1));
+
+        // An empty value, a non-string value and a key that is not a line number are all holes.
+        List<String> odd = OpenAiChatTranslationProvider.parseJsonBatch(
+                "{\"1\": \"  \", \"2\": null, \"note\": \"hi\"}", 2);
+        assertEquals(null, odd.get(0));
+        assertEquals(null, odd.get(1));
+
+        // Anything that is not an object carries no batch at all, so the numbered parser gets its
+        // turn and, failing that, every line is translated on its own.
+        assertEquals(null, OpenAiChatTranslationProvider.parseJsonBatch("[\"一\", \"二\"]", 2));
+        assertEquals(null, OpenAiChatTranslationProvider.parseJsonBatch("一\n二", 2));
+        assertEquals(null, OpenAiChatTranslationProvider.parseJsonBatch("{\"1\": \"一\"", 1));
+        assertEquals(null, OpenAiChatTranslationProvider.parseJsonBatch("", 1));
+        assertEquals(null, OpenAiChatTranslationProvider.parseJsonBatch(null, 1));
+
+        // The numbered list the protocol used before JSON still parses, including a hole.
+        List<String> numbered = OpenAiChatTranslationProvider.parseNumberedBatch(
+                "1. 你好\n2. 歡迎回來", 2);
+        assertEquals("你好", numbered.get(0));
+        assertEquals("歡迎回來", numbered.get(1));
+        List<String> numberedHole = OpenAiChatTranslationProvider.parseNumberedBatch(
+                "1. 你好\n3. 再見", 3);
+        assertEquals("你好", numberedHole.get(0));
+        assertEquals(null, numberedHole.get(1));
+        assertEquals("再見", numberedHole.get(2));
+        // Prose, a duplicate number or an unnumbered line refuses the whole list rather than putting
+        // a translation on the wrong line.
+        assertEquals(null, OpenAiChatTranslationProvider.parseNumberedBatch("Here you go", 1));
+        assertEquals(null, OpenAiChatTranslationProvider.parseNumberedBatch("1. 一\n1. 二", 2));
+        assertEquals(null, OpenAiChatTranslationProvider.parseNumberedBatch("1. 一\n二", 2));
+        assertEquals(null, OpenAiChatTranslationProvider.parseNumberedBatch("", 1));
+    }
+
+    /**
+     * Every quality mode has to describe the JSON batch contract, and the custom-prompt guardrail has
+     * to reinstate it, because the parser keys the reply by input line number.
+     */
+    private static void describesTheJsonBatchProtocolInEveryQualityMode() {
+        TranslationRequest request = new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT);
+        for (TranslationQuality quality : TranslationQuality.values()) {
+            String prompt = TranslationPrompt.batch(
+                    new TranslationPrompt.Settings(quality, ""), request);
+            assertTrue(prompt.contains("Traditional Chinese (Taiwan, zh-TW)"));
+            assertTrue(prompt.contains("JSON object"));
+        }
+        String fast = TranslationPrompt.batch(
+                new TranslationPrompt.Settings(TranslationQuality.FAST, ""), request);
+        String standard = TranslationPrompt.batch(
+                new TranslationPrompt.Settings(TranslationQuality.STANDARD, ""), request);
+        String high = TranslationPrompt.batch(
+                new TranslationPrompt.Settings(TranslationQuality.HIGH, ""), request);
+        assertTrue(fast.length() < standard.length());
+        assertTrue(standard.length() < high.length());
+        assertTrue(high.contains("Preserve the tone, register and terminology"));
+        assertTrue(high.contains("Do not add, remove, reorder or summarize any meaning"));
+        // The shape, the key rule and the escaping rule are stated in the two detailed modes.
+        assertTrue(standard.contains("Reply with one JSON object, for example "
+                + "{\"1\": \"translation of value 1\", \"2\": \"translation of value 2\"}"));
+        assertTrue(standard.contains("Every key of the user object must appear exactly once"));
+        assertTrue(standard.contains("Write a line break inside a translation as \\n"));
+        assertTrue(standard.contains("Reply with only the JSON object"));
+        assertTrue(!fast.contains("for example"));
+
+        // A custom prompt replaces the instruction set but cannot switch the output contract off.
+        String custom = TranslationPrompt.batch(
+                new TranslationPrompt.Settings(
+                        TranslationQuality.HIGH, "Translate the values to {target}."),
+                request);
+        assertTrue(custom.startsWith("Translate the values to "));
+        assertTrue(!custom.contains("{target}"));
+        assertTrue(custom.contains("Reply with one JSON object"));
+        assertTrue(custom.contains("no extra keys and no missing keys"));
+        assertTrue(!custom.contains("Preserve the tone, register and terminology"));
+        assertTrue(!custom.contains("You are a professional Minecraft"));
+    }
+
+    /**
+     * A text containing line breaks now batches: the request is a JSON object, so the newline travels
+     * as an escape instead of ending the entry, and the reply's escaped newline comes back as a real
+     * line break.
+     */
+    private static void batchesMultiLineTextsWithJsonEscapes() throws Exception {
+        ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        AtomicReference<String> body = new AtomicReference<String>();
+        AtomicReference<Integer> requests = new AtomicReference<Integer>(Integer.valueOf(0));
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread serverThread = new Thread(() -> {
+            try (Socket socket = server.accept()) {
+                body.set(readRequest(socket.getInputStream(),
+                        "POST /v1/chat/completions HTTP/1.").body);
+                requests.set(Integer.valueOf(requests.get().intValue() + 1));
+                String content = "{\"1\": \"甲\\n乙\", \"2\": \"丙\\n丁\"}";
+                writeResponse(socket.getOutputStream(), 200,
+                        "{\"choices\":[{\"message\":{\"content\":"
+                                + JsonStrings.quote(content) + "}}]}");
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-multiline-batch");
+        serverThread.setDaemon(true);
+        serverThread.start();
+        try {
+            OpenAiChatTranslationProvider provider = new OpenAiChatTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v1/chat/completions",
+                    "", "batch-model", "openai-compatible");
+            provider.setBatchWindowMillis(600L);
+            AtomicReference<String> first = new AtomicReference<String>();
+            AtomicReference<String> second = new AtomicReference<String>();
+            AtomicReference<Throwable> failure = new AtomicReference<Throwable>();
+            Thread one = new Thread(() -> {
+                try {
+                    first.set(provider.translate(new TranslationRequest(
+                            "a\nb", "auto", "zh-TW", TextKind.CHAT)));
+                } catch (Throwable problem) {
+                    failure.compareAndSet(null, problem);
+                }
+            }, "provider-self-test-multiline-one");
+            Thread two = new Thread(() -> {
+                try {
+                    second.set(provider.translate(new TranslationRequest(
+                            "c\nd", "auto", "zh-TW", TextKind.CHAT)));
+                } catch (Throwable problem) {
+                    failure.compareAndSet(null, problem);
+                }
+            }, "provider-self-test-multiline-two");
+            one.setDaemon(true);
+            two.setDaemon(true);
+            one.start();
+            two.start();
+            one.join(5000);
+            two.join(5000);
+            if (failure.get() != null) {
+                throw new AssertionError("Batched multi-line translation failed", failure.get());
+            }
+            assertEquals(1, requests.get().intValue());
+            // Which text landed on which key follows the order the threads reached the batch, so the
+            // two answers are checked as a set.
+            List<String> translated = Arrays.asList(first.get(), second.get());
+            assertTrue(translated.contains("甲\n乙"));
+            assertTrue(translated.contains("丙\n丁"));
+            // Both texts travel inside one JSON object, with their line breaks escaped: the decoded
+            // user message carries the two characters \n, never a real line break.
+            String user = JsonStrings.readStringPath(body.get(), "messages[1].content");
+            assertTrue(user.startsWith("{") && user.endsWith("}"));
+            assertTrue(user.contains("\"a\\nb\""));
+            assertTrue(user.contains("\"c\\nd\""));
+            assertTrue(user.contains("\"1\":") && user.contains("\"2\":"));
+            assertFalse(user.contains("\n"));
+        } finally {
+            server.close();
+            serverThread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local multi-line batch server failed", serverFailure.get());
+        }
+    }
+
+    /**
+     * A reply that answers some of the batch must cost one request per unanswered line, not a resend
+     * of the whole batch.
+     *
+     * <p>The local server answers only the entry that asks to be kept, whichever line that turns out
+     * to be, so the assertion does not depend on the order the two threads reached the batch.
+     */
+    private static void retriesOnlyTheLinesTheBatchMissed() throws Exception {
+        ServerSocket server = new ServerSocket(0, 4, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(8000);
+        AtomicReference<Integer> requests = new AtomicReference<Integer>(Integer.valueOf(0));
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread serverThread = new Thread(() -> {
+            try {
+                for (int index = 0; index < 3; index++) {
+                    try (Socket socket = server.accept()) {
+                        String body = readRequest(socket.getInputStream(),
+                                "POST /v1/chat/completions HTTP/1.").body;
+                        requests.set(Integer.valueOf(requests.get().intValue() + 1));
+                        String user = JsonStrings.readStringPath(body, "messages[1].content");
+                        String content;
+                        if (user != null && user.trim().startsWith("{")) {
+                            String key = "";
+                            Object parsedRequest = JsonStrings.parse(user);
+                            for (Map.Entry<?, ?> entry : ((Map<?, ?>) parsedRequest).entrySet()) {
+                                if ("keep me".equals(entry.getValue())) {
+                                    key = String.valueOf(entry.getKey());
+                                }
+                            }
+                            content = "{\"" + key + "\": \"KEPT\"}";
+                        } else {
+                            content = "SINGLE:" + user;
+                        }
+                        writeResponse(socket.getOutputStream(), 200,
+                                "{\"choices\":[{\"message\":{\"content\":"
+                                        + JsonStrings.quote(content) + "}}]}");
+                    }
+                }
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-partial-batch");
+        serverThread.setDaemon(true);
+        serverThread.start();
+        try {
+            OpenAiChatTranslationProvider provider = new OpenAiChatTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v1/chat/completions",
+                    "", "batch-model", "openai-compatible");
+            provider.setBatchWindowMillis(600L);
+            List<String> results = Collections.synchronizedList(new ArrayList<String>());
+            AtomicReference<Throwable> failure = new AtomicReference<Throwable>();
+            List<Thread> threads = new ArrayList<Thread>();
+            for (String text : Arrays.asList("keep me", "alpha", "beta")) {
+                Thread worker = new Thread(() -> {
+                    try {
+                        results.add(provider.translate(new TranslationRequest(
+                                text, "auto", "zh-TW", TextKind.CHAT)));
+                    } catch (Throwable problem) {
+                        failure.compareAndSet(null, problem);
+                    }
+                }, "provider-self-test-partial-" + text);
+                worker.setDaemon(true);
+                threads.add(worker);
+            }
+            for (Thread worker : threads) {
+                worker.start();
+            }
+            for (Thread worker : threads) {
+                worker.join(5000);
+            }
+            if (failure.get() != null) {
+                throw new AssertionError("Partially answered batch failed", failure.get());
+            }
+            // One batch plus one request for each of the two lines it did not answer.
+            assertEquals(3, requests.get().intValue());
+            assertEquals(3, results.size());
+            assertTrue(results.contains("KEPT"));
+            assertTrue(results.contains("SINGLE:alpha"));
+            assertTrue(results.contains("SINGLE:beta"));
+        } finally {
+            server.close();
+            serverThread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local partial-batch server failed", serverFailure.get());
+        }
+    }
+
+    /**
+     * The batch asks for a JSON object with the field this endpoint understands, and an endpoint that
+     * answers 400 to that field is retried once without it and never asked again.
+     */
+    private static void asksForAJsonObjectAndStopsAskingWhenRefused() throws Exception {
+        ServerSocket server = new ServerSocket(0, 4, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(8000);
+        List<String> bodies = Collections.synchronizedList(new ArrayList<String>());
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread serverThread = new Thread(() -> {
+            try {
+                for (int index = 0; index < 3; index++) {
+                    try (Socket socket = server.accept()) {
+                        String body = readRequest(socket.getInputStream(),
+                                "POST /v1/chat/completions HTTP/1.").body;
+                        bodies.add(body);
+                        if (index == 0) {
+                            writeResponse(socket.getOutputStream(), 400,
+                                    "{\"error\":\"Unrecognized request argument supplied: "
+                                            + "response_format\"}");
+                            continue;
+                        }
+                        String content = index == 1
+                                ? "{\"1\": \"你好\", \"2\": \"歡迎回來\"}"
+                                : "{\"1\": \"再見\", \"2\": \"下次見\"}";
+                        writeResponse(socket.getOutputStream(), 200,
+                                "{\"choices\":[{\"message\":{\"content\":"
+                                        + JsonStrings.quote(content) + "}}]}");
+                    }
+                }
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-json-output");
+        serverThread.setDaemon(true);
+        serverThread.start();
+        try {
+            OpenAiChatTranslationProvider provider = new OpenAiChatTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v1/chat/completions",
+                    "", "batch-model", "openai-compatible");
+            provider.setBatchWindowMillis(600L);
+            List<String> first = translateTogether(provider, "Hello", "Welcome back");
+            List<String> second = translateTogether(provider, "Bye", "See you");
+            assertEquals(3, bodies.size());
+            assertEquals(2, first.size());
+            assertTrue(first.contains("你好"));
+            assertTrue(first.contains("歡迎回來"));
+            assertEquals(2, second.size());
+            assertTrue(second.contains("再見"));
+            assertTrue(second.contains("下次見"));
+            // The first attempt asked for the object; the retry and every later batch do not.
+            assertTrue(bodies.get(0).contains("\"response_format\":{\"type\":\"json_object\"}"));
+            assertFalse(bodies.get(1).contains("response_format"));
+            assertFalse(bodies.get(2).contains("response_format"));
+        } finally {
+            server.close();
+            serverThread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local JSON-output server failed", serverFailure.get());
+        }
+    }
+
+    /** Translates two texts concurrently so they land in one batch, and collects both results. */
+    private static List<String> translateTogether(
+            TranslationProvider provider, String left, String right) throws Exception {
+        List<String> results = Collections.synchronizedList(new ArrayList<String>());
+        AtomicReference<Throwable> failure = new AtomicReference<Throwable>();
+        List<Thread> threads = new ArrayList<Thread>();
+        for (String text : Arrays.asList(left, right)) {
+            Thread worker = new Thread(() -> {
+                try {
+                    results.add(provider.translate(new TranslationRequest(
+                            text, "auto", "zh-TW", TextKind.CHAT)));
+                } catch (Throwable problem) {
+                    failure.compareAndSet(null, problem);
+                }
+            }, "provider-self-test-together-" + text);
+            worker.setDaemon(true);
+            threads.add(worker);
+        }
+        for (Thread worker : threads) {
+            worker.start();
+        }
+        for (Thread worker : threads) {
+            worker.join(5000);
+        }
+        if (failure.get() != null) {
+            throw new AssertionError("Batched translation failed", failure.get());
+        }
+        return results;
+    }
+
+    /**
+     * The output-format capability is declared per provider, in that provider's own dialect, instead
+     * of being hardcoded in a shared request builder.
+     */
+    private static void declaresTheJsonOutputModeOfEachProvider() {
+        assertEquals(JsonOutputMode.RESPONSE_MIME_TYPE, GeminiTranslationProvider.jsonOutputMode());
+        assertEquals(JsonOutputMode.PREFILL, ClaudeTranslationProvider.jsonOutputMode());
+        assertEquals(JsonOutputMode.NONE, DeepLTranslationProvider.jsonOutputMode());
+
+        GeminiTranslationProvider gemini = new GeminiTranslationProvider(
+                GeminiTranslationProvider.DEFAULT_ENDPOINT, "key", "gemini-2.5-flash");
+        String plainGemini = gemini.requestBody("Hello", "system", 100, false);
+        assertFalse(plainGemini.contains("responseMimeType"));
+        String jsonGemini = gemini.requestBody("Hello", "system", 100, true);
+        assertTrue(jsonGemini.contains("\"responseMimeType\":\"application/json\""));
+        assertTrue(jsonGemini.contains("\"maxOutputTokens\":100"));
+
+        ClaudeTranslationProvider claude = new ClaudeTranslationProvider(
+                ClaudeTranslationProvider.DEFAULT_ENDPOINT, "key", "claude-sonnet-4-5");
+        String plainClaude = claude.requestBody("Hello", "system", 100, false, false);
+        assertFalse(plainClaude.contains("assistant"));
+        String jsonClaude = claude.requestBody("Hello", "system", 100, false, true);
+        assertTrue(jsonClaude.contains("\"role\":\"assistant\""));
+        assertTrue(jsonClaude.contains("\"content\":\"{\""));
     }
 
     private static void parsesNestedProviderResponses() {
@@ -1062,13 +1466,16 @@ public final class ProviderSelfTest {
                 .endsWith(" Keep exactly the same number and order of lines."));
         assertEquals(
                 "You are a professional Minecraft game-localization translator. "
-                        + "Translate every numbered line of the user message to Traditional Chinese "
-                        + "(Taiwan, zh-TW). Use Traditional Chinese characters. Reply with the same "
-                        + "numbering: exactly one translated line per input line, in the same order, "
-                        + "without merging, splitting, reordering or omitting lines. Preserve "
-                        + "punctuation, whitespace, URLs, usernames, placeholders and Minecraft "
-                        + "formatting markers. Reply with only the numbered translations, without "
-                        + "quotes, labels, notes or explanations.",
+                        + "Translate every value of the user JSON object to Traditional Chinese "
+                        + "(Taiwan, zh-TW). Use Traditional Chinese characters. Reply with one JSON "
+                        + "object, for example {\"1\": \"translation of value 1\", \"2\": "
+                        + "\"translation of value 2\"}: each key is the same line number as the user "
+                        + "object, written as a string, and each value is the translation of that "
+                        + "line. Every key of the user object must appear exactly once, with no extra "
+                        + "keys and no missing keys. Write a line break inside a translation as \\n. "
+                        + "Preserve punctuation, whitespace, URLs, usernames, placeholders and "
+                        + "Minecraft formatting markers. Reply with only the JSON object, without "
+                        + "quotes around it, labels, notes or explanations.",
                 TranslationPrompt.batch(TranslationPrompt.Settings.standard(), multi));
         // A default configuration must not perturb the provider id either: the coordinator derives
         // its cache key from it, so changing it would invalidate every user's cache on upgrade.
@@ -1099,7 +1506,7 @@ public final class ProviderSelfTest {
         assertTrue(high.contains("Do not add, remove, reorder or summarize any meaning"));
         // Every mode still demands the translation alone, which is what ProtectedText relies on.
         for (String prompt : Arrays.asList(fast, standard, high)) {
-            assertTrue(prompt.contains("only the translation") || prompt.contains("only the numbered"));
+            assertTrue(prompt.contains("only the translation"));
             assertTrue(prompt.contains("Traditional Chinese (Taiwan, zh-TW)"));
         }
     }
@@ -1161,7 +1568,7 @@ public final class ProviderSelfTest {
         }
     }
 
-    /** The numbered batch path builds its own prompt, so the quality mode has to reach it too. */
+    /** The batch path builds its own prompt, so the quality mode has to reach it too. */
     private static void appliesTheQualityModeToTheBatchPrompt() throws Exception {
         ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
         server.setSoTimeout(5000);
@@ -1213,8 +1620,14 @@ public final class ProviderSelfTest {
                 throw new AssertionError("Batched quality-mode translation failed", failure.get());
             }
             assertEquals("你好", first.get());
-            assertTrue(body.get().contains("1. Hello"));
-            assertTrue(body.get().contains("2. Welcome back"));
+            // The request is one JSON object keyed by line number, so the order of the entries
+            // follows the order in which the two threads reached the batch.
+            String user = JsonStrings.readStringPath(body.get(), "messages[1].content");
+            assertTrue(user.startsWith("{") && user.endsWith("}"));
+            assertTrue(user.contains("\"Hello\""));
+            assertTrue(user.contains("\"Welcome back\""));
+            assertTrue(user.contains("\"1\":") && user.contains("\"2\":"));
+            assertTrue(body.get().contains("\"response_format\":{\"type\":\"json_object\"}"));
         } finally {
             server.close();
             serverThread.join(5000);
@@ -1224,7 +1637,10 @@ public final class ProviderSelfTest {
         }
         String system = JsonStrings.readStringPath(body.get(), "messages[0].content");
         assertTrue(system.contains("Preserve the tone, register and terminology"));
-        assertTrue(system.contains("Reply with the same numbering"));
+        assertTrue(system.contains("Reply with one JSON object"));
+        // The batch request asks the endpoint for a JSON object as well, instead of relying on the
+        // prompt alone.
+        assertTrue(body.get().contains("\"response_format\":{\"type\":\"json_object\"}"));
     }
 
     /**
@@ -1279,8 +1695,8 @@ public final class ProviderSelfTest {
     /**
      * A non-empty custom prompt replaces the built-in one, but the two contracts the rest of the
      * pipeline depends on are appended whatever the user wrote: the model must answer with the
-     * translation alone (or {@code ProtectedText} restoration breaks) and must keep one output line
-     * per input line (or the numbered batch protocol breaks).
+     * translation alone (or {@code ProtectedText} restoration breaks) and, on the batch path, must
+     * answer with one JSON object keyed by the input line numbers (or the batch protocol breaks).
      */
     private static void replacesTheBuiltInPromptWithACustomOne() {
         TranslationRequest single = new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT);
@@ -1298,7 +1714,7 @@ public final class ProviderSelfTest {
         String batch = TranslationPrompt.batch(custom, multi);
         assertTrue(batch.startsWith("Translate to 繁體中文 (zh-TW) for a Minecraft player."));
         assertTrue(batch.contains(
-                "Reply with the same numbering: exactly one translated line per input line"));
+                "Reply with one JSON object: each key is an input line number written as a string"));
 
         assertTrue(custom.hasCustomSystemPrompt());
         assertFalse(TranslationPrompt.Settings.standard().hasCustomSystemPrompt());
