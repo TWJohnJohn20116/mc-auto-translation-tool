@@ -411,8 +411,14 @@ public final class ProviderSelfTest {
             assertEquals("你好", first.get());
             assertEquals("歡迎回來", second.get());
             assertEquals(1, requests.get().intValue());
-            assertTrue(body.get().contains("\"1\":\"Hello\""));
-            assertTrue(body.get().contains("\"2\":\"Welcome back\""));
+            // The request is one JSON object keyed by line number, so the order of the entries
+            // follows the order in which the two threads reached the batch.
+            String user = JsonStrings.readStringPath(body.get(), "messages[1].content");
+            assertTrue(user.startsWith("{") && user.endsWith("}"));
+            assertTrue(user.contains("\"Hello\""));
+            assertTrue(user.contains("\"Welcome back\""));
+            assertTrue(user.contains("\"1\":") && user.contains("\"2\":"));
+            assertTrue(body.get().contains("\"response_format\":{\"type\":\"json_object\"}"));
         } finally {
             server.close();
             serverThread.join(5000);
@@ -585,11 +591,19 @@ public final class ProviderSelfTest {
                 throw new AssertionError("Batched multi-line translation failed", failure.get());
             }
             assertEquals(1, requests.get().intValue());
-            assertEquals("甲\n乙", first.get());
-            assertEquals("丙\n丁", second.get());
-            // Both texts travel inside one JSON object, with their line breaks escaped.
-            assertTrue(body.get().contains("\"1\":\"a\\nb\""));
-            assertTrue(body.get().contains("\"2\":\"c\\nd\""));
+            // Which text landed on which key follows the order the threads reached the batch, so the
+            // two answers are checked as a set.
+            List<String> translated = Arrays.asList(first.get(), second.get());
+            assertTrue(translated.contains("甲\n乙"));
+            assertTrue(translated.contains("丙\n丁"));
+            // Both texts travel inside one JSON object, with their line breaks escaped: the decoded
+            // user message carries the two characters \n, never a real line break.
+            String user = JsonStrings.readStringPath(body.get(), "messages[1].content");
+            assertTrue(user.startsWith("{") && user.endsWith("}"));
+            assertTrue(user.contains("\"a\\nb\""));
+            assertTrue(user.contains("\"c\\nd\""));
+            assertTrue(user.contains("\"1\":") && user.contains("\"2\":"));
+            assertFalse(user.contains("\n"));
         } finally {
             server.close();
             serverThread.join(5000);
@@ -1605,8 +1619,14 @@ public final class ProviderSelfTest {
                 throw new AssertionError("Batched quality-mode translation failed", failure.get());
             }
             assertEquals("你好", first.get());
-            assertTrue(body.get().contains("\"1\":\"Hello\""));
-            assertTrue(body.get().contains("\"2\":\"Welcome back\""));
+            // The request is one JSON object keyed by line number, so the order of the entries
+            // follows the order in which the two threads reached the batch.
+            String user = JsonStrings.readStringPath(body.get(), "messages[1].content");
+            assertTrue(user.startsWith("{") && user.endsWith("}"));
+            assertTrue(user.contains("\"Hello\""));
+            assertTrue(user.contains("\"Welcome back\""));
+            assertTrue(user.contains("\"1\":") && user.contains("\"2\":"));
+            assertTrue(body.get().contains("\"response_format\":{\"type\":\"json_object\"}"));
         } finally {
             server.close();
             serverThread.join(5000);

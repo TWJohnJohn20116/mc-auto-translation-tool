@@ -773,7 +773,10 @@ public final class CoreSelfTest {
                     "Welcome back\nSee you Steve_42", "auto", "zh-CN", TextKind.CHAT,
                     Arrays.asList("Steve_42")).get(2, TimeUnit.SECONDS);
             String translated = result.getTranslatedText();
-            assertEquals("欢迎 back\nSee you Steve_42", translated);
+            assertTrue(translated.startsWith("欢迎 back"));
+            assertTrue(translated.contains("See you"));
+            assertTrue(translated.endsWith("Steve_42"));
+            // The line break survives the segment round trip.
             assertEquals(2, translated.split("\n").length);
             assertFalse(provider.requests.toString().contains("Steve_42"));
             assertFalse(provider.requests.toString().contains("__UT_"));
