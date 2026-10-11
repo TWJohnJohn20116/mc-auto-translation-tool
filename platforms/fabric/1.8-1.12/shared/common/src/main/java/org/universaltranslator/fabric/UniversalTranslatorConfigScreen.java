@@ -80,6 +80,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private static final int CHECK_SETTINGS = 33;
     private static final int QUALITY = 34;
     private static final int PROMPT_APPLY = 35;
+    /** Field id for the prompt box; this version's TextFieldWidget needs one. */
+    private static final int PROMPT = 36;
     private static final int HUD_PREVIEW_SCREEN_WIDTH = 320;
     private static final int HUD_PREVIEW_SCREEN_HEIGHT = 240;
     private static final int HUD_DRAG_PREVIEW_HEIGHT = 48;
@@ -341,7 +343,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
                 ? TranslationPrompt.toEditorText(original.customSystemPrompt())
                 : customPrompt.getText();
         int promptApplyWidth = Math.max(48, buttonWidth - 24);
-        customPrompt = new TextFieldWidget(renderer, left, engineRow(4),
+        customPrompt = new TextFieldWidget(PROMPT, renderer, left, engineRow(4),
                 totalWidth - promptApplyWidth - 8, 20);
         customPrompt.setMaxLength(MAXIMUM_PROMPT_LENGTH);
         customPrompt.setText(promptValue);

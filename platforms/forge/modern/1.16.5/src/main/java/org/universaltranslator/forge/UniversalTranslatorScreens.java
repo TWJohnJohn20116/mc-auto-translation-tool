@@ -324,7 +324,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         customPrompt.setMaxLength(MAXIMUM_PROMPT_LENGTH);
         customPrompt.setValue(promptValue);
         applyPromptButton = addButton(new Button(layout.right + layout.buttonWidth - promptApplyWidth, engineRow(4), promptApplyWidth, 20,
-                new TranslationTextComponent("screen.universal_translator.diagnostics.prompt_apply", button -> applyPromptSettings()));
+                new TranslationTextComponent("screen.universal_translator.diagnostics.prompt_apply"), button -> applyPromptSettings()));
 
         // --- Tab 4: Outgoing (傳送) ---
         outgoingButton = addButton(button(left, layout.contentRow(0), layout.totalWidth,
