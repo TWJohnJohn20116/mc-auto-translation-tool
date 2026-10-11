@@ -56,6 +56,14 @@ public final class DeepLTranslationProvider implements TranslationProvider {
         return "deepl:" + endpoint.getHost() + endpoint.getPath();
     }
 
+    /**
+     * DeepL answers a form document rather than a chat completion, so it has no way to be asked for
+     * a JSON object. It is also the one provider that never batches, so nothing is lost.
+     */
+    public static JsonOutputMode jsonOutputMode() {
+        return JsonOutputMode.NONE;
+    }
+
     @Override
     public String translate(TranslationRequest request) throws Exception {
         Map<String, String> fields = new LinkedHashMap<String, String>();

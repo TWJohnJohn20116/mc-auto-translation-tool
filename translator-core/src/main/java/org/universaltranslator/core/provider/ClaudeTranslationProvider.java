@@ -216,6 +216,19 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
 
     /** One Messages request body; {@code streaming} selects the event-stream response form. */
     private String requestBody(String text, String system, int maximumTokens, boolean streaming) {
+        return requestBody(text, system, maximumTokens, streaming, false);
+    }
+
+    /**
+     * One Messages request body.
+     *
+     * @param jsonObject start the JSON object for the model with a prefilled assistant turn, which is
+     *                   how Anthropic asks for one — the API has no output-format field. The reply
+     *                   continues from that brace, so a caller using this mode has to put the same
+     *                   character back in front of {@code content[].text} before parsing it.
+     */
+    String requestBody(String text, String system, int maximumTokens, boolean streaming,
+            boolean jsonObject) {
         StringBuilder body = new StringBuilder(text.length() + 256)
                 .append('{')
                 .append("\"model\":").append(JsonStrings.quote(model)).append(',')
@@ -226,8 +239,22 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
             body.append("\"system\":").append(JsonStrings.quote(system)).append(',');
         }
         body.append("\"messages\":[{\"role\":\"user\",\"content\":")
-                .append(JsonStrings.quote(text)).append("}]");
+                .append(JsonStrings.quote(text)).append("}");
+        if (jsonObject) {
+            body.append(",{\"role\":\"assistant\",\"content\":").append(JsonStrings.quote("{"));
+        }
+        body.append(']');
         return body.append(streaming ? ",\"stream\":true}" : ",\"stream\":false}").toString();
+    }
+
+    /**
+     * Claude is asked for a JSON object with a prefilled assistant turn.
+     *
+     * <p>Declared here so a batch path can ask in this provider's own dialect instead of the shared
+     * request builder guessing; Claude has no batch path yet.
+     */
+    public static JsonOutputMode jsonOutputMode() {
+        return JsonOutputMode.PREFILL;
     }
 
     private static boolean isEventStream(String contentType) {

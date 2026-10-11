@@ -232,6 +232,16 @@ public final class GeminiTranslationProvider implements TranslationProvider {
 
     /** One {@code generateContent} request body. */
     private String requestBody(String text, String system, int maximumTokens) {
+        return requestBody(text, system, maximumTokens, false);
+    }
+
+    /**
+     * One {@code generateContent} request body.
+     *
+     * @param jsonObject ask for a JSON object through the generation config; Gemini answers with the
+     *                   object as the candidate text, so nothing on the reply side changes
+     */
+    String requestBody(String text, String system, int maximumTokens, boolean jsonObject) {
         StringBuilder body = new StringBuilder(text.length() + 320).append('{');
         if (system != null && !system.trim().isEmpty()) {
             body.append("\"systemInstruction\":{\"parts\":[{\"text\":")
@@ -240,8 +250,20 @@ public final class GeminiTranslationProvider implements TranslationProvider {
         body.append("\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":")
                 .append(JsonStrings.quote(text)).append("]}]")
                 .append(",\"generationConfig\":{\"temperature\":0,\"maxOutputTokens\":")
-                .append(maximumTokens).append('}');
+                .append(maximumTokens)
+                .append(jsonObject ? ",\"responseMimeType\":\"application/json\"" : "")
+                .append('}');
         return body.append('}').toString();
+    }
+
+    /**
+     * Gemini can be asked for a JSON object through {@code generationConfig.responseMimeType}.
+     *
+     * <p>Declared here so a batch path can ask in this provider's own dialect instead of the shared
+     * request builder guessing; Gemini has no batch path yet.
+     */
+    public static JsonOutputMode jsonOutputMode() {
+        return JsonOutputMode.RESPONSE_MIME_TYPE;
     }
 
     /** A missing content type counts as "not streaming", as everywhere else in this package. */

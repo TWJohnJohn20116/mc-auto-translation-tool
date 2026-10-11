@@ -67,6 +67,7 @@ public final class CoreSelfTest {
         protectsNetworkAddresses();
         skipsFullyProtectedText();
         neverSendsProtectedValuesToProvider();
+        preservesLineBreaksInMultiLineSegments();
         blocksConfiguredKeywords();
         discardsResultsBlockedWhileInFlight();
         separatesCacheEntriesByTextKind();
@@ -752,6 +753,30 @@ public final class CoreSelfTest {
             assertFalse(requests.contains("play.example.cn"));
             assertFalse(requests.contains("42"));
             assertFalse(requests.contains("__UT_"));
+        }
+    }
+
+    /**
+     * A multi-line text is still split into segments around its protected literals, sent with its
+     * line breaks, and put back together: the literal returns, the line break survives and the
+     * restored result is what the validator accepted.
+     *
+     * <p>The batch protocol itself — a multi-line text inside one JSON object — is checked in
+     * {@code ProviderSelfTest.batchesMultiLineTextsWithJsonEscapes}; this covers the coordinator
+     * side, which is where the segments and the restoration live.
+     */
+    private static void preservesLineBreaksInMultiLineSegments() throws Exception {
+        SegmentRecordingProvider provider = new SegmentRecordingProvider();
+        try (TranslationCoordinator coordinator = new TranslationCoordinator(
+                provider, new TranslationCache(20), 1)) {
+            TranslationResult result = coordinator.translate(
+                    "Welcome back\nSee you Steve_42", "auto", "zh-CN", TextKind.CHAT,
+                    Arrays.asList("Steve_42")).get(2, TimeUnit.SECONDS);
+            String translated = result.getTranslatedText();
+            assertEquals("欢迎 back\nSee you Steve_42", translated);
+            assertEquals(2, translated.split("\n").length);
+            assertFalse(provider.requests.toString().contains("Steve_42"));
+            assertFalse(provider.requests.toString().contains("__UT_"));
         }
     }
 
