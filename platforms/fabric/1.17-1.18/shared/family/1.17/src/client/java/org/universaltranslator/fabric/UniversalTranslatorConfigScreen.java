@@ -18,6 +18,8 @@ import org.universaltranslator.core.HudIndicatorVisibility;
 import org.universaltranslator.core.TranslationDisplayMode;
 import org.universaltranslator.core.OfflineModel;
 import org.universaltranslator.core.TargetLanguage;
+import org.universaltranslator.core.TranslationPrompt;
+import org.universaltranslator.core.TranslationQuality;
 import org.universaltranslator.core.TranslationStatusLocalizer;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TranslationProviderCatalog;
@@ -45,6 +47,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private static final int MODEL_LIST_TOP = 46;
     /** Room kept under the model rows for the paging, back, and hint lines. */
     private static final int MODEL_LIST_FOOTER_HEIGHT = 62;
+    /** Longest custom prompt the engine tab's text field accepts. */
+    private static final int MAXIMUM_PROMPT_LENGTH = 4096;
     private static final String LIBRETRANSLATE_PROVIDER = "libretranslate";
     private static final String TRANSLATE_PATH = "/translate";
     private static final String LANGUAGES_PATH = "/languages";
@@ -84,8 +88,6 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private double hudDragLastX;
     private double hudDragLastY;
 
-
-
     private enum Tab {
         GENERAL,
         SCOPES,
@@ -112,8 +114,11 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private ButtonWidget hudContentButton;
     private ButtonWidget hudVisibilityButton;
 
-
-
+    /** Selected quality mode; the shared Save writes it and Apply commits it immediately. */
+    private TranslationQuality quality;
+    private ButtonWidget qualityButton;
+    private TextFieldWidget customPrompt;
+    private ButtonWidget applyPromptButton;
     private TextFieldWidget endpoint;
     private TextFieldWidget blockedKeywords;
     private ButtonWidget enabledButton;
@@ -168,6 +173,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         this.llmEndpoint = config.editorEndpoint(config.provider);
         this.llmApiKey = config.editorApiKey(config.provider);
         this.llmModel = config.editorModel(config.provider);
+        this.quality = config.translationQuality();
         this.hudIndicator = config.hudIndicator;
         this.hudIndicatorCorner = config.hudIndicatorCorner;
         this.hudIndicatorSize = config.hudIndicatorSize;
@@ -177,7 +183,6 @@ final class UniversalTranslatorConfigScreen extends Screen {
         this.hudIndicatorVisibility = config.hudIndicatorVisibility;
         this.hudIndicatorOffsetX = config.hudIndicatorOffsetX;
         this.hudIndicatorOffsetY = config.hudIndicatorOffsetY;
-
 
     }
 
@@ -348,6 +353,31 @@ final class UniversalTranslatorConfigScreen extends Screen {
         this.endpoint.setMaxLength(512);
         this.endpoint.setText(endpointValue);
 
+        // Quality and the custom system prompt are engine settings, so they belong on this tab
+        // rather than on the diagnostics screen. They take the two rows under the existing three,
+        // which leaves every other engine control exactly where it was; the prompt shares its row
+        // with its own Apply button.
+        this.qualityButton = addDrawableChild(ButtonWidget.builder(new LiteralText(""), button -> {
+            quality = quality.next();
+            refreshQualityLabel();
+        }).dimensions(left, engineRow(3), layout.totalWidth, 20).build());
+
+        String promptValue = customPrompt == null
+                ? TranslationPrompt.toEditorText(original.customSystemPrompt())
+                : customPrompt.getText();
+        int promptApplyWidth = Math.max(48, layout.buttonWidth - 24);
+        this.customPrompt = addDrawableChild(new TextFieldWidget(this.textRenderer, left, engineRow(4),
+                layout.totalWidth - promptApplyWidth - 8,
+                20, new TranslatableText("screen.universal_translator.diagnostics.prompt")));
+        this.customPrompt.setMaxLength(MAXIMUM_PROMPT_LENGTH);
+        this.customPrompt.setText(promptValue);
+        this.customPrompt.setSuggestion(
+                tr("screen.universal_translator.diagnostics.prompt_hint"));
+        this.applyPromptButton = addDrawableChild(ButtonWidget.builder(
+                new TranslatableText("screen.universal_translator.diagnostics.prompt_apply"),
+                button -> applyPromptSettings()).dimensions(layout.right + layout.buttonWidth - promptApplyWidth, engineRow(4),
+                        promptApplyWidth, 20).build());
+
         // --- Tab 4: Outgoing (傳送) ---
         this.outgoingButton = addDrawableChild(ButtonWidget.builder(new LiteralText(""), button -> {
             translateOutgoing = !translateOutgoing;
@@ -402,7 +432,6 @@ final class UniversalTranslatorConfigScreen extends Screen {
 
         // --- Bottom Action Row ---
 
-
         addDrawableChild(ButtonWidget.builder(new TranslatableText("screen.universal_translator.save"), button -> saveAndApply())
                 .dimensions(left, layout.saveY, layout.buttonWidth, 20).build());
         addDrawableChild(ButtonWidget.builder(new TranslatableText("gui.cancel"), button -> onClose())
@@ -440,6 +469,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         downloadButton.setMessage(new TranslatableText("screen.universal_translator.option.download", onOff(offlineAutoDownload)));
         modelButton.setMessage(new TranslatableText("screen.universal_translator.option.model", offlineModel.displayName()));
         fallbackButton.setMessage(new TranslatableText("screen.universal_translator.option.fallback", onOff(apiFallback)));
+        refreshQualityLabel();
         outgoingButton.setMessage(new TranslatableText("screen.universal_translator.option.outgoing", onOff(translateOutgoing)));
         targetLanguageButton.setMessage(new TranslatableText("screen.universal_translator.option.target_preset",
                 TargetLanguage.displayName(targetLanguage)));
@@ -469,6 +499,49 @@ final class UniversalTranslatorConfigScreen extends Screen {
         hudColorButton.active = hudIndicator;
         hudContentButton.active = hudIndicator;
         hudVisibilityButton.active = hudIndicator;
+    }
+
+    /**
+     * Re-renders the quality button from the pending selection.
+     *
+     * <p>Like the other engine rows the button only changes what the shared Save writes; the Apply
+     * button beside the prompt is there for users who want the change to take effect without
+     * closing the screen.
+     */
+    private void refreshQualityLabel() {
+        if (qualityButton == null) {
+            return;
+        }
+        qualityButton.setMessage(new TranslatableText(
+                "screen.universal_translator.option.quality",
+                tr("value.universal_translator.quality." + quality.configName())));
+    }
+
+    /**
+     * Applies the quality mode and the custom prompt to the running configuration without closing
+     * the screen.
+     *
+     * <p>The provider is rebuilt through exactly the path Save uses, so the new prompt is used by
+     * the next request and the cache key moves with it. A failure leaves the previous configuration
+     * running and reports it on the engine tab's own status line.
+     */
+    private void applyPromptSettings() {
+        refreshQualityLabel();
+        try {
+            String prompt = customPrompt == null
+                    ? original.customSystemPrompt()
+                    : TranslationPrompt.fromEditorText(customPrompt.getText());
+            FabricConfig updated = original.withPromptSettings(quality, prompt);
+            if (updated.enabled) {
+                updated.validateProviderConfiguration();
+            }
+            FabricTranslationRuntime.initialize(updated);
+            updated.save();
+            setTestStatus(tr("screen.universal_translator.diagnostics.settings_saved"), false);
+        } catch (Exception exception) {
+            setTestStatus(tr("screen.universal_translator.diagnostics.settings_failed",
+                    describe(exception)), true);
+        }
     }
 
     private void updateTabVisibility() {
@@ -510,6 +583,9 @@ final class UniversalTranslatorConfigScreen extends Screen {
         // provider let a DeepSeek user edit a value DeepSeek never reads.
         endpoint.visible = isEngine && libre;
         testConnectionButton.visible = isEngine && llm;
+        qualityButton.visible = isEngine;
+        customPrompt.visible = isEngine;
+        applyPromptButton.visible = isEngine;
         checkSettingsButton.visible = isEngine && !offline && !llm;
         if (!isEngine) {
             modelListOpen = false;
@@ -579,7 +655,12 @@ final class UniversalTranslatorConfigScreen extends Screen {
                     new HudIndicatorSettings(hudIndicator, hudIndicatorCorner,
                             hudIndicatorSize, hudIndicatorMargin, hudIndicatorColor,
                             hudIndicatorContent, hudIndicatorVisibility,
-                            hudIndicatorOffsetX, hudIndicatorOffsetY));
+                            hudIndicatorOffsetX, hudIndicatorOffsetY))
+                    // Save writes the engine tab's prompt controls too, so applying the prompt
+                    // and then saving cannot silently restore the value the screen
+                    // was opened with.
+                    .withPromptSettings(quality, TranslationPrompt.fromEditorText(
+                            customPrompt == null ? "" : customPrompt.getText()));
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
                     && (updated.tencentSecretId.isEmpty() || updated.tencentSecretKey.isEmpty())) {
                 throw new IllegalArgumentException(tr("error.universal_translator.tencent_credentials"));
@@ -713,7 +794,6 @@ final class UniversalTranslatorConfigScreen extends Screen {
         return super.mouseReleased(mouseX, mouseY, button);
     }
 
-
     private void renderSelection(MatrixStack matrices, int mouseX, int mouseY) {
         String[] values = SettingsSelectionList.values(openSelection);
         SettingsSelectionList.Layout list = SettingsSelectionList.layout(width, height, values.length);
@@ -789,7 +869,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
      */
     private int engineBlockTop() {
         Layout layout = layout();
-        int blockHeight = layout.contentRowStep * 2 + 20 + 46;
+        int blockHeight = layout.contentRowStep * 4 + 20 + 46;
         int available = layout.saveY - 6 - layout.contentTop;
         return layout.contentTop + Math.max(0, (available - blockHeight) / 2);
     }
@@ -800,7 +880,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
 
     /** Read-only engine facts plus the always-visible privacy hint. */
     private void renderEngineInfo(MatrixStack matrices) {
-        int y = engineRow(2) + 24;
+        int y = engineRow(4) + 24;
         if (isLlm()) {
             drawCenteredText(matrices, this.textRenderer, new TranslatableText(
                             "screen.universal_translator.engine.summary",
@@ -1222,7 +1302,6 @@ final class UniversalTranslatorConfigScreen extends Screen {
             default: return tr("value.universal_translator.hud_corner.top_left");
         }
     }
-
 
     private static String tr(String key, Object... arguments) {
         return new TranslatableText(key, arguments).getString();

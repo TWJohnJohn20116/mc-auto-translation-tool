@@ -1,15 +1,12 @@
 package org.universaltranslator.fabric;
 
 import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.client.render.TextRenderer;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.resource.language.I18n;
 import org.universaltranslator.core.DebugLog;
 import org.universaltranslator.core.DiagnosticsBundleExporter;
 import org.universaltranslator.core.TranslationDiagnosticsSnapshot;
-import org.universaltranslator.core.TranslationPrompt;
-import org.universaltranslator.core.TranslationQuality;
 import org.universaltranslator.core.TranslationStats;
 
 import java.nio.file.Path;
@@ -18,18 +15,13 @@ import java.util.Collections;
 
 /** Secret-free runtime diagnostics shared by Forge 1.8.9 and 1.12.2. */
 final class UniversalTranslatorDiagnosticsScreen extends Screen {
-    /** Longest custom prompt the editor accepts, matching the settings screens' text field bound. */
-    private static final int MAXIMUM_PROMPT_LENGTH = 4096;
     /** Vertical distance between two text lines. */
     private static final int LINE_STEP = 17;
-    /** First line's y, below the quality and prompt controls. */
-    private static final int LINE_START = 84;
+    /** First line's y, just under the title. */
+    private static final int LINE_START = 43;
 
     private static final int BACK = 1;
     private static final int EXPORT = 2;
-    private static final int QUALITY = 3;
-    private static final int PROMPT = 4;
-    private static final int PROMPT_APPLY = 5;
     private static final int DEBUG = 6;
     private static final int BUNDLE = 7;
     private static final int PAGE = 8;
@@ -37,16 +29,9 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
 
     private final Screen parent;
     private TextRenderer renderer;
-    /** Selected quality mode; read from the live configuration on every {@link #init()}. */
-    private TranslationQuality quality;
-    private ButtonWidget qualityButton;
-    private TextFieldWidget customPrompt;
     private ButtonWidget debugButton;
     private ButtonWidget pageButton;
     private ButtonWidget resetButton;
-    /** Where the prompt field was placed, so the empty-state hint can be drawn inside it. */
-    private int promptX;
-    private int promptY;
     /** Whether the counters page is shown instead of the engine diagnostics page. */
     private boolean statisticsPage;
     private boolean debugEnabled;
@@ -65,32 +50,12 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
         if (config != null) {
             // Re-read here rather than in the constructor so a rebuild after a resize, or a change
             // made by another screen, is reflected instead of showing a stale value.
-            quality = config.translationQuality();
             debugEnabled = config.debugLog();
         }
-        if (quality == null) {
-            quality = TranslationQuality.DEFAULT;
-        }
-        String promptValue = customPrompt == null
-                ? TranslationPrompt.toEditorText(config == null ? "" : config.customSystemPrompt())
-                : customPrompt.getText();
         int totalWidth = Math.max(180, Math.min(320, width - 24));
         int gap = 8;
         int buttonWidth = (totalWidth - gap) / 2;
         int left = (width - totalWidth) / 2;
-
-        qualityButton = new ActionButton(QUALITY, left, 32, totalWidth, 20, "");
-        addButton(qualityButton);
-
-        int applyWidth = Math.max(48, buttonWidth - 24);
-        promptX = left;
-        promptY = 56;
-        customPrompt = new TextFieldWidget(
-                PROMPT, renderer, promptX, promptY, totalWidth - applyWidth - gap, 20);
-        customPrompt.setMaxLength(MAXIMUM_PROMPT_LENGTH);
-        customPrompt.setText(promptValue);
-        addButton(new ActionButton(PROMPT_APPLY, left + totalWidth - applyWidth, 56,
-                applyWidth, 20, tr("screen.universal_translator.diagnostics.prompt_apply")));
 
         debugButton = new ActionButton(DEBUG, left, height - 76, buttonWidth, 20, "");
         addButton(debugButton);
@@ -107,17 +72,8 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
                 buttonWidth, 20, tr("screen.universal_translator.diagnostics.back")));
         addButton(new ActionButton(EXPORT, left + buttonWidth + gap, height - 28,
                 buttonWidth, 20, tr("screen.universal_translator.diagnostics.export")));
-        refreshQualityLabel();
         refreshDebugLabel();
         refreshPageLabels();
-    }
-
-    private void refreshQualityLabel() {
-        if (qualityButton == null) {
-            return;
-        }
-        qualityButton.message = tr("screen.universal_translator.option.quality",
-                tr("value.universal_translator.quality." + quality.configName()));
     }
 
     private void refreshDebugLabel() {
@@ -145,11 +101,6 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
             OrnitheClientAccess.openScreen(parent);
         } else if (button.id == EXPORT) {
             exportLog();
-        } else if (button.id == QUALITY) {
-            quality = quality.next();
-            applyAdvancedSettings();
-        } else if (button.id == PROMPT_APPLY) {
-            applyAdvancedSettings();
         } else if (button.id == DEBUG) {
             debugEnabled = !debugEnabled;
             applyDebugMode();
@@ -160,40 +111,6 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
             refreshPageLabels();
         } else if (button.id == RESET) {
             resetStatistics();
-        }
-    }
-
-    /**
-     * Applies the selected quality mode and custom prompt to the live configuration and persists
-     * them.
-     *
-     * <p>Only the system prompt changes: the provider is rebuilt through exactly the path the
-     * settings screen uses, so the new prompt is used by the next request and the cache key moves
-     * with it. A failure leaves the previous configuration running and reports it in place.
-     */
-    private void applyAdvancedSettings() {
-        refreshQualityLabel();
-        FabricConfig config = FabricTranslationRuntime.diagnosticsConfig();
-        if (config == null) {
-            exportStatus = tr("screen.universal_translator.diagnostics.settings_unavailable");
-            exportFailed = true;
-            return;
-        }
-        try {
-            String prompt = customPrompt == null
-                    ? config.customSystemPrompt()
-                    : TranslationPrompt.fromEditorText(customPrompt.getText());
-            FabricConfig updated = config.withPromptSettings(quality, prompt);
-            if (updated.enabled) {
-                updated.validateProviderConfiguration();
-            }
-            FabricTranslationRuntime.initialize(updated);
-            updated.save();
-            exportStatus = tr("screen.universal_translator.diagnostics.settings_saved");
-            exportFailed = false;
-        } catch (Exception failure) {
-            exportStatus = settingsFailure(failure);
-            exportFailed = true;
         }
     }
 
@@ -243,38 +160,6 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
     }
 
     @Override
-    public void tick() {
-        if (customPrompt != null) {
-            customPrompt.tick();
-        }
-    }
-
-    @Override
-    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if (customPrompt != null && customPrompt.keyPressed(keyCode, scanCode, modifiers)) {
-            return true;
-        }
-        return super.keyPressed(keyCode, scanCode, modifiers);
-    }
-
-    @Override
-    public boolean charTyped(char chr, int modifiers) {
-        if (customPrompt != null && customPrompt.charTyped(chr, modifiers)) {
-            return true;
-        }
-        return super.charTyped(chr, modifiers);
-    }
-
-    @Override
-    public boolean mouseClicked(double mouseX, double mouseY, int mouseButton) {
-        boolean handled = super.mouseClicked(mouseX, mouseY, mouseButton);
-        if (customPrompt != null) {
-            customPrompt.mouseClicked(mouseX, mouseY, mouseButton);
-        }
-        return handled;
-    }
-
-    @Override
     public void render(int mouseX, int mouseY, float partialTicks) {
         renderBackground();
         fill(Math.max(5, width / 2 - 190), 8,
@@ -309,14 +194,6 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
                     exportFailed ? 0xFFFF5555 : 0xFF55FF88);
         }
         super.render(mouseX, mouseY, partialTicks);
-        if (customPrompt != null) {
-            OrnitheClientAccess.renderTextField(customPrompt, mouseX, mouseY, partialTicks);
-            if (customPrompt.getText().isEmpty()) {
-                drawString(renderer,
-                        tr("screen.universal_translator.diagnostics.prompt_hint"),
-                        promptX + 4, promptY + 6, 0x70A0A0A0);
-            }
-        }
     }
 
     /** The lines the current page shows. */
