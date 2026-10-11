@@ -1568,7 +1568,7 @@ public final class ProviderSelfTest {
         }
     }
 
-    /** The numbered batch path builds its own prompt, so the quality mode has to reach it too. */
+    /** The batch path builds its own prompt, so the quality mode has to reach it too. */
     private static void appliesTheQualityModeToTheBatchPrompt() throws Exception {
         ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
         server.setSoTimeout(5000);
@@ -1695,8 +1695,8 @@ public final class ProviderSelfTest {
     /**
      * A non-empty custom prompt replaces the built-in one, but the two contracts the rest of the
      * pipeline depends on are appended whatever the user wrote: the model must answer with the
-     * translation alone (or {@code ProtectedText} restoration breaks) and must keep one output line
-     * per input line (or the numbered batch protocol breaks).
+     * translation alone (or {@code ProtectedText} restoration breaks) and, on the batch path, must
+     * answer with one JSON object keyed by the input line numbers (or the batch protocol breaks).
      */
     private static void replacesTheBuiltInPromptWithACustomOne() {
         TranslationRequest single = new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT);
@@ -1714,7 +1714,7 @@ public final class ProviderSelfTest {
         String batch = TranslationPrompt.batch(custom, multi);
         assertTrue(batch.startsWith("Translate to 繁體中文 (zh-TW) for a Minecraft player."));
         assertTrue(batch.contains(
-                "Reply with the same numbering: exactly one translated line per input line"));
+                "Reply with one JSON object: each key is an input line number written as a string"));
 
         assertTrue(custom.hasCustomSystemPrompt());
         assertFalse(TranslationPrompt.Settings.standard().hasCustomSystemPrompt());
