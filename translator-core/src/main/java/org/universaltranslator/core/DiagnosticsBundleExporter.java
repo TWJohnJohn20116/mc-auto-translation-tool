@@ -1,5 +1,7 @@
 package org.universaltranslator.core;
 
+import org.universaltranslator.core.provider.OnlineProviderConfig;
+
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -59,7 +61,7 @@ public final class DiagnosticsBundleExporter {
         try (OutputStream file = Files.newOutputStream(output);
                 ZipOutputStream zip = new ZipOutputStream(file)) {
             put(zip, "environment.txt", environment(platform));
-            put(zip, "diagnostics.txt", report(diagnosticLines));
+            put(zip, "diagnostics.txt", report(diagnosticLines, configFile));
             put(zip, "config.properties", redactedFile(configFile,
                     "# The configuration is redacted: keys, tokens and endpoints are replaced."));
             put(zip, "debug.log", redactedFile(debugLogFile,
@@ -95,7 +97,7 @@ public final class DiagnosticsBundleExporter {
         return content.toString();
     }
 
-    private static String report(List<String> diagnosticLines) {
+    private static String report(List<String> diagnosticLines, Path configFile) {
         StringBuilder content = new StringBuilder(1024);
         content.append("MC Auto Translation Tool - Diagnostics\n");
         if (diagnosticLines == null || diagnosticLines.isEmpty()) {
@@ -104,6 +106,13 @@ public final class DiagnosticsBundleExporter {
             for (String line : diagnosticLines) {
                 content.append(DebugLog.redact(line)).append('\n');
             }
+        }
+        content.append('\n');
+        // The effective throughput settings, with a note for any value that had to be clamped. They
+        // are derived from the configuration file here rather than passed in by the screen, so every
+        // platform's bundle reports them without its diagnostics screen having to know about them.
+        for (String line : OnlineProviderConfig.effectiveSettingsLines(configFile)) {
+            content.append(DebugLog.redact(line)).append('\n');
         }
         content.append('\n');
         for (String line : TranslationStats.global().plainLines()) {

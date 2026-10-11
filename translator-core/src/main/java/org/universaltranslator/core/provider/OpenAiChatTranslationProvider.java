@@ -90,10 +90,15 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
      */
     private volatile boolean jsonOutputRejected;
 
-    /** How long a request waits for siblings to batch with, in milliseconds. */
-    private static final long BATCH_WINDOW_MILLIS = 30L;
-    /** Largest number of texts carried by one request. */
-    private static final int MAXIMUM_BATCH_SIZE = 8;
+    /**
+     * How many texts one request may carry, how long it waits for siblings to batch with, and how
+     * many translations may run at once.
+     *
+     * <p>These are throughput settings and do not change the prompt, so they are kept out of
+     * {@link TranslationPrompt.Settings#signature()} and the cache key is unaffected by them.
+     * {@code batchSize == 1} turns batching off completely.
+     */
+    private final TranslationTuning tuning;
     /**
      * Per-entry allowance in the batch completion budget for the reply's JSON key, its quotes and
      * the separator between entries.
@@ -117,7 +122,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
     private final Object batchLock = new Object();
     private final List<BatchEntry> pendingBatch = new ArrayList<BatchEntry>();
     private boolean batchServing;
-    private long batchWindowMillis = BATCH_WINDOW_MILLIS;
+    private long batchWindowMillis;
 
     /** Test seam: widens the collection window so a batching test is not timing dependent. */
     void setBatchWindowMillis(long millis) {
@@ -166,6 +171,19 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             String providerId,
             HttpJsonClient http,
             TranslationPrompt.Settings prompt,
+            TranslationTuning tuning
+    ) {
+        this(endpoint, apiKey, model, providerId, http, prompt, "Authorization", "Bearer ",
+                JsonOutputMode.RESPONSE_FORMAT, tuning);
+    }
+
+    OpenAiChatTranslationProvider(
+            String endpoint,
+            String apiKey,
+            String model,
+            String providerId,
+            HttpJsonClient http,
+            TranslationPrompt.Settings prompt,
             String credentialHeader,
             String credentialPrefix
     ) {
@@ -200,6 +218,22 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             String credentialPrefix,
             JsonOutputMode jsonOutput
     ) {
+        this(endpoint, apiKey, model, providerId, http, prompt, credentialHeader, credentialPrefix,
+                jsonOutput, TranslationTuning.DEFAULTS);
+    }
+
+    OpenAiChatTranslationProvider(
+            String endpoint,
+            String apiKey,
+            String model,
+            String providerId,
+            HttpJsonClient http,
+            TranslationPrompt.Settings prompt,
+            String credentialHeader,
+            String credentialPrefix,
+            JsonOutputMode jsonOutput,
+            TranslationTuning tuning
+    ) {
         this.endpoint = EndpointPolicy.requireSafeEndpoint(normalizeEndpoint(endpoint));
         this.apiKey = apiKey == null ? "" : apiKey.trim();
         this.model = requireText("model", model);
@@ -211,6 +245,8 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         this.credentialPrefix = credentialPrefix == null ? "" : credentialPrefix;
         // An unspecified mode means "do not send a field this endpoint was never asked about".
         this.jsonOutput = jsonOutput == null ? JsonOutputMode.NONE : jsonOutput;
+        this.tuning = tuning == null ? TranslationTuning.DEFAULTS : tuning;
+        this.batchWindowMillis = this.tuning.batchWindowMillis();
     }
 
     /**
@@ -270,7 +306,9 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
      */
     @Override
     public String translate(TranslationRequest request) throws Exception {
-        if (providerId.startsWith("offline-loopback")) {
+        // The offline loopback server is single threaded and its context window is 1024 tokens, so
+        // it never batches; and a configured batch size of 1 asks for exactly the same thing.
+        if (providerId.startsWith("offline-loopback") || !tuning.batching()) {
             return translateOne(request);
         }
         return translateBatched(request);
@@ -527,11 +565,12 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
     /**
      * Queues one single-line text and waits for the request that will carry it.
      *
-     * <p>The first caller to find the queue unserved becomes the server: it waits
-     * {@link #BATCH_WINDOW_MILLIS} for siblings, sends up to {@link #MAXIMUM_BATCH_SIZE} of them in
-     * one request, and releases the role again so a waiter whose target language or text kind did
-     * not match can serve its own group. Waiting is bounded, so a lost notification cannot park a
-     * translation thread forever.
+     * <p>The first caller to find the queue unserved becomes the server: it waits the configured
+     * window for siblings, sends up to the configured batch size of them in one request, and
+     * releases the role again so a waiter whose target language or text kind did not match can
+     * serve its own group. Waiting is bounded, so a lost notification cannot park a translation
+     * thread forever. A window of 0 skips the wait entirely and only groups what is already
+     * queued, which is what a latency-sensitive setup asks for.
      */
     private String translateBatched(TranslationRequest request) throws Exception {
         BatchEntry entry = new BatchEntry(request);
@@ -564,12 +603,15 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
 
     /** Serves one group of compatible texts, then releases the server role. */
     private void serveBatch(BatchEntry leader) {
-        List<BatchEntry> group = new ArrayList<BatchEntry>(MAXIMUM_BATCH_SIZE);
+        int maximumBatchSize = tuning.batchSize();
+        List<BatchEntry> group = new ArrayList<BatchEntry>(maximumBatchSize);
         try {
-            Thread.sleep(batchWindowMillis);
+            if (batchWindowMillis > 0L) {
+                Thread.sleep(batchWindowMillis);
+            }
             synchronized (batchLock) {
                 Iterator<BatchEntry> iterator = pendingBatch.iterator();
-                while (iterator.hasNext() && group.size() < MAXIMUM_BATCH_SIZE) {
+                while (iterator.hasNext() && group.size() < maximumBatchSize) {
                     BatchEntry candidate = iterator.next();
                     if (sameJob(candidate.request, leader.request)) {
                         iterator.remove();

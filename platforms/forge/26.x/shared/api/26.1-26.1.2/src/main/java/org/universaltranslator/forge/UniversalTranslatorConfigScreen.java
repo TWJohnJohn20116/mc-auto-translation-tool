@@ -92,6 +92,12 @@ final class UniversalTranslatorConfigScreen extends Screen {
     /** Selected quality mode; the shared Save writes it and Apply commits it immediately. */
     private TranslationQuality quality;
     private Button qualityButton;
+    /** Worker threads used by the translation pipeline; the shared Save writes it. */
+    private int workers;
+    private Button workersButton;
+    /** Sentences grouped into one translation request; the shared Save writes it. */
+    private int batchSize;
+    private Button batchSizeButton;
     private EditBox customPrompt;
     private Button applyPromptButton;
     private EditBox endpoint;
@@ -183,6 +189,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
         this.llmApiKey = config.editorApiKey(config.provider);
         this.llmModel = config.editorModel(config.provider);
         this.quality = config.translationQuality();
+        this.workers = config.translationWorkers();
+        this.batchSize = config.batchSize();
     }
 
     @Override
@@ -362,6 +370,15 @@ final class UniversalTranslatorConfigScreen extends Screen {
             quality = quality.next();
             refreshQualityLabel();
         }).bounds(left, engineRow(3), layout.totalWidth, 20).build());
+        this.workersButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+            workers = cycleChoice(workers, 1, 2, 4, 6, 8, 12, 16);
+            refreshWorkersLabel();
+        }).bounds(left, engineRow(5), layout.buttonWidth, 20).build());
+
+        this.batchSizeButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
+            batchSize = cycleChoice(batchSize, 1, 2, 4, 8, 12, 16);
+            refreshBatchLabel();
+        }).bounds(layout.right, engineRow(5), layout.buttonWidth, 20).build());
 
         String promptValue = customPrompt == null
                 ? TranslationPrompt.toEditorText(original.customSystemPrompt())
@@ -460,6 +477,32 @@ final class UniversalTranslatorConfigScreen extends Screen {
                 tr("value.universal_translator.quality." + quality.configName())));
     }
 
+    private void refreshWorkersLabel() {
+        if (workersButton == null) {
+            return;
+        }
+        workersButton.setMessage(Component.translatable(
+                "screen.universal_translator.option.workers", Integer.toString(workers)));
+    }
+
+    private void refreshBatchLabel() {
+        if (batchSizeButton == null) {
+            return;
+        }
+        batchSizeButton.setMessage(Component.translatable(
+                "screen.universal_translator.option.batch_size", Integer.toString(batchSize)));
+    }
+
+    /** Cycles an engine setting through the values the engine tab offers. */
+    private static int cycleChoice(int current, int... choices) {
+        for (int index = 0; index < choices.length; index++) {
+            if (choices[index] == current) {
+                return choices[(index + 1) % choices.length];
+            }
+        }
+        return choices[0];
+    }
+
     /**
      * Applies the quality mode and the custom prompt to the running configuration without closing
      * the screen.
@@ -527,6 +570,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
         endpoint.visible = isEngine && libre;
         testConnectionButton.visible = isEngine && llm;
         qualityButton.visible = isEngine;
+        workersButton.visible = isEngine;
+        batchSizeButton.visible = isEngine;
         customPrompt.visible = isEngine;
         applyPromptButton.visible = isEngine;
         checkSettingsButton.visible = isEngine && !offline && !llm;
@@ -614,6 +659,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
         modelButton.setMessage(Component.translatable("screen.universal_translator.option.model", offlineModel.displayName()));
         fallbackButton.setMessage(Component.translatable("screen.universal_translator.option.fallback", onOff(apiFallback)));
         refreshQualityLabel();
+        refreshWorkersLabel();
+        refreshBatchLabel();
         outgoingButton.setMessage(Component.translatable("screen.universal_translator.option.outgoing", onOff(translateOutgoing)));
         targetLanguageButton.setMessage(Component.translatable("screen.universal_translator.option.target_preset",
                 TargetLanguage.displayName(targetLanguage)));
@@ -666,7 +713,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
                     // and then saving cannot silently restore the value the screen
                     // was opened with.
                     .withPromptSettings(quality, TranslationPrompt.fromEditorText(
-                            customPrompt == null ? "" : customPrompt.getValue()));
+                            customPrompt == null ? "" : customPrompt.getValue()))
+                    .withTranslationTuning(workers, batchSize);
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
                     && (updated.tencentSecretId.isEmpty() || updated.tencentSecretKey.isEmpty())) {
                 throw new IllegalArgumentException(tr("error.universal_translator.tencent_credentials"));
@@ -1027,7 +1075,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
      */
     private int engineBlockTop() {
         Layout layout = layout();
-        int blockHeight = layout.contentRowStep * 4 + 20 + 46;
+        int blockHeight = layout.contentRowStep * 5 + 20 + 46;
         int available = layout.saveY - 6 - layout.contentTop;
         return layout.contentTop + Math.max(0, (available - blockHeight) / 2);
     }
@@ -1038,7 +1086,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
 
     /** Read-only engine facts plus the always-visible privacy hint. */
     private void renderEngineInfo(GuiGraphicsExtractor graphics) {
-        int y = engineRow(4) + 24;
+        int y = engineRow(5) + 24;
         if (isLlm()) {
             graphics.centeredText(this.font, Component.translatable(
                             "screen.universal_translator.engine.summary",

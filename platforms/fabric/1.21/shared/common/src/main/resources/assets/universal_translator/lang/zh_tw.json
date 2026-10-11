@@ -73,6 +73,8 @@
   "screen.universal_translator.diagnostics.auto_download": "模型自動下載：%s",
   "screen.universal_translator.diagnostics.disk_cache": "磁碟快取：%s",
   "screen.universal_translator.option.quality": "品質模式：%s",
+  "screen.universal_translator.option.workers": "併發數：%s",
+  "screen.universal_translator.option.batch_size": "批次大小：%s",
   "value.universal_translator.quality.fast": "快速",
   "value.universal_translator.quality.standard": "標準",
   "value.universal_translator.quality.high": "高品質",

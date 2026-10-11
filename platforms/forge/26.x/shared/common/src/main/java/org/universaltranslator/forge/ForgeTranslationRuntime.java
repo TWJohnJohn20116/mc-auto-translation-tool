@@ -103,7 +103,9 @@ public final class ForgeTranslationRuntime {
                 TranslationStore store = config.diskCache
                         ? new PersistentTranslationCache(config.cacheFile, 10_000)
                         : new TranslationCache(10_000);
-                int workers = provider.id().contains("offline-llama:") ? 1 : 4;
+                // The offline llama.cpp server is single threaded, so it always gets one worker no
+                // matter what the configuration asks for.
+                int workers = provider.id().contains("offline-llama:") ? 1 : config.translationWorkers();
                 created = new RenderTranslationSession(
                         provider, "auto", config.targetLanguage, store, workers, config.displayMode,
                         config.translateEnglishOnly);

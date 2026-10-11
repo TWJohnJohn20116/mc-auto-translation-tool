@@ -108,6 +108,12 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
     /** Selected quality mode; the shared Save writes it and Apply commits it immediately. */
     private TranslationQuality quality;
     private ButtonWidget qualityButton;
+    /** Worker threads used by the translation pipeline; the shared Save writes it. */
+    private int workers;
+    private ButtonWidget workersButton;
+    /** Sentences grouped into one translation request; the shared Save writes it. */
+    private int batchSize;
+    private ButtonWidget batchSizeButton;
     private TextFieldWidget customPrompt;
     private ButtonWidget applyPromptButton;
     private TextFieldWidget blockedKeywords;
@@ -180,6 +186,8 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
         this.llmApiKey = config.editorApiKey(config.provider);
         this.llmModel = config.editorModel(config.provider);
         this.quality = config.translationQuality();
+        this.workers = config.translationWorkers();
+        this.batchSize = config.batchSize();
     }
 
     @Override
@@ -358,6 +366,15 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
             quality = quality.next();
             refreshQualityLabel();
         }).dimensions(left, engineRow(3), layout.totalWidth, 20).build());
+        this.workersButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+            workers = cycleChoice(workers, 1, 2, 4, 6, 8, 12, 16);
+            refreshWorkersLabel();
+        }).dimensions(left, engineRow(5), layout.buttonWidth, 20).build());
+
+        this.batchSizeButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+            batchSize = cycleChoice(batchSize, 1, 2, 4, 8, 12, 16);
+            refreshBatchLabel();
+        }).dimensions(layout.right, engineRow(5), layout.buttonWidth, 20).build());
 
         String promptValue = customPrompt == null
                 ? TranslationPrompt.toEditorText(original.customSystemPrompt())
@@ -489,6 +506,8 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
         modelButton.setMessage(Text.translatable("screen.universal_translator.option.model", offlineModel.displayName()));
         fallbackButton.setMessage(Text.translatable("screen.universal_translator.option.fallback", onOff(apiFallback)));
         refreshQualityLabel();
+        refreshWorkersLabel();
+        refreshBatchLabel();
         outgoingButton.setMessage(Text.translatable("screen.universal_translator.option.outgoing", onOff(translateOutgoing)));
         targetLanguageButton.setMessage(Text.translatable("screen.universal_translator.option.target_preset",
                 TargetLanguage.displayName(targetLanguage)));
@@ -513,6 +532,32 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
         qualityButton.setMessage(Text.translatable(
                 "screen.universal_translator.option.quality",
                 tr("value.universal_translator.quality." + quality.configName())));
+    }
+
+    private void refreshWorkersLabel() {
+        if (workersButton == null) {
+            return;
+        }
+        workersButton.setMessage(Text.translatable(
+                "screen.universal_translator.option.workers", Integer.toString(workers)));
+    }
+
+    private void refreshBatchLabel() {
+        if (batchSizeButton == null) {
+            return;
+        }
+        batchSizeButton.setMessage(Text.translatable(
+                "screen.universal_translator.option.batch_size", Integer.toString(batchSize)));
+    }
+
+    /** Cycles an engine setting through the values the engine tab offers. */
+    private static int cycleChoice(int current, int... choices) {
+        for (int index = 0; index < choices.length; index++) {
+            if (choices[index] == current) {
+                return choices[(index + 1) % choices.length];
+            }
+        }
+        return choices[0];
     }
 
     /**
@@ -583,6 +628,8 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
         testConnectionButton.visible = isEngine && llm;
         checkSettingsButton.visible = isEngine && !offline && !llm;
         qualityButton.visible = isEngine;
+        workersButton.visible = isEngine;
+        batchSizeButton.visible = isEngine;
         customPrompt.visible = isEngine;
         applyPromptButton.visible = isEngine;
         if (!isEngine) {
@@ -660,7 +707,8 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
                     // Save writes the engine tab's prompt controls too, so applying the prompt and
                     // then saving cannot silently restore the value the screen was opened with.
                     .withPromptSettings(quality, TranslationPrompt.fromEditorText(
-                            customPrompt == null ? "" : customPrompt.getText()));
+                            customPrompt == null ? "" : customPrompt.getText()))
+                    .withTranslationTuning(workers, batchSize);
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
                     && (updated.tencentSecretId.isEmpty() || updated.tencentSecretKey.isEmpty())) {
                 throw new IllegalArgumentException(tr("error.universal_translator.tencent_credentials"));
@@ -984,7 +1032,7 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
      */
     private int engineBlockTop() {
         Layout layout = layout();
-        int blockHeight = layout.contentRowStep * 4 + 20 + 46;
+        int blockHeight = layout.contentRowStep * 5 + 20 + 46;
         int available = layout.saveY - 6 - layout.contentTop;
         return layout.contentTop + Math.max(0, (available - blockHeight) / 2);
     }
@@ -995,7 +1043,7 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
 
     /** Read-only engine facts plus the always-visible privacy hint. */
     private void renderEngineInfo(DrawContext context) {
-        int y = engineRow(4) + 24;
+        int y = engineRow(5) + 24;
         if (isLlm()) {
             context.drawCenteredTextWithShadow(this.textRenderer, Text.translatable(
                             "screen.universal_translator.engine.summary",
