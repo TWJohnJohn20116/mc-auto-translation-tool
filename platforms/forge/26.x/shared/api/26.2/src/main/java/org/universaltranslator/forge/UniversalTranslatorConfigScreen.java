@@ -91,9 +91,9 @@ final class UniversalTranslatorConfigScreen extends Screen {
 
     /** Selected quality mode; the shared Save writes it and Apply commits it immediately. */
     private TranslationQuality quality;
-    private ButtonWidget qualityButton;
-    private TextFieldWidget customPrompt;
-    private ButtonWidget applyPromptButton;
+    private Button qualityButton;
+    private EditBox customPrompt;
+    private Button applyPromptButton;
     private EditBox endpoint;
     private EditBox blockedKeywords;
     private Button enabledButton;
@@ -474,11 +474,11 @@ final class UniversalTranslatorConfigScreen extends Screen {
             String prompt = customPrompt == null
                     ? original.customSystemPrompt()
                     : TranslationPrompt.fromEditorText(customPrompt.getValue());
-            ForgeTranslationRuntime updated = original.withPromptSettings(quality, prompt);
+            ForgeConfig updated = original.withPromptSettings(quality, prompt);
             if (updated.enabled) {
                 updated.validateProviderConfiguration();
             }
-            ForgeConfig.initialize(updated);
+            ForgeTranslationRuntime.initialize(updated);
             updated.save();
             setTestStatus(tr("screen.universal_translator.diagnostics.settings_saved"), false);
         } catch (Exception exception) {

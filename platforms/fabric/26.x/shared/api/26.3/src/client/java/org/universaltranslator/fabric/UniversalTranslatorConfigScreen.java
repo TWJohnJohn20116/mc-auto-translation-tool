@@ -109,9 +109,9 @@ final class UniversalTranslatorConfigScreen extends Screen {
 
     /** Selected quality mode; the shared Save writes it and Apply commits it immediately. */
     private TranslationQuality quality;
-    private ButtonWidget qualityButton;
-    private TextFieldWidget customPrompt;
-    private ButtonWidget applyPromptButton;
+    private Button qualityButton;
+    private EditBox customPrompt;
+    private Button applyPromptButton;
     private EditBox endpoint;
     private EditBox blockedKeywords;
     private Button enabledButton;

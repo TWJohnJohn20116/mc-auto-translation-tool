@@ -364,7 +364,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         int promptApplyWidth = Math.max(48, layout.buttonWidth - 24);
         this.customPrompt = addDrawableChild(new TextFieldWidget(this.font, left, engineRow(4),
                 layout.totalWidth - promptApplyWidth - 8,
-                20, new TranslatableText("screen.universal_translator.diagnostics.prompt")));
+                20, tr("screen.universal_translator.diagnostics.prompt")));
         this.customPrompt.setMaxLength(MAXIMUM_PROMPT_LENGTH);
         this.customPrompt.setText(promptValue);
         this.customPrompt.setSuggestion(
