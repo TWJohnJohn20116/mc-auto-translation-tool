@@ -243,6 +243,38 @@ for something like "explain first, then translate" or "answer in JSON", the appe
 still applies and the translation will usually be worse; write it on the assumption that only the
 translation and one line per input line may come back.
 
+## Concurrency and batching (performance tuning)
+
+The mod translates several texts at once by default so that waiting time stays short. All three
+settings live in the game instance's `config/universal-translator.properties`:
+
+```properties
+translation-workers=4
+batch-size=8
+batch-window-ms=30
+```
+
+| Setting | Default | Range | Meaning |
+| --- | --- | --- | --- |
+| `translation-workers` | `4` | 1–16 | Concurrent translation threads; `1` runs everything one after another. |
+| `batch-size` | `8` | 1–16 | How many texts one request may carry; `1` turns batching off (one request per text, the old behaviour). |
+| `batch-window-ms` | `30` | 0–500 | How long a request waits for siblings to batch with, in milliseconds; `0` does not wait. |
+
+A value outside its range is pulled to the nearest end of the range, and an unparseable one falls
+back to the default: neither is ever rejected, and translation never fails because of them. The
+diagnostics bundle reports the value actually in use, so a typo is visible there.
+
+`batch-size=1` turns batching off completely: every text gets a request of its own and nothing
+waits to fill a batch. `batch-window-ms=0` does not wait at all, so a request leaves immediately.
+
+**The offline llama.cpp provider always uses one worker and a batch size of 1**, whatever these
+settings say, because its local server is single-threaded.
+
+The settings screen's “Engine” tab carries the “Workers:” and “Batch size:” buttons. They take
+effect only after “Save and apply” is pressed: saving rebuilds the translation session and applies
+the new worker count, so **no game restart is needed**. `batch-window-ms` has no in-game control
+and is edited in the configuration file only.
+
 ## Translation statistics
 
 The mod accumulates translation counters across sessions and stores them in:

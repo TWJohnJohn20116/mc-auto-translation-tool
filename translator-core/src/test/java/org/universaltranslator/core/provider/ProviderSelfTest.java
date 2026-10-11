@@ -91,6 +91,10 @@ public final class ProviderSelfTest {
         translatesThroughAzureOpenAi();
         dispatchesTheConnectionTestPerProtocol();
         createsEveryNativeProviderFromTheConfiguration();
+        clampsTheThroughputSettings();
+        keepsTheCacheKeyIndependentOfTheThroughputSettings();
+        doesNotBatchWhenTheBatchSizeIsOne();
+        skipsTheCollectionWaitWhenTheWindowIsZero();
         System.out.println("ProviderSelfTest: all checks passed");
     }
 
@@ -1293,6 +1297,231 @@ public final class ProviderSelfTest {
             }
         }
         output.flush();
+    }
+
+    /**
+     * The three throughput settings are clamped, never rejected: the configuration file is edited
+     * by hand as often as by a settings screen, and a typo there must not stop translation.
+     */
+    private static void clampsTheThroughputSettings() {
+        // Out of range, negative, non-numeric, empty and null all resolve to a usable number.
+        assertEquals(16, TranslationTuning.clamp("999", 4, 1, 16));
+        assertEquals(1, TranslationTuning.clamp("0", 4, 1, 16));
+        assertEquals(1, TranslationTuning.clamp("-7", 4, 1, 16));
+        assertEquals(4, TranslationTuning.clamp("many", 4, 1, 16));
+        assertEquals(4, TranslationTuning.clamp("4.5", 4, 1, 16));
+        assertEquals(4, TranslationTuning.clamp("", 4, 1, 16));
+        assertEquals(4, TranslationTuning.clamp("   ", 4, 1, 16));
+        assertEquals(4, TranslationTuning.clamp(null, 4, 1, 16));
+        assertEquals(1, TranslationTuning.clamp("1", 4, 1, 16));
+        assertEquals(16, TranslationTuning.clamp("16", 4, 1, 16));
+        assertEquals(8, TranslationTuning.clamp(" 8 ", 8, 1, 16));
+        assertEquals(0, TranslationTuning.clamp("-1", 30, 0, 500));
+        assertEquals(500, TranslationTuning.clamp("501", 30, 0, 500));
+        assertEquals(30, TranslationTuning.clamp("", 30, 0, 500));
+
+        // The shipped defaults have to stay exactly what they were before this became configurable.
+        Properties shipped = new Properties();
+        OnlineProviderConfig.applyDefaults(shipped);
+        assertEquals("4", shipped.getProperty("translation-workers"));
+        assertEquals("8", shipped.getProperty("batch-size"));
+        assertEquals("30", shipped.getProperty("batch-window-ms"));
+
+        OnlineProviderConfig defaults = OnlineProviderConfig.from(new Properties());
+        assertEquals(4, defaults.translationWorkers());
+        assertEquals(8, defaults.batchSize());
+        assertEquals(30, defaults.batchWindowMillis());
+        assertTrue(defaults.tuning().batching());
+
+        Properties broken = new Properties();
+        broken.setProperty("translation-workers", "lots");
+        broken.setProperty("batch-size", "-3");
+        broken.setProperty("batch-window-ms", "99999");
+        OnlineProviderConfig clamped = OnlineProviderConfig.from(broken);
+        assertEquals(4, clamped.translationWorkers());
+        assertEquals(1, clamped.batchSize());
+        assertEquals(500, clamped.batchWindowMillis());
+        assertTrue(!clamped.tuning().batching());
+
+        Properties blank = new Properties();
+        blank.setProperty("translation-workers", "");
+        blank.setProperty("batch-size", "   ");
+        blank.setProperty("batch-window-ms", "");
+        OnlineProviderConfig blankConfig = OnlineProviderConfig.from(blank);
+        assertEquals(4, blankConfig.translationWorkers());
+        assertEquals(8, blankConfig.batchSize());
+        assertEquals(30, blankConfig.batchWindowMillis());
+
+        // The settings round-trip through the whitelist, so a settings screen can write them.
+        Properties roundTrip = new Properties();
+        OnlineProviderConfig.applyDefaults(roundTrip);
+        OnlineProviderConfig.applyTranslationTuning(roundTrip, 12, 2);
+        OnlineProviderConfig reloaded = OnlineProviderConfig.from(roundTrip);
+        assertEquals(12, reloaded.translationWorkers());
+        assertEquals(2, reloaded.batchSize());
+        // A value handed in out of range is clamped on the way out, not stored broken.
+        Properties clampedWrite = new Properties();
+        OnlineProviderConfig.applyDefaults(clampedWrite);
+        OnlineProviderConfig.applyTranslationTuning(clampedWrite, 99, -5);
+        OnlineProviderConfig rewritten = OnlineProviderConfig.from(clampedWrite);
+        assertEquals(16, rewritten.translationWorkers());
+        assertEquals(1, rewritten.batchSize());
+    }
+
+    /**
+     * The throughput settings must not reach the prompt signature.
+     *
+     * <p>{@code TranslationPrompt.Settings.signature()} is part of the translation cache key, so a
+     * setting that does not change the prompt must not be able to change it: otherwise every cache
+     * entry would be invalidated by moving a slider.
+     */
+    private static void keepsTheCacheKeyIndependentOfTheThroughputSettings() {
+        TranslationPrompt.Settings standard =
+                new TranslationPrompt.Settings(TranslationQuality.DEFAULT, "");
+        assertEquals("", standard.signature());
+        // The signature is pinned character for character so an accidental extra field is caught.
+        TranslationPrompt.Settings high =
+                new TranslationPrompt.Settings(TranslationQuality.HIGH, "abc");
+        assertEquals("q=" + TranslationQuality.HIGH.configName() + ";p=3:"
+                + Integer.toHexString("abc".hashCode()), high.signature());
+
+        Properties fast = new Properties();
+        fast.setProperty("translation-workers", "16");
+        fast.setProperty("batch-size", "1");
+        fast.setProperty("batch-window-ms", "0");
+        Properties slow = new Properties();
+        slow.setProperty("translation-workers", "1");
+        slow.setProperty("batch-size", "16");
+        slow.setProperty("batch-window-ms", "500");
+        assertEquals(OnlineProviderConfig.from(fast).promptSettings().signature(),
+                OnlineProviderConfig.from(slow).promptSettings().signature());
+        assertEquals(standard.signature(),
+                OnlineProviderConfig.from(fast).promptSettings().signature());
+        assertEquals(TranslationPrompt.Settings.standard().signature(),
+                OnlineProviderConfig.from(slow).promptSettings().signature());
+    }
+
+    /**
+     * {@code batch-size = 1} turns batching off: two texts that arrive together still produce one
+     * request each, and neither request is a JSON batch.
+     */
+    private static void doesNotBatchWhenTheBatchSizeIsOne() throws Exception {
+        List<String> bodies = requestBodiesForTwoTexts(new TranslationTuning(4, 1, 300));
+        assertEquals(2, bodies.size());
+        for (String body : bodies) {
+            String user = JsonStrings.readStringPath(body, "messages[1].content");
+            assertTrue(!user.startsWith("{"));
+            assertTrue(user.equals("Hello") || user.equals("Welcome back"));
+        }
+    }
+
+    /**
+     * {@code batch-window-ms = 0} does not wait: a lone text is sent immediately instead of parking
+     * its worker in the collection window.
+     */
+    private static void skipsTheCollectionWaitWhenTheWindowIsZero() throws Exception {
+        long immediate = millisForOneRequest(new TranslationTuning(4, 8, 0));
+        long waiting = millisForOneRequest(new TranslationTuning(4, 8, 1200));
+        assertTrue(immediate < 600L);
+        assertTrue(waiting >= 900L);
+    }
+
+    /** Wall-clock milliseconds one lone request takes under the given tuning. */
+    private static long millisForOneRequest(TranslationTuning tuning) throws Exception {
+        ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(15000);
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread serverThread = new Thread(() -> {
+            try (Socket socket = server.accept()) {
+                readRequest(socket.getInputStream(), "POST /v1/chat/completions HTTP/1.");
+                writeResponse(socket.getOutputStream(), 200,
+                        "{\"choices\":[{\"message\":{\"content\":\"你好\"}}]}");
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-window");
+        serverThread.setDaemon(true);
+        serverThread.start();
+        long startedAt = System.nanoTime();
+        try {
+            OpenAiChatTranslationProvider provider = new OpenAiChatTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v1/chat/completions",
+                    "", "batch-model", "openai-compatible", new HttpJsonClient(5000, 120000),
+                    TranslationPrompt.Settings.standard(), tuning);
+            assertEquals("你好", provider.translate(new TranslationRequest(
+                    "Hello", "auto", "zh-TW", TextKind.CHAT)));
+        } finally {
+            server.close();
+            serverThread.join(15000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local window test server failed", serverFailure.get());
+        }
+        return (System.nanoTime() - startedAt) / 1_000_000L;
+    }
+
+    /** Bodies of the requests two simultaneous texts produce under the given tuning. */
+    private static List<String> requestBodiesForTwoTexts(TranslationTuning tuning) throws Exception {
+        ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(15000);
+        final List<String> bodies = Collections.synchronizedList(new ArrayList<String>());
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread serverThread = new Thread(() -> {
+            try {
+                for (int index = 0; index < 2; index++) {
+                    try (Socket socket = server.accept()) {
+                        HttpRequest request = readRequest(socket.getInputStream(),
+                                "POST /v1/chat/completions HTTP/1.");
+                        bodies.add(request.body);
+                        writeResponse(socket.getOutputStream(), 200,
+                                "{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}");
+                    }
+                }
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-no-batch");
+        serverThread.setDaemon(true);
+        serverThread.start();
+        try {
+            OpenAiChatTranslationProvider provider = new OpenAiChatTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v1/chat/completions",
+                    "", "batch-model", "openai-compatible", new HttpJsonClient(5000, 120000),
+                    TranslationPrompt.Settings.standard(), tuning);
+            AtomicReference<Throwable> failure = new AtomicReference<Throwable>();
+            Thread one = new Thread(() -> {
+                try {
+                    provider.translate(new TranslationRequest(
+                            "Hello", "auto", "zh-TW", TextKind.CHAT));
+                } catch (Throwable problem) {
+                    failure.compareAndSet(null, problem);
+                }
+            }, "provider-self-test-no-batch-one");
+            Thread two = new Thread(() -> {
+                try {
+                    provider.translate(new TranslationRequest(
+                            "Welcome back", "auto", "zh-TW", TextKind.CHAT));
+                } catch (Throwable problem) {
+                    failure.compareAndSet(null, problem);
+                }
+            }, "provider-self-test-no-batch-two");
+            one.setDaemon(true);
+            two.setDaemon(true);
+            one.start();
+            two.start();
+            one.join(15000);
+            two.join(15000);
+            if (failure.get() != null) {
+                throw new AssertionError("Non-batched translation failed", failure.get());
+            }
+        } finally {
+            server.close();
+            serverThread.join(15000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local no-batch test server failed", serverFailure.get());
+        }
+        return new ArrayList<String>(bodies);
     }
 
     private static HttpRequest readRequest(InputStream input, String expectedRequestLinePrefix)
