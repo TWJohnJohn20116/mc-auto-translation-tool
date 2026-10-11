@@ -12,6 +12,8 @@ import net.minecraft.client.resource.language.I18n;
 import org.universaltranslator.core.TranslationDisplayMode;
 import org.universaltranslator.core.OfflineModel;
 import org.universaltranslator.core.TargetLanguage;
+import org.universaltranslator.core.TranslationPrompt;
+import org.universaltranslator.core.TranslationQuality;
 import org.universaltranslator.core.TranslationStatusLocalizer;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TranslationProviderCatalog;
@@ -75,6 +77,9 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private static final int FETCH_MODELS = 31;
     private static final int TEST_CONNECTION = 32;
     private static final int CHECK_SETTINGS = 33;
+    private static final int QUALITY = 34;
+    private static final int PROMPT_APPLY = 35;
+    private static final int PROMPT = 36;
     private static final int HUD_PREVIEW_SCREEN_WIDTH = 320;
     private static final int HUD_PREVIEW_SCREEN_HEIGHT = 240;
     private static final int HUD_DRAG_PREVIEW_HEIGHT = 48;
@@ -85,6 +90,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private static final int MODEL_LIST_TOP = 46;
     /** Room kept under the model rows for the paging, back, and hint lines. */
     private static final int MODEL_LIST_FOOTER_HEIGHT = 62;
+    /** Longest custom prompt the engine tab's text field accepts. */
+    private static final int MAXIMUM_PROMPT_LENGTH = 4096;
     private static final String LIBRETRANSLATE_PROVIDER = "libretranslate";
     private static final String TRANSLATE_PATH = "/translate";
     private static final String LANGUAGES_PATH = "/languages";
@@ -155,6 +162,11 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private ActionButton testConnectionButton;
     private ActionButton checkSettingsButton;
     private TextFieldWidget endpoint;
+    /** Selected quality mode; the shared Save writes it and Apply commits it immediately. */
+    private TranslationQuality quality;
+    private ActionButton qualityButton;
+    private TextFieldWidget customPrompt;
+    private ActionButton applyPromptButton;
 
     private ActionButton outgoingButton;
     private ActionButton outgoingTargetButton;
@@ -204,6 +216,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         this.llmEndpoint = config.editorEndpoint(config.provider);
         this.llmApiKey = config.editorApiKey(config.provider);
         this.llmModel = config.editorModel(config.provider);
+        this.quality = config.translationQuality();
         HudIndicatorSettings hud = config.hudIndicatorSettings();
         this.hudIndicator = hud.isIndicator();
         this.hudIndicatorCorner = hud.getCorner();
@@ -317,6 +330,26 @@ final class UniversalTranslatorConfigScreen extends Screen {
         addButton(testConnectionButton);
         addButton(checkSettingsButton);
 
+        // Quality and the custom system prompt are engine settings, so they belong on this tab
+        // rather than on the diagnostics screen. They take the two rows under the existing three,
+        // which leaves every other engine control exactly where it was; the prompt shares its row
+        // with its own Apply button.
+        qualityButton = new ActionButton(QUALITY, left, engineRow(3), totalWidth, 20, "");
+        addButton(qualityButton);
+
+        String promptValue = customPrompt == null
+                ? TranslationPrompt.toEditorText(original.customSystemPrompt())
+                : customPrompt.getText();
+        int promptApplyWidth = Math.max(48, buttonWidth - 24);
+        customPrompt = new TextFieldWidget(PROMPT, renderer, left, engineRow(4),
+                totalWidth - promptApplyWidth - 8, 20);
+        customPrompt.setMaxLength(MAXIMUM_PROMPT_LENGTH);
+        customPrompt.setText(promptValue);
+        applyPromptButton = new ActionButton(PROMPT_APPLY,
+                right + buttonWidth - promptApplyWidth, engineRow(4), promptApplyWidth, 20,
+                tr("screen.universal_translator.diagnostics.prompt_apply"));
+        addButton(applyPromptButton);
+
         // Tab 4: Outgoing (傳送)
         outgoingButton = new ActionButton(OUTGOING, left, layout.contentRow(0), buttonWidth, 20, "");
         outgoingTargetButton = new ActionButton(OUTGOING_TARGET_LANGUAGE, right, layout.contentRow(0), buttonWidth, 20, "");
@@ -352,6 +385,48 @@ final class UniversalTranslatorConfigScreen extends Screen {
 
         updateTabVisibility();
         refreshLabels();
+    }
+
+    /**
+     * Re-renders the quality button from the pending selection.
+     *
+     * <p>Like the other engine rows the button only changes what the shared Save writes; the Apply
+     * button beside the prompt is there for users who want the change to take effect without
+     * closing the screen.
+     */
+    private void refreshQualityLabel() {
+        if (qualityButton == null) {
+            return;
+        }
+        qualityButton.message = tr("screen.universal_translator.option.quality",
+                tr("value.universal_translator.quality." + quality.configName()));
+    }
+
+    /**
+     * Applies the quality mode and the custom prompt to the running configuration without closing
+     * the screen.
+     *
+     * <p>The provider is rebuilt through exactly the path Save uses, so the new prompt is used by
+     * the next request and the cache key moves with it. A failure leaves the previous configuration
+     * running and reports it on the engine tab's own status line.
+     */
+    private void applyPromptSettings() {
+        refreshQualityLabel();
+        try {
+            String prompt = customPrompt == null
+                    ? original.customSystemPrompt()
+                    : TranslationPrompt.fromEditorText(customPrompt.getText());
+            FabricConfig updated = original.withPromptSettings(quality, prompt);
+            if (updated.enabled) {
+                updated.validateProviderConfiguration();
+            }
+            FabricTranslationRuntime.initialize(updated);
+            updated.save();
+            setTestStatus(tr("screen.universal_translator.diagnostics.settings_saved"), false);
+        } catch (Exception exception) {
+            setTestStatus(tr("screen.universal_translator.diagnostics.settings_failed",
+                    describe(exception)), true);
+        }
     }
 
     private void updateTabVisibility() {
@@ -397,6 +472,9 @@ final class UniversalTranslatorConfigScreen extends Screen {
         // provider let a DeepSeek user edit a value DeepSeek never reads.
         endpoint.setVisible(isEng && isLibreTranslate());
         testConnectionButton.visible = isEng && llm;
+        qualityButton.visible = isEng;
+        customPrompt.setVisible(isEng);
+        applyPromptButton.visible = isEng;
         checkSettingsButton.visible = isEng && !offline && !llm;
         if (!isEng) {
             modelListOpen = false;
@@ -481,6 +559,11 @@ final class UniversalTranslatorConfigScreen extends Screen {
             return;
         } else if (button.id == FALLBACK) {
             apiFallback = !apiFallback;
+        } else if (button.id == QUALITY) {
+            quality = quality.next();
+            refreshQualityLabel();
+        } else if (button.id == PROMPT_APPLY) {
+            applyPromptSettings();
         } else if (button.id == OUTGOING) {
             translateOutgoing = !translateOutgoing;
         } else if (button.id == PLAYER_NAMES) {
@@ -592,6 +675,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
             fallbackButton.message = tr("screen.universal_translator.option.fallback", onOff(apiFallback));
             fallbackButton.active = isOffline();
         }
+        refreshQualityLabel();
         if (outgoingButton != null) {
             outgoingButton.message = tr("screen.universal_translator.option.outgoing", onOff(translateOutgoing));
         }
@@ -636,7 +720,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
      */
     private int engineBlockTop() {
         SettingsScreenLayout.Geometry layout = layout();
-        int blockHeight = layout.contentRowStep() * 2 + 20 + 46;
+        int blockHeight = layout.contentRowStep() * 4 + 20 + 46;
         int available = layout.saveY() - 6 - layout.contentTop();
         return layout.contentTop() + Math.max(0, (available - blockHeight) / 2);
     }
@@ -846,7 +930,11 @@ final class UniversalTranslatorConfigScreen extends Screen {
                     animatedUi,
                     new HudIndicatorSettings(hudIndicator, hudIndicatorCorner, hudIndicatorSize,
                             hudIndicatorMargin, hudIndicatorColor, hudIndicatorContent,
-                            hudIndicatorVisibility, hudIndicatorOffsetX, hudIndicatorOffsetY));
+                            hudIndicatorVisibility, hudIndicatorOffsetX, hudIndicatorOffsetY))
+                    // Save writes the engine tab's prompt controls too, so applying the prompt and
+                    // then saving cannot silently restore the value the screen was opened with.
+                    .withPromptSettings(quality, TranslationPrompt.fromEditorText(
+                            customPrompt == null ? "" : customPrompt.getText()));
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
                     && (updated.tencentSecretId.isEmpty() || updated.tencentSecretKey.isEmpty())) {
                 throw new IllegalArgumentException(tr("error.universal_translator.tencent_credentials"));
@@ -875,6 +963,9 @@ final class UniversalTranslatorConfigScreen extends Screen {
         if (activeTab == Tab.ENGINE && isLibreTranslate() && endpoint != null) {
             endpoint.tick();
         }
+        if (activeTab == Tab.ENGINE && customPrompt != null) {
+            customPrompt.tick();
+        }
         if (activeTab == Tab.SCOPES && blockedKeywords != null) {
             blockedKeywords.tick();
         }
@@ -884,6 +975,10 @@ final class UniversalTranslatorConfigScreen extends Screen {
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         if (activeTab == Tab.ENGINE && isLibreTranslate() && endpoint != null
                 && endpoint.keyPressed(keyCode, scanCode, modifiers)) {
+            return true;
+        }
+        if (activeTab == Tab.ENGINE && customPrompt != null
+                && customPrompt.keyPressed(keyCode, scanCode, modifiers)) {
             return true;
         }
         if (activeTab == Tab.SCOPES && blockedKeywords != null && blockedKeywords.keyPressed(keyCode, scanCode, modifiers)) {
@@ -896,6 +991,10 @@ final class UniversalTranslatorConfigScreen extends Screen {
     public boolean charTyped(char chr, int modifiers) {
         if (activeTab == Tab.ENGINE && isLibreTranslate() && endpoint != null
                 && endpoint.charTyped(chr, modifiers)) {
+            return true;
+        }
+        if (activeTab == Tab.ENGINE && customPrompt != null
+                && customPrompt.charTyped(chr, modifiers)) {
             return true;
         }
         if (activeTab == Tab.SCOPES && blockedKeywords != null && blockedKeywords.charTyped(chr, modifiers)) {
@@ -920,6 +1019,9 @@ final class UniversalTranslatorConfigScreen extends Screen {
         boolean handled = super.mouseClicked(mouseX, mouseY, mouseButton);
         if (activeTab == Tab.ENGINE && isLibreTranslate() && endpoint != null) {
             endpoint.mouseClicked(mouseX, mouseY, mouseButton);
+        }
+        if (activeTab == Tab.ENGINE && customPrompt != null) {
+            customPrompt.mouseClicked(mouseX, mouseY, mouseButton);
         }
         if (activeTab == Tab.SCOPES && blockedKeywords != null) {
             blockedKeywords.mouseClicked(mouseX, mouseY, mouseButton);
@@ -996,6 +1098,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
             if (isLibreTranslate()) {
                 OrnitheClientAccess.renderTextField(endpoint, mouseX, mouseY, partialTicks);
             }
+            OrnitheClientAccess.renderTextField(customPrompt, mouseX, mouseY, partialTicks);
             renderEngineInfo();
         } else if (activeTab == Tab.OUTGOING) {
             int tipY = layout.contentRow(2);
@@ -1100,7 +1203,10 @@ final class UniversalTranslatorConfigScreen extends Screen {
 
     /** Read-only engine facts plus the always-visible privacy hint. */
     private void renderEngineInfo() {
-        int y = engineRow(2) + 24;
+        // These text fields have no in-field placeholder, so the prompt's hint sits above it.
+        drawCenteredString(renderer, tr("screen.universal_translator.diagnostics.prompt_hint"),
+                width / 2, engineRow(4) - 11, 0xFFA0A0A0);
+        int y = engineRow(4) + 24;
         if (isLlm()) {
             drawCenteredString(renderer, tr("screen.universal_translator.engine.summary",
                     trimForDisplay(llmEndpoint),

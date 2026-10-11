@@ -3,13 +3,10 @@ package org.universaltranslator.forge.legacy;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.GuiScreen;
-import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.client.resources.I18n;
 import org.universaltranslator.core.DebugLog;
 import org.universaltranslator.core.DiagnosticsBundleExporter;
 import org.universaltranslator.core.TranslationDiagnosticsSnapshot;
-import org.universaltranslator.core.TranslationPrompt;
-import org.universaltranslator.core.TranslationQuality;
 import org.universaltranslator.core.TranslationStats;
 
 import java.io.IOException;
@@ -19,36 +16,23 @@ import java.util.Collections;
 
 /** Secret-free runtime diagnostics shared by Forge 1.8.9 and 1.12.2. */
 final class LegacyDiagnosticsScreen extends GuiScreen {
-    /** Longest custom prompt the editor accepts, matching the settings screens' text field bound. */
-    private static final int MAXIMUM_PROMPT_LENGTH = 4096;
     /** Vertical distance between two text lines. */
     private static final int LINE_STEP = 17;
-    /** First line's y, below the quality and prompt controls. */
-    private static final int LINE_START = 84;
+    /** First line's y, just under the title. */
+    private static final int LINE_START = 43;
 
     private static final int BACK = 1;
     private static final int EXPORT = 2;
-    private static final int QUALITY = 3;
-    private static final int PROMPT_APPLY = 4;
     private static final int DEBUG = 5;
     private static final int BUNDLE = 6;
     private static final int PAGE = 7;
     private static final int RESET = 8;
-    /** The prompt editor's own id; GuiTextField ids are a separate namespace from button ids. */
-    private static final int PROMPT_FIELD = 21;
 
     private final GuiScreen parent;
     private FontRenderer renderer;
-    /** Selected quality mode; read from the live configuration on every {@link #initGui()}. */
-    private TranslationQuality quality;
-    private GuiButton qualityButton;
-    private GuiTextField customPrompt;
     private GuiButton debugButton;
     private GuiButton pageButton;
     private GuiButton resetButton;
-    /** Where the prompt field was placed, so the empty-state hint can be drawn inside it. */
-    private int promptX;
-    private int promptY;
     /** Whether the counters page is shown instead of the engine diagnostics page. */
     private boolean statisticsPage;
     private boolean debugEnabled;
@@ -67,32 +51,12 @@ final class LegacyDiagnosticsScreen extends GuiScreen {
         if (config != null) {
             // Re-read here rather than in the constructor so a rebuild after a resize, or a change
             // made by another screen, is reflected instead of showing a stale value.
-            quality = config.translationQuality();
             debugEnabled = config.debugLog();
         }
-        if (quality == null) {
-            quality = TranslationQuality.DEFAULT;
-        }
-        String promptValue = customPrompt == null
-                ? TranslationPrompt.toEditorText(config == null ? "" : config.customSystemPrompt())
-                : customPrompt.getText();
         int totalWidth = Math.max(180, Math.min(320, width - 24));
         int gap = 8;
         int buttonWidth = (totalWidth - gap) / 2;
         int left = (width - totalWidth) / 2;
-
-        qualityButton = new GuiButton(QUALITY, left, 32, totalWidth, 20, "");
-        buttonList.add(qualityButton);
-
-        int applyWidth = Math.max(48, buttonWidth - 24);
-        promptX = left;
-        promptY = 56;
-        customPrompt = new GuiTextField(PROMPT_FIELD, renderer, promptX, promptY,
-                totalWidth - applyWidth - gap, 20);
-        customPrompt.setMaxStringLength(MAXIMUM_PROMPT_LENGTH);
-        customPrompt.setText(promptValue);
-        buttonList.add(new GuiButton(PROMPT_APPLY, left + totalWidth - applyWidth, 56,
-                applyWidth, 20, tr("screen.universal_translator.diagnostics.prompt_apply")));
 
         debugButton = new GuiButton(DEBUG, left, height - 76, buttonWidth, 20, "");
         buttonList.add(debugButton);
@@ -109,17 +73,8 @@ final class LegacyDiagnosticsScreen extends GuiScreen {
                 buttonWidth, 20, tr("screen.universal_translator.diagnostics.back")));
         buttonList.add(new GuiButton(EXPORT, left + buttonWidth + gap, height - 28,
                 buttonWidth, 20, tr("screen.universal_translator.diagnostics.export")));
-        refreshQualityLabel();
         refreshDebugLabel();
         refreshPageLabels();
-    }
-
-    private void refreshQualityLabel() {
-        if (qualityButton == null) {
-            return;
-        }
-        qualityButton.displayString = tr("screen.universal_translator.option.quality",
-                tr("value.universal_translator.quality." + quality.configName()));
     }
 
     private void refreshDebugLabel() {
@@ -148,11 +103,6 @@ final class LegacyDiagnosticsScreen extends GuiScreen {
             mc.displayGuiScreen(parent);
         } else if (button.id == EXPORT) {
             exportLog();
-        } else if (button.id == QUALITY) {
-            quality = quality.next();
-            applyAdvancedSettings();
-        } else if (button.id == PROMPT_APPLY) {
-            applyAdvancedSettings();
         } else if (button.id == DEBUG) {
             debugEnabled = !debugEnabled;
             applyDebugMode();
@@ -163,40 +113,6 @@ final class LegacyDiagnosticsScreen extends GuiScreen {
             refreshPageLabels();
         } else if (button.id == RESET) {
             resetStatistics();
-        }
-    }
-
-    /**
-     * Applies the selected quality mode and custom prompt to the live configuration and persists
-     * them.
-     *
-     * <p>Only the system prompt changes: the provider is rebuilt through exactly the path the
-     * settings screen uses, so the new prompt is used by the next request and the cache key moves
-     * with it. A failure leaves the previous configuration running and reports it in place.
-     */
-    private void applyAdvancedSettings() {
-        refreshQualityLabel();
-        LegacyConfig config = LegacyTranslationRuntime.diagnosticsConfig();
-        if (config == null) {
-            exportStatus = tr("screen.universal_translator.diagnostics.settings_unavailable");
-            exportFailed = true;
-            return;
-        }
-        try {
-            String prompt = customPrompt == null
-                    ? config.customSystemPrompt()
-                    : TranslationPrompt.fromEditorText(customPrompt.getText());
-            LegacyConfig updated = config.withPromptSettings(quality, prompt);
-            if (updated.enabled) {
-                updated.validateProviderConfiguration();
-            }
-            LegacyTranslationRuntime.initialize(updated);
-            updated.save();
-            exportStatus = tr("screen.universal_translator.diagnostics.settings_saved");
-            exportFailed = false;
-        } catch (Exception failure) {
-            exportStatus = settingsFailure(failure);
-            exportFailed = true;
         }
     }
 
@@ -246,29 +162,6 @@ final class LegacyDiagnosticsScreen extends GuiScreen {
     }
 
     @Override
-    public void updateScreen() {
-        if (customPrompt != null) {
-            customPrompt.updateCursorCounter();
-        }
-    }
-
-    @Override
-    protected void keyTyped(char typedChar, int keyCode) throws IOException {
-        if (customPrompt != null && customPrompt.textboxKeyTyped(typedChar, keyCode)) {
-            return;
-        }
-        super.keyTyped(typedChar, keyCode);
-    }
-
-    @Override
-    protected void mouseClicked(int mouseX, int mouseY, int mouseButton) throws IOException {
-        super.mouseClicked(mouseX, mouseY, mouseButton);
-        if (customPrompt != null) {
-            customPrompt.mouseClicked(mouseX, mouseY, mouseButton);
-        }
-    }
-
-    @Override
     public void drawScreen(int mouseX, int mouseY, float partialTicks) {
         drawDefaultBackground();
         drawRect(Math.max(5, width / 2 - 190), 8,
@@ -303,14 +196,6 @@ final class LegacyDiagnosticsScreen extends GuiScreen {
                     exportFailed ? 0xFFFF5555 : 0xFF55FF88);
         }
         super.drawScreen(mouseX, mouseY, partialTicks);
-        if (customPrompt != null) {
-            customPrompt.drawTextBox();
-            if (customPrompt.getText().isEmpty()) {
-                renderer.drawStringWithShadow(
-                        tr("screen.universal_translator.diagnostics.prompt_hint"),
-                        promptX + 4, promptY + 6, 0x70A0A0A0);
-            }
-        }
     }
 
     /** The lines the current page shows. */
