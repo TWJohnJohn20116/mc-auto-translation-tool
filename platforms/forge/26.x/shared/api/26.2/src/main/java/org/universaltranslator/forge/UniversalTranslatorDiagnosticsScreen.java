@@ -9,8 +9,6 @@ import org.universaltranslator.core.DebugLog;
 import org.universaltranslator.core.DiagnosticsBundleExporter;
 import org.universaltranslator.core.DiagnosticsLogExporter;
 import org.universaltranslator.core.TranslationDiagnosticsSnapshot;
-import org.universaltranslator.core.TranslationPrompt;
-import org.universaltranslator.core.TranslationQuality;
 import org.universaltranslator.core.TranslationStats;
 
 import java.nio.file.Path;
@@ -19,19 +17,13 @@ import java.util.Collections;
 
 /** Secret-free runtime diagnostics that update while the screen is open. */
 final class UniversalTranslatorDiagnosticsScreen extends Screen {
-    /** Longest custom prompt the editor accepts, matching the settings screens' text field bound. */
-    private static final int MAXIMUM_PROMPT_LENGTH = 4096;
     /** Vertical distance between two text lines. */
     private static final int LINE_STEP = 17;
-    /** First line's y, below the quality and prompt controls. */
-    private static final int LINE_START = 84;
+    /** First line's y, just under the title. */
+    private static final int LINE_START = 43;
 
     private final Screen parent;
     private final ForgeConfig config;
-    /** Selected quality mode; read from the live configuration on every {@link #init()}. */
-    private TranslationQuality quality;
-    private Button qualityButton;
-    private EditBox customPrompt;
     private Button debugButton;
     private Button pageButton;
     private Button resetButton;
@@ -53,37 +45,12 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
         if (live != null) {
             // Re-read here rather than in the constructor so a rebuild after a resize, or a change
             // made by another screen, is reflected instead of showing a stale value.
-            quality = live.translationQuality();
             debugEnabled = live.debugLog();
         }
-        if (quality == null) {
-            quality = TranslationQuality.DEFAULT;
-        }
-        String promptValue = customPrompt == null
-                ? TranslationPrompt.toEditorText(live == null ? "" : live.customSystemPrompt())
-                : customPrompt.getValue();
         int totalWidth = Math.max(180, Math.min(320, this.width - 24));
         int gap = 8;
         int buttonWidth = (totalWidth - gap) / 2;
         int left = (this.width - totalWidth) / 2;
-
-        this.qualityButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
-            quality = quality.next();
-            applyAdvancedSettings();
-        }).bounds(left, 32, totalWidth, 20).build());
-
-        int applyWidth = Math.max(48, buttonWidth - 24);
-        this.customPrompt = addRenderableWidget(new EditBox(
-                this.font, left, 56, totalWidth - applyWidth - gap, 20,
-                Component.translatable("screen.universal_translator.diagnostics.prompt")));
-        this.customPrompt.setMaxLength(MAXIMUM_PROMPT_LENGTH);
-        this.customPrompt.setValue(promptValue);
-        this.customPrompt.setHint(
-                Component.translatable("screen.universal_translator.diagnostics.prompt_hint"));
-        addRenderableWidget(Button.builder(
-                Component.translatable("screen.universal_translator.diagnostics.prompt_apply"),
-                button -> applyAdvancedSettings())
-                .bounds(left + totalWidth - applyWidth, 56, applyWidth, 20).build());
 
         this.debugButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
             debugEnabled = !debugEnabled;
@@ -109,7 +76,6 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
         addRenderableWidget(Button.builder(
                 Component.translatable("screen.universal_translator.diagnostics.export"), button -> exportLog())
                 .bounds(left + buttonWidth + gap, this.height - 28, buttonWidth, 20).build());
-        refreshQualityLabel();
         refreshDebugLabel();
         refreshPageLabels();
     }
@@ -124,15 +90,6 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
     private ForgeConfig liveConfig() {
         ForgeConfig live = ForgeTranslationRuntime.diagnosticsConfig();
         return live == null ? config : live;
-    }
-
-    private void refreshQualityLabel() {
-        if (qualityButton == null) {
-            return;
-        }
-        qualityButton.setMessage(Component.translatable(
-                "screen.universal_translator.option.quality",
-                tr("value.universal_translator.quality." + quality.configName())));
     }
 
     private void refreshDebugLabel() {
@@ -153,43 +110,6 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
         if (resetButton != null) {
             // Only the counters page can be cleared, so the button says so by going flat.
             resetButton.active = statisticsPage;
-        }
-    }
-
-    /**
-     * Applies the selected quality mode and custom prompt to the live configuration and persists
-     * them.
-     *
-     * <p>Only the system prompt changes: the provider is rebuilt through exactly the path the
-     * settings screen uses, so the new prompt is used by the next request and the cache key moves
-     * with it. A failure leaves the previous configuration running and reports it in place.
-     */
-    private void applyAdvancedSettings() {
-        refreshQualityLabel();
-        ForgeConfig live = liveConfig();
-        if (live == null) {
-            exportStatus = tr("screen.universal_translator.diagnostics.settings_unavailable");
-            exportFailed = true;
-            return;
-        }
-        try {
-            String prompt = customPrompt == null
-                    ? live.customSystemPrompt()
-                    : TranslationPrompt.fromEditorText(customPrompt.getValue());
-            ForgeConfig updated = live.withPromptSettings(quality, prompt);
-            if (updated.enabled) {
-                updated.validateProviderConfiguration();
-            }
-            ForgeTranslationRuntime.initialize(updated);
-            updated.save();
-            exportStatus = tr("screen.universal_translator.diagnostics.settings_saved");
-            exportFailed = false;
-        } catch (Exception failure) {
-            String message = failure.getMessage();
-            exportStatus = tr("screen.universal_translator.diagnostics.settings_failed",
-                    message == null || message.trim().isEmpty()
-                            ? failure.getClass().getSimpleName() : message);
-            exportFailed = true;
         }
     }
 
