@@ -363,7 +363,8 @@ public final class LlamaCppOfflineProvider
         OpenAiChatTranslationProvider api = new OpenAiChatTranslationProvider(
                 "http://127.0.0.1:" + port + "/v1/chat/completions",
                 "", "universal-translator-local", "offline-loopback",
-                new org.universaltranslator.core.net.HttpJsonClient(1_000, 15_000));
+                new org.universaltranslator.core.net.HttpJsonClient(1_000, 15_000),
+                JsonOutputMode.NONE);
         synchronized (lifecycleLock) {
             // Same race for the ready hand-off. A close() may have happened while the
             // model was loading, in which case the child is reaped instead of adopted.

@@ -15,10 +15,11 @@ package org.universaltranslator.core;
  *
  * <p>A custom prompt cannot switch off the behaviour the rest of the pipeline depends on. Whatever
  * the user writes, {@link #GUARDRAIL_SINGLE} or {@link #GUARDRAIL_BATCH} is appended, so the model
- * is always told to answer with the translation alone and to keep one output line per input line.
- * Without that, a custom prompt would silently break {@code ProtectedText} restoration (the reply
- * would carry prose around the restored token) and the numbered batch protocol (the reply would
- * merge or drop lines), which are exactly the failures the built-in prompts were written to avoid.
+ * is always told to answer with the translation alone and, on the batch path, to answer with one
+ * JSON object keyed by the input line numbers. Without that, a custom prompt would silently break
+ * {@code ProtectedText} restoration (the reply would carry prose around the restored token) and the
+ * batch protocol (the reply would merge or drop lines), which are exactly the failures the built-in
+ * prompts were written to avoid.
  */
 public final class TranslationPrompt {
     // --- The historical single-text prompt, split exactly where the original concatenation split ---
@@ -33,14 +34,25 @@ public final class TranslationPrompt {
     private static final String KEEP_LINE_ORDER =
             " Keep exactly the same number and order of lines.";
 
-    // --- The historical numbered-batch prompt, split at the same boundaries ---
-    private static final String BATCH_TRANSLATE = "Translate every numbered line of the user message to ";
-    private static final String BATCH_NUMBERING =
-            ". Reply with the same numbering: exactly one translated line per input line, in "
-                    + "the same order, without merging, splitting, reordering or omitting lines. ";
+    // --- The batch prompt: the model answers with one JSON object keyed by input line number ---
+    private static final String BATCH_TRANSLATE = "Translate every value of the user JSON object to ";
+    /**
+     * The batch output contract.
+     *
+     * <p>The previous protocol was a numbered list, and it had two structural holes: a translation
+     * that itself begins with a number ({@code 3 apples}) looks like the next entry, and a
+     * translation containing a line break looks like a new entry. Keying the reply by the input line
+     * number closes both, which is also what finally lets a multi-line text take part in a batch.
+     */
+    private static final String BATCH_JSON_SHAPE =
+            ". Reply with one JSON object, for example {\"1\": \"translation of value 1\", "
+                    + "\"2\": \"translation of value 2\"}: each key is the same line number as the "
+                    + "user object, written as a string, and each value is the translation of that "
+                    + "line. Every key of the user object must appear exactly once, with no extra "
+                    + "keys and no missing keys. Write a line break inside a translation as \\n. ";
     private static final String BATCH_PRESERVE =
             "Preserve punctuation, whitespace, URLs, usernames, placeholders and Minecraft "
-                    + "formatting markers. Reply with only the numbered translations, without quotes, "
+                    + "formatting markers. Reply with only the JSON object, without quotes around it, "
                     + "labels, notes or explanations.";
 
     /** Strictness added by {@link TranslationQuality#HIGH}; shared by both paths. */
@@ -58,11 +70,12 @@ public final class TranslationPrompt {
                     + "Preserve punctuation, whitespace, URLs, usernames, placeholders, and Minecraft "
                     + "formatting markers.";
     static final String GUARDRAIL_BATCH =
-            " Reply with the same numbering: exactly one translated line per input line, in the same "
-                    + "order, without merging, splitting, reordering or omitting lines. Preserve "
-                    + "punctuation, whitespace, URLs, usernames, placeholders and Minecraft formatting "
-                    + "markers. Reply with only the numbered translations, without quotes, labels, "
-                    + "notes or explanations.";
+            " Reply with one JSON object: each key is an input line number written as a string and "
+                    + "each value is that line's translation. Every input line number must appear "
+                    + "exactly once as a key, with no extra keys and no missing keys; write a line "
+                    + "break inside a translation as \\n. Preserve punctuation, whitespace, URLs, "
+                    + "usernames, placeholders and Minecraft formatting markers. Reply with only the "
+                    + "JSON object, without quotes around it, labels, notes or explanations.";
 
     private TranslationPrompt() {
     }
@@ -145,7 +158,7 @@ public final class TranslationPrompt {
         }
     }
 
-    /** The system prompt for one numbered batch; {@code request} supplies the target language. */
+    /** The system prompt for one batch; {@code request} supplies the target language. */
     public static String batch(Settings settings, TranslationRequest request) {
         Settings effective = settings == null ? Settings.standard() : settings;
         if (effective.hasCustomSystemPrompt()) {
@@ -156,13 +169,14 @@ public final class TranslationPrompt {
         switch (effective.quality()) {
             case FAST:
                 return BATCH_TRANSLATE + target
-                        + ". Reply with the same numbering, one translated line per input line.";
+                        + ". Reply with one JSON object whose keys are the line numbers and whose "
+                        + "values are the translations, one entry per input line.";
             case HIGH:
-                return IDENTITY + BATCH_TRANSLATE + target + BATCH_NUMBERING + BATCH_PRESERVE
+                return IDENTITY + BATCH_TRANSLATE + target + BATCH_JSON_SHAPE + BATCH_PRESERVE
                         + HIGH_STRICTNESS;
             case STANDARD:
             default:
-                return IDENTITY + BATCH_TRANSLATE + target + BATCH_NUMBERING + BATCH_PRESERVE;
+                return IDENTITY + BATCH_TRANSLATE + target + BATCH_JSON_SHAPE + BATCH_PRESERVE;
         }
     }
 
