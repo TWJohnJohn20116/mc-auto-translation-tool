@@ -14,10 +14,22 @@ def modFamily = versionFamilies["1.21-1.21.5"].contains(gameVersion) ||
         "1.21-1.21.8" : "1.21.9-1.21.11"
 
 def sharedRoot = rootProject.file("platforms/forge/1.21/shared")
+// Files that adjacent families compile identically live in their own layer instead of being
+// copied into every family directory.
+def sharedLayers = []
+if (family != "1.21.9-1.21.11") {
+    sharedLayers << "runtime/1.21-1.21.8"
+}
+if (family != "1.21-1.21.5") {
+    sharedLayers << "draw-context/1.21.6-1.21.11"
+}
 sourceSets {
     main {
         java.srcDir project(":translator-core").file("src/main/java")
         java.srcDir new File(sharedRoot, "common/src/main/java")
+        sharedLayers.each { layer ->
+            java.srcDir new File(sharedRoot, "${layer}/src/main/java")
+        }
         java.srcDir new File(sharedRoot, "${family}/src/main/java")
         java.srcDir new File(sharedRoot, "mod/${modFamily}/src/main/java")
         resources.srcDir new File(sharedRoot, "common/src/main/resources")
