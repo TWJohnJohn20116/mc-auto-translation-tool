@@ -12,6 +12,8 @@ requiredProperties.each { propertyName ->
 
 def gameVersion = project.ext.ornitheMinecraftVersion.toString()
 def sharedRoot = rootProject.file("platforms/fabric/1.13/shared/common")
+// Files the Ornithe (1.13.0/1.13.1) and legacy (1.13.2) variants compile identically.
+def bothRoot = rootProject.file("platforms/fabric/1.13/shared/shared-both")
 
 version = project.mod_version
 group = project.maven_group
@@ -35,7 +37,9 @@ sourceSets {
     main {
         java.srcDir project(":translator-core").file("src/main/java")
         java.srcDir new File(sharedRoot, "src/main/java")
+        java.srcDir new File(bothRoot, "src/main/java")
         resources.srcDir new File(sharedRoot, "src/main/resources")
+        resources.srcDir new File(bothRoot, "src/main/resources")
     }
 }
 
