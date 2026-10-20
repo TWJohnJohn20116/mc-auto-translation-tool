@@ -21,12 +21,15 @@ def sourceLayers = [
         "1.15": ["family/1.14-1.15-common", "family/1.15"],
         "1.15.1": ["family/1.14-1.15-common", "family/1.15"],
         "1.15.2": ["family/1.14-1.15-common", "family/1.15"],
-        "1.16": ["family/1.16-1.16.1"],
-        "1.16.1": ["family/1.16-1.16.1"],
-        "1.16.2": ["family/1.16.0-1.16.4", "family/1.16.5-1.19.2", "rendered/1.16.5"],
-        "1.16.3": ["family/1.16.0-1.16.4", "family/1.16.5-1.19.2", "rendered/1.16.5"],
-        "1.16.4": ["family/1.16.0-1.16.4", "family/1.16.5-1.19.2", "rendered/1.16.5"],
-        "1.16.5": ["family/1.16.5", "family/1.16.5-1.19.2", "rendered/1.16.5"],
+        "1.16": ["family/1.16-common", "family/1.16-config-screens", "family/1.16-1.16.1"],
+        "1.16.1": ["family/1.16-common", "family/1.16-config-screens", "family/1.16-1.16.1"],
+        "1.16.2": ["family/1.16-common", "family/1.16-config-screens", "family/1.16.0-1.16.4",
+                   "family/1.16.5-1.19.2", "rendered/1.16.5"],
+        "1.16.3": ["family/1.16-common", "family/1.16-config-screens", "family/1.16.0-1.16.4",
+                   "family/1.16.5-1.19.2", "rendered/1.16.5"],
+        "1.16.4": ["family/1.16-common", "family/1.16-config-screens", "family/1.16.0-1.16.4",
+                   "family/1.16.5-1.19.2", "rendered/1.16.5"],
+        "1.16.5": ["family/1.16-common", "family/1.16.5", "family/1.16.5-1.19.2", "rendered/1.16.5"],
         "1.17": ["family/1.16.5-1.19.2", "rendered/1.16.5", "family/1.17"],
         "1.17.1": ["family/1.16.5-1.19.2", "rendered/1.16.5", "family/1.17.1-1.18"],
         "1.18": ["family/1.16.5-1.19.2", "rendered/1.16.5", "family/1.17.1-1.18"],
@@ -53,7 +56,8 @@ if (layers == null) {
 
 def sharedRoot = rootProject.file("platforms/fabric/legacy/shared")
 def rootForLayer = { layer ->
-    if (layer == "family/1.16-1.16.1" || layer == "family/1.16.0-1.16.4" || layer == "family/1.16.5") {
+    if (layer == "family/1.16-1.16.1" || layer == "family/1.16.0-1.16.4" || layer == "family/1.16.5"
+            || layer == "family/1.16-common" || layer == "family/1.16-config-screens") {
         return rootProject.file("platforms/fabric/1.16/shared")
     }
     if (layer == "family/1.14" || layer == "family/1.15" || layer == "family/1.14-1.15"
