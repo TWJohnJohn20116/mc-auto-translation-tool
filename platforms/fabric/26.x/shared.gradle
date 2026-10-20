@@ -9,17 +9,19 @@ requiredProperties.each { propertyName ->
     }
 }
 
+// Each version lists its source layers in override order: later layers win. 26.2 and 26.3
+// share api/26.2-26.3 and keep only the two files that actually differ.
 def sourceLayers = [
-        "26.1"  : "api/26.1-26.1.2",
-        "26.1.1": "api/26.1-26.1.2",
-        "26.1.2": "api/26.1-26.1.2",
-        "26.2"  : "api/26.2",
-        "26.3"  : "api/26.3"
+        "26.1"  : ["api/26.1-26.1.2"],
+        "26.1.1": ["api/26.1-26.1.2"],
+        "26.1.2": ["api/26.1-26.1.2"],
+        "26.2"  : ["api/26.2-26.3", "api/26.2"],
+        "26.3"  : ["api/26.2-26.3", "api/26.3"]
 ]
 
 def gameVersion = project.name - "platform-fabric-"
-def sourceLayer = sourceLayers[gameVersion]
-if (sourceLayer == null) {
+def layers = sourceLayers[gameVersion]
+if (layers == null) {
     throw new GradleException("No Fabric 26.x source layer is registered for ${gameVersion}")
 }
 
@@ -75,7 +77,9 @@ loom {
 sourceSets {
     client {
         java.srcDir new File(sharedRoot, "common/src/client/java")
-        java.srcDir new File(sharedRoot, "${sourceLayer}/src/client/java")
+        layers.each { layer ->
+            java.srcDir new File(sharedRoot, "${layer}/src/client/java")
+        }
     }
 }
 
