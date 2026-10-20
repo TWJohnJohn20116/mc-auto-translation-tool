@@ -13,6 +13,12 @@ base {
 def forgeShared = rootProject.file("platforms/forge/1.21/shared")
 def forgeCommon = new File(forgeShared, "common")
 def forgeFamily = new File(forgeShared, "1.21-1.21.5")
+def forgeFamilyName = forgeFamily.name
+// Adjacent Forge families compile these files identically, so they live in shared layers
+// instead of being copied into every family directory.
+def forgeSharedLayers =
+        (forgeFamilyName == "1.21.9-1.21.11" ? [] : ["runtime/1.21-1.21.8"]) +
+                (forgeFamilyName == "1.21-1.21.5" ? [] : ["draw-context/1.21.6-1.21.11"])
 
 neoForge {
     version = project.neoforge_1_21_3_version
@@ -35,6 +41,9 @@ sourceSets {
         java.srcDir project(":translator-core").file("src/main/java")
         java.srcDir new File(forgeCommon, "src/main/java")
         java.srcDir new File(forgeFamily, "src/main/java")
+        forgeSharedLayers.each { layer ->
+            java.srcDir new File(forgeShared, "${layer}/src/main/java")
+        }
         java.exclude "**/UniversalTranslatorForgeMod.java"
         java.exclude "**/UniversalTranslatorForgeClient.java"
     }
