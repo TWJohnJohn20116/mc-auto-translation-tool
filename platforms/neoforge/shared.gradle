@@ -1,0 +1,146 @@
+// Shared NeoForge wiring.
+//
+// A version module declares its coordinates and applies this script; every source
+// directory, resource layer and compile target lives here. Adding a Minecraft version
+// therefore never means copying Java files again — it means adding one entrypoint
+// layer only when the loader API actually changed.
+//
+// NeoForge runs on Mojmap, so it reuses the Forge source trees unchanged. The shared
+// layer here holds only what is genuinely NeoForge-specific:
+//   entrypoints/<layer>/  the two @Mod / client classes
+//   metadata/<layer>/     universal-translator.neoforge.mixins.json
+// Everything else (common API, version families, lang assets, pack.mcmeta) is read
+// from the matching platforms/forge tree, so there is exactly one copy in the repo.
+//
+// Required coordinates:
+//   neoforgeMinecraftVersion  "1.21.7"      -> archivesName suffix
+//   neoforgeVersion           project.<prop> -> NeoForge artifact version
+//   neoforgeJavaRelease       17 | 21 | 25
+//   neoforgeEntryLayer        "1.21.2-1.21.8"
+//   neoforgeMetadataLayer     "1.21"
+//   neoforgeForgeSharedRoot   "platforms/forge/1.21/shared"
+//   neoforgeForgeLayers       ["common", "1.21-1.21.5"]
+// Optional:
+//   neoforgeForgeExtraRoots   ["platforms/forge/modern/1.20.1"]
+//   neoforgePackFormat        integer, expands ${packFormat} in pack.mcmeta
+//   neoforgeResourcePackFormat integer, expands ${resourcePackFormat} in pack.mcmeta
+
+def requiredCoordinates = [
+        "neoforgeMinecraftVersion",
+        "neoforgeVersion",
+        "neoforgeJavaRelease",
+        "neoforgeEntryLayer",
+        "neoforgeMetadataLayer",
+        "neoforgeForgeSharedRoot",
+        "neoforgeForgeLayers"
+]
+requiredCoordinates.each { coordinate ->
+    if (!project.ext.has(coordinate)) {
+        throw new GradleException(
+                "Missing ${coordinate} before applying platforms/neoforge/shared.gradle")
+    }
+}
+
+def sharedRoot = rootProject.file("platforms/neoforge/shared")
+def entryLayer = new File(sharedRoot, "entrypoints/${project.ext.neoforgeEntryLayer}")
+if (!entryLayer.isDirectory()) {
+    throw new GradleException(
+            "Unknown NeoForge entry layer '${project.ext.neoforgeEntryLayer}'")
+}
+
+def metadataLayer = new File(sharedRoot, "metadata/${project.ext.neoforgeMetadataLayer}")
+if (!metadataLayer.isDirectory()) {
+    throw new GradleException(
+            "Unknown NeoForge metadata layer '${project.ext.neoforgeMetadataLayer}'")
+}
+
+def forgeSharedRoot = rootProject.file(project.ext.neoforgeForgeSharedRoot)
+if (!forgeSharedRoot.isDirectory()) {
+    throw new GradleException(
+            "Unknown Forge shared root '${project.ext.neoforgeForgeSharedRoot}'")
+}
+def forgeLayers = project.ext.neoforgeForgeLayers.collect { rootProject.file("${project.ext.neoforgeForgeSharedRoot}/${it}") }
+def missingLayers = forgeLayers.findAll { !it.isDirectory() }
+if (!missingLayers.isEmpty()) {
+    throw new GradleException(
+            "Missing Forge source layers under ${project.ext.neoforgeForgeSharedRoot}: " +
+                    missingLayers.collect { it.name }.join(", "))
+}
+def forgeExtraRoots = project.ext.has("neoforgeForgeExtraRoots")
+        ? project.ext.neoforgeForgeExtraRoots.collect { rootProject.file(it) }
+        : []
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = "mc-auto-translation-tool-neoforge-${project.ext.neoforgeMinecraftVersion}"
+}
+
+sourceSets {
+    main {
+        java.srcDir project(":translator-core").file("src/main/java")
+        java.srcDir new File(entryLayer, "src/main/java")
+        forgeLayers.each { layer -> java.srcDir new File(layer, "src/main/java") }
+        forgeExtraRoots.each { extra -> java.srcDir new File(extra, "src/main/java") }
+        // The Forge loader entrypoints are replaced by the NeoForge variants above.
+        java.exclude "**/UniversalTranslatorForgeMod.java"
+        java.exclude "**/UniversalTranslatorForgeClient.java"
+    }
+}
+
+tasks.named("processResources", ProcessResources).configure {
+    // NeoForge-specific mixin config, one copy per API family.
+    from(new File(metadataLayer, "src/main/resources"))
+    // Lang assets and pack.mcmeta come from the same Forge layers as the sources, so a
+    // NeoForge jar carries exactly the resources its Forge counterpart does.
+    forgeLayers.each { layer ->
+        from(new File(layer, "src/main/resources")) {
+            exclude "universal-translator.forge.mixins.json"
+            exclude "META-INF/mods.toml"
+        }
+    }
+    forgeExtraRoots.each { extra ->
+        from(new File(extra, "src/main/resources")) {
+            exclude "universal-translator.forge.mixins.json"
+            exclude "META-INF/mods.toml"
+        }
+    }
+    // The metadata layer and a Forge layer may both contribute the same file name; the
+    // metadata copy is added first and therefore wins.
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+
+    inputs.property "version", project.version
+    if (project.ext.has("neoforgePackFormat")) {
+        inputs.property "packFormat", project.ext.neoforgePackFormat
+        filesMatching("pack.mcmeta") {
+            expand "packFormat": project.ext.neoforgePackFormat
+        }
+    }
+    if (project.ext.has("neoforgeResourcePackFormat")) {
+        inputs.property "resourcePackFormat", project.ext.neoforgeResourcePackFormat
+        filesMatching("pack.mcmeta") {
+            expand "resourcePackFormat": project.ext.neoforgeResourcePackFormat
+        }
+    }
+    filesMatching("META-INF/neoforge.mods.toml") {
+        expand "version": project.version
+    }
+    filesMatching("META-INF/mods.toml") {
+        expand "version": project.version
+    }
+}
+
+tasks.named("jar", Jar).configure {
+    from(rootProject.file("LICENSE")) {
+        rename { "LICENSE_universal_translator" }
+    }
+    from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) {
+        rename { "THIRD_PARTY_OFFLINE.md" }
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+    options.release = project.ext.neoforgeJavaRelease
+}

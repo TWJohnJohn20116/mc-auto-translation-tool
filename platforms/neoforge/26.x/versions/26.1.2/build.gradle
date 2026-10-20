@@ -3,69 +3,29 @@ plugins {
     id "net.neoforged.moddev" version "${moddev_version}"
 }
 
-version = project.mod_version
-group = project.maven_group
+// Coordinate-only module. Sources, resources and compile settings all come from
+// platforms/neoforge/shared.gradle; only the values below differ per version.
+ext.neoforgeMinecraftVersion = "26.1.2"
+ext.neoforgeVersion = project.neoforge_26_1_2_version
+ext.neoforgeJavaRelease = 25
+ext.neoforgeEntryLayer = "26.1-26.1.2"
+ext.neoforgeMetadataLayer = "26.x"
+ext.neoforgeForgeSharedRoot = "platforms/forge/26.x/shared"
+ext.neoforgeForgeLayers = ["common", "api/26.1-26.1.2"]
+ext.neoforgeResourcePackFormat = 101
 
-base {
-    archivesName = "mc-auto-translation-tool-neoforge-${minecraft_neoforge_26_1_2_version}"
-}
-
-// NeoForge runs on Mojmap, so it reuses the Forge 26.x shared sources.
-// Only the two loader entrypoints are replaced by the NeoForge variants in this module.
-def forgeShared = rootProject.file("platforms/forge/26.x/shared")
-def forgeCommon = new File(forgeShared, "common")
-def forgeApi = new File(forgeShared, "api/26.1-26.1.2")
+apply from: rootProject.file("platforms/neoforge/shared.gradle")
 
 neoForge {
-    version = project.neoforge_26_1_2_version
-
+    version = project.ext.neoforgeVersion
     runs {
         client {
             client()
         }
     }
-
     mods {
         "universal_translator" {
             sourceSet sourceSets.main
         }
     }
-}
-
-sourceSets {
-    main {
-        java.srcDir project(":translator-core").file("src/main/java")
-        java.srcDir new File(forgeCommon, "src/main/java")
-        java.srcDir new File(forgeApi, "src/main/java")
-        java.exclude "**/UniversalTranslatorForgeMod.java"
-        java.exclude "**/UniversalTranslatorForgeClient.java"
-    }
-}
-
-tasks.named("processResources", ProcessResources).configure {
-    from(new File(forgeCommon, "src/main/resources")) {
-        exclude "universal-translator.forge.mixins.json"
-    }
-    inputs.property "version", project.version
-    inputs.property "resourcePackFormat", 101
-    filesMatching("META-INF/neoforge.mods.toml") {
-        expand "version": project.version
-    }
-    filesMatching("pack.mcmeta") {
-        expand "resourcePackFormat": 101
-    }
-}
-
-tasks.named("jar", Jar).configure {
-    from(rootProject.file("LICENSE")) {
-        rename { "LICENSE_universal_translator" }
-    }
-    from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) {
-        rename { "THIRD_PARTY_OFFLINE.md" }
-    }
-}
-
-tasks.withType(JavaCompile).configureEach {
-    options.encoding = "UTF-8"
-    options.release = 25
 }
