@@ -168,7 +168,7 @@ if (splitEnvironment) {
             }
             // FabricConfig is shared by every Fabric tree, so it is added unconditionally: the
             // early 1.14/1.15 builds used to read it from family/1.14-1.15-common.
-            java.srcDir rootProject.file("platforms/fabric/shared/config/src/main/java")
+            java.srcDir rootProject.file("platforms/fabric/shared/config/legacy/src/main/java")
             layers.each { layer ->
                 java.srcDir new File(rootForLayer(layer), "${layer}/src/client/java")
             }
@@ -181,7 +181,7 @@ if (splitEnvironment) {
             if (!early114115) {
                 java.srcDir new File(sharedRoot, "common/src/client/java")
             }
-            java.srcDir rootProject.file("platforms/fabric/shared/config/src/main/java")
+            java.srcDir rootProject.file("platforms/fabric/shared/config/legacy/src/main/java")
             layers.each { layer ->
                 java.srcDir new File(rootForLayer(layer), "${layer}/src/client/java")
             }
