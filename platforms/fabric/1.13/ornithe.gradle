@@ -46,6 +46,8 @@ sourceSets {
         java.srcDir new File(screenBaseRoot, "src/main/java")
         resources.srcDir new File(sharedRoot, "src/main/resources")
         resources.srcDir new File(bothRoot, "src/main/resources")
+        resources.srcDir rootProject.file("platforms/shared/lang/json")
+        resources.srcDir rootProject.file("platforms/shared/lang/legacy")
     }
 }
 
