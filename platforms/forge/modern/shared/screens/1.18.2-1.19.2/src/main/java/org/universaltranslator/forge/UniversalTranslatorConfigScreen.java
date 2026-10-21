@@ -66,6 +66,21 @@ final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorLlmCon
         renderLlm(CanvasFactory.create(pose, font));
         super.render(pose, mouseX, mouseY, delta);
     }
+
+    @Override
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        return handleModelListClick(mouseX, mouseY) || super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        return handleModelListKey(keyCode) || super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+    @Override
+    public boolean charTyped(char chr, int modifiers) {
+        return isModelListOpen() || super.charTyped(chr, modifiers);
+    }
 }
 
 final class CanvasFactory {
