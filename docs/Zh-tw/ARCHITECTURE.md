@@ -71,7 +71,6 @@ flowchart TD
 | `platforms/forge/1.21/` | 現代 Forge 1.21 | 1.21.0 ~ 1.21.11 | Forge | **Java 21**| ForgeGradle 6 / NeoDev |
 | `platforms/forge/26.x/` | 未來 Forge | 26.1 ~ 26.2 | Forge | **Java 25**| ForgeGradle / NeoDev |
 | `platforms/neoforge/` | NeoForge 獨立系列 | 1.20.1, 1.20.x, 1.21.x, 26.x | NeoForge | **Java 17/21/25**| ModDev Gradle |
-
 ---
 
 ## 3. 常見架構疑問解答 (FAQ)
@@ -92,6 +91,13 @@ flowchart TD
    - 子專案（例如 `platforms/fabric/1.20/versions/1.20.4`）內部只有 `fabric.mod.json` 與版本相依性宣告，其 Java 代碼是在編譯時直接掛載共用目錄的 sourceSet。
 3. **Forge 共用層**：
    - `platforms/forge/shared/` 封裝了現代 Forge 的 Client Mod 事件與 Mixin 進入點，1.16.5 至 1.20.1 共用同一套客戶端代碼。
+4. **NeoForge 座標層**：
+   - `platforms/neoforge/<版本>/build.gradle` 只有座標（Minecraft 版本、NeoForge 版本、Java release、entrypoint 層、metadata 層、要重用的 Forge 共用層）；
+     所有 `sourceSets`、資源與編譯設定都在 `platforms/neoforge/shared.gradle`。
+   - 只有 NeoForge 真正獨有的東西留在 `platforms/neoforge/shared/`：`entrypoints/<layer>/` 的兩個 `@Mod`／client 類別，
+     以及 `metadata/<layer>/` 的 `universal-translator.neoforge.mixins.json`。
+   - 其餘（common API、版本 family、語言檔、`pack.mcmeta`）直接指向對應的 `platforms/forge/` 目錄，不保留副本。
+   - `./gradlew validateNeoForgeModuleCoordinates` 會驗證每個座標都解析得到目錄，且宣告的 Forge 層與 Forge 樹自己的版本對應表一致。
 
 ---
 

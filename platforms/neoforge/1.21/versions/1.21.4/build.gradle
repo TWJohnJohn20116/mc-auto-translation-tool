@@ -3,76 +3,28 @@ plugins {
     id "net.neoforged.moddev" version "${moddev_version}"
 }
 
-version = project.mod_version
-group = project.maven_group
+// Coordinate-only module. Sources, resources and compile settings all come from
+// platforms/neoforge/shared.gradle; only the values below differ per version.
+ext.neoforgeMinecraftVersion = "1.21.4"
+ext.neoforgeVersion = project.neoforge_1_21_4_version
+ext.neoforgeJavaRelease = 21
+ext.neoforgeEntryLayer = "1.21.2-1.21.8"
+ext.neoforgeMetadataLayer = "1.21"
+ext.neoforgeForgeSharedRoot = "platforms/forge/1.21/shared"
+ext.neoforgeForgeLayers = ["common", "1.21-1.21.5"]
 
-base {
-    archivesName = "mc-auto-translation-tool-neoforge-${minecraft_neoforge_1_21_4_version}"
-}
-
-def forgeShared = rootProject.file("platforms/forge/1.21/shared")
-def forgeScreenShared = rootProject.file("platforms/forge/shared/screens/1.18.2-1.21.11")
-def forgeScreenWidgets = rootProject.file("platforms/forge/shared/widgets/1.20.1-1.21.11")
-def forgeCommon = new File(forgeShared, "common")
-def forgeFamily = new File(forgeShared, "1.21-1.21.5")
-def forgeFamilyName = forgeFamily.name
-// Adjacent Forge families compile these files identically, so they live in shared layers
-// instead of being copied into every family directory.
-def forgeSharedLayers =
-        (forgeFamilyName == "1.21.9-1.21.11" ? [] : ["runtime/1.21-1.21.8"]) +
-                (forgeFamilyName == "1.21-1.21.5" ? [] : ["draw-context/1.21.6-1.21.11"])
+apply from: rootProject.file("platforms/neoforge/shared.gradle")
 
 neoForge {
-    version = project.neoforge_1_21_4_version
-
+    version = project.ext.neoforgeVersion
     runs {
         client {
             client()
         }
     }
-
     mods {
         "universal_translator" {
             sourceSet sourceSets.main
         }
     }
-}
-
-sourceSets {
-    main {
-        java.srcDir project(":translator-core").file("src/main/java")
-        java.srcDir new File(forgeCommon, "src/main/java")
-        java.srcDir new File(forgeScreenShared, "src/main/java")
-        java.srcDir new File(forgeScreenWidgets, "src/main/java")
-        java.srcDir new File(forgeFamily, "src/main/java")
-        forgeSharedLayers.each { layer ->
-            java.srcDir new File(forgeShared, "${layer}/src/main/java")
-        }
-        java.exclude "**/UniversalTranslatorForgeMod.java"
-        java.exclude "**/UniversalTranslatorForgeClient.java"
-    }
-}
-
-tasks.named("processResources", ProcessResources).configure {
-    from(new File(forgeCommon, "src/main/resources")) {
-        exclude "universal-translator.forge.mixins.json"
-    }
-    inputs.property "version", project.version
-    filesMatching("META-INF/neoforge.mods.toml") {
-        expand "version": project.version
-    }
-}
-
-tasks.named("jar", Jar).configure {
-    from(rootProject.file("LICENSE")) {
-        rename { "LICENSE_universal_translator" }
-    }
-    from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) {
-        rename { "THIRD_PARTY_OFFLINE.md" }
-    }
-}
-
-tasks.withType(JavaCompile).configureEach {
-    options.encoding = "UTF-8"
-    options.release = 21
 }
