@@ -128,6 +128,12 @@ git -c 'credential.helper=' -c 'credential.helper=!gh auth git-credential' push 
 - `主要建置` 額外關鍵字：`legacy`（7 個 1.16.5–1.20.1 舊版目標）、`release`（發布資產驗證）。
 - 目標名稱必須與該 workflow 的 matrix 完全一致。名稱打錯時該項目會被略過，而整體仍顯示成功，
   因此一定要用 `gh run view <run-id> --json jobs` 確認 `conclusion` 不是 `skipped`。
+- **只看 job 的 `conclusion` 不夠**：`legacy-targets.yml` 的建置步驟帶
+  `if: needs.plan.outputs.targets == '' || contains(...)`，指定 `targets` 時不匹配的 job 仍會執行、
+  建置步驟被略過，job 本身回報 `success`。要確認某個目標真的建置過，必須看該 job 內
+  「建置」步驟的 `conclusion`（`--json jobs` 的 `steps[]`）。2026-10-21 就是只看了 job 的
+  `success`，誤以為 4 個 26.x NeoForge 目標建置通過，實際上建置步驟全被略過，錯誤直到
+  `prepare-release` 第一次真正編譯 48 個目標才暴露。
 
 ### 目標名稱
 
