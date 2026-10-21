@@ -92,7 +92,8 @@ jobs:
             requested=""
           fi
           export REQUESTED_TARGETS="$requested"
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          # $GITHUB_OUTPUT 只接受 key=value，所以 key 由 Python 直接寫檔，notice 走 stdout。
+          python3 - <<'PY'
           import json, os, sys
 
           requested = [n for n in os.environ.get("REQUESTED_TARGETS", "").split(",") if n]
@@ -105,11 +106,14 @@ jobs:
               print("可用目標：" + "、".join(sorted(known)), file=sys.stderr)
               sys.exit(1)
           total = 0
+          lines = []
           for name, entries in groups.items():
               selected = [e for e in entries if not requested or e["target"] in requested]
               total += len(selected)
-              print(f"{name}_matrix=" + json.dumps({"include": selected}))
-              print(f"{name}_count={len(selected)}")
+              lines.append(f"{name}_matrix=" + json.dumps({"include": selected}))
+              lines.append(f"{name}_count={len(selected)}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write("\n".join(lines) + "\n")
           suffix = "（全部）" if not requested else "（其餘未指定，不會產生 job）"
           print(f"::notice::本次要建置 {total} 個目標{suffix}")
           PY
