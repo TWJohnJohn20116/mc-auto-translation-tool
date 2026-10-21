@@ -13,6 +13,7 @@ base {
 // NeoForge runs on Mojmap, so it reuses the Forge 1.20.1 legacy sources.
 // Only the two loader entrypoints are replaced by the NeoForge variants in this module.
 def forgeModernShared = rootProject.file("platforms/forge/modern/shared")
+def forgeScreenShared = rootProject.file("platforms/forge/shared/screens/1.20.1-1.21.11")
 def forgeModernCommon = new File(forgeModernShared, "common")
 def forgeLegacyFamily = new File(forgeModernShared, "family/1.19.2-plus")
 def forgeModern1201 = rootProject.file("platforms/forge/modern/1.20.1")
@@ -38,6 +39,7 @@ sourceSets {
         java.srcDir project(":translator-core").file("src/main/java")
         java.srcDir new File(forgeModernCommon, "src/main/java")
         java.srcDir new File(forgeLegacyFamily, "src/main/java")
+        java.srcDir new File(forgeScreenShared, "src/main/java")
         java.srcDir new File(forgeModern1201, "src/main/java")
         java.exclude "**/UniversalTranslatorForgeMod.java"
         java.exclude "**/UniversalTranslatorForgeClient.java"
