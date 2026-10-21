@@ -1,7 +1,6 @@
 package org.universaltranslator.fabric;
 
 import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.client.render.TextRenderer;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.resource.language.I18n;
 import org.universaltranslator.core.DebugLog;
@@ -14,7 +13,7 @@ import java.util.List;
 import java.util.Collections;
 
 /** Secret-free runtime diagnostics shared by Forge 1.8.9 and 1.12.2. */
-final class UniversalTranslatorDiagnosticsScreen extends Screen {
+final class UniversalTranslatorDiagnosticsScreen extends UniversalTranslatorScreenBase {
     /** Vertical distance between two text lines. */
     private static final int LINE_STEP = 17;
     /** First line's y, just under the title. */
@@ -28,7 +27,6 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
     private static final int RESET = 9;
 
     private final Screen parent;
-    private TextRenderer renderer;
     private ButtonWidget debugButton;
     private ButtonWidget pageButton;
     private ButtonWidget resetButton;
@@ -181,7 +179,7 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
             if (index == shown - 1 && shown < lines.size()) {
                 line = line + " ...";
             }
-            drawString(renderer, line, left, y, 0xFFD0D0D0);
+            drawShadowedString(line, left, y, 0xFFD0D0D0);
             y += LINE_STEP;
         }
         drawCenteredString(renderer,

@@ -4,7 +4,6 @@ import java.util.Collections;
 import java.util.List;
 
 import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.client.render.TextRenderer;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.client.resource.language.I18n;
@@ -31,7 +30,7 @@ import org.universaltranslator.core.net.JsonStrings;
 import org.universaltranslator.core.provider.OpenAiModelCatalog;
 import org.universaltranslator.core.provider.ProviderProbe;
 
-final class UniversalTranslatorConfigScreen extends Screen {
+final class UniversalTranslatorConfigScreen extends UniversalTranslatorScreenBase {
     private enum Tab {
         GENERAL,
         SCOPES,
@@ -190,7 +189,6 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private ActionButton hudContentButton;
     private ActionButton hudVisibilityButton;
 
-    private TextRenderer renderer;
     private String status = "";
     /** Result of the engine tab's connection test; written by its worker thread. */
     private volatile String testStatus = "";
@@ -1142,7 +1140,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         if (activeTab == Tab.SCOPES) {
             OrnitheClientAccess.renderTextField(blockedKeywords, mouseX, mouseY, partialTicks);
             if (blockedKeywords.getText().isEmpty()) {
-                drawString(renderer, 
+                drawShadowedString(
                         tr("screen.universal_translator.blocked_keywords_hint"),
                         layout.left() + 4, layout.contentRow(3) + 6, 0x70A0A0A0);
             }
@@ -1410,7 +1408,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         for (int row = 0; row < rows && first + row < fetchedModels.size(); row++) {
             int rowY = MODEL_LIST_TOP + row * MODEL_ROW_HEIGHT;
             boolean hovered = mouseY >= rowY && mouseY < rowY + MODEL_ROW_HEIGHT;
-            drawString(renderer, (hovered ? "> " : "  ") + fetchedModels.get(first + row),
+            drawShadowedString((hovered ? "> " : "  ") + fetchedModels.get(first + row),
                     24, rowY, hovered ? 0xFFFFD060 : 0xFFE0E0E0);
         }
         int pages = modelPageCount(rows);
