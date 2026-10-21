@@ -36,7 +36,12 @@ jobs:
     name: 解析建置目標
     runs-on: ubuntu-24.04
     outputs:
-      targets: ${{ steps.resolve.outputs.targets }}
+      fabric_matrix: ${{ steps.resolve.outputs.fabric_matrix }}
+      fabric_count: ${{ steps.resolve.outputs.fabric_count }}
+      forge_matrix: ${{ steps.resolve.outputs.forge_matrix }}
+      forge_count: ${{ steps.resolve.outputs.forge_count }}
+      neoforge_matrix: ${{ steps.resolve.outputs.neoforge_matrix }}
+      neoforge_count: ${{ steps.resolve.outputs.neoforge_count }}
     steps:
       - name: 解析要建置的目標
         id: resolve
@@ -46,18 +51,73 @@ jobs:
           REQUESTED: ${{ github.event.inputs.targets }}
         run: |
           set -euo pipefail
-          # Whitespace is stripped here because GitHub expressions provide no
-          # replace()/trim(); the jobs below match comma-wrapped target names.
+          # 21 個目標的權威清單。每個 job 的 matrix 都從這裡過濾出來，沒被要求的目標
+          # 不會產生 job——這正是重點：先前 matrix 是靜態的，未指定的目標仍會開 job、
+          # 建置步驟被 if 略過、job 卻回報 success，`gh run view --json jobs` 看起來全綠。
+          # 2026-10-21 就因此誤以為 4 個 26.x NeoForge 目標建置通過。
+          cat > "$RUNNER_TEMP/targets.json" <<'JSON'
+          {
+            "fabric": [
+              {"target": "fabric-1.0-1.8.x"},
+              {"target": "fabric-1.8-1.12.x"},
+              {"target": "fabric-1.13.x"},
+              {"target": "fabric-1.14-1.15.x"}
+            ],
+            "forge": [
+              {"target": "forge-legacy-1.8.9", "dir": "platforms/forge/legacy/1.8.9"},
+              {"target": "forge-legacy-1.12.2", "dir": "platforms/forge/legacy/1.12.2"}
+            ],
+            "neoforge": [
+              {"target": "neoforge-1.20.4", "java": "21"},
+              {"target": "neoforge-1.20.6", "java": "21"},
+              {"target": "neoforge-1.21", "java": "21"},
+              {"target": "neoforge-1.21.2", "java": "21"},
+              {"target": "neoforge-1.21.4", "java": "21"},
+              {"target": "neoforge-1.21.5", "java": "21"},
+              {"target": "neoforge-1.21.6", "java": "21"},
+              {"target": "neoforge-1.21.7", "java": "21"},
+              {"target": "neoforge-1.21.8", "java": "21"},
+              {"target": "neoforge-1.21.9", "java": "21"},
+              {"target": "neoforge-1.21.10", "java": "21"},
+              {"target": "neoforge-26.1", "java": "25"},
+              {"target": "neoforge-26.1.1", "java": "25"},
+              {"target": "neoforge-26.1.2", "java": "25"},
+              {"target": "neoforge-26.2", "java": "25"}
+            ]
+          }
+          JSON
+          # GitHub 運算式沒有 replace()/trim()，空白在這裡剝除。
           requested="$(printf '%s' "${REQUESTED:-}" | tr -d '[:space:]')"
-          if [[ "${EVENT_NAME:-}" != "workflow_dispatch" || -z "$requested" ]]; then
-            echo "targets=" >> "$GITHUB_OUTPUT"
-          else
-            echo "targets=,$requested," >> "$GITHUB_OUTPUT"
+          if [[ "${EVENT_NAME:-}" != "workflow_dispatch" ]]; then
+            requested=""
           fi
+          export REQUESTED_TARGETS="$requested"
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os, sys
+
+          requested = [n for n in os.environ.get("REQUESTED_TARGETS", "").split(",") if n]
+          with open(os.path.join(os.environ["RUNNER_TEMP"], "targets.json"), encoding="utf-8") as handle:
+              groups = json.load(handle)
+          known = {entry["target"] for entries in groups.values() for entry in entries}
+          unknown = [name for name in requested if name not in known]
+          if unknown:
+              print("::error::不存在的目標：" + "、".join(unknown), file=sys.stderr)
+              print("可用目標：" + "、".join(sorted(known)), file=sys.stderr)
+              sys.exit(1)
+          total = 0
+          for name, entries in groups.items():
+              selected = [e for e in entries if not requested or e["target"] in requested]
+              total += len(selected)
+              print(f"{name}_matrix=" + json.dumps({"include": selected}))
+              print(f"{name}_count={len(selected)}")
+          suffix = "（全部）" if not requested else "（其餘未指定，不會產生 job）"
+          print(f"::notice::本次要建置 {total} 個目標{suffix}")
+          PY
 
   legacy-fabric:
     name: 建置舊版 Fabric ${{ matrix.target }}
     needs: plan
+    if: needs.plan.outputs.fabric_count != '0'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     # fabric-1.0-1.8.x 曾經長期紅燈（feather 版本對應錯誤），2026-10-04 已修好：12 個上游 mappings
@@ -65,12 +125,7 @@ jobs:
     # 都用 feather build.31，所以不再需要 continue-on-error。
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - target: fabric-1.0-1.8.x
-          - target: fabric-1.8-1.12.x
-          - target: fabric-1.13.x
-          - target: fabric-1.14-1.15.x
+      matrix: ${{ fromJSON(needs.plan.outputs.fabric_matrix) }}
     steps:
       - name: 取出原始碼
         uses: actions/checkout@v7
@@ -93,15 +148,11 @@ jobs:
 
       - name: 建置舊版 Fabric 整合包
         id: build
-        if: needs.plan.outputs.targets == '' || contains(needs.plan.outputs.targets, format(',{0},', matrix.target))
         uses: ./.github/actions/gradle-build
         with:
           args: --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
 
       - name: 上傳舊版 Fabric JAR
-        if: >-
-          success() && (needs.plan.outputs.targets == '' ||
-          contains(needs.plan.outputs.targets, format(',{0},', matrix.target)))
         uses: actions/upload-artifact@v7
         with:
           name: legacy-fabric-${{ matrix.target }}
@@ -137,16 +188,12 @@ jobs:
   legacy-forge:
     name: 建置舊版 Forge ${{ matrix.target }}
     needs: plan
+    if: needs.plan.outputs.forge_count != '0'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - target: forge-legacy-1.8.9
-            dir: platforms/forge/legacy/1.8.9
-          - target: forge-legacy-1.12.2
-            dir: platforms/forge/legacy/1.12.2
+      matrix: ${{ fromJSON(needs.plan.outputs.forge_matrix) }}
     steps:
       - name: 取出原始碼
         uses: actions/checkout@v7
@@ -161,16 +208,12 @@ jobs:
 
       - name: 建置舊版 Forge
         id: build
-        if: needs.plan.outputs.targets == '' || contains(needs.plan.outputs.targets, format(',{0},', matrix.target))
         uses: ./.github/actions/gradle-build
         with:
           args: --no-daemon build
           working-directory: ${{ matrix.dir }}
 
       - name: 上傳舊版 Forge JAR
-        if: >-
-          success() && (needs.plan.outputs.targets == '' ||
-          contains(needs.plan.outputs.targets, format(',{0},', matrix.target)))
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target }}
@@ -209,42 +252,12 @@ jobs:
   neoforge-targets:
     name: 建置 NeoForge ${{ matrix.target }}
     needs: plan
+    if: needs.plan.outputs.neoforge_count != '0'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - target: neoforge-1.20.4
-            java: "21"
-          - target: neoforge-1.20.6
-            java: "21"
-          - target: neoforge-1.21
-            java: "21"
-          - target: neoforge-1.21.2
-            java: "21"
-          - target: neoforge-1.21.4
-            java: "21"
-          - target: neoforge-1.21.5
-            java: "21"
-          - target: neoforge-1.21.6
-            java: "21"
-          - target: neoforge-1.21.7
-            java: "21"
-          - target: neoforge-1.21.8
-            java: "21"
-          - target: neoforge-1.21.9
-            java: "21"
-          - target: neoforge-1.21.10
-            java: "21"
-          - target: neoforge-26.1
-            java: "25"
-          - target: neoforge-26.1.1
-            java: "25"
-          - target: neoforge-26.1.2
-            java: "25"
-          - target: neoforge-26.2
-            java: "25"
+      matrix: ${{ fromJSON(needs.plan.outputs.neoforge_matrix) }}
     steps:
       - name: 取出原始碼
         uses: actions/checkout@v7
@@ -263,15 +276,11 @@ jobs:
 
       - name: 建置 NeoForge 平台
         id: build
-        if: needs.plan.outputs.targets == '' || contains(needs.plan.outputs.targets, format(',{0},', matrix.target))
         uses: ./.github/actions/gradle-build
         with:
           args: --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
 
       - name: 上傳 NeoForge JAR
-        if: >-
-          success() && (needs.plan.outputs.targets == '' ||
-          contains(needs.plan.outputs.targets, format(',{0},', matrix.target)))
         uses: actions/upload-artifact@v7
         with:
           name: platform-${{ matrix.target }}
