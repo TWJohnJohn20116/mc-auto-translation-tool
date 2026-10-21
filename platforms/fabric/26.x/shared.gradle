@@ -78,6 +78,7 @@ loom {
 sourceSets {
     client {
         java.srcDir new File(sharedRoot, "common/src/client/java")
+        java.srcDir rootProject.file("platforms/fabric/shared/settings/modern/src/main/java")
         layers.each { layer ->
             java.srcDir new File(sharedRoot, "${layer}/src/client/java")
         }

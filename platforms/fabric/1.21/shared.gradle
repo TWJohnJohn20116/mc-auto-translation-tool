@@ -87,6 +87,7 @@ loom {
 sourceSets {
     client {
         java.srcDir new File(sharedRoot, "common/src/client/java")
+        java.srcDir rootProject.file("platforms/fabric/shared/settings/modern/src/main/java")
         // The settings screens are shared with Fabric 1.20.x as well, so they sit in their own layer.
         java.srcDir new File(sharedRoot, "screens/1.20.1-1.21.11/src/client/java")
         layers.each { layer ->
