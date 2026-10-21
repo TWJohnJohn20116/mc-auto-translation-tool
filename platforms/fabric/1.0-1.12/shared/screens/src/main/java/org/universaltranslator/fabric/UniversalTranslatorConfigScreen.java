@@ -7,7 +7,6 @@ import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.render.TextRenderer;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.TextFieldWidget;
-import net.minecraft.client.resource.language.I18n;
 
 import org.universaltranslator.core.TranslationDisplayMode;
 import org.universaltranslator.core.OfflineModel;
@@ -32,7 +31,7 @@ import org.universaltranslator.core.provider.OpenAiModelCatalog;
 import org.universaltranslator.core.provider.ProviderProbe;
 
 /** Dependency-free settings UI shared by Forge 1.8.9 and 1.12.2. */
-final class UniversalTranslatorConfigScreen extends Screen {
+final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScreenBase {
     private enum Tab {
         GENERAL,
         SCOPES,
@@ -80,7 +79,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private static final int CHECK_SETTINGS = 33;
     private static final int QUALITY = 34;
     private static final int PROMPT_APPLY = 35;
-    /** Field id for the prompt box; this version's TextFieldWidget needs one. */
+    /** Field id for the prompt box; only the 1.8-1.12 family's TextFieldWidget needs one. */
     private static final int PROMPT = 36;
     private static final int WORKERS = 37;
     private static final int BATCH_SIZE = 38;
@@ -303,7 +302,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         vanillaButton = new ButtonWidget(VANILLA, left, layout.contentRow(1), buttonWidth, 20, "");
         playerNamesButton = new ButtonWidget(PLAYER_NAMES, right, layout.contentRow(1), buttonWidth, 20, "");
         mixedTextButton = new ButtonWidget(MIXED_TEXT, left, layout.contentRow(2), totalWidth, 20, "");
-        blockedKeywords = new TextFieldWidget(22, renderer, left, layout.contentRow(3), totalWidth, 20);
+        blockedKeywords = textField(22, renderer, left, layout.contentRow(3), totalWidth, 20);
         blockedKeywords.setMaxLength(4096);
         blockedKeywords.setText(blockedKeywordsValue);
 
@@ -328,7 +327,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
                 tr("screen.universal_translator.option.llm_settings"));
         testConnectionButton = new ButtonWidget(TEST_CONNECTION, right, engineRow(2), buttonWidth, 20, "");
         checkSettingsButton = new ButtonWidget(CHECK_SETTINGS, left, engineRow(2), totalWidth, 20, "");
-        endpoint = new TextFieldWidget(21, renderer, left, engineRow(1), totalWidth, 20);
+        endpoint = textField(21, renderer, left, engineRow(1), totalWidth, 20);
         endpoint.setMaxLength(512);
         endpoint.setText(endpointValue);
 
@@ -358,7 +357,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
                 ? TranslationPrompt.toEditorText(original.customSystemPrompt())
                 : customPrompt.getText();
         int promptApplyWidth = Math.max(48, buttonWidth - 24);
-        customPrompt = new TextFieldWidget(PROMPT, renderer, left, engineRow(4),
+        customPrompt = textField(PROMPT, renderer, left, engineRow(4),
                 totalWidth - promptApplyWidth - 8, 20);
         customPrompt.setMaxLength(MAXIMUM_PROMPT_LENGTH);
         customPrompt.setText(promptValue);
@@ -887,7 +886,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         return true;
     }
 
-    private boolean handleDragMove(double mouseX, double mouseY) {
+    protected boolean handleDragMove(double mouseX, double mouseY) {
         if (!hudDragging) {
             return false;
         }
@@ -1066,14 +1065,6 @@ final class UniversalTranslatorConfigScreen extends Screen {
         if (activeTab == Tab.SCOPES && blockedKeywords != null) {
             blockedKeywords.mouseClicked(mouseX, mouseY, mouseButton);
         }
-    }
-
-    @Override
-    protected void mouseDragged(int mouseX, int mouseY, int clickedMouseButton, long timeSinceLastClick) {
-        if (handleDragMove(mouseX, mouseY)) {
-            return;
-        }
-        super.mouseDragged(mouseX, mouseY, clickedMouseButton, timeSinceLastClick);
     }
 
     @Override
@@ -1498,7 +1489,4 @@ final class UniversalTranslatorConfigScreen extends Screen {
         }
     }
 
-    private static String tr(String key, Object... arguments) {
-        return I18n.translate(key, arguments);
-    }
 }
