@@ -9,14 +9,15 @@ requiredProperties.each { propertyName ->
     }
 }
 
-// Each version lists its source layers in override order: later layers win. 26.2 and 26.3
-// share api/26.2-26.3 and keep only the two files that actually differ.
+// Each version lists its source layers in override order: later layers win.
+// api/26.1-26.3 holds the three settings screens; they reach the screen stack through
+// FabricScreenOpener, which is the only part that 26.2 changed.
 def sourceLayers = [
-        "26.1"  : ["api/26.1-26.1.2"],
-        "26.1.1": ["api/26.1-26.1.2"],
-        "26.1.2": ["api/26.1-26.1.2"],
-        "26.2"  : ["api/26.2-26.3", "api/26.2"],
-        "26.3"  : ["api/26.2-26.3", "api/26.3"]
+        "26.1"  : ["api/26.1-26.3", "api/26.1-26.1.2"],
+        "26.1.1": ["api/26.1-26.3", "api/26.1-26.1.2"],
+        "26.1.2": ["api/26.1-26.3", "api/26.1-26.1.2"],
+        "26.2"  : ["api/26.1-26.3", "api/26.2-26.3", "api/26.2"],
+        "26.3"  : ["api/26.1-26.3", "api/26.2-26.3", "api/26.3"]
 ]
 
 def gameVersion = project.name - "platform-fabric-"
