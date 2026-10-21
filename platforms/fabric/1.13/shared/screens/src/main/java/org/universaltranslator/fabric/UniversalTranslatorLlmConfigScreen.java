@@ -3,7 +3,6 @@ package org.universaltranslator.fabric;
 import java.util.Collections;
 import java.util.List;
 
-import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.TextFieldWidget;
@@ -11,7 +10,7 @@ import net.minecraft.client.resource.language.I18n;
 import org.universaltranslator.core.provider.OpenAiModelCatalog;
 
 /** OpenAI-compatible LLM settings shared by Forge 1.8.9 and 1.12.2. */
-final class UniversalTranslatorLlmConfigScreen extends Screen {
+final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorScreenBase {
     /** Height of a single catalog row in the model picker overlay. */
     private static final int LIST_ROW_HEIGHT = 12;
     /** Y of the first catalog row; the picker title sits above it. */
@@ -28,7 +27,6 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
     private final String initialEndpoint;
     private final String initialModel;
     private final boolean hasStoredKey;
-    private TextRenderer renderer;
     private TextFieldWidget endpoint;
     private TextFieldWidget model;
     private TextFieldWidget apiKey;
@@ -78,7 +76,7 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
 
     void buttonClicked(ButtonWidget button) {
         if (button.id == CANCEL) {
-            OrnitheClientAccess.setScreen(parent);
+            OrnitheClientAccess.openScreen(parent);
             return;
         }
         if (button.id == FETCH) {
@@ -98,7 +96,7 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
         String keyValue = enteredKey.isEmpty()
                 ? parent.llmApiKey() : ("-".equals(enteredKey) ? "" : enteredKey);
         parent.applyLlmSettings(endpointValue, modelValue, keyValue);
-        OrnitheClientAccess.setScreen(parent);
+        OrnitheClientAccess.openScreen(parent);
     }
 
     /** Asks the configured endpoint for its model catalog without blocking the render thread. */
@@ -233,9 +231,9 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
         int left = (width - fieldWidth) / 2;
         int top = Math.max(42, (height - 174) / 2);
         drawCenteredString(renderer, tr("screen.universal_translator.llm.title"), width / 2, 18, 0xFFFFFF);
-        drawWithShadow(renderer, tr("screen.universal_translator.llm.endpoint_hint"), left, top - 11, 0xA0A0A0);
-        drawWithShadow(renderer, tr("screen.universal_translator.llm.model_hint"), left, top + 25, 0xA0A0A0);
-        drawWithShadow(renderer,
+        drawShadowedString(tr("screen.universal_translator.llm.endpoint_hint"), left, top - 11, 0xA0A0A0);
+        drawShadowedString(tr("screen.universal_translator.llm.model_hint"), left, top + 25, 0xA0A0A0);
+        drawShadowedString(
                 tr(hasStoredKey
                         ? "screen.universal_translator.llm.key_saved_hint"
                         : "screen.universal_translator.llm.key_empty_hint"),
@@ -263,7 +261,7 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
         for (int row = 0; row < rows && first + row < fetchedModels.size(); row++) {
             int rowY = LIST_TOP + row * LIST_ROW_HEIGHT;
             boolean hovered = mouseY >= rowY && mouseY < rowY + LIST_ROW_HEIGHT;
-            drawWithShadow(renderer, (hovered ? "> " : "  ") + fetchedModels.get(first + row),
+            drawShadowedString((hovered ? "> " : "  ") + fetchedModels.get(first + row),
                     24, rowY, hovered ? 0xFFFFD060 : 0xFFE0E0E0);
         }
         int pages = pageCount(rows);
