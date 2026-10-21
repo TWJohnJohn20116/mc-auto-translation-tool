@@ -31,7 +31,7 @@ import org.universaltranslator.core.provider.OpenAiModelCatalog;
 import org.universaltranslator.core.provider.ProviderProbe;
 
 /** Minimal dependency-free settings screen, opened with U by default. */
-final class UniversalTranslatorConfigScreen extends Screen {
+final class UniversalTranslatorConfigScreen extends UniversalTranslatorScreenBase {
 
     /** The preview panel is a miniature of Minecraft's 320x240 minimum logical screen. */
     private static final int HUD_PREVIEW_SCREEN_WIDTH = 320;

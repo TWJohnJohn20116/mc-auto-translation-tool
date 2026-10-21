@@ -1,9 +1,7 @@
 package org.universaltranslator.fabric;
 
 import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.text.Text;
 import org.universaltranslator.core.DebugLog;
@@ -16,7 +14,7 @@ import java.util.List;
 import java.util.Collections;
 
 /** Secret-free runtime diagnostics that update while the screen is open. */
-final class UniversalTranslatorDiagnosticsScreen extends Screen {
+final class UniversalTranslatorDiagnosticsScreen extends UniversalTranslatorScreenBase {
     /** Vertical distance between two text lines. */
     private static final int LINE_STEP = 17;
     /** First line's y, just under the title. */
@@ -236,11 +234,6 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
             exportStatus = tr("screen.universal_translator.diagnostics.export_failed");
             exportFailed = true;
         }
-    }
-
-    public static void drawCenteredText(MatrixStack matrices, TextRenderer renderer, Text text,
-                                         int centerX, int y, int color) {
-        renderer.drawWithShadow(matrices, text, centerX - renderer.getWidth(text) / 2.0f, y, color);
     }
 
     @Override
