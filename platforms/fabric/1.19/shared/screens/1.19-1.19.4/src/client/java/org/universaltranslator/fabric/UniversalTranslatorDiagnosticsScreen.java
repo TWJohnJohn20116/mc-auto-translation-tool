@@ -48,28 +48,28 @@ final class UniversalTranslatorDiagnosticsScreen extends UniversalTranslatorScre
         int buttonWidth = (totalWidth - gap) / 2;
         int left = (this.width - totalWidth) / 2;
 
-        this.debugButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.debugButton = addDrawableChild(of(Text.empty(), button -> {
             debugEnabled = !debugEnabled;
             applyDebugMode();
         }).dimensions(left, this.height - 76, buttonWidth, 20).build());
-        addDrawableChild(ButtonWidget.builder(
+        addDrawableChild(of(
                 Text.translatable("screen.universal_translator.debug.bundle"),
                 button -> exportBundle())
                 .dimensions(left + buttonWidth + gap, this.height - 76, buttonWidth, 20).build());
 
-        this.pageButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.pageButton = addDrawableChild(of(Text.empty(), button -> {
             statisticsPage = !statisticsPage;
             refreshPageLabels();
         }).dimensions(left, this.height - 52, buttonWidth, 20).build());
-        this.resetButton = addDrawableChild(ButtonWidget.builder(
+        this.resetButton = addDrawableChild(of(
                 Text.translatable("screen.universal_translator.stats.reset"),
                 button -> resetStatistics())
                 .dimensions(left + buttonWidth + gap, this.height - 52, buttonWidth, 20).build());
 
-        addDrawableChild(ButtonWidget.builder(
+        addDrawableChild(of(
                 Text.translatable("screen.universal_translator.diagnostics.back"), button -> close())
                 .dimensions(left, this.height - 28, buttonWidth, 20).build());
-        addDrawableChild(ButtonWidget.builder(
+        addDrawableChild(of(
                 Text.translatable("screen.universal_translator.diagnostics.export"), button -> exportLog())
                 .dimensions(left + buttonWidth + gap, this.height - 28, buttonWidth, 20).build());
         refreshDebugLabel();
