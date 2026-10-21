@@ -33,6 +33,7 @@ dependencies {
 sourceSets {
     main {
         java.srcDir project(":translator-core").file("src/main/java")
+        java.srcDir rootProject.file("platforms/fabric/shared/config/src/main/java")
         java.srcDir new File(sharedRoot, "src/main/java")
         java.srcDir new File(rootProject.file("platforms/fabric/1.0-1.12/shared/screens"), "src/main/java")
         resources.srcDir new File(sharedRoot, "src/main/resources")
