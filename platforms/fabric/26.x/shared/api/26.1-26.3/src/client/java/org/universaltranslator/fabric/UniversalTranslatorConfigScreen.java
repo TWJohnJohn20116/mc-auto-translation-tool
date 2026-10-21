@@ -269,7 +269,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         diagnosticsButton = addRenderableWidget(Button.builder(
                 Component.translatable("screen.universal_translator.diagnostics.title"), button -> {
             if (minecraft != null) {
-                minecraft.setScreen(new UniversalTranslatorDiagnosticsScreen(this));
+                FabricScreenOpener.open(minecraft, new UniversalTranslatorDiagnosticsScreen(this));
             }
         }).bounds(left, layout.contentRow(3), layout.totalWidth, 20).build());
 
@@ -340,7 +340,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         llmConfigButton = addRenderableWidget(Button.builder(
                 Component.translatable("screen.universal_translator.option.llm_settings"), button -> {
             if (this.minecraft != null) {
-                this.minecraft.setScreen(new UniversalTranslatorLlmConfigScreen(
+                FabricScreenOpener.open(this.minecraft, new UniversalTranslatorLlmConfigScreen(
                         this, llmEndpoint, llmModel, !llmApiKey.isEmpty()));
             }
         }).bounds(left, engineRow(2), layout.buttonWidth, 20).build());
@@ -740,7 +740,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
     @Override
     public void onClose() {
         if (minecraft != null) {
-            minecraft.setScreen(parent);
+            FabricScreenOpener.open(minecraft, parent);
         }
     }
 
