@@ -14,6 +14,7 @@ dependencies { compileOnly "net.fabricmc:fabric-loader:0.19.3" }
 sourceSets {
     main {
         java.srcDir rootProject.file("platforms/fabric/1.14-1.15/shared/family/1.14-1.15/src/client/java")
+        java.srcDir rootProject.file("platforms/fabric/shared/config/src/main/java")
         resources.srcDir rootProject.file("platforms/fabric/1.14-1.15/shared/family/1.14-1.15/src/main/resources")
     }
 }
