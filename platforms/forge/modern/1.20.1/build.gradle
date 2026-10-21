@@ -13,3 +13,11 @@ ext.legacyPackFormat = 15
 ext.legacyAuthors = "我小张7272635"
 
 apply from: rootProject.file("platforms/forge/modern/shared.gradle")
+
+// The settings screens are shared with the Forge 1.21 tree, so they live outside both trees.
+sourceSets {
+    main {
+        java.srcDir new File(rootProject.file("platforms/forge/shared/screens/1.20.1-1.21.11"),
+                "src/main/java")
+    }
+}

@@ -14,6 +14,8 @@ def modFamily = versionFamilies["1.21-1.21.5"].contains(gameVersion) ||
         "1.21-1.21.8" : "1.21.9-1.21.11"
 
 def sharedRoot = rootProject.file("platforms/forge/1.21/shared")
+// The settings screens are shared with Forge 1.20.1 as well, so they live outside the 1.21 tree.
+def screensRoot = rootProject.file("platforms/forge/shared/screens/1.20.1-1.21.11")
 // Files that adjacent families compile identically live in their own layer instead of being
 // copied into every family directory.
 def sharedLayers = []
@@ -27,6 +29,7 @@ sourceSets {
     main {
         java.srcDir project(":translator-core").file("src/main/java")
         java.srcDir new File(sharedRoot, "common/src/main/java")
+        java.srcDir new File(screensRoot, "src/main/java")
         sharedLayers.each { layer ->
             java.srcDir new File(sharedRoot, "${layer}/src/main/java")
         }
