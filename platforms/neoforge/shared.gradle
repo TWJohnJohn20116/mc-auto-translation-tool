@@ -71,11 +71,19 @@ def forgeExtraRoots = project.ext.has("neoforgeForgeExtraRoots")
         : []
 
 // The Forge settings screens cover 1.18.2 through 1.21.11 and live outside both trees, so every
-// NeoForge module compiles them alongside its own Forge layers.
-def forgeScreenRoots = [
-        rootProject.file("platforms/forge/shared/screens/1.18.2-1.21.11"),
-        rootProject.file("platforms/forge/shared/widgets/1.20.1-1.21.11"),
-]
+// NeoForge module on the 1.20/1.21 trees compiles them alongside its own Forge layers.
+//
+// The 26.x tree is the exception: it carries its own three screens under forge/26.x/shared/api, and
+// Minecraft 26.x moved setScreen off Minecraft (Minecraft#gui), so the 1.18.2-1.21.11 copy cannot
+// compile there. Pulling it in produced "cannot find symbol: setScreen" and a ConfigScreenBase that
+// does not convert to the 26.x UniversalTranslatorConfigScreen.
+def forgeScreenRoots = []
+if (project.ext.neoforgeForgeSharedRoot != "platforms/forge/26.x/shared") {
+    forgeScreenRoots = [
+            rootProject.file("platforms/forge/shared/screens/1.18.2-1.21.11"),
+            rootProject.file("platforms/forge/shared/widgets/1.20.1-1.21.11"),
+    ]
+}
 def missingScreenRoots = forgeScreenRoots.findAll { !it.isDirectory() }
 if (!missingScreenRoots.isEmpty()) {
     throw new GradleException(
