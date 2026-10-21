@@ -61,6 +61,7 @@ final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorLlmCon
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
         renderLlm(CanvasFactory.create(graphics, font));
         super.render(graphics, mouseX, mouseY, delta);
+        renderModelListOverlay(mouseX, mouseY);
     }
 
     @Override
