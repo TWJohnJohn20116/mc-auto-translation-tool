@@ -97,3 +97,12 @@ test {
 }
 
 build.dependsOn verifyBundle, verifyLoaderSelection
+
+// The Fabric Loader discovery harness is byte-identical across these seven bundles; it lives in
+// platforms/fabric/bundles/shared-test so a Loader API change is fixed once. The 1.20/1.21 and
+// 26.x bundles keep their own copy: they run against a different Loader generation.
+sourceSets {
+    test {
+        java.srcDir rootProject.file("platforms/fabric/bundles/shared-test/src/test/java")
+    }
+}
