@@ -1,6 +1,5 @@
 package org.universaltranslator.forge;
 
-import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
@@ -1698,9 +1697,12 @@ abstract class UniversalTranslatorLlmConfigScreenBase extends Screen {
         return message == null || message.trim().isEmpty() ? error.getClass().getSimpleName() : message;
     }
 
-    @Override
-    public void render(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
-        super.render(graphics, mouseX, mouseY, delta);
+    /**
+     * Draws the fetched catalog over the form. Each concrete screen calls this right after
+     * {@code super.render} because the render signature differs per version (PoseStack before
+     * 1.20, GuiGraphics after).
+     */
+    protected final void renderModelListOverlay(int mouseX, int mouseY) {
         if (modelListOpen && canvas != null) {
             renderModelList(canvas, mouseX, mouseY);
         }

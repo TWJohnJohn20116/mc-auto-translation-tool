@@ -85,6 +85,7 @@ final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorLlmCon
         ForgeScreenCanvas canvas = CanvasFactory.create(graphics, font);
         renderLlm(canvas);
         super.render(graphics, mouseX, mouseY, delta);
+        renderModelListOverlay(mouseX, mouseY);
     }
 
     @Override

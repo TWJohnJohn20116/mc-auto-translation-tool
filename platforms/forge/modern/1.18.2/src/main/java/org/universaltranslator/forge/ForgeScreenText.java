@@ -6,12 +6,12 @@ import net.minecraft.network.chat.TextComponent;
 import net.minecraft.network.chat.TranslatableComponent;
 
 /**
- * Component factory for the shared settings widgets.
+ * Component factory for the shared settings screens.
  *
- * <p>1.18.2 and 1.19.2 build components through the concrete {@link TextComponent} and
- * {@link TranslatableComponent} classes, and their {@code EditBox} has no hint yet; 1.20.1 moved
- * both onto {@code Component}. The shared sources go through this seam instead of naming either
- * form.
+ * <p>1.18.2 is the last version with the concrete {@link TextComponent} and
+ * {@link TranslatableComponent} classes and with only an edit box suggestion; 1.19 replaced both
+ * with {@code Component.literal}/{@code Component.translatable}. The shared sources go through this
+ * seam instead of naming either form.
  */
 final class ForgeScreenText {
     private ForgeScreenText() {
