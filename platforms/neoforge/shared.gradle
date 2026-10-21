@@ -82,6 +82,25 @@ if (!missingScreenRoots.isEmpty()) {
             "Missing Forge screen roots: " + missingScreenRoots.collect { it.name }.join(", "))
 }
 
+// The 1.21 Forge tree pulls files that adjacent families compile identically into their own layers
+// (platforms/forge/1.21/shared.gradle). NeoForge compiles the same tree, so it needs the same extras.
+def forgeSharedLayers = []
+if (project.ext.neoforgeForgeSharedRoot == "platforms/forge/1.21/shared") {
+    def family = project.ext.neoforgeForgeLayers.last()
+    if (family != "1.21.9-1.21.11") {
+        forgeSharedLayers << "runtime/1.21-1.21.8"
+    }
+    if (family != "1.21-1.21.5") {
+        forgeSharedLayers << "draw-context/1.21.6-1.21.11"
+    }
+}
+def missingSharedLayers = forgeSharedLayers.findAll {
+    !new File(forgeSharedRoot, "${it}/src/main/java").isDirectory()
+}
+if (!missingSharedLayers.isEmpty()) {
+    throw new GradleException("Missing Forge shared layers: " + missingSharedLayers.join(", "))
+}
+
 version = project.mod_version
 group = project.maven_group
 
@@ -96,6 +115,9 @@ sourceSets {
         forgeLayers.each { layer -> java.srcDir new File(layer, "src/main/java") }
         forgeExtraRoots.each { extra -> java.srcDir new File(extra, "src/main/java") }
         forgeScreenRoots.each { root -> java.srcDir new File(root, "src/main/java") }
+        forgeSharedLayers.each { layer ->
+            java.srcDir new File(forgeSharedRoot, "${layer}/src/main/java")
+        }
         // The Forge loader entrypoints are replaced by the NeoForge variants above.
         java.exclude "**/UniversalTranslatorForgeMod.java"
         java.exclude "**/UniversalTranslatorForgeClient.java"
