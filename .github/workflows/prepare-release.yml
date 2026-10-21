@@ -363,10 +363,15 @@ jobs:
           fi
           git commit -m "chore(release): 準備 $VERSION 的發布資產"
           git push --force-with-lease origin "$branch"
-          gh pr create --base main --head "$branch" \
-            --title "chore(release): 準備 $VERSION 的發布資產" \
-            --body "由「準備發布資產」workflow 自動產生。合併後 push 到 main 會觸發發布流程。" \
-            || echo "PR 可能已存在，繼續。"
+          # 不要用 `gh pr create ... || echo`：那會讓建立失敗（權限、暫時性 API 錯誤）變成
+          # 綠燈，2026-10-21 與 2026-10-21 之後各發生一次，兩次都是人工補開 PR。
+          if gh pr view "$branch" --json number >/dev/null 2>&1; then
+            echo "PR 已存在（$branch），略過建立"
+          else
+            gh pr create --base main --head "$branch" \
+              --title "chore(release): 準備 $VERSION 的發布資產" \
+              --body "由「準備發布資產」workflow 自動產生。合併後 push 到 main 會觸發發布流程。"
+          fi
           # 用 GITHUB_TOKEN 開的 PR 不會觸發其他 workflow，所以手動觸發一次建置，
           # 讓分支保護要求的 CI 總結 能在這個 PR 上產生。
           gh workflow run build.yml --ref "$branch"
