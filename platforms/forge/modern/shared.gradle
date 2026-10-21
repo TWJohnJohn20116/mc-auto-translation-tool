@@ -105,6 +105,10 @@ sourceSets {
     main {
         java.srcDir project(":translator-core").file("src/main/java")
         java.srcDir new File(sharedRoot, "common/src/main/java")
+        // ForgeConfig is shared with the 1.21 and 26.x trees; the modern tree does not apply
+        // platforms/forge/shared.gradle (its mods.toml would collide), so it takes the Java
+        // directory only.
+        java.srcDir new File(rootProject.file("platforms/forge/shared"), "common/src/main/java")
         // 1.16.5 keeps its own copy: its ITextComponent predates the shared component seam.
         if (gameVersion != "1.16.5") {
             java.srcDir new File(sharedScreens, "src/main/java")
