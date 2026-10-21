@@ -128,6 +128,12 @@ git -c 'credential.helper=' -c 'credential.helper=!gh auth git-credential' push 
 - `主要建置` 額外關鍵字：`legacy`（7 個 1.16.5–1.20.1 舊版目標）、`release`（發布資產驗證）。
 - 目標名稱必須與該 workflow 的 matrix 完全一致。名稱打錯時該項目會被略過，而整體仍顯示成功，
   因此一定要用 `gh run view <run-id> --json jobs` 確認 `conclusion` 不是 `skipped`。
+- **只看 job 的 `conclusion` 不夠**：`legacy-targets.yml` 的建置步驟帶
+  `if: needs.plan.outputs.targets == '' || contains(...)`，指定 `targets` 時不匹配的 job 仍會執行、
+  建置步驟被略過，job 本身回報 `success`。要確認某個目標真的建置過，必須看該 job 內
+  「建置」步驟的 `conclusion`（`--json jobs` 的 `steps[]`）。2026-10-21 就是只看了 job 的
+  `success`，誤以為 4 個 26.x NeoForge 目標建置通過，實際上建置步驟全被略過，錯誤直到
+  `prepare-release` 第一次真正編譯 48 個目標才暴露。
 
 ### 目標名稱
 
@@ -191,7 +197,7 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
    32 個資產），再建立或更新 `v<mod_version>` Release；版本號含 `-` 者視為 prerelease。
    NeoForge **不做**版本範圍合併（同一顆 JAR 塞多個同 `modId` 實作會載入失敗），每個版本各一顆。
    **注意**：`publish-release.yml` 的 `expected` 陣列與數量檢查描述的是**目前 `downloads/` 裡已提交
-   的版本**，現在是 1.4-beta4 的 48 顆／32 個資產。下一個版本用 `prepare-release` 重新產生
+   的版本**，現在是 1.4-beta5 的 48 顆／32 個資產。下一個版本用 `prepare-release` 重新產生
    `downloads/` 時，必須在**同一個 PR** 裡把這兩處改成新的目標清單與數量，否則發布會失敗。
 6. 更新文件與網站：`README.md` 與 `docs/Zh-cn|Zh-tw|en/README.md` 裡的連結是**寫死版本號**的
    （`releases/download/v<版本>/...`），新增或移除目標時四個檔案都要一起改，否則會指向不存在的檔案。
