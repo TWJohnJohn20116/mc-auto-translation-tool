@@ -60,6 +60,47 @@ jobs:
         with:
           args: --no-daemon check
 
+      - name: 檢查版本號一致性
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 版本號在四個地方各有一份。過去漂移過一次（2026-10-06：UserAgent 停在 1.1，
+          # 當時版本已是 1.3.11，每次下載模型都對外宣告三版前的版本號），這裡讓漂移在
+          # PR 上就紅，而不是等使用者發現。
+          version="$(sed -n 's/^mod_version=//p' gradle.properties | head -n 1)"
+          if [[ -z "$version" ]]; then
+            echo "::error::gradle.properties 讀不到 mod_version"
+            exit 1
+          fi
+          agent="$(sed -n 's/.*MCAutoTranslationTool\/\([^"]*\)".*/\1/p' \
+            translator-core/src/main/java/org/universaltranslator/core/UserAgent.java | head -n 1)"
+          web="$(sed -n 's/^const releaseVersion = "\([^"]*\)";/\1/p' website/app/page.tsx | head -n 1)"
+          failed=0
+          check() {
+            local label="$1"
+            local value="$2"
+            if [[ "$value" != "$version" ]]; then
+              echo "::error::${label} 是 '${value}'，但 mod_version 是 '${version}'"
+              failed=1
+            fi
+          }
+          check "UserAgent.VALUE" "$agent"
+          check "website 的 releaseVersion" "$web"
+          for readme in README.md docs/Zh-cn/README.md docs/Zh-tw/README.md docs/en/README.md; do
+            linked="$(grep -o 'releases/download/v[^/]*/' "$readme" | head -n 1 | sed 's|releases/download/v||; s|/$||')"
+            check "$readme 的下載連結" "$linked"
+          done
+          # 這個常數只能有一份：兩份就會各自漂移。
+          copies="$(grep -rl 'MCAutoTranslationTool/' translator-core/src/main/java | wc -l)"
+          if [[ "$copies" -ne 1 ]]; then
+            echo "::error::MCAutoTranslationTool/ 出現在 ${copies} 個檔案，應該只有 UserAgent.java 一處"
+            failed=1
+          fi
+          if [[ "$failed" -ne 0 ]]; then
+            exit 1
+          fi
+          echo "版本號一致：${version}"
+
       - name: 上傳檢查報告
         if: failure()
         uses: actions/upload-artifact@v7
