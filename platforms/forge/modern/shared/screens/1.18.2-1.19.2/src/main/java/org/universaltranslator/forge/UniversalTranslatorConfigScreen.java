@@ -5,7 +5,7 @@ import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
-/** Minecraft 1.18.2 render/input bridge for the shared settings screens. */
+/** Minecraft 1.18.2-1.19.2 render/input bridge for the shared settings screens. */
 final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScreenBase {
     UniversalTranslatorConfigScreen(Screen parent, ForgeConfig config) {
         super(parent, config);
