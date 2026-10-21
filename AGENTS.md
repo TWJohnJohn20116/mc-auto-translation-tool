@@ -128,12 +128,14 @@ git -c 'credential.helper=' -c 'credential.helper=!gh auth git-credential' push 
 - `主要建置` 額外關鍵字：`legacy`（7 個 1.16.5–1.20.1 舊版目標）、`release`（發布資產驗證）。
 - 目標名稱必須與該 workflow 的 matrix 完全一致。名稱打錯時該項目會被略過，而整體仍顯示成功，
   因此一定要用 `gh run view <run-id> --json jobs` 確認 `conclusion` 不是 `skipped`。
-- **只看 job 的 `conclusion` 不夠**：`legacy-targets.yml` 的建置步驟帶
-  `if: needs.plan.outputs.targets == '' || contains(...)`，指定 `targets` 時不匹配的 job 仍會執行、
-  建置步驟被略過，job 本身回報 `success`。要確認某個目標真的建置過，必須看該 job 內
-  「建置」步驟的 `conclusion`（`--json jobs` 的 `steps[]`）。2026-10-21 就是只看了 job 的
-  `success`，誤以為 4 個 26.x NeoForge 目標建置通過，實際上建置步驟全被略過，錯誤直到
-  `prepare-release` 第一次真正編譯 48 個目標才暴露。
+- **`legacy-targets.yml` 已改成動態 matrix**：`plan` 持有 21 個目標的權威清單，依 `targets` 過濾後
+  輸出三組 `fromJSON` matrix；沒被要求的分組**整個 job 不會出現**（或顯示 `skipped`），所以
+  `--json jobs` 的 `conclusion` 就足以判斷，不必再看 `steps[]`。打錯的目標名稱會在 `plan` 以
+  `::error::` 失敗並列出可用目標。**要增刪 legacy 目標，改 `plan` 裡那份 JSON 就好**，三個 job 的
+  matrix 會自動跟隨（`build.yml` 仍是靜態 matrix）。
+  2026-10-21 之前 matrix 是靜態的：未指定的目標仍會開 job、建置步驟被 `if` 略過、job 卻回報
+  `success`，於是誤以為 4 個 26.x NeoForge 目標建置通過，錯誤直到 `prepare-release` 第一次真正
+  編譯 48 個目標才暴露。
 
 ### 目標名稱
 
@@ -149,7 +151,7 @@ git -c 'credential.helper=' -c 'credential.helper=!gh auth git-credential' push 
 `fabric-1.16.5`、`fabric-1.19.2`、`fabric-1.20.1`、`forge-1.16.5`、`forge-1.18.2`、`forge-1.19.2`、
 `forge-1.20.1`
 
-`legacy-targets.yml`（排程／手動，不擋 PR）：
+`legacy-targets.yml`（排程／手動，不擋 PR；權威清單是 `plan` job 裡那份 JSON，三個 job 的 matrix 由它過濾出來）：
 
 `fabric-1.0-1.8.x`、`fabric-1.8-1.12.x`、`fabric-1.13.x`、`fabric-1.14-1.15.x`、`forge-legacy-1.8.9`、
 `forge-legacy-1.12.2`（後兩者位於 `platforms/forge/legacy/<版本>/`，是獨立 Gradle 建置，需要 JDK 8）
@@ -240,7 +242,8 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
 - 不要降低既有檢查強度：`check`、`verifyBundle`、`verifyLoaderSelection`、`verifyPreparedReleaseAssets`
   與 `scripts/verify_release_jars.py` 的驗證都必須保留。
 - 新增或調整平台目標時，必須同步四處：`settings.gradle` 的 `platformProjects`、對應 workflow 的 matrix
-  （`build.yml` 或 `legacy-targets.yml`）、`gradle.properties` 的版本變數，以及本檔的目標名稱清單。
+  （`build.yml` 是靜態 matrix；`legacy-targets.yml` 是 `plan` job 裡那份 JSON）、`gradle.properties`
+  的版本變數，以及本檔的目標名稱清單。
 - **新增 26.x 平台時要同步 `build.gradle` 的 toolchain 清單**：`subprojects` 區塊只對
   `platform-fabric-26.`、`platform-forge-26.`、`platform-neoforge-26.` 開頭的專案給 Java 25
   toolchain，其餘一律 21。漏掉一個前綴，該平台的 `options.release = 25` 就會以
