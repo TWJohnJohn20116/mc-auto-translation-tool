@@ -13,6 +13,7 @@ base {
 // NeoForge runs on Mojmap, so it reuses the Forge 1.21 common and API-family sources.
 // Only the two loader entrypoints are replaced by the NeoForge variants in this module.
 def forgeShared = rootProject.file("platforms/forge/1.21/shared")
+def forgeScreenShared = rootProject.file("platforms/forge/shared/screens/1.20.1-1.21.11")
 def forgeCommon = new File(forgeShared, "common")
 def forgeFamily = new File(forgeShared, "1.21-1.21.5")
 def forgeFamilyName = forgeFamily.name
@@ -42,6 +43,7 @@ sourceSets {
     main {
         java.srcDir project(":translator-core").file("src/main/java")
         java.srcDir new File(forgeCommon, "src/main/java")
+        java.srcDir new File(forgeScreenShared, "src/main/java")
         java.srcDir new File(forgeFamily, "src/main/java")
         forgeSharedLayers.each { layer ->
             java.srcDir new File(forgeShared, "${layer}/src/main/java")
