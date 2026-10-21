@@ -80,10 +80,24 @@ tasks.register("validateSharedPlatformLayouts") {
     description = "Ensures modern multi-version platforms keep sources in shared layers."
 
     doLast {
+        // Java sources never belong in a version directory. For NeoForge the loader
+        // entrypoints live in platforms/neoforge/shared/entrypoints/<layer> and the
+        // mixin config in platforms/neoforge/shared/metadata/<layer>. Only
+        // META-INF/*.toml stays per version, because its versionRange is real
+        // per-version data.
         def versionOwnedSources = fileTree("platforms") {
             include "fabric/26.x/26.*/src/**"
             include "forge/1.21/versions/*/src/**"
             include "forge/26.x/versions/*/src/**"
+            include "neoforge/1.20/versions/*/src/**/*.java"
+            include "neoforge/1.21/versions/*/src/**/*.java"
+            include "neoforge/26.x/versions/*/src/**/*.java"
+            include "neoforge/1.20/versions/*/src/**/*.mixins.json"
+            include "neoforge/1.21/versions/*/src/**/*.mixins.json"
+            include "neoforge/26.x/versions/*/src/**/*.mixins.json"
+            include "neoforge/1.20/versions/*/src/**/assets/**"
+            include "neoforge/1.21/versions/*/src/**/assets/**"
+            include "neoforge/26.x/versions/*/src/**/assets/**"
         }.files.findAll { it.isFile() }
 
         if (!versionOwnedSources.isEmpty()) {
@@ -104,7 +118,19 @@ tasks.register("validateSharedPlatformLayouts") {
                 "platforms/forge/shared.gradle",
                 "platforms/forge/shared/common/src/main/resources/META-INF/mods.toml",
                 "platforms/forge/26.x/shared.gradle",
-                "platforms/forge/26.x/shared/common/src/main/resources/pack.mcmeta"
+                "platforms/forge/26.x/shared/common/src/main/resources/pack.mcmeta",
+                "platforms/neoforge/shared.gradle",
+                "platforms/neoforge/shared/metadata/1.20-1.20.4/src/main/resources/universal-translator.neoforge.mixins.json",
+                "platforms/neoforge/shared/metadata/1.20.6/src/main/resources/universal-translator.neoforge.mixins.json",
+                "platforms/neoforge/shared/metadata/1.21/src/main/resources/universal-translator.neoforge.mixins.json",
+                "platforms/neoforge/shared/metadata/26.x/src/main/resources/universal-translator.neoforge.mixins.json",
+                "platforms/neoforge/shared/entrypoints/1.20.2-1.20.4/src/main/java/org/universaltranslator/forge/UniversalTranslatorNeoForgeMod.java",
+                "platforms/neoforge/shared/entrypoints/1.20.6/src/main/java/org/universaltranslator/forge/UniversalTranslatorNeoForgeMod.java",
+                "platforms/neoforge/shared/entrypoints/1.21-1.21.1/src/main/java/org/universaltranslator/forge/UniversalTranslatorNeoForgeMod.java",
+                "platforms/neoforge/shared/entrypoints/1.21.2-1.21.8/src/main/java/org/universaltranslator/forge/UniversalTranslatorNeoForgeMod.java",
+                "platforms/neoforge/shared/entrypoints/1.21.9-1.21.11/src/main/java/org/universaltranslator/forge/UniversalTranslatorNeoForgeMod.java",
+                "platforms/neoforge/shared/entrypoints/26.1-26.1.2/src/main/java/org/universaltranslator/forge/UniversalTranslatorNeoForgeMod.java",
+                "platforms/neoforge/shared/entrypoints/26.2/src/main/java/org/universaltranslator/forge/UniversalTranslatorNeoForgeMod.java"
         ]
         def missing = requiredSharedFiles.findAll { !file(it).isFile() }
         if (!missing.isEmpty()) {
@@ -378,6 +404,221 @@ tasks.register("prepareReleaseAssets", Exec) {
     )
 }
 
+// NeoForge version modules are coordinate-only. Every coordinate they declare must
+// resolve to a real directory, the declared Minecraft version must match the directory
+// the module lives in, and the declared Forge source layer must be the one the matching
+// Forge tree uses. Without this a typo silently compiles the wrong source family.
+tasks.register("validateNeoForgeModuleCoordinates") {
+    group = "verification"
+    description = "Checks that every NeoForge version module's coordinates resolve."
+
+    doLast {
+        def required = [
+                "neoforgeMinecraftVersion",
+                "neoforgeVersion",
+                "neoforgeJavaRelease",
+                "neoforgeEntryLayer",
+                "neoforgeMetadataLayer",
+                "neoforgeForgeSharedRoot",
+                "neoforgeForgeLayers"
+        ]
+        def modules = fileTree("platforms/neoforge") {
+            include "1.20/versions/*/build.gradle"
+            include "1.21/versions/*/build.gradle"
+            include "26.x/versions/*/build.gradle"
+        }.files
+
+        if (modules.isEmpty()) {
+            throw new GradleException("No NeoForge version modules were found to validate")
+        }
+
+        def unquote = { String value -> value.trim().replaceAll('^"', '').replaceAll('"$', '') }
+        def quoteList = { String value -> (value =~ /"([^"]+)"/).collect { it[1] } }
+        def coordinateValue = { String text, String name ->
+            def matcher = text =~ /(?m)^\s*ext\.${name}\s*=\s*(.+)$/
+            matcher.find() ? matcher.group(1).trim() : null
+        }
+
+        def problems = []
+        modules.each { module ->
+            def relative = relativePath(module).replace('\\', '/')
+            def text = module.getText("UTF-8")
+            def directoryVersion = module.parentFile.name
+
+            required.each { name ->
+                if (coordinateValue(text, name) == null) {
+                    problems.add("${relative}: missing coordinate ${name}".toString())
+                }
+            }
+
+            def declaredVersion = coordinateValue(text, "neoforgeMinecraftVersion")
+            if (declaredVersion != null && unquote(declaredVersion) != directoryVersion) {
+                problems.add(
+                        "${relative}: neoforgeMinecraftVersion '${unquote(declaredVersion)}' " +
+                                "does not match its directory '${directoryVersion}'".toString())
+            }
+
+            def entryLayer = coordinateValue(text, "neoforgeEntryLayer")
+            if (entryLayer != null &&
+                    !file("platforms/neoforge/shared/entrypoints/${unquote(entryLayer)}").isDirectory()) {
+                problems.add("${relative}: neoforgeEntryLayer does not resolve".toString())
+            }
+
+            def metadataLayer = coordinateValue(text, "neoforgeMetadataLayer")
+            if (metadataLayer != null &&
+                    !file("platforms/neoforge/shared/metadata/${unquote(metadataLayer)}").isDirectory()) {
+                problems.add("${relative}: neoforgeMetadataLayer does not resolve".toString())
+            }
+
+            def forgeRoot = coordinateValue(text, "neoforgeForgeSharedRoot")
+            if (forgeRoot != null && !file(unquote(forgeRoot)).isDirectory()) {
+                problems.add("${relative}: neoforgeForgeSharedRoot does not resolve".toString())
+            }
+
+            def forgeLayers = coordinateValue(text, "neoforgeForgeLayers")
+            if (forgeLayers != null) {
+                def names = quoteList(forgeLayers)
+                if (names.isEmpty()) {
+                    problems.add("${relative}: neoforgeForgeLayers lists no layers".toString())
+                }
+                names.each { name ->
+                    if (forgeRoot != null && !file("${unquote(forgeRoot)}/${name}").isDirectory()) {
+                        problems.add("${relative}: Forge layer '${name}' does not resolve".toString())
+                    }
+                }
+            }
+
+            def extraRoots = coordinateValue(text, "neoforgeForgeExtraRoots")
+            if (extraRoots != null) {
+                quoteList(extraRoots).each { extra ->
+                    if (!file(extra).isDirectory()) {
+                        problems.add("${relative}: extra root '${extra}' does not resolve".toString())
+                    }
+                }
+            }
+        }
+
+        if (!problems.isEmpty()) {
+            throw new GradleException(
+                    "NeoForge version modules must declare resolvable coordinates:\n" +
+                            problems.sort().join("\n"))
+        }
+
+        // Cross-check the declared Forge layer against the Forge tree's own version->layer
+        // map. Naming the wrong family still resolves to a real directory, so only the
+        // Forge map can tell us it is the wrong one. The three trees spell their maps
+        // differently:
+        //   forge/1.21   versionFamilies = ["<family>": ["<version>", ...]]
+        //   forge/26.x   sourceLayers    = ["<version>": "<layer>"]
+        //   forge/modern sourceLayers    = ["<version>": ["<layer>", ...]]
+        def mapBody = { File source, String mapName ->
+            def matcher = source.getText("UTF-8") =~ /(?s)def\s+${mapName}\s*=\s*\[(.*?)\n\]/
+            if (!matcher.find()) {
+                throw new GradleException("Could not read ${mapName} from ${relativePath(source)}")
+            }
+            matcher.group(1)
+        }
+
+        // Map variable names follow the shape of the map they hold so the three trees stay
+        // distinguishable: "<key>By<value>" reads left to right.
+        def familyByVersion = [:]
+        (mapBody(file("platforms/forge/1.21/shared.gradle"), "versionFamilies") =~
+                /"([^"]+)"\s*:\s*\[([^\]]*)\]/).each { match ->
+            def family = match[1]
+            (match[2] =~ /"([^"]+)"/).each { version -> familyByVersion[version[1]] = family }
+        }
+
+        def layerByVersion26 = [:]
+        (mapBody(file("platforms/forge/26.x/shared.gradle"), "sourceLayers") =~
+                /"([^"]+)"\s*:\s*"([^"]+)"/).each { match ->
+            layerByVersion26[match[1]] = match[2]
+        }
+
+        def layerByVersionModern = [:]
+        (mapBody(file("platforms/forge/modern/shared.gradle"), "sourceLayers") =~
+                /"([^"]+)"\s*:\s*\[([^\]]*)\]/).each { match ->
+            def layers = (match[2] =~ /"([^"]+)"/).collect { it[1] }
+            layerByVersionModern[match[1]] = layers.join("/")
+        }
+
+        def versionParts = { String value ->
+            value.tokenize('.').collect { (it ==~ /\d+/) ? it.toInteger() : 0 }
+        }
+        def compareVersions = { String left, String right ->
+            def a = versionParts(left)
+            def b = versionParts(right)
+            for (int index = 0; index < Math.max(a.size(), b.size()); index++) {
+                def diff = (index < a.size() ? a[index] : 0) <=> (index < b.size() ? b[index] : 0)
+                if (diff != 0) {
+                    return diff
+                }
+            }
+            0
+        }
+        // "1.21.2" has no platform-forge-1.21.2 project, so it is absent from the Forge
+        // 1.21 map; fall back to the family whose version range contains it.
+        def familyFromRanges = { Collection families, String version ->
+            families.find { family ->
+                def bounds = family.tokenize('-')
+                bounds.size() == 2 &&
+                        compareVersions(version, bounds[0]) >= 0 &&
+                        compareVersions(version, bounds[1]) <= 0
+            }
+        }
+
+        def crossCheckProblems = []
+        modules.each { module ->
+            def relative = relativePath(module).replace('\\', '/')
+            def text = module.getText("UTF-8")
+            def directoryVersion = module.parentFile.name
+
+            def declaredLayers = quoteList(coordinateValue(text, "neoforgeForgeLayers") ?: "")
+            def declaredLayer = declaredLayers.find { it != "common" }
+            if (declaredLayer == null) {
+                return
+            }
+
+            def expected = null
+            def source = null
+            if (relative.startsWith("platforms/neoforge/1.21/versions/")) {
+                expected = familyByVersion[directoryVersion]
+                if (expected == null) {
+                    expected = familyFromRanges(
+                            familyByVersion.values().toList().unique(), directoryVersion)
+                }
+                source = "platforms/forge/1.21/shared.gradle versionFamilies"
+            } else if (relative.startsWith("platforms/neoforge/26.x/versions/")) {
+                expected = layerByVersion26[directoryVersion]
+                source = "platforms/forge/26.x/shared.gradle sourceLayers"
+            } else if (relative.startsWith("platforms/neoforge/1.20/versions/")) {
+                // 1.20.2/1.20.4/1.20.6 have no Forge counterpart of their own; they reuse
+                // the Forge 1.20.1 sources, exactly as the pre-consolidation modules did.
+                expected = layerByVersionModern["1.20.1"]
+                source = "platforms/forge/modern/shared.gradle sourceLayers"
+            }
+
+            if (source == null) {
+                return
+            }
+            if (expected == null) {
+                crossCheckProblems.add(
+                        "${relative}: cannot resolve the expected Forge layer for " +
+                                "${directoryVersion} from ${source}".toString())
+            } else if (expected != declaredLayer) {
+                crossCheckProblems.add(
+                        "${relative}: declares Forge layer '${declaredLayer}' but ${source} " +
+                                "maps ${directoryVersion} to '${expected}'".toString())
+            }
+        }
+
+        if (!crossCheckProblems.isEmpty()) {
+            throw new GradleException(
+                    "NeoForge modules must reuse the same Forge source layer as their Forge " +
+                            "counterpart:\n" + crossCheckProblems.sort().join("\n"))
+        }
+    }
+}
+
 tasks.register("verifyPreparedReleaseAssets", Exec) {
     group = "verification"
     description = "Validates the reduced directly installable release JAR set."
@@ -398,6 +639,7 @@ tasks.register("verifyPreparedReleaseAssets", Exec) {
 tasks.named("check") {
     dependsOn(
             "validateMixinConfigs",
+            "validateNeoForgeModuleCoordinates",
             "validateNonOverlappingSettingsLabels",
             "validateOutgoingTranslationReentryGuards",
             "validateOpaqueDiagnosticsTextColors",

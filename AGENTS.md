@@ -244,6 +244,28 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   `neoforge.mods.toml` 共用同一條 Forge 驗證路徑，要求 `modLoader="javafml"`。漏掉時建置會成功，
   但在 `prepare-release.yml` 的「用專案的驗證器檢查」那一步以 `missing Forge metadata field` 失敗
   （2026-10-06 的 4 個 26.x toml 就是這樣）。
+- **NeoForge 版本目錄只能放座標與 `META-INF/*.toml`**：`platforms/neoforge/<線>/versions/<版本>/`
+  底下**不得**再出現 `.java`、`*.mixins.json` 或 `assets/`。Java 進入點在
+  `platforms/neoforge/shared/entrypoints/<layer>/`，mixin 設定在
+  `platforms/neoforge/shared/metadata/<layer>/`，其餘一律指向對應的 `platforms/forge/` 目錄。
+  `build.gradle` 的 `validateSharedPlatformLayouts` 會擋下違規，`validateNeoForgeModuleCoordinates`
+  會檢查座標解析與 Forge 層是否對得上 Forge 樹自己的版本表。新增 NeoForge 版本時只要在
+  `build.gradle` 填座標；只有當 NeoForge 的載入器 API 真的改變時，才新增一個 entrypoint 層。
+  目前的分層（內容相同的版本共用一層）：
+
+  | 層 | 版本 | 差異 |
+  | --- | --- | --- |
+  | `1.20.2-1.20.4` | 1.20.2、1.20.4 | `TickEvent`，`@Mod.EventBusSubscriber` |
+  | `1.20.6` | 1.20.6 | 同 1.21 的 client，但仍沿用舊 `@Mod` 標註 |
+  | `1.21-1.21.1` | 1.21、1.21.1 | `EventBusSubscriber.Bus.MOD` |
+  | `1.21.2-1.21.8` | 1.21.2–1.21.8 | 去掉 `Bus.MOD` |
+  | `1.21.9-1.21.11` | 1.21.9–1.21.11 | `getChat()` 移到 `gui.hud` |
+  | `26.1-26.1.2` | 26.1、26.1.1、26.1.2 | 舊 `gui.getChat()`／`gui.screen()` 形式 |
+  | `26.2` | 26.2 | 新 `hud.getChat()`／`gui.screen()` 形式 |
+
+  metadata 層則只有 4 種（`1.20-1.20.4`、`1.20.6`、`1.21`、`26.x`），差異在 mixin 清單
+  （1.20.x 沒有 `InGameHudStatusIndicatorMixin`，26.x 沒有 `ChatHudContextMixin` 與
+  `PlayerListHudContextMixin`）與 `compatibilityLevel`。
 - 慢的目標不要放進 PR 必經的 `build.yml`：需要 ForgeGradle decompile 或大量舊版 remap 的目標放
   `legacy-targets.yml`。PR 的牆鐘時間由最慢的 job 決定——曾經有一個 job 序列跑 7 個舊版目標，
   讓整體變成 15.9 分；拆成各自獨立的 matrix job 平行跑之後瓶頸才回到單一目標。
