@@ -70,6 +70,18 @@ def forgeExtraRoots = project.ext.has("neoforgeForgeExtraRoots")
         ? project.ext.neoforgeForgeExtraRoots.collect { rootProject.file(it) }
         : []
 
+// The Forge settings screens cover 1.18.2 through 1.21.11 and live outside both trees, so every
+// NeoForge module compiles them alongside its own Forge layers.
+def forgeScreenRoots = [
+        rootProject.file("platforms/forge/shared/screens/1.18.2-1.21.11"),
+        rootProject.file("platforms/forge/shared/widgets/1.20.1-1.21.11"),
+]
+def missingScreenRoots = forgeScreenRoots.findAll { !it.isDirectory() }
+if (!missingScreenRoots.isEmpty()) {
+    throw new GradleException(
+            "Missing Forge screen roots: " + missingScreenRoots.collect { it.name }.join(", "))
+}
+
 version = project.mod_version
 group = project.maven_group
 
@@ -83,6 +95,7 @@ sourceSets {
         java.srcDir new File(entryLayer, "src/main/java")
         forgeLayers.each { layer -> java.srcDir new File(layer, "src/main/java") }
         forgeExtraRoots.each { extra -> java.srcDir new File(extra, "src/main/java") }
+        forgeScreenRoots.each { root -> java.srcDir new File(root, "src/main/java") }
         // The Forge loader entrypoints are replaced by the NeoForge variants above.
         java.exclude "**/UniversalTranslatorForgeMod.java"
         java.exclude "**/UniversalTranslatorForgeClient.java"
