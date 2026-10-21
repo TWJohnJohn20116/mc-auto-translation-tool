@@ -4,15 +4,13 @@ import java.util.Collections;
 import java.util.List;
 
 import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.text.Text;
 import org.universaltranslator.core.provider.OpenAiModelCatalog;
 
 /** Local-only editor for an OpenAI-compatible hosted or loopback LLM endpoint. */
-final class UniversalTranslatorLlmConfigScreen extends Screen {
+final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorScreenBase {
     /** Height of a single catalog row in the model picker overlay. */
     private static final int LIST_ROW_HEIGHT = 12;
     /** Y of the first catalog row; the picker title sits above it. */
@@ -187,11 +185,6 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
                 Text.translatable("screen.universal_translator.llm.select_back"), this.width / 2, this.height - 30, 0xFFFFD060);
         drawCenteredText(matrices, this.textRenderer,
                 Text.translatable("screen.universal_translator.llm.select_hint"), this.width / 2, this.height - 16, 0xA0A0A0);
-    }
-
-    public static void drawCenteredText(MatrixStack matrices, TextRenderer renderer, Text text,
-                                         int centerX, int y, int color) {
-        renderer.drawWithShadow(matrices, text, centerX - renderer.getWidth(text) / 2.0f, y, color);
     }
 
     @Override
