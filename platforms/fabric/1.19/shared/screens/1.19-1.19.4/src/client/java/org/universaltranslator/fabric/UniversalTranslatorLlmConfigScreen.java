@@ -64,11 +64,11 @@ final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorScreen
         apiKey.setMaxLength(512);
         int gap = 8;
         int buttonWidth = (width - gap) / 2;
-        addDrawableChild(ButtonWidget.builder(Text.translatable("screen.universal_translator.llm.save"), button -> save())
+        addDrawableChild(of(Text.translatable("screen.universal_translator.llm.save"), button -> save())
                 .dimensions(left, top + 108, buttonWidth, 20).build());
-        addDrawableChild(ButtonWidget.builder(Text.translatable("gui.cancel"), button -> close())
+        addDrawableChild(of(Text.translatable("gui.cancel"), button -> close())
                 .dimensions(left + buttonWidth + gap, top + 108, buttonWidth, 20).build());
-        addDrawableChild(ButtonWidget.builder(
+        addDrawableChild(of(
                         Text.translatable("screen.universal_translator.llm.fetch_models"), button -> fetchModels())
                 .dimensions(left, top + 132, width, 20).build());
     }

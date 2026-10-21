@@ -16,7 +16,7 @@ public final class ButtonWidget extends net.minecraft.client.gui.widget.ButtonWi
         super(x, y, width, height, message, action, DEFAULT_NARRATION_SUPPLIER);
     }
 
-    public static Builder builder(Text message, PressAction action) {
+    public static Builder of(Text message, PressAction action) {
         return new Builder(message, action);
     }
 

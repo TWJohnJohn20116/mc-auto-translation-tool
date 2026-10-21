@@ -207,64 +207,64 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorScreenBas
         int left = layout.left;
 
         // Navigation Tabs (positioned right below header at tabY)
-        this.tabGeneralButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.tabGeneralButton = addDrawableChild(of(Text.empty(), button -> {
             activeTab = Tab.GENERAL;
             updateTabVisibility();
         }).dimensions(layout.tabX(0), layout.tabY(), layout.tabWidth(), 20).build());
 
-        this.tabScopesButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.tabScopesButton = addDrawableChild(of(Text.empty(), button -> {
             activeTab = Tab.SCOPES;
             updateTabVisibility();
         }).dimensions(layout.tabX(1), layout.tabY(), layout.tabWidth(), 20).build());
 
-        this.tabEngineButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.tabEngineButton = addDrawableChild(of(Text.empty(), button -> {
             activeTab = Tab.ENGINE;
             updateTabVisibility();
         }).dimensions(layout.tabX(2), layout.tabY(), layout.tabWidth(), 20).build());
 
-        this.tabOutgoingButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.tabOutgoingButton = addDrawableChild(of(Text.empty(), button -> {
             activeTab = Tab.OUTGOING;
             updateTabVisibility();
         }).dimensions(layout.tabX(3), layout.tabY(), layout.tabWidth(), 20).build());
-        this.tabHudButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.tabHudButton = addDrawableChild(of(Text.empty(), button -> {
             activeTab = Tab.HUD;
             updateTabVisibility();
         }).dimensions(layout.tabX(4), layout.tabY(), layout.tabWidth(), 20).build());
 
         // --- Tab 1: General (常規) ---
-        this.enabledButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.enabledButton = addDrawableChild(of(Text.empty(), button -> {
             enabled = !enabled;
             refreshLabels();
         }).dimensions(left, layout.contentRow(0), layout.buttonWidth, 20).build());
 
-        this.targetLanguageButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.targetLanguageButton = addDrawableChild(of(Text.empty(), button -> {
             openSelection = SettingsSelectionList.Kind.TARGET_LANGUAGE;
         }).dimensions(layout.right, layout.contentRow(0), layout.buttonWidth, 20).build());
 
-        this.displayButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.displayButton = addDrawableChild(of(Text.empty(), button -> {
             displayMode = displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED
                     ? TranslationDisplayMode.TRANSLATED_ONLY
                     : TranslationDisplayMode.ORIGINAL_AND_TRANSLATED;
             refreshLabels();
         }).dimensions(left, layout.contentRow(1), layout.buttonWidth, 20).build());
 
-        this.colorButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.colorButton = addDrawableChild(of(Text.empty(), button -> {
             translatedTextColor = translatedTextColor.next();
             refreshLabels();
         }).dimensions(layout.right, layout.contentRow(1), layout.buttonWidth, 20).build());
 
-        this.cacheButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.cacheButton = addDrawableChild(of(Text.empty(), button -> {
             diskCache = !diskCache;
             refreshLabels();
         }).dimensions(left, layout.contentRow(2), layout.buttonWidth, 20).build());
 
-        this.uiStyleButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.uiStyleButton = addDrawableChild(of(Text.empty(), button -> {
             animatedUi = !animatedUi;
             animationStartedNanos = System.nanoTime();
             refreshLabels();
         }).dimensions(layout.right, layout.contentRow(2), layout.buttonWidth, 20).build());
 
-        this.diagnosticsButton = addDrawableChild(ButtonWidget.builder(
+        this.diagnosticsButton = addDrawableChild(of(
                 Text.translatable("screen.universal_translator.diagnostics.title"), button -> {
             if (client != null) {
                 client.setScreen(new UniversalTranslatorDiagnosticsScreen(this));
@@ -272,27 +272,27 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorScreenBas
         }).dimensions(left, layout.contentRow(3), layout.totalWidth, 20).build());
 
         // --- Tab 2: Scopes (範圍) ---
-        this.chatButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.chatButton = addDrawableChild(of(Text.empty(), button -> {
             translateChat = !translateChat;
             refreshLabels();
         }).dimensions(left, layout.contentRow(0), layout.buttonWidth, 20).build());
 
-        this.otherButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.otherButton = addDrawableChild(of(Text.empty(), button -> {
             translateOther = !translateOther;
             refreshLabels();
         }).dimensions(layout.right, layout.contentRow(0), layout.buttonWidth, 20).build());
 
-        this.vanillaButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.vanillaButton = addDrawableChild(of(Text.empty(), button -> {
             translateVanilla = !translateVanilla;
             refreshLabels();
         }).dimensions(left, layout.contentRow(1), layout.buttonWidth, 20).build());
 
-        this.playerNamesButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.playerNamesButton = addDrawableChild(of(Text.empty(), button -> {
             translatePlayerNames = !translatePlayerNames;
             refreshLabels();
         }).dimensions(layout.right, layout.contentRow(1), layout.buttonWidth, 20).build());
 
-        this.mixedTextButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.mixedTextButton = addDrawableChild(of(Text.empty(), button -> {
             translateEnglishOnly = !translateEnglishOnly;
             refreshLabels();
         }).dimensions(left, layout.contentRow(2), layout.totalWidth, 20).build());
@@ -308,21 +308,21 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorScreenBas
         // The engine rows are centred in the free band (see engineRow) so the tab does not sit in
         // the top third of an otherwise empty panel, and every row is reachable without moving the
         // shared Save/Cancel row that the other tabs and the HUD preview depend on.
-        this.providerButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.providerButton = addDrawableChild(of(Text.empty(), button -> {
             openSelection = SettingsSelectionList.Kind.PROVIDER;
         }).dimensions(left, engineRow(0), layout.totalWidth, 20).build());
 
-        this.modelButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.modelButton = addDrawableChild(of(Text.empty(), button -> {
             offlineModel = offlineModel.next();
             refreshLabels();
         }).dimensions(left, engineRow(1), layout.buttonWidth, 20).build());
 
-        this.downloadButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.downloadButton = addDrawableChild(of(Text.empty(), button -> {
             offlineAutoDownload = !offlineAutoDownload;
             refreshLabels();
         }).dimensions(layout.right, engineRow(1), layout.buttonWidth, 20).build());
 
-        this.modelPickButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.modelPickButton = addDrawableChild(of(Text.empty(), button -> {
             if (fetchedModels.isEmpty()) {
                 fetchModels();
             } else {
@@ -330,11 +330,11 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorScreenBas
             }
         }).dimensions(left, engineRow(1), layout.buttonWidth, 20).build());
 
-        this.fetchModelsButton = addDrawableChild(ButtonWidget.builder(
+        this.fetchModelsButton = addDrawableChild(of(
                 Text.translatable("screen.universal_translator.llm.fetch_models"), button -> fetchModels())
                 .dimensions(layout.right, engineRow(1), layout.buttonWidth, 20).build());
 
-        this.llmConfigButton = addDrawableChild(ButtonWidget.builder(
+        this.llmConfigButton = addDrawableChild(of(
                 Text.translatable("screen.universal_translator.option.llm_settings"), button -> {
             if (this.client != null) {
                 this.client.setScreen(new UniversalTranslatorLlmConfigScreen(
@@ -342,13 +342,13 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorScreenBas
             }
         }).dimensions(left, engineRow(2), layout.buttonWidth, 20).build());
 
-        this.testConnectionButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> testConnection())
+        this.testConnectionButton = addDrawableChild(of(Text.empty(), button -> testConnection())
                 .dimensions(layout.right, engineRow(2), layout.buttonWidth, 20).build());
 
-        this.checkSettingsButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> testConnection())
+        this.checkSettingsButton = addDrawableChild(of(Text.empty(), button -> testConnection())
                 .dimensions(left, engineRow(2), layout.totalWidth, 20).build());
 
-        this.fallbackButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.fallbackButton = addDrawableChild(of(Text.empty(), button -> {
             apiFallback = !apiFallback;
             refreshLabels();
         }).dimensions(left, engineRow(2), layout.totalWidth, 20).build());
@@ -363,16 +363,16 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorScreenBas
         // rather than on the diagnostics screen. They take the two rows under the existing three,
         // which leaves every other engine control exactly where it was; the prompt shares its row
         // with its own Apply button.
-        this.qualityButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.qualityButton = addDrawableChild(of(Text.empty(), button -> {
             quality = quality.next();
             refreshQualityLabel();
         }).dimensions(left, engineRow(3), layout.totalWidth, 20).build());
-        this.workersButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.workersButton = addDrawableChild(of(Text.empty(), button -> {
             workers = cycleChoice(workers, 1, 2, 4, 6, 8, 12, 16);
             refreshWorkersLabel();
         }).dimensions(left, engineRow(5), layout.buttonWidth, 20).build());
 
-        this.batchSizeButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.batchSizeButton = addDrawableChild(of(Text.empty(), button -> {
             batchSize = cycleChoice(batchSize, 1, 2, 4, 8, 12, 16);
             refreshBatchLabel();
         }).dimensions(layout.right, engineRow(5), layout.buttonWidth, 20).build());
@@ -388,58 +388,58 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorScreenBas
         this.customPrompt.setText(promptValue);
         this.customPrompt.setSuggestion(
                 tr("screen.universal_translator.diagnostics.prompt_hint"));
-        this.applyPromptButton = addDrawableChild(ButtonWidget.builder(
+        this.applyPromptButton = addDrawableChild(of(
                 Text.translatable("screen.universal_translator.diagnostics.prompt_apply"),
                 button -> applyPromptSettings()).dimensions(layout.right + layout.buttonWidth - promptApplyWidth, engineRow(4),
                         promptApplyWidth, 20).build());
 
         // --- Tab 4: Outgoing (傳送) ---
-        this.outgoingButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.outgoingButton = addDrawableChild(of(Text.empty(), button -> {
             translateOutgoing = !translateOutgoing;
             refreshLabels();
         }).dimensions(left, layout.contentRow(0), layout.totalWidth, 20).build());
 
-        this.outgoingTargetLanguageButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.outgoingTargetLanguageButton = addDrawableChild(of(Text.empty(), button -> {
             openSelection = SettingsSelectionList.Kind.OUTGOING_LANGUAGE;
         }).dimensions(left, layout.contentRow(1), layout.totalWidth, 20).build());
 
         // --- Tab 5: HUD (抬頭顯示) ---
-        this.hudIndicatorButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.hudIndicatorButton = addDrawableChild(of(Text.empty(), button -> {
             hudIndicator = !hudIndicator;
             refreshLabels();
         }).dimensions(left, layout.contentRow(0), layout.buttonWidth, 20).build());
 
-        this.hudCornerButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.hudCornerButton = addDrawableChild(of(Text.empty(), button -> {
             hudIndicatorCorner = HudIndicatorCorner.values()[
                     (hudIndicatorCorner.ordinal() + 1) % HudIndicatorCorner.values().length];
             refreshLabels();
         }).dimensions(layout.right, layout.contentRow(0), layout.buttonWidth, 20).build());
 
-        this.hudSizeButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.hudSizeButton = addDrawableChild(of(Text.empty(), button -> {
             hudIndicatorSize = hudIndicatorSize >= HudIndicatorSettings.MAX_SIZE
                     ? HudIndicatorSettings.MIN_SIZE : hudIndicatorSize + 1;
             refreshLabels();
         }).dimensions(left, layout.contentRow(1), layout.buttonWidth, 20).build());
 
-        this.hudMarginButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.hudMarginButton = addDrawableChild(of(Text.empty(), button -> {
             hudIndicatorMargin = hudIndicatorMargin >= HudIndicatorSettings.MAX_MARGIN
                     ? HudIndicatorSettings.MIN_MARGIN : hudIndicatorMargin + 1;
             refreshLabels();
         }).dimensions(layout.right, layout.contentRow(1), layout.buttonWidth, 20).build());
 
-        this.hudColorButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.hudColorButton = addDrawableChild(of(Text.empty(), button -> {
             hudIndicatorColor = HudIndicatorColor.values()[
                     (hudIndicatorColor.ordinal() + 1) % HudIndicatorColor.values().length];
             refreshLabels();
         }).dimensions(left, layout.contentRow(2), layout.buttonWidth, 20).build());
 
-        this.hudContentButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.hudContentButton = addDrawableChild(of(Text.empty(), button -> {
             hudIndicatorContent = HudIndicatorContent.values()[
                     (hudIndicatorContent.ordinal() + 1) % HudIndicatorContent.values().length];
             refreshLabels();
         }).dimensions(layout.right, layout.contentRow(2), layout.buttonWidth, 20).build());
 
-        this.hudVisibilityButton = addDrawableChild(ButtonWidget.builder(Text.empty(), button -> {
+        this.hudVisibilityButton = addDrawableChild(of(Text.empty(), button -> {
             hudIndicatorVisibility = HudIndicatorVisibility.values()[
                     (hudIndicatorVisibility.ordinal() + 1) % HudIndicatorVisibility.values().length];
             refreshLabels();
@@ -447,9 +447,9 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorScreenBas
 
         // --- Bottom Action Row ---
 
-        addDrawableChild(ButtonWidget.builder(Text.translatable("screen.universal_translator.save"), button -> saveAndApply())
+        addDrawableChild(of(Text.translatable("screen.universal_translator.save"), button -> saveAndApply())
                 .dimensions(left, layout.saveY, layout.buttonWidth, 20).build());
-        addDrawableChild(ButtonWidget.builder(Text.translatable("gui.cancel"), button -> close())
+        addDrawableChild(of(Text.translatable("gui.cancel"), button -> close())
                 .dimensions(layout.right, layout.saveY, layout.buttonWidth, 20).build());
 
         refreshLabels();
