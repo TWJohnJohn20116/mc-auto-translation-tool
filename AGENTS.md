@@ -339,3 +339,8 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
 - 不要提交 `build/` 產物或 `hs_err_pid*.log`；也不要為了方便而修改 `.gitignore` 讓產物進版控。
 - 回報時附上對應的 GitHub Actions run 連結。尚未推送、尚未經 CI 驗證的變更，必須明確說明
   「尚未經 CI 驗證」，不得描述成「已通過」。
+- **不要用整顆 JAR 的位元組比對當唯一回歸判準**：ForgeGradle 產生的 `main.refmap.json` 每次建置的
+  key 順序都不同（HashMap 迭代序），長度、行數、內容都一樣，位元組卻不同。比對 CI 產物時要逐 entry
+  比對，並把 `main.refmap.json` 當成集合比較，否則會得到假的「有變更」。
+  （2026-10-21：`forge-1.16.5` 在一次沒有任何相關改動的執行裡「變成不同」，實際 196 個 entry 完全相同，
+  只有 refmap 的 key 排序換了。）
