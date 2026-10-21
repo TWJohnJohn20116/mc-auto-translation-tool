@@ -42,6 +42,7 @@ sourceSets.main.java.srcDirs += [
         "../../../../translator-core/src/main/java",
         "../../shared/legacy-common/src/main/java"
 ]
+sourceSets.main.resources.srcDir file("../../../../platforms/shared/lang/legacy-forge")
 
 processResources {
     filteringCharset = "UTF-8"

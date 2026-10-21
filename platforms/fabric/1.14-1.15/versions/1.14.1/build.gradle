@@ -15,6 +15,7 @@ sourceSets {
     main {
         java.srcDir rootProject.file("platforms/fabric/1.14-1.15/shared/family/1.14-1.15/src/client/java")
         resources.srcDir rootProject.file("platforms/fabric/1.14-1.15/shared/family/1.14-1.15/src/main/resources")
+        resources.srcDir rootProject.file("platforms/shared/lang/json")
     }
 }
 

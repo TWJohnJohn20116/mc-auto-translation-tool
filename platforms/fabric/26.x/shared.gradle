@@ -61,6 +61,7 @@ sourceSets {
     main {
         java.srcDir project(":translator-core").file("src/main/java")
         resources.srcDir new File(sharedRoot, "common/src/main/resources")
+        resources.srcDir rootProject.file("platforms/shared/lang/json")
     }
 }
 
