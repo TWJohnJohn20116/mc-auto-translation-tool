@@ -1,5 +1,92 @@
 # 更新记录
 
+## 1.4 - 2026-10-21
+
+**1.4 把「能翻」變成「翻得可控、看得見、修得動」**：新增 HUD 狀態指示器、JSON 批次協定、SSE 串流顯示、四個原生服務（DeepL／Gemini／Claude／Azure OpenAI）、統計面板與除錯模式；翻譯失敗時會說出真正原因；翻譯行為第一次可以自己調（併發數、批次大小、品質模式、自訂提示詞）；同時把 48 個發布目標的設定畫面收斂成共用層，淨刪 38,169 行。**本版取代 1.3.11 成為建議版本。**
+
+### 一、翻譯更快、更省
+
+| 改動 | 效果 |
+| --- | --- |
+| **JSON 批次協定** | 同一批的單行文字合併成一次請求，`{"1":"…","2":"…"}` 逐鍵驗證：缺鍵只補那一筆、多餘鍵忽略、值不是字串只留一個洞；模型不吐 JSON 時退回編號清單（允許缺號）。譯文以數字開頭、含換行的情況不再錯位。 |
+| **併發與批次可設定** | `translation-workers`（1–16，預設 4）、`batch-size`（1–16，預設 8）、`batch-window-ms`（0–500，預設 30）。超範圍或無法解析一律夾到範圍內，診斷包會寫出實際生效值與被夾到的原因。**併發數在儲存設定時即生效，不需要重開遊戲。** |
+| **SSE 串流顯示** | `stream-outgoing`（預設開）：翻譯中在 HUD 旁顯示累積譯文，請求結束即清除；部分文字永不進快取，只有通過驗證的最終結果才寫入。非串流端點自動退回既有路徑，每個端點只多付一次探測成本。 |
+| **推理模型額度 16,384** | 原本 2048 常被思考吃光、還沒寫出譯文就被截斷。現在第一次遇到「只有 reasoning、沒有譯文」就直接以 16,384 起算；端點拒絕時記住可接受上限，不再每行重試。 |
+| **託管服務併發 2 → 4** | 速率限制是「預約時段」，worker 數才是真上限；對動輒數秒的推理模型，2 個就是硬天花板。離線維持 1。 |
+
+### 二、品質可以自己定
+
+- **品質模式 `fast` / `standard` / `high`**（`translation-quality`，預設 `standard`）：只改系統提示詞，`temperature`、額度計算、批次協定、串流行為全部不變。`standard` 逐字元等於舊版送出的提示詞，**預設設定的位元組與 1.3.11 完全一致**，既有磁碟快取不失效。**提示詞非預設時 provider id 會附加簽章，讓快取鍵跟著提示詞走**，不會吃到舊模式的譯文。
+- **自訂系統提示詞**（`custom-system-prompt`）：非空時完全取代內建提示詞，三種模式都適用；支援 `{target}`、`{source}`、`{kind}`、`{mode}`，未列出的 `{name}` 原樣保留。結尾一律附加固定要求（只輸出譯文、每個輸入行對應一個輸出行），因此無法藉此關閉受保護文字的還原或逐行對齊。
+- **新增四個原生服務**：DeepL（表單 POST + `DeepL-Auth-Key`，目標語言轉 `ZH-HANT`／`ZH-HANS`）、Gemini（`systemInstruction`、`:streamGenerateContent?alt=sse`）、Claude（Messages + prefill）、Azure OpenAI（`{endpoint}/openai/deployments/{deployment}/chat/completions?api-version=…`）。既有 16 個服務的建構、請求與快取鍵完全未動。
+
+### 三、看得見：HUD、統計、除錯、失敗原因
+
+- **HUD 翻譯狀態指示器**：開關、四角定位、大小與邊距、顏色（開為實心方塊、關為紅色空心框，形狀與顏色雙重區分）、顯示內容（圓點／目標語言／服務商／翻譯中）、顯示時機（始終／僅翻譯中／僅停用）、可直接拖曳並附迷你螢幕預覽。**覆蓋全部 8 個平台家族、48 個發布目標**，含 Fabric 1.0–1.8、1.8–1.12、1.13（含 1.13.2）、Forge 1.8.9／1.12.2 這些原本沒有 HUD 掛勾的版本。
+- **Forge／NeoForge 的執行期狀態與離線模型下載進度**：行為比照 Fabric——狀態進 Action Bar，失敗進聊天並 60 秒去重；離線模型下載有進度回報。
+- **翻譯失敗會說出真正的原因**：不再是一句籠統訊息。非 JSON 回應會附上開頭 60 字元（`Invalid JSON value (body starts with: "<!doctype html>…")`）；轉發站以 HTTP 200 回傳自己的錯誤物件時直接轉述（額度不足、令牌無效、模型不存在…）；填 `https://host/v1` 這種基底網址會自動補上 `/chat/completions`；模型只回推理內容時自動以最大額度重試一次，仍失敗才回報並說明原因。
+- **統計面板**：`config/universal-translator-stats.properties`，記請求數、成功／失敗分類、快取命中率、平均與 p95 延遲、輸入／輸出 Token，以及每個服務各自的計數。讀檔一次、背景每 60 秒寫一次，讀寫失敗一律吞掉，絕不影響翻譯。
+- **除錯模式與診斷包**：`debug-log` 記錄重試、退避、串流事件、快取決策與失敗原因；金鑰與端點先清洗（含 `x-goog-api-key`、`aliyun-access-key-id`、`DeepL-Auth-Key` 這類名稱與裸的長 base64），端點只留主機名稱，檔案達 2 MB 自動輪替。另有「匯出診斷包」，在 `config/` 產生含環境、診斷、清洗後設定與除錯記錄的 zip。
+- **引擎分頁全面重做**：服務類型決定顯示哪些欄位（不再出現與所選服務無關的輸入框）、**LLM 摘要一目了然**（直接看到端點與金鑰是否已設定）、一鍵抓取模型清單、可實際打一次 chat 端點的「測試連線」，控件在分頁列與儲存列之間**垂直置中**。連同品質模式、自訂提示詞、統計與除錯控制，**28 個設定畫面全部到位**。
+
+### 四、修掉的真實缺陷
+
+- **Fabric 1.13.2 補上 HUD 指示器**：這是 8 個平台家族裡唯一沒有指示器的版本線——它走 legacy yarn，HUD 類名（`InGameHud` 對 `GameGui`）、`TextRenderer` 套件，甚至「有沒有 `Window` 類」都與 1.13.0／1.13.1 的 Ornithe mappings 不同。指示器改為從 GLFW framebuffer 與 GUI scale 推導縮放尺寸（即 vanilla `Window#getScaledWidth` 的算法），行為與其餘家族一致。
+- **列表項目符號被改寫、顏色跟著位移**：行首裝飾符號（`•` `◆` `▪` `▸` `»`）連同其後的空白一律保護，不再送給模型，也就不會因字元寬度不同讓顏色看起來跑到別的字上。
+- **計分板／Tab 行翻譯後變白**：顏色在子元件上時，bridge 原本退回「整行攤平成一個 literal」而丟掉樣式。10 份 `RenderedTextBridge` 改為遞迴收集整棵元件樹的可視葉節點與各自樣式。
+- **同一段文字重複送出、重複計費**：in-flight 去重鍵原本用 `System.identityHashCode`，而玩家名快照每 5 秒換新實例，去重等於失效；改用內容簽章。
+- **多色 Text 元件只保留第一段樣式**：改為逐段重建，顏色、粗體與點擊事件都保留。
+- **模組自有訊息被再翻譯**：原本只認帶方括號的字面值，繁中「MC 自動翻譯工具：…」等漏網；改為語言無關的名稱比對。
+- **Forge 1.21.x／NeoForge 1.21.x 的自有設定與診斷畫面被機翻**：畫面文字被當成待譯文本送去翻譯；已把 26.x 的判定移植到三個 family，涵蓋 Forge 11 個、NeoForge 12 個版本。
+- **Fabric 1.20–1.20.6 拖曳中縮放視窗會把 HUD 把手黏在指標上**：`init()` 在視窗縮放時重跑，1.20.x 少了 `hudDragging = false`；共用畫面後一併修正。
+- **翻譯文字顏色預設 `aqua` → `original`**：顏色不在字串本身、來自隊伍或元件的行（例如計分板標籤）原本會被整片塗成青色。13 個設定檔同步，玩家自己選過的顏色不受影響。
+- **Fabric 1.14–1.15.2 完全沒有介面語言檔**：8 個發布目標的畫面標籤原本顯示原始鍵名，已補 `en_us`／`zh_cn`／`zh_tw`。
+- **設定畫面在部分版本一開啟就崩潰**：Fabric 1.16–1.20.1 的 HUD 分頁按鈕只被宣告、從未被建立，導致 `NullPointerException`。
+
+### 五、效能（只搬成本，沒有放寬任何行為語意）
+
+| 項目 | 原本 | 現在 |
+| --- | --- | --- |
+| `RecentUserText.shouldPreserve` | 每幀約 896 個臨時字串 | 0 個 |
+| 玩家名快照去重（18 個 runtime） | `List.contains`，n=1000 約 5×10⁵ 次 `equals` | `LinkedHashSet`，O(n) |
+| HTTP 連線 | 每個請求結束 `disconnect()` | 成功路徑回連線池，省下每次 TCP+TLS 握手 |
+| `ProtectedText` 正則 | 每次 `parse` 重編最多 1000 條 alternative | 4 槽有界快取，一次快照只編一次 |
+| 磁碟快取落盤 | 每次 `put` 複製整個 map（上限 10,000 筆） | 單一寫者 + dirty 旗標 + revision 守衛 |
+| 離線模型驗證 | 每次啟動重算數百 MB～GB 的全檔 SHA-256 | `.verified` sidecar，不符才回退全檔雜湊 |
+| 渲染快取淘汰 | 滿 4096 筆整張 `clear()`，整個畫面同時退回原文 | 一次淘汰 512 筆 |
+| pending 期限 | 180 秒（短於最壞重試 35 分） | 40 分鐘 |
+| F8／儲存設定 | 先 `shutdown()` 再建新的，會等 worker 做完 | 先建 → 再換 → 背景關舊，切換無空窗 |
+| 429 `Retry-After` | 讀了標頭但沒用 | `min(max(backoff, retryAfter), 30 秒)` |
+
+**三項行為取捨（你可能察覺）**：快取檔損毀或不可讀時改為**靜默退化成空快取**（原本會拋 `IOException` 讓遊戲起不來，代價是重新翻譯）；`.verified` sidecar 可被同時偽造大小與 mtime 繞過（能寫入該目錄者本來就能替換 JAR）；磁碟快取 flush 進行中進來的 `put` 只存在記憶體，硬殺或斷電會遺失一次視窗內的數筆（硬上限 10,000 筆，正常關閉不遺失）。
+
+### 六、平台與發布
+
+- **發布目標 33 → 48**：新增 15 個從未出貨的 NeoForge 目標（1.20.4、1.20.6、1.21、1.21.2、1.21.4–1.21.10、26.1、26.1.1、26.1.2、26.2）。可安裝 JAR 16 → **31 顆**，Release 資產 **32 個**。
+- **Fabric 1.16 補回 1.16.0–1.16.4**：原本版本清單從 1.15.2 直接跳到 1.16.5，這 5 個版本的玩家裝了會載入失敗。
+- **覆蓋範圍**：Fabric 1.3.1–26.3、Forge 1.8.9–26.2、NeoForge 1.20.1–26.2。
+- **對外版本號收斂為單一來源**：`VerifiedDownloader` 原本停在 `1.1`，每次下載模型都對外宣告一個三版前的版本號；現在統一由 `UserAgent.VALUE` 提供。
+- **內部整理**（不影響行為）：三個設定畫面類別由 **106 份降到 56 份**，`platforms/` 的 `.java` 由 490 檔降到 406 檔，淨刪 **38,169 行**；NeoForge 改為座標驅動（`.java` 38 → 14，版本目錄只留 `build.gradle` 與 `META-INF/*.toml`）；`validateSharedPlatformLayouts` 新增 9 條 include，並新增 `validateNeoForgeModuleCoordinates`，違規在設定階段直接失敗。收斂過程中也修掉五類世代錯配（1.19.3 的靜態方法遮蔽、Forge 1.18.2／1.19.2 的 `TextComponent` 與 `GuiGraphics`、NeoForge 的 16 個 `srcDir`、1.21 線兩層遺失、26.x 誤吃 1.18.2–1.21.11 的共用畫面）。
+
+### 七、安裝
+
+先刪掉舊版 JAR，每個遊戲實例只留一顆與你的 Minecraft 版本、載入器完全對應的 1.4 JAR；Fabric 另需對應版本的 Fabric API。除了 **Fabric 1.13.2 補上指示器**之外，`1.4` 與 `1.4-beta5` 的 JAR 只差版本號字串——**1.13.2 的玩家請更新**，其餘已在 beta5 的不必急著換。
+
+### 八、已知限制
+
+- **NeoForge 1.20.2 不發布**：`net.neoforged:neoforge:20.2.93` 的 `-userdev.jar` 在 Maven 上確實存在，但它是 ForgeGradle 風格的過渡期產物，`moddev_version=2.0.144` 的 `neoFormRuntimeDependenciesNeoForgeClasses` 期待的是 1.20.5+ 的 NeoForm runtime 結構，因此解析不到。要補這一版得改成獨立建置。
+- **Forge／NeoForge 不做版本範圍合併**：FML 不允許同一 JAR 內嵌多套同 `modId` 實作；JiJ 也不會按 Minecraft 版本篩選子 mod，跳過之前就可能因類引用失敗而崩。每個版本各一顆是官方推薦做法。
+- **`fabric-1.0-1.8` 不含 1.0.0–1.2.5、1.6.2、1.7.3、1.7.5、1.7.7**：上游 mappings 只發佈帶側別後綴的 feather，或 ploceus 的 version manifest 對不上。這 12 個版本的玩家基數接近 0，補上需要繞開 ploceus 的版本推導。
+
+### 九、驗證
+
+- 48 個目標的發布資產由 `prepare-release` 建置、以 `verify_release_jars.py` 校驗：[run 39593357729](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/actions/runs/39593357729)，50/50
+- 合併後 `main` 的完整建置（17 平台 + 7 舊版）：[run 39595869553](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/actions/runs/39595869553)，30/30、0 skipped
+- 舊版目標全跑（4 個 Fabric bundle、`forge-legacy-1.8.9`／`1.12.2`、15 個 NeoForge）：[run 39577304249](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/actions/runs/39577304249)，22/22
+- Fabric 1.13.2 的指示器：[run 39599742982](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/actions/runs/39599742982)（建置步驟 success，產物含 `InGameHudStatusIndicatorMixin.class` 與 mixins.json 條目）
+- 本機未執行任何編譯或測試——本專案唯一的建置途徑是 GitHub Actions。
+- **尚待實機驗證**：HUD 指示器的遮擋與拖曳手感（含 1.13.2）、SSE 串流、統計與除錯、四個新服務的端到端、離線模型第二次啟動、1.20–1.20.6 拖曳中縮放視窗、NeoForge 26.x 進世界。
+
 ## 1.4-beta5 - 2026-10-21
 
 - **設定畫面收斂成共用層，同一份原始碼服務 48 個發布目標**：全倉的 `UniversalTranslatorConfigScreen`、`UniversalTranslatorDiagnosticsScreen`、`UniversalTranslatorLlmConfigScreen` 三個畫面原本有 **106 份定義**，逐對比對後只剩 56 份；`platforms/` 底下的 `.java` 由 490 檔降到 406 檔，本次 264 個檔案 `+1,715 / −39,884`（淨刪 38,169 行）。做法一律是「把世代差異抽成基底類別或轉接器、畫面本體只留一份」，沒有放寬任何行為。逐家族結果：
