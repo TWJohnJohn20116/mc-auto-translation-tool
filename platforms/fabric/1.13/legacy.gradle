@@ -1,5 +1,10 @@
 def gameVersion = project.ext.legacyMinecraftVersion.toString()
 def sharedRoot = rootProject.file("platforms/fabric/1.13/shared/legacy-1.13.2")
+// Files the Ornithe (1.13.0/1.13.1) and legacy (1.13.2) variants compile identically.
+def bothRoot = rootProject.file("platforms/fabric/1.13/shared/shared-both")
+// The three settings screens, shared by both 1.13 build paths, plus this path's mapping half.
+def screensRoot = rootProject.file("platforms/fabric/1.13/shared/screens")
+def screenBaseRoot = rootProject.file("platforms/fabric/1.13/shared/screen-base/1.13.2")
 
 version = project.mod_version
 group = project.maven_group
@@ -26,7 +31,11 @@ sourceSets {
     main {
         java.srcDir project(":translator-core").file("src/main/java")
         java.srcDir new File(sharedRoot, "src/main/java")
+        java.srcDir new File(bothRoot, "src/main/java")
+        java.srcDir new File(screensRoot, "src/main/java")
+        java.srcDir new File(screenBaseRoot, "src/main/java")
         resources.srcDir new File(sharedRoot, "src/main/resources")
+        resources.srcDir new File(bothRoot, "src/main/resources")
     }
 }
 
