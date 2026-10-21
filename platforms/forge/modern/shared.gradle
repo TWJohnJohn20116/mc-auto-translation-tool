@@ -16,8 +16,8 @@ requiredProperties.each { propertyName ->
 def gameVersion = project.ext.legacyMinecraftVersion.toString()
 def sourceLayers = [
         "1.16.5": [],
-        "1.18.2": ["screens/1.18.2-1.19.2"],
-        "1.19.2": ["screens/1.18.2-1.19.2", "family/1.19.2-plus"],
+        "1.18.2": ["screens/1.18.2-1.19.2", "widgets/1.18.2-1.19.2"],
+        "1.19.2": ["screens/1.18.2-1.19.2", "widgets/1.18.2-1.19.2", "family/1.19.2-plus"],
         "1.20.1": ["family/1.19.2-plus"]
 ]
 def layers = sourceLayers[gameVersion]
@@ -25,6 +25,9 @@ if (layers == null) {
     throw new GradleException("No Forge legacy source layers are registered for ${gameVersion}")
 }
 def sharedRoot = rootProject.file("platforms/forge/modern/shared")
+// The settings screens cover 1.18.2 through 1.21.11, so they live outside both trees.
+def sharedScreens = rootProject.file("platforms/forge/shared/screens/1.18.2-1.21.11")
+def sharedWidgets = rootProject.file("platforms/forge/shared/widgets/1.20.1-1.21.11")
 
 version = project.mod_version
 group = project.maven_group
@@ -102,6 +105,13 @@ sourceSets {
     main {
         java.srcDir project(":translator-core").file("src/main/java")
         java.srcDir new File(sharedRoot, "common/src/main/java")
+        // 1.16.5 keeps its own copy: its ITextComponent predates the shared component seam.
+        if (gameVersion != "1.16.5") {
+            java.srcDir new File(sharedScreens, "src/main/java")
+        }
+        if (gameVersion == "1.20.1") {
+            java.srcDir new File(sharedWidgets, "src/main/java")
+        }
         layers.each { layer ->
             java.srcDir new File(sharedRoot, "${layer}/src/main/java")
         }

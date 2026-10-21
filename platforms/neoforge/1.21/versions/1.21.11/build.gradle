@@ -11,7 +11,8 @@ base {
 }
 
 def forgeShared = rootProject.file("platforms/forge/1.21/shared")
-def forgeScreenShared = rootProject.file("platforms/forge/shared/screens/1.20.1-1.21.11")
+def forgeScreenShared = rootProject.file("platforms/forge/shared/screens/1.18.2-1.21.11")
+def forgeScreenWidgets = rootProject.file("platforms/forge/shared/widgets/1.20.1-1.21.11")
 def forgeCommon = new File(forgeShared, "common")
 def forgeFamily = new File(forgeShared, "1.21.9-1.21.11")
 def forgeFamilyName = forgeFamily.name
@@ -42,6 +43,7 @@ sourceSets {
         java.srcDir project(":translator-core").file("src/main/java")
         java.srcDir new File(forgeCommon, "src/main/java")
         java.srcDir new File(forgeScreenShared, "src/main/java")
+        java.srcDir new File(forgeScreenWidgets, "src/main/java")
         java.srcDir new File(forgeFamily, "src/main/java")
         forgeSharedLayers.each { layer ->
             java.srcDir new File(forgeShared, "${layer}/src/main/java")

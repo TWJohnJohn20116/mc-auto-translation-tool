@@ -33,7 +33,7 @@ legacyForge {
 }
 
 def forgeLegacyShared = rootProject.file("platforms/forge/modern/shared")
-def forgeScreenShared = rootProject.file("platforms/forge/shared/screens/1.20.1-1.21.11")
+def forgeScreenShared = rootProject.file("platforms/forge/shared/screens/1.18.2-1.21.11")
 
 sourceSets {
     main {
@@ -46,6 +46,7 @@ sourceSets {
                 new File(forgeLegacyShared, "common/src/main/java"),
                 new File(forgeLegacyShared, "family/1.19.2-plus/src/main/java"),
                 new File(forgeScreenShared, "src/main/java"),
+                new File(rootProject.file("platforms/forge/shared/widgets/1.20.1-1.21.11"), "src/main/java"),
                 project(":translator-core").file("src/main/java")
         ]
         resources.setSrcDirs([])
