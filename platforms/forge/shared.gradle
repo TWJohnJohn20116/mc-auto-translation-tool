@@ -58,6 +58,10 @@ dependencies {
 def globalSharedRoot = rootProject.file("platforms/forge/shared")
 sourceSets {
     main {
+        // ForgeConfig is identical in every Forge tree (1.21, 26.x, modern), so it lives here
+        // once. Targets that do not apply this script (the modern tree) add this one directory
+        // themselves; see platforms/forge/modern/shared.gradle.
+        java.srcDir new File(globalSharedRoot, "common/src/main/java")
         resources.srcDir new File(globalSharedRoot, "common/src/main/resources")
     }
 }

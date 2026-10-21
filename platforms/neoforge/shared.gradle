@@ -119,6 +119,9 @@ base {
 sourceSets {
     main {
         java.srcDir project(":translator-core").file("src/main/java")
+        // ForgeConfig and the other files every Forge tree shares live in the global Forge layer;
+        // NeoForge compiles the Forge sources, so it needs that directory too.
+        java.srcDir rootProject.file("platforms/forge/shared/common/src/main/java")
         java.srcDir new File(entryLayer, "src/main/java")
         forgeLayers.each { layer -> java.srcDir new File(layer, "src/main/java") }
         forgeExtraRoots.each { extra -> java.srcDir new File(extra, "src/main/java") }
