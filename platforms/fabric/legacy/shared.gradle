@@ -185,6 +185,9 @@ if (splitEnvironment) {
             // 1.20 keep their own copies (different HUD entry points).
             if (!early114115 && !gameVersion.startsWith("1.20")) {
                 java.srcDir rootProject.file("platforms/fabric/shared/hud-indicator/src/client/java")
+                // The six small HUD/input mixins below are identical for 1.16 through 1.19.4 as
+                // well; 1.14/1.15 and 1.20+ keep their own copies.
+                java.srcDir rootProject.file("platforms/fabric/shared/mixin-1.16-1.19/src/client/java")
             }
             // ScreenMixin is identical for 1.14 through 1.19.4. 1.20+ keeps its own copy: the
             // screen lifecycle hooks it wraps changed in 1.20.
@@ -242,6 +245,9 @@ if (splitEnvironment) {
             // 1.20 keep their own copies (different HUD entry points).
             if (!early114115 && !gameVersion.startsWith("1.20")) {
                 java.srcDir rootProject.file("platforms/fabric/shared/hud-indicator/src/client/java")
+                // The six small HUD/input mixins below are identical for 1.16 through 1.19.4 as
+                // well; 1.14/1.15 and 1.20+ keep their own copies.
+                java.srcDir rootProject.file("platforms/fabric/shared/mixin-1.16-1.19/src/client/java")
             }
             // ScreenMixin is identical for 1.14 through 1.19.4. 1.20+ keeps its own copy: the
             // screen lifecycle hooks it wraps changed in 1.20.
