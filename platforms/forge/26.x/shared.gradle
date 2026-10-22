@@ -26,6 +26,9 @@ sourceSets {
             java.srcDir new File(rootProject.file("platforms/forge/shared"),
                     "local-guard-1.18.2-plus/src/main/java")
         }
+        // ForgeTranslationRuntime is shared with Forge 1.21.9–1.21.11.
+        java.srcDir new File(rootProject.file("platforms/forge/shared"),
+                "runtime-1.21.9-plus/src/main/java")
         java.srcDir new File(sharedRoot, "${sourceLayer}/src/main/java")
         resources.srcDir new File(sharedRoot, "common/src/main/resources")
     }
