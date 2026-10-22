@@ -361,6 +361,23 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
 ## 其他專案慣例
 
 - 版本號來源是 `gradle.properties` 的 `mod_version`；發布目錄為 `downloads/<mod_version>`。
+- **共用的 jar 內容**：平台的 `jar { from(LICENSE); from(THIRD_PARTY_OFFLINE) }` 由
+  `gradle/jar-contents.gradle` 提供，用 `apply from: rootProject.file("gradle/jar-contents.gradle")`
+  掛入，不要在 `build.gradle` 各貼一份。bundle 專案要換 licence 檔名時，在 `apply` **之前**設
+  `ext.jarLicenseName`（現有三個值：預設 `LICENSE_universal_translator`、`..._bundle`、
+  `..._26_x_bundle`）。要再加一個附件檔時只改那一個檔案。`platforms/forge/legacy/1.8.9`、
+  `1.12.2` 是獨立 Gradle 建置、路徑是相對字串，不套用這個腳本。
+- **`translator-core` 的共用常量**：`LogMessages`（跨平台日誌字串）、`UiTextKeys`（共用語言鍵，
+  含 `onOff(boolean)`）、`UiLimits`（畫面與輸入上限）、`TargetLanguage.AUTO` 與 `isAuto(String)`
+  （來源語言的偵測哨兵值）、`provider/LoopbackContext`（loopback llama.cpp 的 context 視窗）。
+  要寫重複的字面量或數值之前先找這幾個類；它們以 `srcDir` 掛進每個平台，不需要新增依賴。
+- **`TargetLanguage.displayName()` 保持各語言的自稱**（简体中文／繁體中文／日本語）：`TranslationPrompt`
+  用它組提示詞，`CoreSelfTest` 也把它當契約測，不要改成語言鍵。
+- **改到非 PR 路徑的程式碼要手動觸發 `legacy-targets.yml` 驗證**：`platforms/forge/shared/legacy-common`
+  （Forge 1.8.9／1.12.2）與 `platforms/fabric/shared/{settings/legacy,runtime-legacy}`（Fabric 1.0–1.15）
+  只在 `legacy-targets.yml` 編譯，PR 的 `主要建置` 完全看不到它們。改到那些層之後要跑
+  `gh workflow run legacy-targets.yml --ref <branch>` 並確認 21 個目標全綠，否則會等到每週排程
+  才發現紅燈（2026-10-22 就差點把未編譯過的 `legacy-common` 改動合進 `main`）。
 - `website/` 用 pnpm 11（CI 以 `corepack enable` 讀 `package.json` 的 `packageManager` 決定版本）。
   **pnpm 11 不再讀 `package.json` 的 `pnpm` 欄位**：`overrides`、`allowBuilds` 這類設定要放
   `website/pnpm-workspace.yaml`，放進 `package.json` 只會被靜默忽略（僅吐一行 WARN）。
