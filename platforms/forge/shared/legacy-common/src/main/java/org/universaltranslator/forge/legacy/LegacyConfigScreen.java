@@ -31,6 +31,8 @@ import org.universaltranslator.core.net.HttpJsonClient;
 import org.universaltranslator.core.net.JsonStrings;
 import org.universaltranslator.core.provider.OpenAiModelCatalog;
 import org.universaltranslator.core.provider.ProviderProbe;
+import org.universaltranslator.core.UiTextKeys;
+import org.universaltranslator.core.UiLimits;
 
 /** Dependency-free settings UI shared by Forge 1.8.9 and 1.12.2. */
 final class LegacyConfigScreen extends GuiScreen {
@@ -95,8 +97,6 @@ final class LegacyConfigScreen extends GuiScreen {
     private static final int MODEL_LIST_TOP = 46;
     /** Room kept under the model rows for the paging, back, and hint lines. */
     private static final int MODEL_LIST_FOOTER_HEIGHT = 62;
-    /** Longest custom prompt the engine tab's text field accepts. */
-    private static final int MAXIMUM_PROMPT_LENGTH = 4096;
     private static final String LIBRETRANSLATE_PROVIDER = "libretranslate";
     private static final String TRANSLATE_PATH = "/translate";
     private static final String LANGUAGES_PATH = "/languages";
@@ -364,7 +364,7 @@ final class LegacyConfigScreen extends GuiScreen {
         int promptApplyWidth = Math.max(48, buttonWidth - 24);
         customPrompt = new GuiTextField(PROMPT_FIELD, renderer, left, engineRow(4),
                 totalWidth - promptApplyWidth - gap, 20);
-        customPrompt.setMaxStringLength(MAXIMUM_PROMPT_LENGTH);
+        customPrompt.setMaxStringLength(UiLimits.PROMPT_MAX_CHARS);
         customPrompt.setText(promptValue);
         applyPromptButton = new GuiButton(PROMPT_APPLY, right + buttonWidth - promptApplyWidth,
                 engineRow(4), promptApplyWidth, 20,
@@ -934,7 +934,7 @@ final class LegacyConfigScreen extends GuiScreen {
     }
 
     private static String onOff(boolean value) {
-        return tr(value ? "value.universal_translator.on" : "value.universal_translator.off");
+        return tr(UiTextKeys.onOff(value));
     }
 
     private static boolean isFailureStatus(String value) {

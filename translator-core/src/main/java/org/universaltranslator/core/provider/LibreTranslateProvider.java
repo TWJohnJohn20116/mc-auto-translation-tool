@@ -52,7 +52,7 @@ public final class LibreTranslateProvider implements TranslationProvider {
     }
 
     private static String normalizeSource(String language) {
-        return language == null || language.trim().isEmpty() ? "auto" : baseLanguage(language);
+        return language == null || language.trim().isEmpty() ? TargetLanguage.AUTO : baseLanguage(language);
     }
 
     private static String normalizeTarget(String language) {

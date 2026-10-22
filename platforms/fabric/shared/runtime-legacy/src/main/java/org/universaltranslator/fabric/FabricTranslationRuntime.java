@@ -96,7 +96,7 @@ public final class FabricTranslationRuntime {
                 // matter what the configuration asks for.
                 int workers = provider.id().contains("offline-llama:") ? 1 : config.translationWorkers();
                 created = new RenderTranslationSession(
-                        provider, "auto", config.targetLanguage, store, workers, config.displayMode,
+                        provider, TargetLanguage.AUTO, config.targetLanguage, store, workers, config.displayMode,
                         config.translateEnglishOnly);
                 created.setBlockedKeywords(config.blockedKeywords);
                 created.setProtectedLiteralsSupplier(FabricTranslationRuntime::playerNameSnapshot);

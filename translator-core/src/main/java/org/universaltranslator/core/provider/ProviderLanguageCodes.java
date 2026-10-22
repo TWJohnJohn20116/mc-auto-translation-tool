@@ -10,9 +10,9 @@ final class ProviderLanguageCodes {
     }
 
     static String common(String language, boolean allowAuto) {
-        if (language == null || language.trim().isEmpty() || "auto".equalsIgnoreCase(language.trim())) {
+        if (language == null || language.trim().isEmpty() || TargetLanguage.isAuto(language)) {
             if (allowAuto) {
-                return "auto";
+                return TargetLanguage.AUTO;
             }
             throw new IllegalArgumentException("Target language is required");
         }
@@ -20,7 +20,7 @@ final class ProviderLanguageCodes {
             return "zh";
         }
         if (TargetLanguage.isTraditionalChinese(language)) {
-            return "zh-TW";
+            return TargetLanguage.TRADITIONAL_CHINESE;
         }
         String normalized = language.trim().replace('_', '-').toLowerCase(Locale.ROOT);
         int separator = normalized.indexOf('-');
@@ -29,7 +29,7 @@ final class ProviderLanguageCodes {
 
     static String baidu(String language, boolean allowAuto) {
         String common = common(language, allowAuto);
-        if ("zh-TW".equals(common)) return "cht";
+        if (TargetLanguage.TRADITIONAL_CHINESE.equals(common)) return "cht";
         if ("zh".equals(common)) return "zh";
         if ("ja".equals(common)) return "jp";
         if ("ko".equals(common)) return "kor";
@@ -40,30 +40,30 @@ final class ProviderLanguageCodes {
 
     static String tencent(String language, boolean allowAuto) {
         String common = common(language, allowAuto);
-        return "zh-TW".equals(common) ? "zh-TW" : common;
+        return TargetLanguage.TRADITIONAL_CHINESE.equals(common) ? TargetLanguage.TRADITIONAL_CHINESE : common;
     }
 
     static String aliyun(String language, boolean allowAuto) {
         String common = common(language, allowAuto);
-        return "zh-TW".equals(common) ? "zh-tw" : common;
+        return TargetLanguage.TRADITIONAL_CHINESE.equals(common) ? "zh-tw" : common;
     }
 
     static String youdao(String language, boolean allowAuto) {
         String common = common(language, allowAuto);
         if ("zh".equals(common)) return "zh-CHS";
-        if ("zh-TW".equals(common)) return "zh-CHT";
+        if (TargetLanguage.TRADITIONAL_CHINESE.equals(common)) return "zh-CHT";
         return common;
     }
 
     static String volcengine(String language, boolean allowAuto) {
         String common = common(language, allowAuto);
-        return "zh-TW".equals(common) ? "zh-Hant" : common;
+        return TargetLanguage.TRADITIONAL_CHINESE.equals(common) ? "zh-Hant" : common;
     }
 
     static String iflytek(String language, boolean allowAuto) {
         String common = common(language, allowAuto);
         if ("zh".equals(common)) return "cn";
-        if ("zh-TW".equals(common)) return "cht";
+        if (TargetLanguage.TRADITIONAL_CHINESE.equals(common)) return "cht";
         return common;
     }
 
@@ -74,7 +74,7 @@ final class ProviderLanguageCodes {
     static String deeplTarget(String language) {
         String common = common(language, false);
         if ("zh".equals(common)) return "ZH-HANS";
-        if ("zh-TW".equals(common)) return "ZH-HANT";
+        if (TargetLanguage.TRADITIONAL_CHINESE.equals(common)) return "ZH-HANT";
         if ("en".equals(common)) return "EN-US";
         if ("pt".equals(common)) return "PT-BR";
         return common.toUpperCase(Locale.ROOT);
@@ -87,11 +87,11 @@ final class ProviderLanguageCodes {
      */
     static String deeplSource(String language) {
         if (language == null || language.trim().isEmpty()
-                || "auto".equalsIgnoreCase(language.trim())) {
+                || TargetLanguage.isAuto(language)) {
             return "";
         }
         String common = common(language, false);
-        if ("zh".equals(common) || "zh-TW".equals(common)) return "ZH";
+        if ("zh".equals(common) || TargetLanguage.TRADITIONAL_CHINESE.equals(common)) return "ZH";
         if ("pt".equals(common)) return "PT";
         return common.toUpperCase(Locale.ROOT);
     }

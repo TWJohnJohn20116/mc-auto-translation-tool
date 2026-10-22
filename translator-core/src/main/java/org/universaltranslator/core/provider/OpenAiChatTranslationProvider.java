@@ -24,7 +24,7 @@ import java.util.Map;
 /** Small OpenAI-compatible chat provider used by local llama.cpp and optional hosted APIs. */
 public final class OpenAiChatTranslationProvider implements TranslationProvider {
     /** Matches the loopback llama.cpp server's {@code --ctx-size} argument. */
-    private static final int OFFLINE_CONTEXT_TOKENS = 1024;
+    private static final int OFFLINE_CONTEXT_TOKENS = LoopbackContext.TOKENS;
     /** System prompt plus chat-template tokens charged against the offline context. */
     private static final int OFFLINE_PROMPT_OVERHEAD_TOKENS = 128;
     /** Upper bound for the completion budget of a hosted OpenAI-compatible endpoint. */

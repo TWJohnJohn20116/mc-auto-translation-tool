@@ -15,6 +15,15 @@ public final class TargetLanguage {
     public static final String PORTUGUESE = "pt";
     public static final String RUSSIAN = "ru";
 
+    /**
+     * Sentinel telling the provider to detect the source language instead of pinning one.
+     *
+     * <p>It is not a target language, so it is deliberately absent from {@link #PRESETS}. Every
+     * caller that means "detect it" used to spell the string out, which is how a typo in one
+     * provider silently became a real language code.
+     */
+    public static final String AUTO = "auto";
+
     private static final String[] PRESETS = {
             SIMPLIFIED_CHINESE, TRADITIONAL_CHINESE, ENGLISH, JAPANESE, KOREAN,
             FRENCH, GERMAN, SPANISH, PORTUGUESE, RUSSIAN
@@ -25,6 +34,11 @@ public final class TargetLanguage {
 
     public static String[] presets() {
         return PRESETS.clone();
+    }
+
+    /** True when {@code language} asks the provider to detect the source language. */
+    public static boolean isAuto(String language) {
+        return language != null && AUTO.equalsIgnoreCase(language.trim());
     }
 
     public static String canonicalize(String language) {

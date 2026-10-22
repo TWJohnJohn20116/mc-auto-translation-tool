@@ -96,7 +96,7 @@ public final class TencentHunyuanProvider implements TranslationProvider {
     }
 
     private static String normalizeSource(String language) {
-        if (language == null || language.trim().isEmpty() || "auto".equalsIgnoreCase(language.trim())) {
+        if (language == null || language.trim().isEmpty() || TargetLanguage.isAuto(language)) {
             return null;
         }
         return normalizeLanguage(language);

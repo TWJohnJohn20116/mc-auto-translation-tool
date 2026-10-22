@@ -18,6 +18,7 @@ import org.universaltranslator.core.TranslationBlocklist;
 import org.universaltranslator.core.provider.FallbackTranslationProvider;
 import org.universaltranslator.core.provider.LlamaCppOfflineProvider;
 import org.universaltranslator.core.provider.OnlineProviderConfig;
+import org.universaltranslator.core.TargetLanguage;
 
 import java.io.IOException;
 import java.io.Reader;
@@ -89,7 +90,7 @@ final class FabricConfig {
                 properties.getProperty("translate-player-names", "false"));
         this.animatedUi = Boolean.parseBoolean(properties.getProperty("animated-ui", "true"));
         this.blockedKeywords = boundedKeywords(properties.getProperty("blocked-keywords", ""));
-        this.targetLanguage = properties.getProperty("target-language", "zh-CN").trim();
+        this.targetLanguage = properties.getProperty("target-language", TargetLanguage.SIMPLIFIED_CHINESE).trim();
         this.outgoingTargetLanguage = properties.getProperty(
                 "outgoing-target-language", "en").trim();
         this.displayMode = TranslationDisplayMode.fromConfig(
@@ -421,7 +422,7 @@ final class FabricConfig {
         properties.setProperty("translate-player-names", "false");
         properties.setProperty("animated-ui", "true");
         properties.setProperty("blocked-keywords", "");
-        properties.setProperty("target-language", "zh-CN");
+        properties.setProperty("target-language", TargetLanguage.SIMPLIFIED_CHINESE);
         properties.setProperty("outgoing-target-language", "en");
         properties.setProperty("display-mode", "translated-only");
         properties.setProperty("translate-english-only", "true");
