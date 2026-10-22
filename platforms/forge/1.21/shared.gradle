@@ -30,6 +30,10 @@ sourceSets {
     main {
         java.srcDir project(":translator-core").file("src/main/java")
         java.srcDir new File(sharedRoot, "common/src/main/java")
+        // RenderedTextBridge is shared with the 26.x tree and Forge 1.19.2+; see
+        // platforms/forge/shared/rendered-1.19.2-plus.
+        java.srcDir new File(rootProject.file("platforms/forge/shared"),
+                "rendered-1.19.2-plus/src/main/java")
         java.srcDir new File(screensRoot, "src/main/java")
         java.srcDir new File(widgetsRoot, "src/main/java")
         sharedLayers.each { layer ->
