@@ -127,6 +127,12 @@ sourceSets {
         java.srcDir new File(rootProject.file("platforms/forge/shared"),
                 "rendered-1.19.2-plus/src/main/java")
         java.srcDir new File(entryLayer, "src/main/java")
+        // UniversalTranslatorNeoForgeClient is identical for the 1.20.6 and 1.21-1.21.1 entrypoint
+        // layers; the other layers differ in how they read the client state, so they keep their own.
+        if (project.ext.neoforgeEntryLayer in ["1.20.6", "1.21-1.21.1"]) {
+            java.srcDir new File(rootProject.file("platforms/neoforge/shared"),
+                    "entrypoints/common/src/main/java")
+        }
         forgeLayers.each { layer -> java.srcDir new File(layer, "src/main/java") }
         forgeExtraRoots.each { extra -> java.srcDir new File(extra, "src/main/java") }
         forgeScreenRoots.each { root -> java.srcDir new File(root, "src/main/java") }
