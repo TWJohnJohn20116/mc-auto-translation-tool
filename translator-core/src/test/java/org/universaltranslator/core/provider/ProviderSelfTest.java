@@ -218,10 +218,7 @@ public final class ProviderSelfTest {
         Thread thread = new Thread(() -> {
             try {
                 for (int index = 0; index < 3; index++) {
-                    HttpRequest request = serveProbeRequest(server, index);
-                    requestLine.set(request.requestLine);
-                    requestBody.set(request.body);
-                    authorization.set(request.headers.get("authorization"));
+                    serveProbeRequest(server, index, requestLine, requestBody, authorization);
                 }
             } catch (Throwable failure) {
                 serverFailure.set(failure);
@@ -256,10 +253,17 @@ public final class ProviderSelfTest {
      * <p>The three answers are the three shapes a probe has to tell apart: a healthy reply, a
      * relay's own error object behind HTTP 200, and a gateway's HTML page.
      */
-    private static HttpRequest serveProbeRequest(ServerSocket server, int index) throws IOException {
+    private static void serveProbeRequest(ServerSocket server, int index,
+            AtomicReference<String> requestLine, AtomicReference<String> requestBody,
+            AtomicReference<String> authorization) throws IOException {
         try (Socket socket = server.accept()) {
             HttpRequest request = readRequest(socket.getInputStream(),
                     "POST /v1/chat/completions HTTP/1.");
+            // Record what the client sent before answering: the client is unblocked by the
+            // response, so anything set afterwards races with the assertions in the caller.
+            requestLine.set(request.requestLine);
+            requestBody.set(request.body);
+            authorization.set(request.headers.get("authorization"));
             String response;
             if (index == 0) {
                 response = "{\"choices\":[{\"message\":{\"content\":\"ping\"}}]}";
@@ -270,7 +274,6 @@ public final class ProviderSelfTest {
                 response = "<!DOCTYPE html><html>gateway</html>";
             }
             writeResponse(socket.getOutputStream(), 200, response);
-            return request;
         }
     }
 
