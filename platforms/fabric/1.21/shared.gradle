@@ -96,6 +96,9 @@ sourceSets {
         if (layers.contains("runtime/pre-1.21.9")) {
             java.srcDir rootProject.file("platforms/fabric/shared/runtime-common/src/client/java")
         }
+        // FabricLocalTextGuard is identical for 1.14 through 1.21; 26.x keeps its own copy
+        // because it reads the chat field through the newer EditBox API.
+        java.srcDir rootProject.file("platforms/fabric/shared/legacy-common/src/client/java")
         // The settings screens are shared with Fabric 1.20.x as well, so they sit in their own layer.
         java.srcDir new File(sharedRoot, "screens/1.20.1-1.21.11/src/client/java")
         layers.each { layer ->
