@@ -430,8 +430,8 @@ public final class ProviderSelfTest {
             // reply line belongs to which caller is not fixed (the comment below says as much).
             // Assert the pair plus the single batched request instead of a fixed mapping.
             List<String> got = Arrays.asList(first.get(), second.get());
-            assertTrue(got.contains("你好"), got.toString());
-            assertTrue(got.contains("歡迎回來"), got.toString());
+            assertTrue(got.contains("你好"));
+            assertTrue(got.contains("歡迎回來"));
             assertEquals(1, requests.get().intValue());
             // The request is one JSON object keyed by line number, so the order of the entries
             // follows the order in which the two threads reached the batch.
@@ -1912,8 +1912,8 @@ public final class ProviderSelfTest {
             // Same ordering caveat as batchesNearbyTextsIntoOneRequest: the reply line that
             // belongs to each caller depends on which thread reached the batch first.
             List<String> got = Arrays.asList(first.get(), second.get());
-            assertTrue(got.contains("你好"), got.toString());
-            assertTrue(got.contains("歡迎回來"), got.toString());
+            assertTrue(got.contains("你好"));
+            assertTrue(got.contains("歡迎回來"));
             // The request is one JSON object keyed by line number, so the order of the entries
             // follows the order in which the two threads reached the batch.
             String user = JsonStrings.readStringPath(body.get(), "messages[1].content");
