@@ -57,6 +57,22 @@ public final class FontRendererTransformer implements IClassTransformer {
         }
     }
 
+    /**
+     * True when {@code name} is any of the given readable or obfuscated method names.
+     *
+     * <p>Every visitor below matches one method by a list of names because the obfuscated name
+     * differs per Minecraft version. Spelling the chain out at each site made the nesting depth
+     * of {@code visitMethod} the worst in the repository.
+     */
+    private static boolean isAny(String name, String... candidates) {
+        for (String candidate : candidates) {
+            if (candidate.equals(name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Keeps the live sign preview local while GuiEditSign renders it. */
     private static final class SignInputVisitor extends CountingVisitor {
         private static final String CONTEXT =
@@ -71,9 +87,7 @@ public final class FontRendererTransformer implements IClassTransformer {
                 int access, String name, String descriptor, String signature, String[] exceptions) {
             MethodVisitor delegate = super.visitMethod(access, name, descriptor, signature, exceptions);
             boolean drawScreen = "(IIF)V".equals(descriptor)
-                    && ("drawScreen".equals(name)
-                    || "func_73863_a".equals(name)
-                    || "a".equals(name));
+                    && isAny(name, "drawScreen", "func_73863_a", "a");
             if (!drawScreen) {
                 return delegate;
             }
@@ -116,9 +130,7 @@ public final class FontRendererTransformer implements IClassTransformer {
                 int access, String name, String descriptor, String signature, String[] exceptions) {
             MethodVisitor delegate = super.visitMethod(access, name, descriptor, signature, exceptions);
             boolean drawTextBox = "()V".equals(descriptor)
-                    && ("drawTextBox".equals(name)
-                    || "func_146194_f".equals(name)
-                    || "g".equals(name));
+                    && isAny(name, "drawTextBox", "func_146194_f", "g");
             if (!drawTextBox) {
                 return delegate;
             }
@@ -173,7 +185,7 @@ public final class FontRendererTransformer implements IClassTransformer {
                 int access, String name, String descriptor, String signature, String[] exceptions) {
             MethodVisitor delegate = super.visitMethod(access, name, descriptor, signature, exceptions);
             boolean drawChat = "(I)V".equals(descriptor)
-                    && ("drawChat".equals(name) || "func_146230_a".equals(name) || "a".equals(name));
+                    && isAny(name, "drawChat", "func_146230_a", "a");
             if (!drawChat) {
                 return delegate;
             }
@@ -209,7 +221,7 @@ public final class FontRendererTransformer implements IClassTransformer {
             MethodVisitor delegate = super.visitMethod(access, name, descriptor, signature, exceptions);
             boolean rendersString = "(Ljava/lang/String;FFIZ)I".equals(descriptor);
             boolean measuresString = "(Ljava/lang/String;)I".equals(descriptor)
-                    && ("getStringWidth".equals(name) || "func_78256_a".equals(name) || "a".equals(name));
+                    && isAny(name, "getStringWidth", "func_78256_a", "a");
             if (!rendersString && !measuresString) {
                 return delegate;
             }
@@ -245,9 +257,7 @@ public final class FontRendererTransformer implements IClassTransformer {
                 int access, String name, String descriptor, String signature, String[] exceptions) {
             MethodVisitor delegate = super.visitMethod(access, name, descriptor, signature, exceptions);
             boolean tooltip = "(Ljava/util/List;II)V".equals(descriptor)
-                    && ("drawHoveringText".equals(name)
-                    || "func_146283_a".equals(name)
-                    || "a".equals(name));
+                    && isAny(name, "drawHoveringText", "func_146283_a", "a");
             if (tooltip) {
                 markModified();
                 return hoveringTextVisitor(delegate);
@@ -255,9 +265,7 @@ public final class FontRendererTransformer implements IClassTransformer {
             boolean itemTooltipFactory = (descriptor.equals(
                     "(Lnet/minecraft/item/ItemStack;)Ljava/util/List;")
                     || descriptor.equals("(Laip;)Ljava/util/List;"))
-                    && ("getItemToolTip".equals(name)
-                    || "func_191927_a".equals(name)
-                    || "a".equals(name));
+                    && isAny(name, "getItemToolTip", "func_191927_a", "a");
             if (itemTooltipFactory) {
                 return itemTooltipFactoryVisitor(delegate);
             }
@@ -267,9 +275,7 @@ public final class FontRendererTransformer implements IClassTransformer {
                     || descriptor.startsWith("(Lzx;")
                     || descriptor.startsWith("(Laip;"))
                     && descriptor.endsWith(";II)V")
-                    && ("renderToolTip".equals(name)
-                    || "func_146285_a".equals(name)
-                    || "a".equals(name));
+                    && isAny(name, "renderToolTip", "func_146285_a", "a");
             if (!itemTooltip) {
                 return delegate;
             }
@@ -316,9 +322,7 @@ public final class FontRendererTransformer implements IClassTransformer {
                             // 1.8.9 uses (EntityPlayer, boolean); 1.12.2 uses
                             // (EntityPlayer, ITooltipFlag). Both return the canonical list.
                             && descriptor.endsWith(")Ljava/util/List;")
-                            && ("getTooltip".equals(name)
-                            || "func_82840_a".equals(name)
-                            || "a".equals(name));
+                            && isAny(name, "getTooltip", "func_82840_a", "a");
                     if (itemStackTooltip) {
                         super.visitMethodInsn(
                                 Opcodes.INVOKESTATIC,
