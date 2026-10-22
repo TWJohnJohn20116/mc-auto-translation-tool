@@ -38,6 +38,9 @@ sourceSets {
         java.srcDir rootProject.file("platforms/fabric/shared/rendered-legacy/src/main/java")
         java.srcDir rootProject.file("platforms/fabric/shared/render-context-legacy/src/main/java")
         java.srcDir rootProject.file("platforms/fabric/shared/runtime-legacy/src/main/java")
+        // UniversalTranslatorFabricClient is shared with Fabric 1.13.0/1.13.1; 1.13.2 keeps its
+        // own copy and 1.0–1.8 differs in the client entrypoint API.
+        java.srcDir rootProject.file("platforms/fabric/shared/client-1.8-1.13/src/main/java")
         java.srcDir new File(rootProject.file("platforms/fabric/1.0-1.12/shared/screens"), "src/main/java")
         resources.srcDir new File(sharedRoot, "src/main/resources")
         resources.srcDir rootProject.file("platforms/shared/lang/legacy")
