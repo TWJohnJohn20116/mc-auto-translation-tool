@@ -7,6 +7,7 @@ import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.ChatScreen;
 import org.universaltranslator.core.TranslationResult;
 import org.universaltranslator.core.TranslationStatusLocalizer;
+import org.universaltranslator.core.LogMessages;
 
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -44,7 +45,7 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
             FabricConfig config = FabricConfig.load(FabricLoader.getInstance().getConfigDir());
             OrnitheClientAccess.openScreen(new UniversalTranslatorConfigScreen(client.screen, config));
         } catch (Exception exception) {
-            LOGGER.log(Level.SEVERE, "Could not open MC Auto Translation Tool settings", exception);
+            LOGGER.log(Level.SEVERE, LogMessages.SETTINGS_OPEN_FAILED, exception);
         }
     }
 
@@ -155,7 +156,7 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
             OrnitheClientAccess.openScreen(new UniversalTranslatorConfigScreen(parent, config));
         } catch (Exception exception) {
             LOGGER.log(java.util.logging.Level.SEVERE,
-                    "Could not open MC Auto Translation Tool settings", exception);
+                    LogMessages.SETTINGS_OPEN_FAILED, exception);
         }
     }
 

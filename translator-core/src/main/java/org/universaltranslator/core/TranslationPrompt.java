@@ -227,7 +227,7 @@ public final class TranslationPrompt {
             return allowAuto ? "auto-detect" : "";
         }
         String trimmed = language.trim();
-        if (allowAuto && "auto".equalsIgnoreCase(trimmed)) {
+        if (allowAuto && TargetLanguage.isAuto(trimmed)) {
             return "auto-detect";
         }
         String canonical = TargetLanguage.canonicalize(trimmed);

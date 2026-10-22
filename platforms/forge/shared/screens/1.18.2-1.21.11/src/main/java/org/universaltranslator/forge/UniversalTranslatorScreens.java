@@ -30,6 +30,8 @@ import org.universaltranslator.core.net.HttpJsonClient;
 import org.universaltranslator.core.net.JsonStrings;
 import org.universaltranslator.core.provider.OpenAiModelCatalog;
 import org.universaltranslator.core.provider.ProviderProbe;
+import org.universaltranslator.core.UiTextKeys;
+import org.universaltranslator.core.UiLimits;
 
 import java.net.URI;
 import java.nio.file.Path;
@@ -157,8 +159,6 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     private static final int MODEL_LIST_TOP = 46;
     /** Room kept under the model rows for the paging, back, and hint lines. */
     private static final int MODEL_LIST_FOOTER_HEIGHT = 62;
-    /** Longest custom prompt the engine tab's text field accepts. */
-    private static final int MAXIMUM_PROMPT_LENGTH = 4096;
     private static final String LIBRETRANSLATE_PROVIDER = "libretranslate";
     private static final String TRANSLATE_PATH = "/translate";
     private static final String LANGUAGES_PATH = "/languages";
@@ -343,7 +343,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         customPrompt = addRenderableWidget(new EditBox(font, left, engineRow(4),
                 layout.totalWidth - promptApplyWidth - 8,
                 20, translatable("screen.universal_translator.diagnostics.prompt")));
-        customPrompt.setMaxLength(MAXIMUM_PROMPT_LENGTH);
+        customPrompt.setMaxLength(UiLimits.PROMPT_MAX_CHARS);
         customPrompt.setValue(promptValue);
         applyPromptButton = addRenderableWidget(ButtonSpec.of(
                 translatable("screen.universal_translator.diagnostics.prompt_apply"),
@@ -1220,7 +1220,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     }
 
     private static String onOff(boolean value) {
-        return tr(value ? "value.universal_translator.on" : "value.universal_translator.off");
+        return tr(UiTextKeys.onOff(value));
     }
 
     private static String colorLabel(TranslationTextColor color) {
@@ -1381,8 +1381,7 @@ abstract class UniversalTranslatorDiagnosticsScreenBase extends Screen {
             return;
         }
         debugButton.setMessage(translatable("screen.universal_translator.debug.mode",
-                tr(debugEnabled
-                        ? "value.universal_translator.on" : "value.universal_translator.off")));
+                tr(UiTextKeys.onOff(debugEnabled))));
     }
 
     private void refreshPageLabels() {
@@ -1419,8 +1418,7 @@ abstract class UniversalTranslatorDiagnosticsScreenBase extends Screen {
             DebugLog.global().configure(
                     configFile.resolveSibling(DebugLog.FILE_NAME), debugEnabled);
             exportStatus = tr("screen.universal_translator.debug.changed",
-                    tr(debugEnabled
-                            ? "value.universal_translator.on" : "value.universal_translator.off"));
+                    tr(UiTextKeys.onOff(debugEnabled)));
             exportFailed = false;
         } catch (Exception failure) {
             exportStatus = settingsFailure(failure);

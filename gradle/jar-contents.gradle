@@ -1,0 +1,23 @@
+// Shared jar contents: the project licence and the offline third-party notice.
+//
+// Every platform script used to repeat this block verbatim, so a rename or a new notice file
+// meant editing two dozen build files and hoping none was missed. Apply this script instead:
+//
+//     apply from: rootProject.file("gradle/jar-contents.gradle")
+//
+// Bundle projects ship several nested mod jars and want a licence entry that cannot be confused
+// with a nested one, so they set the name first:
+//
+//     ext.jarLicenseName = "LICENSE_universal_translator_bundle"
+//     apply from: rootProject.file("gradle/jar-contents.gradle")
+
+def jarLicenseName = project.findProperty("jarLicenseName") ?: "LICENSE_universal_translator"
+
+jar {
+    from(rootProject.file("LICENSE")) {
+        rename { jarLicenseName }
+    }
+    from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) {
+        rename { "THIRD_PARTY_OFFLINE.md" }
+    }
+}

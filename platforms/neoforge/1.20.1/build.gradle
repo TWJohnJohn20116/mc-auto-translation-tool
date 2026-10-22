@@ -87,13 +87,8 @@ tasks.named("jar", Jar).configure {
     manifest {
         attributes "MixinConfigs": "universal-translator.neoforge.mixins.json"
     }
-    from(rootProject.file("LICENSE")) {
-        rename { "LICENSE_universal_translator" }
-    }
-    from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) {
-        rename { "THIRD_PARTY_OFFLINE.md" }
-    }
 }
+apply from: rootProject.file("gradle/jar-contents.gradle")
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"

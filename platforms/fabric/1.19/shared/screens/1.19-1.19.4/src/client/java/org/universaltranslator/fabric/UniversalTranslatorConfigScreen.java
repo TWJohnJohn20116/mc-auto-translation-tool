@@ -29,6 +29,8 @@ import org.universaltranslator.core.net.HttpJsonClient;
 import org.universaltranslator.core.net.JsonStrings;
 import org.universaltranslator.core.provider.OpenAiModelCatalog;
 import org.universaltranslator.core.provider.ProviderProbe;
+import org.universaltranslator.core.UiTextKeys;
+import org.universaltranslator.core.UiLimits;
 
 /** Minimal dependency-free settings screen, opened with U by default. */
 final class UniversalTranslatorConfigScreen extends UniversalTranslatorScreenBase {
@@ -45,8 +47,6 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorScreenBas
     private static final int MODEL_LIST_TOP = 46;
     /** Room kept under the model rows for the paging, back, and hint lines. */
     private static final int MODEL_LIST_FOOTER_HEIGHT = 62;
-    /** Longest custom prompt the engine tab's text field accepts. */
-    private static final int MAXIMUM_PROMPT_LENGTH = 4096;
     private static final String LIBRETRANSLATE_PROVIDER = "libretranslate";
     private static final String TRANSLATE_PATH = "/translate";
     private static final String LANGUAGES_PATH = "/languages";
@@ -384,7 +384,7 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorScreenBas
         this.customPrompt = addDrawableChild(new TextFieldWidget(this.textRenderer, left, engineRow(4),
                 layout.totalWidth - promptApplyWidth - 8,
                 20, Text.translatable("screen.universal_translator.diagnostics.prompt")));
-        this.customPrompt.setMaxLength(MAXIMUM_PROMPT_LENGTH);
+        this.customPrompt.setMaxLength(UiLimits.PROMPT_MAX_CHARS);
         this.customPrompt.setText(promptValue);
         this.customPrompt.setSuggestion(
                 tr("screen.universal_translator.diagnostics.prompt_hint"));
@@ -664,7 +664,7 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorScreenBas
     }
 
     private static String onOff(boolean value) {
-        return tr(value ? "value.universal_translator.on" : "value.universal_translator.off");
+        return tr(UiTextKeys.onOff(value));
     }
 
     private static boolean isFailureStatus(String value) {

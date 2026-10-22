@@ -123,7 +123,7 @@ public final class RenderTranslationSession implements AutoCloseable {
     ) {
         this.coordinator = new TranslationCoordinator(provider, store, workerCount);
         this.providerCategory = safeProviderCategoryForLog(provider.id());
-        this.sourceLanguage = sourceLanguage == null ? "auto" : sourceLanguage;
+        this.sourceLanguage = sourceLanguage == null ? TargetLanguage.AUTO : sourceLanguage;
         if (targetLanguage == null || targetLanguage.trim().isEmpty()) {
             this.coordinator.close();
             throw new IllegalArgumentException("targetLanguage is required");
