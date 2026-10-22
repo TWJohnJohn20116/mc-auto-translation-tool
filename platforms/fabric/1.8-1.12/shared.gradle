@@ -40,6 +40,8 @@ sourceSets {
         java.srcDir rootProject.file("platforms/fabric/shared/text-renderer-legacy/src/main/java")
         // FabricLocalTextGuard is shared with Fabric 1.0–1.8; 1.13+ has its own.
         java.srcDir rootProject.file("platforms/fabric/shared/guard-legacy/src/main/java")
+        // ChatGuiMixin and SignEditScreenMixin are shared with 1.0–1.8 and 1.13.0/1.13.1.
+        java.srcDir rootProject.file("platforms/fabric/shared/mixin-legacy-1.0-1.13/src/main/java")
         java.srcDir rootProject.file("platforms/fabric/shared/render-context-legacy/src/main/java")
         java.srcDir rootProject.file("platforms/fabric/shared/runtime-legacy/src/main/java")
         // UniversalTranslatorFabricClient is shared with Fabric 1.13.0/1.13.1; 1.13.2 keeps its
