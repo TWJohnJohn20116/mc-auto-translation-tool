@@ -122,6 +122,10 @@ sourceSets {
         // ForgeConfig and the other files every Forge tree shares live in the global Forge layer;
         // NeoForge compiles the Forge sources, so it needs that directory too.
         java.srcDir rootProject.file("platforms/forge/shared/common/src/main/java")
+        // RenderedTextBridge now lives in one shared Forge layer instead of each tree's common
+        // layer. The NeoForge targets reuse the Forge layers, so they have to add it explicitly.
+        java.srcDir new File(rootProject.file("platforms/forge/shared"),
+                "rendered-1.19.2-plus/src/main/java")
         java.srcDir new File(entryLayer, "src/main/java")
         forgeLayers.each { layer -> java.srcDir new File(layer, "src/main/java") }
         forgeExtraRoots.each { extra -> java.srcDir new File(extra, "src/main/java") }
