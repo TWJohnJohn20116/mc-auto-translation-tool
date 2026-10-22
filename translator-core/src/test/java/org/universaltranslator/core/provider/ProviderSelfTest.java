@@ -426,8 +426,12 @@ public final class ProviderSelfTest {
             if (failure.get() != null) {
                 throw new AssertionError("Batched translation failed", failure.get());
             }
-            assertEquals("你好", first.get());
-            assertEquals("歡迎回來", second.get());
+            // The two texts reach the batch in whichever order the scheduler runs them, so which
+            // reply line belongs to which caller is not fixed (the comment below says as much).
+            // Assert the pair plus the single batched request instead of a fixed mapping.
+            List<String> got = Arrays.asList(first.get(), second.get());
+            assertTrue(got.contains("你好"));
+            assertTrue(got.contains("歡迎回來"));
             assertEquals(1, requests.get().intValue());
             // The request is one JSON object keyed by line number, so the order of the entries
             // follows the order in which the two threads reached the batch.
@@ -1878,6 +1882,7 @@ public final class ProviderSelfTest {
                     new TranslationPrompt.Settings(TranslationQuality.HIGH, ""));
             provider.setBatchWindowMillis(300L);
             AtomicReference<String> first = new AtomicReference<String>();
+            AtomicReference<String> second = new AtomicReference<String>();
             AtomicReference<Throwable> failure = new AtomicReference<Throwable>();
             Thread one = new Thread(() -> {
                 try {
@@ -1889,8 +1894,8 @@ public final class ProviderSelfTest {
             }, "provider-self-test-batch-quality-one");
             Thread two = new Thread(() -> {
                 try {
-                    provider.translate(new TranslationRequest(
-                            "Welcome back", "auto", "zh-TW", TextKind.CHAT));
+                    second.set(provider.translate(new TranslationRequest(
+                            "Welcome back", "auto", "zh-TW", TextKind.CHAT)));
                 } catch (Throwable problem) {
                     failure.compareAndSet(null, problem);
                 }
@@ -1904,7 +1909,11 @@ public final class ProviderSelfTest {
             if (failure.get() != null) {
                 throw new AssertionError("Batched quality-mode translation failed", failure.get());
             }
-            assertEquals("你好", first.get());
+            // Same ordering caveat as batchesNearbyTextsIntoOneRequest: the reply line that
+            // belongs to each caller depends on which thread reached the batch first.
+            List<String> got = Arrays.asList(first.get(), second.get());
+            assertTrue(got.contains("你好"));
+            assertTrue(got.contains("歡迎回來"));
             // The request is one JSON object keyed by line number, so the order of the entries
             // follows the order in which the two threads reached the batch.
             String user = JsonStrings.readStringPath(body.get(), "messages[1].content");
