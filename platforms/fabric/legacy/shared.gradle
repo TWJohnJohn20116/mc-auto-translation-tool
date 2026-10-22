@@ -191,6 +191,11 @@ if (splitEnvironment) {
             if (!gameVersion.startsWith("1.20")) {
                 java.srcDir rootProject.file("platforms/fabric/shared/screen-mixin/src/client/java")
             }
+            // UniversalTranslatorFabricClient is identical for 1.14 through 1.16.4.
+            if (layers.contains("family/1.14-1.15-common")
+                    || layers.contains("family/1.16.0-1.16.4")) {
+                java.srcDir rootProject.file("platforms/fabric/shared/client-1.14-1.16.4/src/client/java")
+            }
             layers.each { layer ->
                 java.srcDir new File(rootForLayer(layer), "${layer}/src/client/java")
             }
@@ -224,6 +229,11 @@ if (splitEnvironment) {
             // screen lifecycle hooks it wraps changed in 1.20.
             if (!gameVersion.startsWith("1.20")) {
                 java.srcDir rootProject.file("platforms/fabric/shared/screen-mixin/src/client/java")
+            }
+            // UniversalTranslatorFabricClient is identical for 1.14 through 1.16.4.
+            if (layers.contains("family/1.14-1.15-common")
+                    || layers.contains("family/1.16.0-1.16.4")) {
+                java.srcDir rootProject.file("platforms/fabric/shared/client-1.14-1.16.4/src/client/java")
             }
             layers.each { layer ->
                 java.srcDir new File(rootForLayer(layer), "${layer}/src/client/java")
