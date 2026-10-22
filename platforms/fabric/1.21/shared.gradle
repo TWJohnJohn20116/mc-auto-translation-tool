@@ -111,6 +111,8 @@ sourceSets {
         }
         // TitleScreenMixin is shared with Fabric 1.19.3+ and 1.20.x.
         java.srcDir rootProject.file("platforms/fabric/shared/title-screen-1.19-1.21/src/client/java")
+        // Three small screen/HUD mixins are shared with Fabric 1.20.x.
+        java.srcDir rootProject.file("platforms/fabric/shared/mixin-1.20-1.21/src/client/java")
         // FabricLocalTextGuard is identical for 1.14 through 1.21; 26.x keeps its own copy
         // because it reads the chat field through the newer EditBox API.
         java.srcDir rootProject.file("platforms/fabric/shared/legacy-common/src/client/java")
