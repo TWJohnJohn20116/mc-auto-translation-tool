@@ -132,6 +132,12 @@ sourceSets {
             java.srcDir new File(rootProject.file("platforms/forge/shared"),
                     "local-guard-1.18.2-plus/src/main/java")
         }
+        // ForgeTranslationRuntime is shared between Forge 1.21.9+ and 26.x; NeoForge reuses the
+        // same layers, so the entrypoints that map onto them need it as well.
+        if (project.ext.neoforgeEntryLayer in ["1.21.9-1.21.11", "26.1-26.1.2", "26.2"]) {
+            java.srcDir new File(rootProject.file("platforms/forge/shared"),
+                    "runtime-1.21.9-plus/src/main/java")
+        }
         java.srcDir new File(entryLayer, "src/main/java")
         // UniversalTranslatorNeoForgeClient is identical for the 1.20.6 and 1.21-1.21.1 entrypoint
         // layers; the other layers differ in how they read the client state, so they keep their own.

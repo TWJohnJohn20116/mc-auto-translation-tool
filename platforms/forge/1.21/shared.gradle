@@ -38,6 +38,12 @@ sourceSets {
         // their own copies because they read the chat field through a different API.
         java.srcDir new File(rootProject.file("platforms/forge/shared"),
                 "local-guard-1.18.2-plus/src/main/java")
+        // ForgeTranslationRuntime is shared with the 26.x tree from 1.21.9 up; 1.21–1.21.8 keeps
+        // its own copy because the client-state accessors changed in 1.21.9.
+        if (family == "1.21.9-1.21.11") {
+            java.srcDir new File(rootProject.file("platforms/forge/shared"),
+                    "runtime-1.21.9-plus/src/main/java")
+        }
         java.srcDir new File(screensRoot, "src/main/java")
         java.srcDir new File(widgetsRoot, "src/main/java")
         sharedLayers.each { layer ->
