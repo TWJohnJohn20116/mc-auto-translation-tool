@@ -173,6 +173,9 @@ if (splitEnvironment) {
             // TranslationRenderContext is byte-identical in every Fabric tree from 1.14 up, so it
             // lives in one shared layer instead of one copy per tree.
             java.srcDir rootProject.file("platforms/fabric/shared/common/src/client/java")
+            // FabricTranslationRuntime is byte-identical for 1.14 through 1.20; 1.21 keeps its own
+            // pair (pre-1.21.9 / 1.21.9-plus) because the runtime splits there.
+            java.srcDir rootProject.file("platforms/fabric/shared/runtime-common/src/client/java")
             layers.each { layer ->
                 java.srcDir new File(rootForLayer(layer), "${layer}/src/client/java")
             }
@@ -189,6 +192,9 @@ if (splitEnvironment) {
             // TranslationRenderContext is byte-identical in every Fabric tree from 1.14 up, so it
             // lives in one shared layer instead of one copy per tree.
             java.srcDir rootProject.file("platforms/fabric/shared/common/src/client/java")
+            // FabricTranslationRuntime is byte-identical for 1.14 through 1.20; 1.21 keeps its own
+            // pair (pre-1.21.9 / 1.21.9-plus) because the runtime splits there.
+            java.srcDir rootProject.file("platforms/fabric/shared/runtime-common/src/client/java")
             layers.each { layer ->
                 java.srcDir new File(rootForLayer(layer), "${layer}/src/client/java")
             }
