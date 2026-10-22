@@ -218,23 +218,10 @@ public final class ProviderSelfTest {
         Thread thread = new Thread(() -> {
             try {
                 for (int index = 0; index < 3; index++) {
-                    try (Socket socket = server.accept()) {
-                        HttpRequest request = readRequest(socket.getInputStream(),
-                                "POST /v1/chat/completions HTTP/1.");
-                        requestLine.set(request.requestLine);
-                        requestBody.set(request.body);
-                        authorization.set(request.headers.get("authorization"));
-                        String response;
-                        if (index == 0) {
-                            response = "{\"choices\":[{\"message\":{\"content\":\"ping\"}}]}";
-                        } else if (index == 1) {
-                            // A relay's own error object behind HTTP 200 must not look healthy.
-                            response = "{\"error\":{\"message\":\"Insufficient Balance\"}}";
-                        } else {
-                            response = "<!DOCTYPE html><html>gateway</html>";
-                        }
-                        writeResponse(socket.getOutputStream(), 200, response);
-                    }
+                    HttpRequest request = serveProbeRequest(server, index);
+                    requestLine.set(request.requestLine);
+                    requestBody.set(request.body);
+                    authorization.set(request.headers.get("authorization"));
                 }
             } catch (Throwable failure) {
                 serverFailure.set(failure);
@@ -260,6 +247,30 @@ public final class ProviderSelfTest {
         }
         if (serverFailure.get() != null) {
             throw new AssertionError("Local probe test server failed", serverFailure.get());
+        }
+    }
+
+    /**
+     * Serves one request of the connection-test scenario and returns what the client sent.
+     *
+     * <p>The three answers are the three shapes a probe has to tell apart: a healthy reply, a
+     * relay's own error object behind HTTP 200, and a gateway's HTML page.
+     */
+    private static HttpRequest serveProbeRequest(ServerSocket server, int index) throws IOException {
+        try (Socket socket = server.accept()) {
+            HttpRequest request = readRequest(socket.getInputStream(),
+                    "POST /v1/chat/completions HTTP/1.");
+            String response;
+            if (index == 0) {
+                response = "{\"choices\":[{\"message\":{\"content\":\"ping\"}}]}";
+            } else if (index == 1) {
+                // A relay's own error object behind HTTP 200 must not look healthy.
+                response = "{\"error\":{\"message\":\"Insufficient Balance\"}}";
+            } else {
+                response = "<!DOCTYPE html><html>gateway</html>";
+            }
+            writeResponse(socket.getOutputStream(), 200, response);
+            return request;
         }
     }
 
@@ -632,28 +643,7 @@ public final class ProviderSelfTest {
         Thread serverThread = new Thread(() -> {
             try {
                 for (int index = 0; index < 3; index++) {
-                    try (Socket socket = server.accept()) {
-                        String body = readRequest(socket.getInputStream(),
-                                "POST /v1/chat/completions HTTP/1.").body;
-                        requests.set(Integer.valueOf(requests.get().intValue() + 1));
-                        String user = JsonStrings.readStringPath(body, "messages[1].content");
-                        String content;
-                        if (user != null && user.trim().startsWith("{")) {
-                            String key = "";
-                            Object parsedRequest = JsonStrings.parse(user);
-                            for (Map.Entry<?, ?> entry : ((Map<?, ?>) parsedRequest).entrySet()) {
-                                if ("keep me".equals(entry.getValue())) {
-                                    key = String.valueOf(entry.getKey());
-                                }
-                            }
-                            content = "{\"" + key + "\": \"KEPT\"}";
-                        } else {
-                            content = "SINGLE:" + user;
-                        }
-                        writeResponse(socket.getOutputStream(), 200,
-                                "{\"choices\":[{\"message\":{\"content\":"
-                                        + JsonStrings.quote(content) + "}}]}");
-                    }
+                    servePartialBatchRequest(server, requests);
                 }
             } catch (Throwable failure) {
                 serverFailure.set(failure);
@@ -706,6 +696,39 @@ public final class ProviderSelfTest {
     }
 
     /**
+     * Serves one request of the partial-batch scenario.
+     *
+     * <p>A JSON batch is answered with only the line whose value is {@code "keep me"}; anything
+     * else gets a single-line reply, which is how the provider learns the other two lines were
+     * missed and has to ask for them again.
+     */
+    private static void servePartialBatchRequest(ServerSocket server, AtomicReference<Integer> requests)
+            throws IOException {
+        try (Socket socket = server.accept()) {
+            String body = readRequest(socket.getInputStream(),
+                    "POST /v1/chat/completions HTTP/1.").body;
+            requests.set(Integer.valueOf(requests.get().intValue() + 1));
+            String user = JsonStrings.readStringPath(body, "messages[1].content");
+            String content;
+            if (user != null && user.trim().startsWith("{")) {
+                String key = "";
+                Object parsedRequest = JsonStrings.parse(user);
+                for (Map.Entry<?, ?> entry : ((Map<?, ?>) parsedRequest).entrySet()) {
+                    if ("keep me".equals(entry.getValue())) {
+                        key = String.valueOf(entry.getKey());
+                    }
+                }
+                content = "{\"" + key + "\": \"KEPT\"}";
+            } else {
+                content = "SINGLE:" + user;
+            }
+            writeResponse(socket.getOutputStream(), 200,
+                    "{\"choices\":[{\"message\":{\"content\":"
+                            + JsonStrings.quote(content) + "}}]}");
+        }
+    }
+
+    /**
      * The batch asks for a JSON object with the field this endpoint understands, and an endpoint that
      * answers 400 to that field is retried once without it and never asked again.
      */
@@ -717,23 +740,7 @@ public final class ProviderSelfTest {
         Thread serverThread = new Thread(() -> {
             try {
                 for (int index = 0; index < 3; index++) {
-                    try (Socket socket = server.accept()) {
-                        String body = readRequest(socket.getInputStream(),
-                                "POST /v1/chat/completions HTTP/1.").body;
-                        bodies.add(body);
-                        if (index == 0) {
-                            writeResponse(socket.getOutputStream(), 400,
-                                    "{\"error\":\"Unrecognized request argument supplied: "
-                                            + "response_format\"}");
-                            continue;
-                        }
-                        String content = index == 1
-                                ? "{\"1\": \"你好\", \"2\": \"歡迎回來\"}"
-                                : "{\"1\": \"再見\", \"2\": \"下次見\"}";
-                        writeResponse(socket.getOutputStream(), 200,
-                                "{\"choices\":[{\"message\":{\"content\":"
-                                        + JsonStrings.quote(content) + "}}]}");
-                    }
+                    serveJsonObjectRequest(server, bodies, index);
                 }
             } catch (Throwable failure) {
                 serverFailure.set(failure);
@@ -765,6 +772,34 @@ public final class ProviderSelfTest {
         }
         if (serverFailure.get() != null) {
             throw new AssertionError("Local JSON-output server failed", serverFailure.get());
+        }
+    }
+
+    /**
+     * Serves one request of the JSON-output scenario.
+     *
+     * <p>The first attempt is refused with the error a relay gives when it does not understand
+     * {@code response_format}; the retry and every later batch are answered with a numbered JSON
+     * object so the batch protocol has something to parse.
+     */
+    private static void serveJsonObjectRequest(ServerSocket server, List<String> bodies, int index)
+            throws IOException {
+        try (Socket socket = server.accept()) {
+            String body = readRequest(socket.getInputStream(),
+                    "POST /v1/chat/completions HTTP/1.").body;
+            bodies.add(body);
+            if (index == 0) {
+                writeResponse(socket.getOutputStream(), 400,
+                        "{\"error\":\"Unrecognized request argument supplied: "
+                                + "response_format\"}");
+                return;
+            }
+            String content = index == 1
+                    ? "{\"1\": \"你好\", \"2\": \"歡迎回來\"}"
+                    : "{\"1\": \"再見\", \"2\": \"下次見\"}";
+            writeResponse(socket.getOutputStream(), 200,
+                    "{\"choices\":[{\"message\":{\"content\":"
+                            + JsonStrings.quote(content) + "}}]}");
         }
     }
 
