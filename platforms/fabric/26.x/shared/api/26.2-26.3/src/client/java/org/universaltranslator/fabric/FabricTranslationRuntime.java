@@ -159,6 +159,19 @@ public final class FabricTranslationRuntime {
         }
     }
 
+    /**
+     * True when one of this mod's own screens is open.
+     *
+     * <p>Those screens must never translate their own labels, so every render path asks this. It
+     * takes {@code Object} on purpose: the accessor is {@code screen}, {@code currentScreen} or
+     * {@code gui.screen()} depending on the Minecraft version, and none of them needs a cast.
+     */
+    private static boolean isTranslatorScreen(Object screen) {
+        return screen instanceof UniversalTranslatorConfigScreen
+                || screen instanceof UniversalTranslatorDiagnosticsScreen
+                || screen instanceof UniversalTranslatorLlmConfigScreen;
+    }
+
     static String translateForRender(String original, TextKind kind) {
         RenderTranslationSession active = session;
         FabricConfig config = activeConfig;
@@ -166,9 +179,7 @@ public final class FabricTranslationRuntime {
         if (active == null || config == null || !config.allows(kind)
                 || (!config.translateVanilla && kind == TextKind.OTHER
                 && MinecraftContentScope.isVanillaScreen(FabricLocalTextGuard.currentScreen(client)))
-                || client.gui.screen() instanceof UniversalTranslatorConfigScreen
-                || client.gui.screen() instanceof UniversalTranslatorDiagnosticsScreen
-                || client.gui.screen() instanceof UniversalTranslatorLlmConfigScreen
+                || isTranslatorScreen(client.gui.screen())
                 || FabricLocalTextGuard.isLocalChatInput(client, original)
                 || RECENT_USER_TEXT.shouldPreserve(original)) {
             return original;
@@ -292,9 +303,7 @@ public final class FabricTranslationRuntime {
         FabricConfig config = activeConfig;
         Minecraft client = Minecraft.getInstance();
         if (active == null || config == null || !config.allows(kind)
-                || client.gui.screen() instanceof UniversalTranslatorConfigScreen
-                || client.gui.screen() instanceof UniversalTranslatorDiagnosticsScreen
-                || client.gui.screen() instanceof UniversalTranslatorLlmConfigScreen
+                || isTranslatorScreen(client.gui.screen())
                 || TranslationRenderContext.isTextInput()) {
             return originals;
         }
