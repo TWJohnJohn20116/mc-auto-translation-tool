@@ -141,8 +141,7 @@ public final class TranslationDiagnosticsSnapshot {
     }
 
     private static String localizedOnOff(boolean value, UiTranslator translator) {
-        return translator.translate(value
-                ? "value.universal_translator.on" : "value.universal_translator.off");
+        return translator.translate(UiTextKeys.onOff(value));
     }
 
     private String modelFileStatus() {

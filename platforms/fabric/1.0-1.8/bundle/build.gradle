@@ -34,9 +34,9 @@ processResources {
 jar {
     dependsOn implementationJars.values()
     supportedVersions.each { gameVersion -> from(implementationJars[gameVersion].flatMap { it.archiveFile }) { into "META-INF/jars"; rename { "universal-translator-${gameVersion}.jar" } } }
-    from(rootProject.file("LICENSE")) { rename { "LICENSE_universal_translator_bundle" } }
-    from(rootProject.file("docs/en/THIRD_PARTY_OFFLINE.md")) { rename { "THIRD_PARTY_OFFLINE.md" } }
 }
+ext.jarLicenseName = "LICENSE_universal_translator_bundle"
+apply from: rootProject.file("gradle/jar-contents.gradle")
 
 tasks.register("verifyBundle") {
     dependsOn jar

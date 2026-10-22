@@ -329,7 +329,7 @@ public final class LlamaCppOfflineProvider
                 "--host", "127.0.0.1",
                 "--port", Integer.toString(port),
                 "--alias", "universal-translator-local",
-                "--ctx-size", "1024",
+                "--ctx-size", Integer.toString(LoopbackContext.TOKENS),
                 "--parallel", "1",
                 "--threads", Integer.toString(threads),
                 "--threads-batch", Integer.toString(threads)));
