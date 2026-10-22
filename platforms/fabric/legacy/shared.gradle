@@ -196,6 +196,10 @@ if (splitEnvironment) {
                     || layers.contains("family/1.16.0-1.16.4")) {
                 java.srcDir rootProject.file("platforms/fabric/shared/client-1.14-1.16.4/src/client/java")
             }
+            // UniversalTranslatorFabricClient is identical for 1.16.5 and 1.17 as well.
+            if (layers.contains("family/1.16.5") || layers.contains("family/1.17")) {
+                java.srcDir rootProject.file("platforms/fabric/shared/client-1.16.5-1.17/src/client/java")
+            }
             // DrawContextMixin is identical for 1.20 and 1.21.0–1.21.5.
             if (layers.contains("family/1.20.1")) {
                 java.srcDir rootProject.file("platforms/fabric/shared/draw-context/src/client/java")
@@ -238,6 +242,10 @@ if (splitEnvironment) {
             if (layers.contains("family/1.14-1.15-common")
                     || layers.contains("family/1.16.0-1.16.4")) {
                 java.srcDir rootProject.file("platforms/fabric/shared/client-1.14-1.16.4/src/client/java")
+            }
+            // UniversalTranslatorFabricClient is identical for 1.16.5 and 1.17 as well.
+            if (layers.contains("family/1.16.5") || layers.contains("family/1.17")) {
+                java.srcDir rootProject.file("platforms/fabric/shared/client-1.16.5-1.17/src/client/java")
             }
             // DrawContextMixin is identical for 1.20 and 1.21.0–1.21.5.
             if (layers.contains("family/1.20.1")) {
