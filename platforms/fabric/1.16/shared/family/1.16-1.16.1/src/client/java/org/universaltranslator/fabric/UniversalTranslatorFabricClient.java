@@ -15,6 +15,7 @@ import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.LogManager;
 import org.universaltranslator.core.TranslationResult;
 import org.universaltranslator.core.TranslationStatusLocalizer;
+import org.universaltranslator.core.LogMessages;
 
 /** Fabric bootstrap. Capture mixins are added incrementally after mapping verification. */
 public final class UniversalTranslatorFabricClient implements ClientModInitializer {
@@ -103,7 +104,7 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
                     FabricConfig config = FabricConfig.load(FabricLoader.getInstance().getConfigDir());
                     client.openScreen(new UniversalTranslatorConfigScreen(client.currentScreen, config));
                 } catch (Exception exception) {
-                    LOGGER.error("Could not open MC Auto Translation Tool settings", exception);
+                    LOGGER.error(LogMessages.SETTINGS_OPEN_FAILED, exception);
                 }
             }
         });
@@ -204,7 +205,7 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
             FabricConfig config = FabricConfig.load(FabricLoader.getInstance().getConfigDir());
             client.openScreen(new UniversalTranslatorConfigScreen(parent, config));
         } catch (Exception exception) {
-            LOGGER.error("Could not open MC Auto Translation Tool settings", exception);
+            LOGGER.error(LogMessages.SETTINGS_OPEN_FAILED, exception);
         }
     }
 

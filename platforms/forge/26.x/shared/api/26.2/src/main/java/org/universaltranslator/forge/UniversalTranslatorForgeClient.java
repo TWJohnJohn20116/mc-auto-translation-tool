@@ -14,6 +14,7 @@ import net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent;
 import net.minecraftforge.fml.loading.FMLPaths;
 import org.lwjgl.glfw.GLFW;
 import org.universaltranslator.core.TranslationResult;
+import org.universaltranslator.core.LogMessages;
 
 /** Forge client lifecycle and input integration. */
 public final class UniversalTranslatorForgeClient {
@@ -131,7 +132,7 @@ public final class UniversalTranslatorForgeClient {
                     (net.minecraft.client.gui.screens.Screen) parent, config));
         } catch (Exception exception) {
             UniversalTranslatorForgeMod.LOGGER.error(
-                    "Could not open MC Auto Translation Tool settings", exception);
+                    LogMessages.SETTINGS_OPEN_FAILED, exception);
         }
     }
 
@@ -141,7 +142,7 @@ public final class UniversalTranslatorForgeClient {
             client.gui.setScreen(new UniversalTranslatorConfigScreen(client.gui.screen(), config));
         } catch (Exception exception) {
             UniversalTranslatorForgeMod.LOGGER.error(
-                    "Could not open MC Auto Translation Tool settings", exception);
+                    LogMessages.SETTINGS_OPEN_FAILED, exception);
             client.gui.hud.setOverlayMessage(
                     Component.translatable("message.universal_translator.settings_open_failed"), false);
         }

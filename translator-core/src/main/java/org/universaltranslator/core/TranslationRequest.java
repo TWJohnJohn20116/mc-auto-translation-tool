@@ -11,7 +11,7 @@ public final class TranslationRequest {
 
     public TranslationRequest(String text, String sourceLanguage, String targetLanguage, TextKind kind) {
         this.text = Objects.requireNonNull(text, "text");
-        this.sourceLanguage = sourceLanguage == null ? "auto" : sourceLanguage;
+        this.sourceLanguage = sourceLanguage == null ? TargetLanguage.AUTO : sourceLanguage;
         this.targetLanguage = Objects.requireNonNull(targetLanguage, "targetLanguage");
         this.kind = kind == null ? TextKind.OTHER : kind;
     }

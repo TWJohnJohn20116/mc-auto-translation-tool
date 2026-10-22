@@ -139,7 +139,7 @@ public final class TranslationCoordinator implements AutoCloseable {
             return CompletableFuture.completedFuture(TranslationResult.unchanged(text));
         }
 
-        final String effectiveSource = sourceLanguage == null ? "auto" : sourceLanguage.trim();
+        final String effectiveSource = sourceLanguage == null ? TargetLanguage.AUTO : sourceLanguage.trim();
         final TextKind effectiveKind = kind == null ? TextKind.OTHER : kind;
 
         // Keep all regex construction, cache I/O and provider work off the render thread.

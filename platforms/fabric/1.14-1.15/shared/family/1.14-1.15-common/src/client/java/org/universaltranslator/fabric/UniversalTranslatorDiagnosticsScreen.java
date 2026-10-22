@@ -9,6 +9,7 @@ import org.universaltranslator.core.DebugLog;
 import org.universaltranslator.core.DiagnosticsBundleExporter;
 import org.universaltranslator.core.TranslationDiagnosticsSnapshot;
 import org.universaltranslator.core.TranslationStats;
+import org.universaltranslator.core.UiTextKeys;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -86,8 +87,7 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
             return;
         }
         debugButton.setMessage(new TranslatableText("screen.universal_translator.debug.mode",
-                tr(debugEnabled
-                        ? "value.universal_translator.on" : "value.universal_translator.off")));
+                tr(UiTextKeys.onOff(debugEnabled))));
     }
 
     private void refreshPageLabels() {
@@ -124,8 +124,7 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
             DebugLog.global().configure(
                     configFile.resolveSibling(DebugLog.FILE_NAME), debugEnabled);
             exportStatus = tr("screen.universal_translator.debug.changed",
-                    tr(debugEnabled
-                            ? "value.universal_translator.on" : "value.universal_translator.off"));
+                    tr(UiTextKeys.onOff(debugEnabled)));
             exportFailed = false;
         } catch (Exception failure) {
             String message = failure.getMessage();
