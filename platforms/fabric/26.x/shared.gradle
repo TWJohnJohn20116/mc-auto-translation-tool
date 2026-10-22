@@ -80,6 +80,8 @@ sourceSets {
     client {
         java.srcDir new File(sharedRoot, "common/src/client/java")
         java.srcDir rootProject.file("platforms/fabric/shared/settings/modern/src/main/java")
+        // Byte-identical in every Fabric tree from 1.14 up; see platforms/fabric/shared/common.
+        java.srcDir rootProject.file("platforms/fabric/shared/common/src/client/java")
         layers.each { layer ->
             java.srcDir new File(sharedRoot, "${layer}/src/client/java")
         }
