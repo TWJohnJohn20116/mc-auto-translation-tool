@@ -176,6 +176,7 @@ if (splitEnvironment) {
             // FabricTranslationRuntime is byte-identical for 1.14 through 1.20; 1.21 keeps its own
             // pair (pre-1.21.9 / 1.21.9-plus) because the runtime splits there.
             java.srcDir rootProject.file("platforms/fabric/shared/runtime-common/src/client/java")
+            java.srcDir rootProject.file("platforms/fabric/shared/legacy-common/src/client/java")
             layers.each { layer ->
                 java.srcDir new File(rootForLayer(layer), "${layer}/src/client/java")
             }
@@ -195,6 +196,7 @@ if (splitEnvironment) {
             // FabricTranslationRuntime is byte-identical for 1.14 through 1.20; 1.21 keeps its own
             // pair (pre-1.21.9 / 1.21.9-plus) because the runtime splits there.
             java.srcDir rootProject.file("platforms/fabric/shared/runtime-common/src/client/java")
+            java.srcDir rootProject.file("platforms/fabric/shared/legacy-common/src/client/java")
             layers.each { layer ->
                 java.srcDir new File(rootForLayer(layer), "${layer}/src/client/java")
             }
