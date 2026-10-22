@@ -426,8 +426,12 @@ public final class ProviderSelfTest {
             if (failure.get() != null) {
                 throw new AssertionError("Batched translation failed", failure.get());
             }
-            assertEquals("你好", first.get());
-            assertEquals("歡迎回來", second.get());
+            // The two texts reach the batch in whichever order the scheduler runs them, so which
+            // reply line belongs to which caller is not fixed (the comment below says as much).
+            // Assert the pair plus the single batched request instead of a fixed mapping.
+            List<String> got = Arrays.asList(first.get(), second.get());
+            assertTrue(got.contains("你好"), got.toString());
+            assertTrue(got.contains("歡迎回來"), got.toString());
             assertEquals(1, requests.get().intValue());
             // The request is one JSON object keyed by line number, so the order of the entries
             // follows the order in which the two threads reached the batch.
