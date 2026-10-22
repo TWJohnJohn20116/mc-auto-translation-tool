@@ -204,6 +204,10 @@ if (splitEnvironment) {
             if (layers.contains("family/1.20.1")) {
                 java.srcDir rootProject.file("platforms/fabric/shared/draw-context/src/client/java")
             }
+            // UniversalTranslatorFabricClient is identical for 1.20.1 and 1.21.0–1.21.8.
+            if (layers.contains("family/1.20.1")) {
+                java.srcDir rootProject.file("platforms/fabric/shared/client-1.20-1.21/src/client/java")
+            }
             layers.each { layer ->
                 java.srcDir new File(rootForLayer(layer), "${layer}/src/client/java")
             }
@@ -250,6 +254,10 @@ if (splitEnvironment) {
             // DrawContextMixin is identical for 1.20 and 1.21.0–1.21.5.
             if (layers.contains("family/1.20.1")) {
                 java.srcDir rootProject.file("platforms/fabric/shared/draw-context/src/client/java")
+            }
+            // UniversalTranslatorFabricClient is identical for 1.20.1 and 1.21.0–1.21.8.
+            if (layers.contains("family/1.20.1")) {
+                java.srcDir rootProject.file("platforms/fabric/shared/client-1.20-1.21/src/client/java")
             }
             layers.each { layer ->
                 java.srcDir new File(rootForLayer(layer), "${layer}/src/client/java")

@@ -101,6 +101,10 @@ sourceSets {
         if (layers.contains("draw/1.21-1.21.5")) {
             java.srcDir rootProject.file("platforms/fabric/shared/draw-context/src/client/java")
         }
+        // UniversalTranslatorFabricClient is shared with Fabric 1.20.1; 1.21.9+ has its own.
+        if (layers.contains("runtime/pre-1.21.9")) {
+            java.srcDir rootProject.file("platforms/fabric/shared/client-1.20-1.21/src/client/java")
+        }
         // FabricLocalTextGuard is identical for 1.14 through 1.21; 26.x keeps its own copy
         // because it reads the chat field through the newer EditBox API.
         java.srcDir rootProject.file("platforms/fabric/shared/legacy-common/src/client/java")
