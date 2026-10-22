@@ -145,13 +145,6 @@ sourceSets {
             java.srcDir new File(rootProject.file("platforms/neoforge/shared"),
                     "entrypoints/common/src/main/java")
         }
-        // UniversalTranslatorNeoForgeMod is identical for 1.21.2+; 1.20.2–1.20.6 still use the old
-        // @Mod annotation, and 1.21-1.21.1 keeps its own copy so that entrypoint layer stays valid.
-        if (project.ext.neoforgeEntryLayer in ["1.21.2-1.21.8",
-                "1.21.9-1.21.11", "26.1-26.1.2", "26.2"]) {
-            java.srcDir new File(rootProject.file("platforms/neoforge/shared"),
-                    "entrypoints/mod-common/src/main/java")
-        }
         forgeLayers.each { layer -> java.srcDir new File(layer, "src/main/java") }
         forgeExtraRoots.each { extra -> java.srcDir new File(extra, "src/main/java") }
         forgeScreenRoots.each { root -> java.srcDir new File(root, "src/main/java") }
