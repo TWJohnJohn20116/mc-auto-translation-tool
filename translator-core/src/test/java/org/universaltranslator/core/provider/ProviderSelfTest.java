@@ -632,28 +632,7 @@ public final class ProviderSelfTest {
         Thread serverThread = new Thread(() -> {
             try {
                 for (int index = 0; index < 3; index++) {
-                    try (Socket socket = server.accept()) {
-                        String body = readRequest(socket.getInputStream(),
-                                "POST /v1/chat/completions HTTP/1.").body;
-                        requests.set(Integer.valueOf(requests.get().intValue() + 1));
-                        String user = JsonStrings.readStringPath(body, "messages[1].content");
-                        String content;
-                        if (user != null && user.trim().startsWith("{")) {
-                            String key = "";
-                            Object parsedRequest = JsonStrings.parse(user);
-                            for (Map.Entry<?, ?> entry : ((Map<?, ?>) parsedRequest).entrySet()) {
-                                if ("keep me".equals(entry.getValue())) {
-                                    key = String.valueOf(entry.getKey());
-                                }
-                            }
-                            content = "{\"" + key + "\": \"KEPT\"}";
-                        } else {
-                            content = "SINGLE:" + user;
-                        }
-                        writeResponse(socket.getOutputStream(), 200,
-                                "{\"choices\":[{\"message\":{\"content\":"
-                                        + JsonStrings.quote(content) + "}}]}");
-                    }
+                    servePartialBatchRequest(server, requests);
                 }
             } catch (Throwable failure) {
                 serverFailure.set(failure);
@@ -702,6 +681,39 @@ public final class ProviderSelfTest {
         }
         if (serverFailure.get() != null) {
             throw new AssertionError("Local partial-batch server failed", serverFailure.get());
+        }
+    }
+
+    /**
+     * Serves one request of the partial-batch scenario.
+     *
+     * <p>A JSON batch is answered with only the line whose value is {@code "keep me"}; anything
+     * else gets a single-line reply, which is how the provider learns the other two lines were
+     * missed and has to ask for them again.
+     */
+    private static void servePartialBatchRequest(ServerSocket server, AtomicReference<Integer> requests)
+            throws IOException {
+        try (Socket socket = server.accept()) {
+            String body = readRequest(socket.getInputStream(),
+                    "POST /v1/chat/completions HTTP/1.").body;
+            requests.set(Integer.valueOf(requests.get().intValue() + 1));
+            String user = JsonStrings.readStringPath(body, "messages[1].content");
+            String content;
+            if (user != null && user.trim().startsWith("{")) {
+                String key = "";
+                Object parsedRequest = JsonStrings.parse(user);
+                for (Map.Entry<?, ?> entry : ((Map<?, ?>) parsedRequest).entrySet()) {
+                    if ("keep me".equals(entry.getValue())) {
+                        key = String.valueOf(entry.getKey());
+                    }
+                }
+                content = "{\"" + key + "\": \"KEPT\"}";
+            } else {
+                content = "SINGLE:" + user;
+            }
+            writeResponse(socket.getOutputStream(), 200,
+                    "{\"choices\":[{\"message\":{\"content\":"
+                            + JsonStrings.quote(content) + "}}]}");
         }
     }
 
