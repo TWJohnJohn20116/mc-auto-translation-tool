@@ -177,6 +177,10 @@ if (splitEnvironment) {
             // pair (pre-1.21.9 / 1.21.9-plus) because the runtime splits there.
             java.srcDir rootProject.file("platforms/fabric/shared/runtime-common/src/client/java")
             java.srcDir rootProject.file("platforms/fabric/shared/legacy-common/src/client/java")
+            // 1.19–1.20 share RenderedTextBridge with 1.21; 1.14–1.18 use their own copies.
+            if (layers.contains("rendered/1.19.2-plus")) {
+                java.srcDir rootProject.file("platforms/fabric/shared/rendered-common/src/client/java")
+            }
             layers.each { layer ->
                 java.srcDir new File(rootForLayer(layer), "${layer}/src/client/java")
             }
@@ -197,6 +201,10 @@ if (splitEnvironment) {
             // pair (pre-1.21.9 / 1.21.9-plus) because the runtime splits there.
             java.srcDir rootProject.file("platforms/fabric/shared/runtime-common/src/client/java")
             java.srcDir rootProject.file("platforms/fabric/shared/legacy-common/src/client/java")
+            // 1.19–1.20 share RenderedTextBridge with 1.21; 1.14–1.18 use their own copies.
+            if (layers.contains("rendered/1.19.2-plus")) {
+                java.srcDir rootProject.file("platforms/fabric/shared/rendered-common/src/client/java")
+            }
             layers.each { layer ->
                 java.srcDir new File(rootForLayer(layer), "${layer}/src/client/java")
             }
