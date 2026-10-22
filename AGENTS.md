@@ -378,6 +378,19 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   只在 `legacy-targets.yml` 編譯，PR 的 `主要建置` 完全看不到它們。改到那些層之後要跑
   `gh workflow run legacy-targets.yml --ref <branch>` 並確認 21 個目標全綠，否則會等到每週排程
   才發現紅燈（2026-10-22 就差點把未編譯過的 `legacy-common` 改動合進 `main`）。
+- **NeoForge 複用 Forge 的層**：`neoforgeForgeLayers`（各版本 `build.gradle`）決定 NeoForge 從哪幾個
+  `platforms/forge/<樹>/shared` 層取 Java 原始碼。把某個類別從那些層搬到新的共用層時，**必須同時**
+  在 `platforms/neoforge/shared.gradle` 掛上新層（有例外版本時用 `neoforgeEntryLayer` 或
+  `sourceLayer` 條件），並在 `platforms/neoforge/1.20.1/build.gradle` 這個手寫 `srcDirs` 也補一行。
+  2026-10-22 就是漏了這一步，讓 4 個 neoforge job 全紅（#141）。
+- **測試裡的「伺服器執行緒 + 客戶端斷言」有兩個時序陷阱**，2026-10-22 各踩一次：
+  1. `AtomicReference.set(...)` 必須在寫出回應**之前**。客戶端一收到回應就解除阻塞並斷言，
+     之後才設的值會是 `null`（`ProviderSelfTest.serveProbeRequest`，#141）。
+  2. 兩個執行緒同時送文本時，**哪一行對應哪個呼叫者不確定**。服務端若回固定字串，就不能斷言
+     `first.get() == "你好"`，要斷言「兩個翻譯都出現」＋「請求只合併一次」
+     （`batchesNearbyTextsIntoOneRequest`、`describesTheJsonBatchProtocolInEveryQualityMode`，#150）。
+- **`ProviderSelfTest` 的斷言輔助只有單參數版本**：`assertTrue(boolean)`、`assertEquals(Object, Object)`、
+  `assertFalse(boolean)`。寫 `assertTrue(cond, message)` 會編譯失敗（#150）。
 - `website/` 用 pnpm 11（CI 以 `corepack enable` 讀 `package.json` 的 `packageManager` 決定版本）。
   **pnpm 11 不再讀 `package.json` 的 `pnpm` 欄位**：`overrides`、`allowBuilds` 這類設定要放
   `website/pnpm-workspace.yaml`，放進 `package.json` 只會被靜默忽略（僅吐一行 WARN）。
