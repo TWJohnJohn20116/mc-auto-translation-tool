@@ -20,6 +20,12 @@ sourceSets {
         // platforms/forge/shared/rendered-1.19.2-plus.
         java.srcDir new File(rootProject.file("platforms/forge/shared"),
                 "rendered-1.19.2-plus/src/main/java")
+        // ForgeLocalTextGuard is shared with Forge 1.18.2+ and 1.21; 26.2 reads the chat field
+        // through client.gui.screen() and keeps its own copy.
+        if (sourceLayer == "api/26.1-26.1.2") {
+            java.srcDir new File(rootProject.file("platforms/forge/shared"),
+                    "local-guard-1.18.2-plus/src/main/java")
+        }
         java.srcDir new File(sharedRoot, "${sourceLayer}/src/main/java")
         resources.srcDir new File(sharedRoot, "common/src/main/resources")
     }
