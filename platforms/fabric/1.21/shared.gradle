@@ -89,6 +89,13 @@ sourceSets {
     client {
         java.srcDir new File(sharedRoot, "common/src/client/java")
         java.srcDir rootProject.file("platforms/fabric/shared/settings/modern/src/main/java")
+        // Byte-identical in every Fabric tree from 1.14 up; see platforms/fabric/shared/common.
+        java.srcDir rootProject.file("platforms/fabric/shared/common/src/client/java")
+        // 1.21 through 1.21.8 share the runtime with the legacy trees; 1.21.9+ has its own copy
+        // in runtime/1.21.9-plus, so the shared layer is only added for the pre-1.21.9 layer.
+        if (layers.contains("runtime/pre-1.21.9")) {
+            java.srcDir rootProject.file("platforms/fabric/shared/runtime-common/src/client/java")
+        }
         // The settings screens are shared with Fabric 1.20.x as well, so they sit in their own layer.
         java.srcDir new File(sharedRoot, "screens/1.20.1-1.21.11/src/client/java")
         layers.each { layer ->
