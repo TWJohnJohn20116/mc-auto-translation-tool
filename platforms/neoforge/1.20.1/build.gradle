@@ -45,6 +45,9 @@ sourceSets {
                 rootProject.file("platforms/forge/modern/1.20.1/src/main/java"),
                 new File(forgeLegacyShared, "common/src/main/java"),
                 new File(forgeLegacyShared, "family/1.19.2-plus/src/main/java"),
+                // RenderedTextBridge moved to one shared Forge layer; see rendered-1.19.2-plus.
+                new File(rootProject.file("platforms/forge/shared"),
+                        "rendered-1.19.2-plus/src/main/java"),
                 new File(forgeScreenShared, "src/main/java"),
                 new File(rootProject.file("platforms/forge/shared/widgets/1.20.1-1.21.11"), "src/main/java"),
                 // ForgeConfig and the other files every Forge tree shares live in the global layer.
