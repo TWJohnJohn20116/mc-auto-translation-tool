@@ -34,6 +34,10 @@ sourceSets {
         // platforms/forge/shared/rendered-1.19.2-plus.
         java.srcDir new File(rootProject.file("platforms/forge/shared"),
                 "rendered-1.19.2-plus/src/main/java")
+        // ForgeLocalTextGuard is shared with Forge 1.18.2+ and 26.1–26.1.2; 1.16.5 and 26.2 keep
+        // their own copies because they read the chat field through a different API.
+        java.srcDir new File(rootProject.file("platforms/forge/shared"),
+                "local-guard-1.18.2-plus/src/main/java")
         java.srcDir new File(screensRoot, "src/main/java")
         java.srcDir new File(widgetsRoot, "src/main/java")
         sharedLayers.each { layer ->
