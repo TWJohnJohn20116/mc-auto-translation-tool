@@ -4,6 +4,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.IOException;
+import java.io.PushbackInputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -12,6 +13,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.Map;
+import java.util.zip.GZIPInputStream;
 import org.universaltranslator.core.UserAgent;
 
 /** Bounded Java 8 HTTP client used to avoid shipping a large networking dependency. */
@@ -78,6 +80,9 @@ public final class HttpJsonClient {
                         ? "application/json; charset=utf-8" : contentType.trim());
             }
             connection.setRequestProperty("User-Agent", UserAgent.VALUE);
+            // A translation reply is a few kilobytes of JSON that compresses to roughly a third, and
+            // this is a per-request cost on every provider call.
+            connection.setRequestProperty("Accept-Encoding", "gzip");
             if (headers != null) {
                 for (Map.Entry<String, String> header : headers.entrySet()) {
                     if (header.getKey() != null && header.getValue() != null) {
@@ -98,7 +103,7 @@ public final class HttpJsonClient {
             InputStream stream = status >= 200 && status < 300
                     ? connection.getInputStream()
                     : connection.getErrorStream();
-            String response = stream == null ? "" : readBounded(stream);
+            String response = stream == null ? "" : readBounded(decoded(stream, connection.getContentEncoding()));
             if (status < 200 || status >= 300) {
                 String providerError = JsonStrings.readStringField(response, "error");
                 if (providerError == null) {
@@ -121,6 +126,37 @@ public final class HttpJsonClient {
                 connection.disconnect();
             }
         }
+    }
+
+    /**
+     * Unwraps a compressed response body.
+     *
+     * <p>The encoding is taken from the header, and the stream is also sniffed for the gzip magic
+     * number: a provider behind a proxy can return a gzipped body while the header is dropped, and a
+     * translation that fails because of a missing header would look like a broken endpoint. The
+     * sniffed bytes are pushed back so a plain body is read unchanged.
+     */
+    private static InputStream decoded(InputStream stream, String contentEncoding) throws IOException {
+        if (contentEncoding != null && contentEncoding.toLowerCase(java.util.Locale.ROOT).contains("gzip")) {
+            return new GZIPInputStream(stream);
+        }
+        PushbackInputStream probe = new PushbackInputStream(stream, 2);
+        byte[] head = new byte[2];
+        int read = 0;
+        while (read < head.length) {
+            int count = probe.read(head, read, head.length - read);
+            if (count < 0) {
+                break;
+            }
+            read += count;
+        }
+        if (read == head.length && (head[0] & 0xFF) == 0x1F && (head[1] & 0xFF) == 0x8B) {
+            return new GZIPInputStream(probe);
+        }
+        if (read > 0) {
+            probe.unread(head, 0, read);
+        }
+        return probe;
     }
 
     /**

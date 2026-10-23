@@ -26,6 +26,19 @@ public final class LanguageHeuristics {
     }
 
     public static boolean shouldTranslate(String text, String targetLanguage) {
+        return shouldTranslateToTarget(text, isChineseTarget(targetLanguage));
+    }
+
+    /**
+     * The same check with the target-language test already resolved.
+     *
+     * <p>The render path calls this for every visible string on every frame, so it must not
+     * re-normalize the language identifier per call; the identifier is fixed for the lifetime of a
+     * session, which makes the boolean a per-session constant.
+     *
+     * @param chineseTarget whether {@code targetLanguage} names a Chinese variant
+     */
+    public static boolean shouldTranslateToTarget(String text, boolean chineseTarget) {
         if (text == null || text.trim().isEmpty()) {
             return false;
         }
@@ -56,7 +69,7 @@ public final class LanguageHeuristics {
         }
         // Mixed Chinese/Latin labels still need their Latin portion translated. Existing Han
         // runs are protected later, so skip only when every detected letter is already Han.
-        if (isChineseTarget(targetLanguage) && han == letters) {
+        if (chineseTarget && han == letters) {
             return false;
         }
         return true;
@@ -89,7 +102,8 @@ public final class LanguageHeuristics {
                 || (value >= '\uf900' && value <= '\ufaff');
     }
 
-    private static boolean isChineseTarget(String language) {
+    /** True when {@code language} is {@code zh} or a {@code zh-*} variant. */
+    public static boolean isChineseTarget(String language) {
         if (language == null) {
             return false;
         }

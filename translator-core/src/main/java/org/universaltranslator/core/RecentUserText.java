@@ -39,6 +39,11 @@ public final class RecentUserText {
     }
 
     public synchronized boolean shouldPreserve(String renderedText) {
+        // The queue is empty for almost every frame of a normal session, so it is tested before the
+        // normalization allocates a copy of the rendered line.
+        if (entries.isEmpty()) {
+            return false;
+        }
         String rendered = normalize(renderedText);
         if (rendered.isEmpty()) {
             return false;

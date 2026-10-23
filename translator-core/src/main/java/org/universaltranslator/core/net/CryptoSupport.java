@@ -27,7 +27,7 @@ public final class CryptoSupport {
     }
 
     public static String sha256Hex(String value) {
-        return hex(digest("SHA-256", utf8(value)));
+        return hex(sha256(utf8(value)));
     }
 
     public static String sha256Base64(String value) {
@@ -35,7 +35,7 @@ public final class CryptoSupport {
     }
 
     public static String sha256Hex(byte[] value) {
-        return hex(digest("SHA-256", value));
+        return hex(sha256(value));
     }
 
     public static String hmacSha1Base64(String secret, String value) {
@@ -98,6 +98,35 @@ public final class CryptoSupport {
             result.append(Character.forDigit(item & 0x0f, 16));
         }
         return result.toString();
+    }
+
+    /**
+     * One {@code MessageDigest} per thread.
+     *
+     * <p>{@code getInstance} resolves the algorithm through the JCA providers on every call, and the
+     * persistent cache hashes a key on every lookup, so the lookup moved out of the hot path. A
+     * digest instance is not thread safe, which is why it cannot be a single static field.
+     */
+    private static final ThreadLocal<MessageDigest> SHA256 = new ThreadLocal<MessageDigest>() {
+        @Override
+        protected MessageDigest initialValue() {
+            return digestInstance("SHA-256");
+        }
+    };
+
+    private static MessageDigest digestInstance(String algorithm) {
+        try {
+            return MessageDigest.getInstance(algorithm);
+        } catch (GeneralSecurityException exception) {
+            throw new IllegalStateException(algorithm + " is unavailable", exception);
+        }
+    }
+
+    private static byte[] sha256(byte[] value) {
+        MessageDigest digest = SHA256.get();
+        // A ThreadLocal digest is reused, so it must not carry state from the previous call.
+        digest.reset();
+        return digest.digest(value);
     }
 
     private static byte[] digest(String algorithm, byte[] value) {
