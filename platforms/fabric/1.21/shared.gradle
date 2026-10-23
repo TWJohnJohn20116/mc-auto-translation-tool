@@ -91,6 +91,9 @@ sourceSets {
         java.srcDir rootProject.file("platforms/fabric/shared/settings/modern/src/main/java")
         // Byte-identical in every Fabric tree from 1.14 up; see platforms/fabric/shared/common.
         java.srcDir rootProject.file("platforms/fabric/shared/common/src/client/java")
+        // FabricTranslationRuntimeBase is the single copy of the runtime body every Fabric tree
+        // shares; each tree keeps only its generation-specific FabricTranslationRuntime.
+        java.srcDir rootProject.file("platforms/fabric/shared/base/src/main/java")
         // 1.21 through 1.21.8 share the runtime with the legacy trees; 1.21.9+ has its own copy
         // in runtime/1.21.9-plus, so the shared layer is only added for the pre-1.21.9 layer.
         if (layers.contains("runtime/pre-1.21.9")) {
