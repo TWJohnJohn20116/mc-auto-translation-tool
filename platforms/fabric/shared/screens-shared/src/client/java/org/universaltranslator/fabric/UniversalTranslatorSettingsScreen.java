@@ -283,7 +283,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
             updateTabVisibility();
         }).dimensions(layout.tabX(4), layout.tabY(), layout.tabWidth(), 20).build());
 
-        // --- Tab 1: General (常規) ---
+        // --- Tab 1：常規 ---
         this.enabledButton = addSettingButton(of(emptyStr(), button -> {
             enabled = !enabled;
             refreshLabels();
@@ -323,7 +323,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
             }
         }).dimensions(left, layout.contentRow(3), layout.totalWidth, 20).build());
 
-        // --- Tab 2: Scopes (範圍) ---
+        // --- Tab 2：範圍 ---
         this.chatButton = addSettingButton(of(emptyStr(), button -> {
             translateChat = !translateChat;
             refreshLabels();
@@ -356,7 +356,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         this.blockedKeywords.setText(blockedKeywordsValue);
         this.blockedKeywords.setSuggestion(tr("screen.universal_translator.blocked_keywords_hint"));
 
-        // --- Tab 3: Engine (引擎) ---
+        // --- Tab 3：引擎 ---
         // The engine rows are centred in the free band (see engineRow) so the tab does not sit in
         // the top third of an otherwise empty panel, and every row is reachable without moving the
         // shared Save/Cancel row that the other tabs and the HUD preview depend on.
@@ -446,7 +446,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
                 .dimensions(layout.right + layout.buttonWidth - promptApplyWidth, engineRow(4),
                         promptApplyWidth, 20).build());
 
-        // --- Tab 4: Outgoing (傳送) ---
+        // --- Tab 4：傳送 ---
         this.outgoingButton = addSettingButton(of(emptyStr(), button -> {
             translateOutgoing = !translateOutgoing;
             refreshLabels();
@@ -456,7 +456,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
             openSelection = SettingsSelectionList.Kind.OUTGOING_LANGUAGE;
         }).dimensions(left, layout.contentRow(1), layout.totalWidth, 20).build());
 
-        // --- Tab 5: HUD (抬頭顯示) ---
+        // --- Tab 5：抬頭顯示 ---
         this.hudIndicatorButton = addSettingButton(of(emptyStr(), button -> {
             hudIndicator = !hudIndicator;
             refreshLabels();
@@ -714,9 +714,9 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         tabHudButton.setMessage(tabTitle("screen.universal_translator.tab.hud", activeTab == Tab.HUD));
     }
 
-    private Text tabTitle(String key, boolean active) {
+    private String tabTitle(String key, boolean active) {
         String label = tr(key);
-        return lit(active ? "蝳宴蝳峽[ " + label + " ]" : "蝳?" + label);
+        return lit(active ? "§b§l[ " + label + " ]" : "§7" + label);
     }
 
     private String onOff(boolean value) {
@@ -1024,7 +1024,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
                 list.panelRight() + 1, list.panelBottom + 1, 0xFF55D6FF);
         fillRect(canvas, list.panelLeft(), list.panelTop,
                 list.panelRight(), list.panelBottom, 0xF018202A);
-        drawCentered(canvas, textRenderer,
+        drawCentered(canvas, this.font,
                 trStr(selectionTitleKey()), width / 2, list.panelTop + 9, 0xFFFFFFFF);
         for (int index = 0; index < values.length; index++) {
             int x = list.x(index);
@@ -1034,7 +1034,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
             boolean selected = values[index].equalsIgnoreCase(selectionValue());
             fillRect(canvas, x, y, x + list.buttonWidth, y + list.buttonHeight,
                     hovered ? 0xFF3B6178 : selected ? 0xFF28533D : 0xFF303844);
-            drawCentered(canvas, textRenderer,
+            drawCentered(canvas, this.font,
                     lit(SettingsSelectionList.displayName(openSelection, values[index])),
                     x + list.buttonWidth / 2, y + Math.max(1, (list.buttonHeight - 8) / 2),
                     selected ? 0xFF55FF88 : 0xFFFFFFFF);
