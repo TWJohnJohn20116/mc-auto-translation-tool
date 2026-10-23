@@ -103,7 +103,7 @@ public final class HttpJsonClient {
             InputStream stream = status >= 200 && status < 300
                     ? connection.getInputStream()
                     : connection.getErrorStream();
-            String response = stream == null ? "" : readBounded(decoded(stream, connection.getContentEncoding()));
+            String response = stream == null ? "" : readBounded(decoded(stream));
             if (status < 200 || status >= 300) {
                 String providerError = JsonStrings.readStringField(response, "error");
                 if (providerError == null) {
@@ -131,15 +131,13 @@ public final class HttpJsonClient {
     /**
      * Unwraps a compressed response body.
      *
-     * <p>The encoding is taken from the header, and the stream is also sniffed for the gzip magic
-     * number: a provider behind a proxy can return a gzipped body while the header is dropped, and a
-     * translation that fails because of a missing header would look like a broken endpoint. The
-     * sniffed bytes are pushed back so a plain body is read unchanged.
+     * <p>Decided by the body's own first two bytes, never by {@code Content-Encoding} alone. Both
+     * directions of mismatch happen in the wild: a proxy can drop the header on a gzipped body, and
+     * a server can echo the header without compressing. Trusting the header turned the second case
+     * into a failed translation, so the sniff is what decides and the header is only documentation.
+     * The sniffed bytes are pushed back so a plain body is read unchanged.
      */
-    private static InputStream decoded(InputStream stream, String contentEncoding) throws IOException {
-        if (contentEncoding != null && contentEncoding.toLowerCase(java.util.Locale.ROOT).contains("gzip")) {
-            return new GZIPInputStream(stream);
-        }
+    private static InputStream decoded(InputStream stream) throws IOException {
         PushbackInputStream probe = new PushbackInputStream(stream, 2);
         byte[] head = new byte[2];
         int read = 0;
