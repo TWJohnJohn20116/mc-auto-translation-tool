@@ -34,8 +34,14 @@ import org.universaltranslator.core.provider.ProviderProbe;
 import org.universaltranslator.core.UiTextKeys;
 import org.universaltranslator.core.UiLimits;
 
-/** Minimal dependency-free settings screen, opened with U by default. */
-final class UniversalTranslatorConfigScreen extends Screen {
+/**
+ * Settings screen body, shared by Forge and NeoForge 26.1 through 26.2.
+ *
+ * <p>26.2 moved {@code setScreen} from {@code Minecraft} to {@code Minecraft#gui}, which is the
+ * only thing that changed inside this range, so that single call is the one seam the concrete
+ * screen supplies per version ({@code UniversalTranslatorConfigScreenSeams}).
+ */
+abstract class UniversalTranslatorConfigScreenBase extends Screen {
     private enum Tab {
         GENERAL,
         SCOPES,
@@ -43,6 +49,9 @@ final class UniversalTranslatorConfigScreen extends Screen {
         OUTGOING,
         HUD
     }
+
+    /** Opens another screen; 26.2 reaches the screen stack through {@code Minecraft#gui}. */
+    protected abstract void showScreen(Screen screen);
 
     private final Screen parent;
     private final ForgeConfig original;
@@ -157,7 +166,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private static final String TRANSLATE_PATH = "/translate";
     private static final String LANGUAGES_PATH = "/languages";
 
-    UniversalTranslatorConfigScreen(Screen parent, ForgeConfig config) {
+    UniversalTranslatorConfigScreenBase(Screen parent, ForgeConfig config) {
         super(Component.translatable("screen.universal_translator.settings.title"));
         this.parent = parent;
         this.original = config;
@@ -269,7 +278,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         diagnosticsButton = addRenderableWidget(Button.builder(
                 Component.translatable("screen.universal_translator.diagnostics.title"), button -> {
             if (minecraft != null) {
-                minecraft.setScreen(new UniversalTranslatorDiagnosticsScreen(this, original));
+                showScreen(new UniversalTranslatorDiagnosticsScreen(this, original));
             }
         }).bounds(left, layout.contentRow(3), layout.totalWidth, 20).build());
 
@@ -340,7 +349,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         llmConfigButton = addRenderableWidget(Button.builder(
                 Component.translatable("screen.universal_translator.option.llm_settings"), button -> {
             if (this.minecraft != null) {
-                this.minecraft.setScreen(new UniversalTranslatorLlmConfigScreen(
+                showScreen(new UniversalTranslatorLlmConfigScreen(
                         this, llmEndpoint, llmModel, !llmApiKey.isEmpty()));
             }
         }).bounds(left, engineRow(2), layout.buttonWidth, 20).build());
@@ -741,7 +750,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
     @Override
     public void onClose() {
         if (minecraft != null) {
-            minecraft.setScreen(parent);
+            showScreen(parent);
         }
     }
 
