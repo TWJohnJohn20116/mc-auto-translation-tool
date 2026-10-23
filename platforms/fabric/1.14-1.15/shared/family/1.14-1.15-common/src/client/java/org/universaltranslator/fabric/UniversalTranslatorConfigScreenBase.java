@@ -4,6 +4,7 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.TextFieldWidget;
+import net.minecraft.text.LiteralText;
 import net.minecraft.text.Text;
 import net.minecraft.text.TranslatableText;
 
@@ -58,7 +59,7 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorSe
 
     @Override
     protected SettingsButtonBuilder of(String message, ButtonWidget.PressAction action) {
-        ButtonWidget.Builder builder = ButtonWidget.builder(Component.literal(message), action);
+        ButtonWidget.Builder builder = ButtonWidget.builder(new LiteralText(message), action);
         return new SettingsButtonBuilder() {
             @Override
             public SettingsButtonBuilder dimensions(int x, int y, int width, int height) {
@@ -90,7 +91,7 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorSe
     }
 
     @Override
-    protected ButtonWidget addSettingButton(
+    protected net.minecraft.client.gui.widget.ButtonWidget addSettingButton(
             net.minecraft.client.gui.widget.ButtonWidget button) {
         return addButton(button);
     }
@@ -98,9 +99,7 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorSe
     @Override
     protected net.minecraft.client.gui.widget.TextFieldWidget addSettingField(
             TextFieldWidget field) {
-        // addButton is generic and infers T from its argument, which would fix T to the field
-        // type and clash with the declared return type; the explicit witness keeps both.
-        UniversalTranslatorConfigScreenBase.<TextFieldWidget>addButton(field);
+        addButton(field);
         return field;
     }
 
@@ -137,6 +136,11 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorSe
     @Override
     protected MinecraftClient minecraftClient() {
         return this.minecraft;
+    }
+
+    @Override
+    protected void setLabel(net.minecraft.client.gui.widget.ButtonWidget button, String label) {
+        button.setMessage(label);
     }
 
 }

@@ -35,7 +35,7 @@ import org.universaltranslator.core.UiTextKeys;
 import org.universaltranslator.core.UiLimits;
 
 /** Minimal dependency-free settings screen, opened with U by default. */
-abstract class UniversalTranslatorSettingsScreen extends Screen {
+abstract class UniversalTranslatorSettingsScreen extends Screen implements LlmEditorHost {
     /** The preview panel is a miniature of Minecraft's 320x240 minimum logical screen. */
     private static final int HUD_PREVIEW_SCREEN_WIDTH = 320;
     private static final int HUD_PREVIEW_SCREEN_HEIGHT = 240;
@@ -83,6 +83,9 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
 
     /** The client instance; {@code this.client} only exists from 1.20 onwards. */
     protected abstract MinecraftClient minecraftClient();
+
+    /** Sets a button label. 1.14 takes a plain string, 1.16 onwards take a text component. */
+    protected abstract void setLabel(ButtonWidget button, String label);
 
     /** Opens another screen; every generation spells this differently. */
     protected abstract void showScreen(Screen screen);
@@ -230,17 +233,6 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         this.quality = config.translationQuality();
         this.workers = config.translationWorkers();
         this.batchSize = config.batchSize();
-    }
-
-    /**
-     * The two things the model list editor needs from the screen that opened it. Kept as an
-     * interface so eras where the editor lives in a different source layer can be typed against it
-     * without naming a class they cannot see.
-     */
-    interface LlmEditorHost {
-        String llmApiKey();
-
-        void applyLlmSettings(String endpoint, String model, String apiKey);
     }
 
     @Override
@@ -511,22 +503,22 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     }
 
     private void refreshLabels() {
-        uiStyleButton.setMessage(trStr("screen.universal_translator.option.ui_style",
+        setLabel(uiStyleButton, trStr("screen.universal_translator.option.ui_style",
                 tr(animatedUi ? "value.universal_translator.ui_animated"
                         : "value.universal_translator.ui_classic")));
-        hudIndicatorButton.setMessage(trStr(
+        setLabel(hudIndicatorButton, trStr(
                 "screen.universal_translator.option.hud_indicator", onOff(hudIndicator)));
-        hudCornerButton.setMessage(trStr(
+        setLabel(hudCornerButton, trStr(
                 "screen.universal_translator.option.hud_corner", hudCornerLabel(hudIndicatorCorner)));
-        hudSizeButton.setMessage(trStr(
+        setLabel(hudSizeButton, trStr(
                 "screen.universal_translator.option.hud_size", hudIndicatorSize));
-        hudMarginButton.setMessage(trStr(
+        setLabel(hudMarginButton, trStr(
                 "screen.universal_translator.option.hud_margin", hudIndicatorMargin));
-        hudColorButton.setMessage(trStr(
+        setLabel(hudColorButton, trStr(
                 "screen.universal_translator.option.hud_color", hudColorLabel(hudIndicatorColor)));
-        hudContentButton.setMessage(trStr(
+        setLabel(hudContentButton, trStr(
                 "screen.universal_translator.option.hud_content", hudContentLabel(hudIndicatorContent)));
-        hudVisibilityButton.setMessage(trStr(
+        setLabel(hudVisibilityButton, trStr(
                 "screen.universal_translator.option.hud_visibility", hudVisibilityLabel(hudIndicatorVisibility)));
         hudCornerButton.active = hudIndicator;
         hudSizeButton.active = hudIndicator;
@@ -534,37 +526,37 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         hudColorButton.active = hudIndicator;
         hudContentButton.active = hudIndicator;
         hudVisibilityButton.active = hudIndicator;
-        enabledButton.setMessage(trStr("screen.universal_translator.option.automatic", onOff(enabled)));
-        chatButton.setMessage(trStr("screen.universal_translator.option.chat", onOff(translateChat)));
-        otherButton.setMessage(trStr("screen.universal_translator.option.other", onOff(translateOther)));
-        vanillaButton.setMessage(trStr("screen.universal_translator.option.vanilla", onOff(translateVanilla)));
-        playerNamesButton.setMessage(trStr(
+        setLabel(enabledButton, trStr("screen.universal_translator.option.automatic", onOff(enabled)));
+        setLabel(chatButton, trStr("screen.universal_translator.option.chat", onOff(translateChat)));
+        setLabel(otherButton, trStr("screen.universal_translator.option.other", onOff(translateOther)));
+        setLabel(vanillaButton, trStr("screen.universal_translator.option.vanilla", onOff(translateVanilla)));
+        setLabel(playerNamesButton, trStr(
                 "screen.universal_translator.option.player_names", onOff(translatePlayerNames)));
-        cacheButton.setMessage(trStr("screen.universal_translator.option.cache", onOff(diskCache)));
-        providerButton.setMessage(trStr("screen.universal_translator.option.provider", providerLabel()));
+        setLabel(cacheButton, trStr("screen.universal_translator.option.cache", onOff(diskCache)));
+        setLabel(providerButton, trStr("screen.universal_translator.option.provider", providerLabel()));
         String modelValue = llmModel == null || llmModel.trim().isEmpty()
                 ? tr("screen.universal_translator.engine.key_unset") : llmModel.trim();
-        modelPickButton.setMessage(trStr("screen.universal_translator.engine.model", modelValue));
-        testConnectionButton.setMessage(trStr("screen.universal_translator.engine.test"));
-        checkSettingsButton.setMessage(trStr(LIBRETRANSLATE_PROVIDER.equalsIgnoreCase(provider)
+        setLabel(modelPickButton, trStr("screen.universal_translator.engine.model", modelValue));
+        setLabel(testConnectionButton, trStr("screen.universal_translator.engine.test"));
+        setLabel(checkSettingsButton, trStr(LIBRETRANSLATE_PROVIDER.equalsIgnoreCase(provider)
                 ? "screen.universal_translator.engine.test"
                 : "screen.universal_translator.engine.check"));
-        displayButton.setMessage(trStr("screen.universal_translator.option.display",
+        setLabel(displayButton, trStr("screen.universal_translator.option.display",
                 tr(displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED
                         ? "value.universal_translator.display_bilingual"
                         : "value.universal_translator.display_translated")));
-        mixedTextButton.setMessage(trStr("screen.universal_translator.option.mixed", onOff(translateEnglishOnly)));
-        colorButton.setMessage(trStr("screen.universal_translator.option.color", colorLabel(translatedTextColor)));
-        downloadButton.setMessage(trStr("screen.universal_translator.option.download", onOff(offlineAutoDownload)));
-        modelButton.setMessage(trStr("screen.universal_translator.option.model", offlineModel.displayName()));
-        fallbackButton.setMessage(trStr("screen.universal_translator.option.fallback", onOff(apiFallback)));
+        setLabel(mixedTextButton, trStr("screen.universal_translator.option.mixed", onOff(translateEnglishOnly)));
+        setLabel(colorButton, trStr("screen.universal_translator.option.color", colorLabel(translatedTextColor)));
+        setLabel(downloadButton, trStr("screen.universal_translator.option.download", onOff(offlineAutoDownload)));
+        setLabel(modelButton, trStr("screen.universal_translator.option.model", offlineModel.displayName()));
+        setLabel(fallbackButton, trStr("screen.universal_translator.option.fallback", onOff(apiFallback)));
         refreshQualityLabel();
         refreshWorkersLabel();
         refreshBatchLabel();
-        outgoingButton.setMessage(trStr("screen.universal_translator.option.outgoing", onOff(translateOutgoing)));
-        targetLanguageButton.setMessage(trStr("screen.universal_translator.option.target_preset",
+        setLabel(outgoingButton, trStr("screen.universal_translator.option.outgoing", onOff(translateOutgoing)));
+        setLabel(targetLanguageButton, trStr("screen.universal_translator.option.target_preset",
                 TargetLanguage.displayName(targetLanguage)));
-        outgoingTargetLanguageButton.setMessage(trStr(
+        setLabel(outgoingTargetLanguageButton, trStr(
                 "screen.universal_translator.option.outgoing_target",
                 TargetLanguage.displayName(outgoingTargetLanguage)));
         outgoingTargetLanguageButton.active = translateOutgoing;
@@ -582,7 +574,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         if (qualityButton == null) {
             return;
         }
-        qualityButton.setMessage(trStr(
+        setLabel(qualityButton, trStr(
                 "screen.universal_translator.option.quality",
                 tr("value.universal_translator.quality." + quality.configName())));
     }
@@ -591,7 +583,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         if (workersButton == null) {
             return;
         }
-        workersButton.setMessage(trStr(
+        setLabel(workersButton, trStr(
                 "screen.universal_translator.option.workers", Integer.toString(workers)));
     }
 
@@ -599,7 +591,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         if (batchSizeButton == null) {
             return;
         }
-        batchSizeButton.setMessage(trStr(
+        setLabel(batchSizeButton, trStr(
                 "screen.universal_translator.option.batch_size", Integer.toString(batchSize)));
     }
 
@@ -707,11 +699,11 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
 
     private void refreshTabButtons() {
         if (tabGeneralButton == null) return;
-        tabGeneralButton.setMessage(tabTitle("screen.universal_translator.tab.general", activeTab == Tab.GENERAL));
-        tabScopesButton.setMessage(tabTitle("screen.universal_translator.tab.scopes", activeTab == Tab.SCOPES));
-        tabEngineButton.setMessage(tabTitle("screen.universal_translator.tab.engine", activeTab == Tab.ENGINE));
-        tabOutgoingButton.setMessage(tabTitle("screen.universal_translator.tab.outgoing", activeTab == Tab.OUTGOING));
-        tabHudButton.setMessage(tabTitle("screen.universal_translator.tab.hud", activeTab == Tab.HUD));
+        setLabel(tabGeneralButton, tabTitle("screen.universal_translator.tab.general", activeTab == Tab.GENERAL));
+        setLabel(tabScopesButton, tabTitle("screen.universal_translator.tab.scopes", activeTab == Tab.SCOPES));
+        setLabel(tabEngineButton, tabTitle("screen.universal_translator.tab.engine", activeTab == Tab.ENGINE));
+        setLabel(tabOutgoingButton, tabTitle("screen.universal_translator.tab.outgoing", activeTab == Tab.OUTGOING));
+        setLabel(tabHudButton, tabTitle("screen.universal_translator.tab.hud", activeTab == Tab.HUD));
     }
 
     private String tabTitle(String key, boolean active) {

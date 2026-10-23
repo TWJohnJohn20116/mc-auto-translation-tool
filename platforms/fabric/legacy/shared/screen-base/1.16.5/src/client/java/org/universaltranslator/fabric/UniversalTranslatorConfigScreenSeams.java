@@ -2,6 +2,7 @@ package org.universaltranslator.fabric;
 
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.TextFieldWidget;
+import net.minecraft.text.LiteralText;
 import net.minecraft.text.Text;
 
 /**
@@ -30,13 +31,6 @@ abstract class UniversalTranslatorConfigScreenSeams extends UniversalTranslatorS
     }
 
     @Override
-    protected void showScreen(Screen screen) {
-        if (minecraftClient() != null) {
-            minecraftClient().openScreen(screen);
-        }
-    }
-
-    @Override
     public void onClose() {
         onBack();
     }
@@ -44,4 +38,9 @@ abstract class UniversalTranslatorConfigScreenSeams extends UniversalTranslatorS
     public boolean isPauseScreen() {
         return false;
     }
+    @Override
+    protected void setLabel(net.minecraft.client.gui.widget.ButtonWidget button, String label) {
+        button.setMessage(new LiteralText(label));
+    }
+
 }
