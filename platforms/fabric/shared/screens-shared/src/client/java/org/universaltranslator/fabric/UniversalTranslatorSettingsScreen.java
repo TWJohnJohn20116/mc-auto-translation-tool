@@ -35,7 +35,7 @@ import org.universaltranslator.core.UiTextKeys;
 import org.universaltranslator.core.UiLimits;
 
 /** Minimal dependency-free settings screen, opened with U by default. */
-abstract class UniversalTranslatorSettingsScreen extends Screen implements LlmEditorHost {
+abstract class UniversalTranslatorSettingsScreen extends Screen {
     /** The preview panel is a miniature of Minecraft's 320x240 minimum logical screen. */
     private static final int HUD_PREVIEW_SCREEN_WIDTH = 320;
     private static final int HUD_PREVIEW_SCREEN_HEIGHT = 240;
