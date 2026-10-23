@@ -53,6 +53,9 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     private static final String LANGUAGES_PATH = "/languages";
 
     /** Builds one settings button with the factory this Minecraft version exposes. */
+    /** The font renderer; every generation calls this field either font or textRenderer. */
+    protected abstract TextRenderer textRenderer();
+
     /** Creates one button; every generation builds and labels these differently. */
     protected abstract SettingsButtonBuilder of(String label, ButtonWidget.PressAction action);
 
@@ -342,7 +345,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         }).dimensions(left, layout.contentRow(2), layout.totalWidth, 20).build());
 
         this.blockedKeywords = addSettingField(new TextFieldWidget(
-                this.font, left, layout.contentRow(3), layout.totalWidth, 20,
+                textRenderer(), left, layout.contentRow(3), layout.totalWidth, 20,
                 tr("screen.universal_translator.blocked_keywords")));
         this.blockedKeywords.setMaxLength(4096);
         this.blockedKeywords.setText(blockedKeywordsValue);
@@ -398,7 +401,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         }).dimensions(left, engineRow(2), layout.totalWidth, 20).build());
 
         this.endpoint = addSettingField(new TextFieldWidget(
-                this.font, left, engineRow(1), layout.totalWidth, 20,
+                textRenderer(), left, engineRow(1), layout.totalWidth, 20,
                 tr("screen.universal_translator.endpoint")));
         this.endpoint.setMaxLength(512);
         this.endpoint.setText(endpointValue);
@@ -426,7 +429,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
                 : customPrompt.getText();
         int promptApplyWidth = Math.max(48, layout.buttonWidth - 24);
         this.customPrompt = addSettingField(new TextFieldWidget(
-                this.font, left, engineRow(4),
+                textRenderer(), left, engineRow(4),
                 layout.totalWidth - promptApplyWidth - 8, 20,
                 tr("screen.universal_translator.diagnostics.prompt")));
         this.customPrompt.setMaxLength(UiLimits.PROMPT_MAX_CHARS);
@@ -804,7 +807,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
             int tabX = layout.tabX(tabIndex);
             fillRect(canvas, tabX, layout.tabY() + 20, tabX + layout.tabWidth(), layout.tabY() + 22, 0xFF55D6FF);
         }
-        drawCentered(canvas, this.font, this.getTitle().getString(), this.width / 2, 16,
+        drawCentered(canvas, textRenderer(), this.getTitle().getString(), this.width / 2, 16,
                 animatedUi ? SettingsUiAnimation.pulseColor(now) : 0xFFFFFFFF);
         String rawRuntimeStatus = FabricTranslationRuntime.status();
         String runtimeStatus = TranslationStatusLocalizer.localize(rawRuntimeStatus,
@@ -812,22 +815,22 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         int belowSave = layout.saveY + 24;
         int messageY = belowSave <= this.height - 10 ? belowSave : SettingsScreenLayout.COMPACT_STATUS_Y;
         if (!status.isEmpty()) {
-            drawCentered(canvas, this.font, lit(status),
+            drawCentered(canvas, textRenderer(), lit(status),
                     this.width / 2, messageY, 0xFFFF5555);
         } else if (!testStatus.isEmpty()) {
-            drawCentered(canvas, this.font, lit(testStatus),
+            drawCentered(canvas, textRenderer(), lit(testStatus),
                     this.width / 2, messageY, testStatusIsError ? 0xFFFF5555 : 0xFF55FF55);
         } else if (!runtimeStatus.isEmpty()) {
-            drawCentered(canvas, this.font, lit(runtimeStatus),
+            drawCentered(canvas, textRenderer(), lit(runtimeStatus),
                     this.width / 2, messageY,
                     isFailureStatus(rawRuntimeStatus) ? 0xFFFF5555 : 0xFF55FF55);
         } else {
             if (activeTab == Tab.OUTGOING) {
-                drawCentered(canvas, this.font,
+                drawCentered(canvas, textRenderer(),
                         trStr("screen.universal_translator.info.outgoing_hint"),
                         this.width / 2, layout.contentRow(2) + 6, 0xFFA0A0A0);
             } else if (activeTab == Tab.GENERAL) {
-                drawCentered(canvas, this.font,
+                drawCentered(canvas, textRenderer(),
                         trStr("screen.universal_translator.info.keybind"),
                         this.width / 2, layout.contentRow(3) + 24, 0xFFA0A0A0);
             }
@@ -1016,7 +1019,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
                 list.panelRight() + 1, list.panelBottom + 1, 0xFF55D6FF);
         fillRect(canvas, list.panelLeft(), list.panelTop,
                 list.panelRight(), list.panelBottom, 0xF018202A);
-        drawCentered(canvas, this.font,
+        drawCentered(canvas, textRenderer(),
                 trStr(selectionTitleKey()), width / 2, list.panelTop + 9, 0xFFFFFFFF);
         for (int index = 0; index < values.length; index++) {
             int x = list.x(index);
@@ -1026,7 +1029,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
             boolean selected = values[index].equalsIgnoreCase(selectionValue());
             fillRect(canvas, x, y, x + list.buttonWidth, y + list.buttonHeight,
                     hovered ? 0xFF3B6178 : selected ? 0xFF28533D : 0xFF303844);
-            drawCentered(canvas, this.font,
+            drawCentered(canvas, textRenderer(),
                     lit(SettingsSelectionList.displayName(openSelection, values[index])),
                     x + list.buttonWidth / 2, y + Math.max(1, (list.buttonHeight - 8) / 2),
                     selected ? 0xFF55FF88 : 0xFFFFFFFF);
@@ -1090,7 +1093,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     private void renderEngineInfo(Object canvas) {
         int y = engineRow(5) + 24;
         if (isLlm()) {
-            drawCentered(canvas, this.font, trStr(
+            drawCentered(canvas, textRenderer(), trStr(
                             "screen.universal_translator.engine.summary",
                             trimForDisplay(llmEndpoint),
                             tr(llmApiKey == null || llmApiKey.isEmpty()
@@ -1098,11 +1101,11 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
                                     : "screen.universal_translator.engine.key_set")),
                     this.width / 2, y, 0xFFA0A0A0);
         } else if (!isOffline() && !LIBRETRANSLATE_PROVIDER.equalsIgnoreCase(provider)) {
-            drawCentered(canvas, this.font,
+            drawCentered(canvas, textRenderer(),
                     trStr("screen.universal_translator.engine.config_file"),
                     this.width / 2, y, 0xFFA0A0A0);
         }
-        drawCentered(canvas, this.font,
+        drawCentered(canvas, textRenderer(),
                 trStr(isOffline()
                         ? "screen.universal_translator.info.offline"
                         : "screen.universal_translator.info.api"),
@@ -1235,7 +1238,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     /** Draws the fetched catalog over the settings so a served model can be picked. */
     private void renderModelList(Object canvas, int mouseX, int mouseY) {
         fillRect(canvas, 0, 0, this.width, this.height, 0xFF101010);
-        drawCentered(canvas, this.font,
+        drawCentered(canvas, textRenderer(),
                 trStr("screen.universal_translator.llm.select_model", fetchedModels.size()),
                 this.width / 2, 20, 0xFFFFFFFF);
         int rows = modelRowsPerPage();
@@ -1243,18 +1246,18 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         for (int row = 0; row < rows && first + row < fetchedModels.size(); row++) {
             int rowY = MODEL_LIST_TOP + row * MODEL_ROW_HEIGHT;
             boolean hovered = mouseY >= rowY && mouseY < rowY + MODEL_ROW_HEIGHT;
-            drawLeft(canvas, this.font,
+            drawLeft(canvas, textRenderer(),
                     lit((hovered ? "> " : "  ") + fetchedModels.get(first + row)),
                     24, rowY, hovered ? 0xFFFFD060 : 0xFFE0E0E0);
         }
         int pages = modelPageCount(rows);
-        drawCentered(canvas, this.font,
+        drawCentered(canvas, textRenderer(),
                 lit("< " + (modelPage + 1) + "/" + pages + " >"),
                 this.width / 2, this.height - 46, 0xFFFFFFFF);
-        drawCentered(canvas, this.font,
+        drawCentered(canvas, textRenderer(),
                 trStr("screen.universal_translator.llm.select_back"),
                 this.width / 2, this.height - 30, 0xFFFFD060);
-        drawCentered(canvas, this.font,
+        drawCentered(canvas, textRenderer(),
                 trStr("screen.universal_translator.llm.select_hint"),
                 this.width / 2, this.height - 16, 0xFFA0A0A0);
     }
