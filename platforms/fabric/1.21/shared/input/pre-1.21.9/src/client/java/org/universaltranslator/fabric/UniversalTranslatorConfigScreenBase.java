@@ -6,7 +6,6 @@ import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.text.Component;
 import net.minecraft.text.Text;
 
 /**
@@ -50,7 +49,7 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorSe
 
     @Override
     protected SettingsButtonBuilder of(String message, ButtonWidget.PressAction action) {
-        ButtonWidget.Builder builder = ButtonWidget.builder(Component.literal(message), action);
+        ButtonWidget.Builder builder = ButtonWidget.builder(Text.literal(message), action);
         return new SettingsButtonBuilder() {
             @Override
             public SettingsButtonBuilder dimensions(int x, int y, int width, int height) {
@@ -110,7 +109,7 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorSe
     }
     @Override
     protected String trStr(String key, Object... arguments) {
-        return Component.translatable(key, arguments).getString();
+        return Text.translatable(key, arguments).getString();
     }
 
     @Override
@@ -126,6 +125,11 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorSe
     @Override
     protected MinecraftClient minecraftClient() {
         return this.client;
+    }
+
+    @Override
+    protected void setLabel(net.minecraft.client.gui.widget.ButtonWidget button, String label) {
+        button.setMessage(Text.literal(label));
     }
 
 }

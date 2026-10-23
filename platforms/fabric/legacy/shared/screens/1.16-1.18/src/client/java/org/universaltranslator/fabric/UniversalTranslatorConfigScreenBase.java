@@ -59,7 +59,7 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorCo
 
     @Override
     protected SettingsButtonBuilder of(String message, ButtonWidget.PressAction action) {
-        ButtonWidget.Builder builder = ButtonWidget.builder(Component.literal(message), action);
+        ButtonWidget.Builder builder = ButtonWidget.builder(new LiteralText(message), action);
         return new SettingsButtonBuilder() {
             @Override
             public SettingsButtonBuilder dimensions(int x, int y, int width, int height) {
@@ -82,14 +82,23 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorCo
     @Override
     protected void drawCentered(Object canvas, TextRenderer renderer, String text, int centerX, int y,
             int color) {
-        renderer.drawWithShadow((MatrixStack) canvas, Component.literal(text),
+        renderer.drawWithShadow((MatrixStack) canvas, new LiteralText(text),
                 centerX - renderer.getWidth(text) / 2, y, color);
     }
 
     @Override
     protected void drawLeft(Object canvas, TextRenderer renderer, String text, int x, int y, int color) {
-        renderer.drawWithShadow((MatrixStack) canvas, Component.literal(text), x, y, color);
+        renderer.drawWithShadow((MatrixStack) canvas, new LiteralText(text), x, y, color);
     }
+    @Override
+    protected void showScreen(Screen screen) {
+        if (client != null) {
+            // Every 1.16 to 1.18 build inherited this unqualified call, so it resolves
+            // through Screen in all of them.
+            openScreen(screen);
+        }
+    }
+
     @Override
     protected String trStr(String key, Object... arguments) {
         return new TranslatableText(key, arguments).getString();
@@ -107,7 +116,12 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorCo
 
     @Override
     protected MinecraftClient minecraftClient() {
-        return this.minecraft;
+        return this.client;
+    }
+
+    @Override
+    protected void setLabel(net.minecraft.client.gui.widget.ButtonWidget button, String label) {
+        button.setMessage(new LiteralText(label));
     }
 
 }
