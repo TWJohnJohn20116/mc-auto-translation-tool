@@ -174,11 +174,9 @@ public final class RenderTranslationSession implements AutoCloseable {
         if (closed || original == null || original.isEmpty()) {
             return original;
         }
-        if (blockedKeywords.matches(original)) {
-            return original;
-        }
         // A GUI text can pass through both a high-level draw hook and TextRenderer.
-        // Never submit our own completed output for translation a second time.
+        // Never submit our own completed output for translation a second time. This stays ahead of
+        // the render cache: our own output must never be looked up as if it were an input.
         if (isCompletedOutput(original)) {
             return original;
         }
@@ -194,6 +192,14 @@ public final class RenderTranslationSession implements AutoCloseable {
             return ready;
         }
         if (rejected.containsKey(key)) {
+            return original;
+        }
+        // A keyword-filtered line and a heuristics-rejected line are the same thing to this cache:
+        // the caller gets the original back. Both are remembered, so the keyword scan (a lower-case
+        // copy plus a contains per keyword) runs once per string instead of once per frame.
+        // setBlockedKeywords() clears the whole set, so a changed filter re-evaluates every string.
+        if (blockedKeywords.matches(original)) {
+            rememberRejected(key);
             return original;
         }
         // Avoid building player-name snapshots for text that is already in the

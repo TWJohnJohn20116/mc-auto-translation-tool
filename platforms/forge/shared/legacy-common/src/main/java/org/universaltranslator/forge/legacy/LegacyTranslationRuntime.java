@@ -30,6 +30,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class LegacyTranslationRuntime {
     private static final long PLAYER_NAME_SNAPSHOT_MILLIS = 5_000L;
@@ -51,6 +52,9 @@ public final class LegacyTranslationRuntime {
     private static volatile TranslationProvider activeProvider;
     private static volatile List<String> protectedPlayerNames = Collections.emptyList();
     private static volatile long protectedPlayerNamesExpireAt;
+
+    /** Guards the player-name refresh so a burst of render-thread lookups rebuilds once per window. */
+    private static final AtomicBoolean playerNameRefresh = new AtomicBoolean();
     private static final RecentUserText RECENT_USER_TEXT = new RecentUserText();
     private static CompletableFuture<Void> outgoingTail = CompletableFuture.completedFuture(null);
     // A single daemon thread serializes the teardown of replaced sessions: at most one reaper
@@ -199,11 +203,27 @@ public final class LegacyTranslationRuntime {
         }
     }
 
-    private static synchronized List<String> playerNameSnapshot() {
+    private static List<String> playerNameSnapshot() {
         long now = System.currentTimeMillis();
+        List<String> snapshot = protectedPlayerNames;
         if (now < protectedPlayerNamesExpireAt) {
-            return protectedPlayerNames;
+            return snapshot;
         }
+        // Refreshed outside the class monitor: the coordinator asks for this on every submitted
+        // string, so the render thread reaches it for every new line, and initialize() holds that
+        // monitor for the whole provider build. One refresher per window is enough; the rest keep
+        // using the published snapshot, which only decides which names are excluded.
+        if (!playerNameRefresh.compareAndSet(false, true)) {
+            return snapshot;
+        }
+        try {
+            return refreshPlayerNames(now);
+        } finally {
+            playerNameRefresh.set(false);
+        }
+    }
+
+    private static List<String> refreshPlayerNames(long now) {
         Minecraft minecraft = Minecraft.getMinecraft();
         boolean protectPlayerNames = activeConfig == null || !activeConfig.translatePlayerNames;
         NetHandlerPlayClient connection = LegacyVersionAccess.connection(minecraft);
