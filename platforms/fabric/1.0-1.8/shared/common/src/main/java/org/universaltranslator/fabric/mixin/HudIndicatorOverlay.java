@@ -7,6 +7,7 @@ import net.minecraft.client.render.TextRenderer;
 import net.minecraft.locale.I18n;
 import org.universaltranslator.core.HudIndicatorContent;
 import org.universaltranslator.core.HudIndicatorCorner;
+import org.universaltranslator.core.HomeQuickSettingsState;
 import org.universaltranslator.core.HudIndicatorSettings;
 import org.universaltranslator.core.HudIndicatorVisibility;
 import org.universaltranslator.core.OutgoingTranslationPreview;
@@ -26,7 +27,10 @@ final class HudIndicatorOverlay {
 
     static void render(int windowWidth, int windowHeight) {
         // Read the settings first: a disabled indicator draws nothing at all.
-        HudIndicatorSettings settings = FabricTranslationRuntime.homeSettings().getHudIndicator();
+        // One read per frame: the runtime publishes a finished snapshot, and this method needs
+        // four different fields off the same one.
+        HomeQuickSettingsState quickSettings = FabricTranslationRuntime.homeSettings();
+        HudIndicatorSettings settings = quickSettings.getHudIndicator();
         if (!settings.isIndicator()) {
             return;
         }
@@ -39,7 +43,7 @@ final class HudIndicatorOverlay {
             case WHEN_DISABLED:
                 // The translation master switch, deliberately not the indicator's own option:
                 // the indicator option already gated every value of this enum above.
-                if (FabricTranslationRuntime.homeSettings().isEnabled()) {
+                if (quickSettings.isEnabled()) {
                     return;
                 }
                 break;
@@ -71,7 +75,7 @@ final class HudIndicatorOverlay {
         GuiElement.fill(left - 1, bottom, right + 1, bottom + 1, borderColor);
         GuiElement.fill(left - 1, top, left, bottom, borderColor);
         GuiElement.fill(right, top, right + 1, bottom, borderColor);
-        boolean translationOn = FabricTranslationRuntime.homeSettings().isEnabled();
+        boolean translationOn = quickSettings.isEnabled();
         if (translationOn) {
             // Solid colour while translation is on: configurable, green by default.
             GuiElement.fill(left, top, right, bottom, settings.getColor().argb());
@@ -107,9 +111,9 @@ final class HudIndicatorOverlay {
         }
         String label = null;
         if (content == HudIndicatorContent.LANGUAGE) {
-            label = FabricTranslationRuntime.homeSettings().getTargetLanguage();
+            label = quickSettings.getTargetLanguage();
         } else if (content == HudIndicatorContent.PROVIDER) {
-            label = FabricTranslationRuntime.homeSettings().getProvider();
+            label = quickSettings.getProvider();
         } else if (content == HudIndicatorContent.ACTIVITY && TranslationActivity.isTranslating()) {
             label = I18n.translate("value.universal_translator.hud_content.activity");
         }

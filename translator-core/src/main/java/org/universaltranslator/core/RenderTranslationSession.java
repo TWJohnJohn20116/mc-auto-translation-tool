@@ -21,6 +21,11 @@ public final class RenderTranslationSession implements AutoCloseable {
     // The re-entry guard is bounded separately from the translation map: it has to outlive
     // the translation it guards, otherwise evicted outputs are translated all over again.
     private static final int MAX_RENDERED_OUTPUTS = 8_192;
+    // Heuristics-rejected text never produces a translation, so it needs its own bound. Sized like
+    // the rendered outputs because the same lobby-tab-list load reaches both.
+    private static final int MAX_REJECTED_TEXTS = 8_192;
+    // How many render lookups accumulate before the debug log gets one summary line.
+    private static final int PROBE_REPORT_INTERVAL = 1_024;
     private static final int MAX_FAILED_TRANSLATIONS = 1_024;
     // A request whose future is never completed (for example an Error escaping the coordinator's
     // worker) would otherwise hold a pending slot forever, so the guard is kept. It has to be
@@ -48,6 +53,8 @@ public final class RenderTranslationSession implements AutoCloseable {
     private final String targetLanguage;
     private final TranslationDisplayMode displayMode;
     private final boolean preserveHanText;
+    /** Whether {@code targetLanguage} is Chinese; resolved once because the render path asks per string. */
+    private final boolean chineseTarget;
     private final ConcurrentHashMap<RenderKey, String> translated = new ConcurrentHashMap<RenderKey, String>();
     private final ConcurrentHashMap<String, Boolean> translatedOutputs =
             new ConcurrentHashMap<String, Boolean>();
@@ -55,6 +62,11 @@ public final class RenderTranslationSession implements AutoCloseable {
     // reclaimed instead of permanently consuming one of the MAX_PENDING_TRANSLATIONS slots.
     private final ConcurrentHashMap<RenderKey, Long> pending = new ConcurrentHashMap<RenderKey, Long>();
     private final ConcurrentHashMap<RenderKey, Long> retryAfter = new ConcurrentHashMap<RenderKey, Long>();
+    // Text the heuristics rejected. Without this every frame paid for the whole scan again: a
+    // rejection never reaches `translated`, so nothing stopped the same string from being re-tested
+    // sixty times a second. shouldTranslate is a pure function of (text, targetLanguage) and both are
+    // fixed for the life of a session, so the verdict can be cached for as long as the session lives.
+    private final ConcurrentHashMap<RenderKey, Boolean> rejected = new ConcurrentHashMap<RenderKey, Boolean>();
     // Insertion order for the bounded eviction of translated, translatedOutputs and retryAfter.
     // Keys that were already evicted stay in the queue harmlessly; the remove is simply a no-op.
     private final ConcurrentLinkedQueue<RenderKey> renderedTranslationOrder =
@@ -63,10 +75,16 @@ public final class RenderTranslationSession implements AutoCloseable {
             new ConcurrentLinkedQueue<String>();
     private final ConcurrentLinkedQueue<RenderKey> retryOrder =
             new ConcurrentLinkedQueue<RenderKey>();
+    private final ConcurrentLinkedQueue<RenderKey> rejectedOrder =
+            new ConcurrentLinkedQueue<RenderKey>();
     private final SubmissionWindow backgroundSubmissions =
             new SubmissionWindow(MAX_BACKGROUND_SUBMISSIONS_PER_SECOND);
     private final SubmissionWindow prioritySubmissions =
             new SubmissionWindow(MAX_PRIORITY_SUBMISSIONS_PER_SECOND);
+    // Render-path probe counters. Written only by the render thread, read only by recordProbe.
+    private long probeLookups;
+    private long probeSubstituted;
+    private long probeNanos;
     private volatile boolean closed;
     private volatile String lastFailureStatus = "";
     private volatile String lastReportedFailureStatus = "";
@@ -132,17 +150,33 @@ public final class RenderTranslationSession implements AutoCloseable {
         this.displayMode = displayMode == null
                 ? TranslationDisplayMode.TRANSLATED_ONLY : displayMode;
         this.preserveHanText = preserveHanText;
+        this.chineseTarget = LanguageHeuristics.isChineseTarget(this.targetLanguage);
     }
 
+    /**
+     * Looks up {@code original} for the render hooks.
+     *
+     * <p>Only times the call when debug logging is on; with the log off this is a plain delegation
+     * that the JIT inlines, so per-frame callers pay nothing for the probe.
+     */
     public String lookup(String original, TextKind kind) {
+        DebugLog probeLog = DebugLog.global();
+        if (!probeLog.isEnabled()) {
+            return lookupInternal(original, kind);
+        }
+        long startedAt = System.nanoTime();
+        String result = lookupInternal(original, kind);
+        recordProbe(probeLog, System.nanoTime() - startedAt, original == result);
+        return result;
+    }
+
+    private String lookupInternal(String original, TextKind kind) {
         if (closed || original == null || original.isEmpty()) {
             return original;
         }
-        if (blockedKeywords.matches(original)) {
-            return original;
-        }
         // A GUI text can pass through both a high-level draw hook and TextRenderer.
-        // Never submit our own completed output for translation a second time.
+        // Never submit our own completed output for translation a second time. This stays ahead of
+        // the render cache: our own output must never be looked up as if it were an input.
         if (isCompletedOutput(original)) {
             return original;
         }
@@ -157,9 +191,21 @@ public final class RenderTranslationSession implements AutoCloseable {
         if (ready != null) {
             return ready;
         }
+        if (rejected.containsKey(key)) {
+            return original;
+        }
+        // A keyword-filtered line and a heuristics-rejected line are the same thing to this cache:
+        // the caller gets the original back. Both are remembered, so the keyword scan (a lower-case
+        // copy plus a contains per keyword) runs once per string instead of once per frame.
+        // setBlockedKeywords() clears the whole set, so a changed filter re-evaluates every string.
+        if (blockedKeywords.matches(original)) {
+            rememberRejected(key);
+            return original;
+        }
         // Avoid building player-name snapshots for text that is already in the
         // target language or contains no words worth translating.
-        if (!LanguageHeuristics.shouldTranslate(original, targetLanguage)) {
+        if (!LanguageHeuristics.shouldTranslateToTarget(original, chineseTarget)) {
+            rememberRejected(key);
             return original;
         }
 
@@ -540,6 +586,53 @@ public final class RenderTranslationSession implements AutoCloseable {
         return safe.length() == 0 ? "unknown" : safe.toString();
     }
 
+    /**
+     * Remembers that the heuristics rejected {@code key}, so later frames reach the same verdict with
+     * one hash lookup instead of another full-text scan. Bounded exactly like the translation map.
+     */
+    private void rememberRejected(RenderKey key) {
+        if (rejected.putIfAbsent(key, Boolean.TRUE) != null) {
+            return;
+        }
+        rejectedOrder.add(key);
+        while (rejected.size() > MAX_REJECTED_TEXTS) {
+            RenderKey oldest = rejectedOrder.poll();
+            if (oldest == null) {
+                break;
+            }
+            rejected.remove(oldest);
+        }
+    }
+
+    /**
+     * Writes one probe line to the debug log every {@link #PROBE_REPORT_INTERVAL} render lookups.
+     *
+     * <p>Called only while debug logging is on, and only from the render thread, so the counters need
+     * no synchronization. They exist because the render path runs hundreds of times per frame and the
+     * only trustworthy way to judge a change there is a measurement from a real client.
+     */
+    private void recordProbe(DebugLog probeLog, long elapsedNanos, boolean unchanged) {
+        probeLookups++;
+        probeNanos += elapsedNanos;
+        if (!unchanged) {
+            probeSubstituted++;
+        }
+        if (probeLookups < PROBE_REPORT_INTERVAL) {
+            return;
+        }
+        long averageNanos = probeNanos / probeLookups;
+        probeLog.log("render-path",
+                "lookups", Long.toString(probeLookups),
+                "substituted", Long.toString(probeSubstituted),
+                "avg_us", Long.toString(averageNanos / 1_000L),
+                "cached", Integer.toString(translated.size()),
+                "rejected", Integer.toString(rejected.size()),
+                "pending", Integer.toString(pending.size()));
+        probeLookups = 0L;
+        probeSubstituted = 0L;
+        probeNanos = 0L;
+    }
+
     public synchronized void clearRenderedTranslations() {
         translated.clear();
         translatedOutputs.clear();
@@ -548,6 +641,8 @@ public final class RenderTranslationSession implements AutoCloseable {
         pending.clear();
         retryAfter.clear();
         retryOrder.clear();
+        rejected.clear();
+        rejectedOrder.clear();
         lastFailureStatus = "";
         lastReportedFailureStatus = "";
         backgroundSubmissions.reset();

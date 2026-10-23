@@ -19,7 +19,8 @@ import java.util.Properties;
  * Disk write failures never break translation and the in-memory value remains usable.
  *
  * <p>Concurrent {@link #put(String, String)} calls are coalesced instead of each rewriting the whole
- * file. The caller that finds no flush running becomes the single writer; mutations arriving while
+ * file, and a burst of entries waits for up to {@code UNSAVED_ENTRIES_BEFORE_FLUSH} changes or
+ * {@code FLUSH_INTERVAL_MILLIS} before the next rewrite. The caller that finds no flush running becomes the single writer; mutations arriving while
  * that flush is in flight only set a dirty flag, and the writer re-snapshots the map once its write
  * finishes. There is no background thread, no timer and no pending-write queue, so the class cannot
  * leak a thread past its owner and nothing can grow without bound. The only deferred state is the
@@ -31,6 +32,11 @@ import java.util.Properties;
  * on a worker thread, so the constructor performs no disk I/O at all.
  */
 public final class PersistentTranslationCache implements TranslationStore {
+    /** Changed entries tolerated before a rewrite is forced. */
+    private static final int UNSAVED_ENTRIES_BEFORE_FLUSH = 64;
+    /** Longest a changed entry may wait for the next rewrite, in milliseconds. */
+    private static final long FLUSH_INTERVAL_MILLIS = 5_000L;
+
     private final Object diskLock = new Object();
     private final Path file;
     private final Map<String, String> entries;
@@ -47,6 +53,10 @@ public final class PersistentTranslationCache implements TranslationStore {
     private boolean flushing;
     /** Guarded by {@code this}. True when a mutation arrived while a flush was running. */
     private boolean dirty;
+    /** Guarded by {@code this}. Entries written to memory but not yet to the file. */
+    private int unsaved;
+    /** Guarded by {@code this}. When the file was last rewritten, in wall-clock milliseconds. */
+    private long lastFlushMillis;
     /** Guarded by {@link #diskLock}. Revision of the newest state already written to the file. */
     private long persistedRevision;
 
@@ -60,7 +70,10 @@ public final class PersistentTranslationCache implements TranslationStore {
             throw new IllegalArgumentException("maximumEntries must be positive");
         }
         this.file = file;
-        this.entries = new LinkedHashMap<String, String>(16, 0.75f, true) {
+        // Insertion order, not access order: every worker thread reads through get(), and an
+        // access-ordered map re-links the entry it reads, which turns a hit into a structural
+        // modification under the instance monitor and serializes all workers behind it.
+        this.entries = new LinkedHashMap<String, String>(16, 0.75f, false) {
             @Override
             protected boolean removeEldestEntry(Map.Entry<String, String> eldest) {
                 return size() > maximumEntries;
@@ -88,13 +101,29 @@ public final class PersistentTranslationCache implements TranslationStore {
             }
             entries.put(hashed, value);
             snapshotRevision = ++revision;
+            unsaved++;
             if (flushing) {
                 // Another thread is already writing. Mark the state dirty and let that writer fold
                 // this entry into its next pass instead of starting a second concurrent rewrite.
                 dirty = true;
                 return;
             }
+            // Coalesce a burst instead of rewriting the whole file once per entry. The map holds up
+            // to the configured maximum (ten thousand entries for the shipped setting), so writing
+            // on every put made one session write O(n^2) bytes and kept a translation worker in the
+            // file system instead of translating. Deferred entries are written by the next put past
+            // either bound, by clear(), or by flush() when the owning session closes.
+            long now = System.currentTimeMillis();
+            if (unsaved < UNSAVED_ENTRIES_BEFORE_FLUSH
+                    && now - lastFlushMillis < FLUSH_INTERVAL_MILLIS) {
+                return;
+            }
             flushing = true;
+            unsaved = 0;
+            lastFlushMillis = now;
+            // The snapshot below already carries every change counted so far, so there is nothing
+            // for flushLoop to fold in unless a new mutation arrives while the write runs.
+            dirty = false;
             snapshot = snapshot();
         }
         flushLoop(snapshot, snapshotRevision);
@@ -113,10 +142,39 @@ public final class PersistentTranslationCache implements TranslationStore {
             // only returns once the file reflects it. A flush still in flight carries an older
             // revision and is dropped by persistBestEffort, so it cannot resurrect deleted entries.
             dirty = false;
+            unsaved = 0;
+            lastFlushMillis = System.currentTimeMillis();
             snapshotRevision = ++revision;
             snapshot = snapshot();
         }
         persistBestEffort(snapshot, snapshotRevision);
+    }
+
+    /**
+     * Writes the entries {@link #put(String, String)} deferred. Called by the owning session before
+     * the cache is dropped, so a clean shutdown persists a burst that never reached either bound.
+     */
+    @Override
+    public void flush() {
+        Map<String, String> snapshot;
+        long snapshotRevision;
+        synchronized (this) {
+            if (!loaded || revision == 0L) {
+                return;
+            }
+            if (flushing) {
+                // The running writer re-reads the map once it finishes, so it will carry this state.
+                dirty = true;
+                return;
+            }
+            flushing = true;
+            unsaved = 0;
+            lastFlushMillis = System.currentTimeMillis();
+            dirty = false;
+            snapshotRevision = revision;
+            snapshot = snapshot();
+        }
+        flushLoop(snapshot, snapshotRevision);
     }
 
     public synchronized int size() {
