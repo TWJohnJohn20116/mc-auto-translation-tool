@@ -3,6 +3,7 @@ package org.universaltranslator.fabric;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.text.LiteralText;
 import net.minecraft.text.Text;
@@ -90,6 +91,13 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorCo
     protected void drawLeft(Object canvas, TextRenderer renderer, String text, int x, int y, int color) {
         renderer.drawWithShadow((MatrixStack) canvas, new LiteralText(text), x, y, color);
     }
+    @Override
+    protected TextFieldWidget newTextField(int x, int y, int width, int height,
+            String initialText) {
+        return new TextFieldWidget(textRenderer(), x, y, width, height,
+                new LiteralText(initialText));
+    }
+
     @Override
     protected TextRenderer textRenderer() {
         return this.textRenderer;

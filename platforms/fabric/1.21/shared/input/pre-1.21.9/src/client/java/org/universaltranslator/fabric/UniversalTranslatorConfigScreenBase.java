@@ -108,6 +108,13 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorSe
         return false;
     }
     @Override
+    protected TextFieldWidget newTextField(int x, int y, int width, int height,
+            String initialText) {
+        return new TextFieldWidget(textRenderer(), x, y, width, height,
+                Text.literal(initialText));
+    }
+
+    @Override
     protected TextRenderer textRenderer() {
         return this.textRenderer;
     }

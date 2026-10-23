@@ -53,6 +53,10 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     private static final String LANGUAGES_PATH = "/languages";
 
     /** Builds one settings button with the factory this Minecraft version exposes. */
+    /** Creates a text field; the placeholder argument is a component from 1.16 onwards. */
+    protected abstract TextFieldWidget newTextField(int x, int y, int width, int height,
+            String initialText);
+
     /** The font renderer; every generation calls this field either font or textRenderer. */
     protected abstract TextRenderer textRenderer();
 
@@ -344,8 +348,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
             refreshLabels();
         }).dimensions(left, layout.contentRow(2), layout.totalWidth, 20).build());
 
-        this.blockedKeywords = addSettingField(new TextFieldWidget(
-                textRenderer(), left, layout.contentRow(3), layout.totalWidth, 20,
+        this.blockedKeywords = addSettingField(newTextField(left, layout.contentRow(3), layout.totalWidth, 20,
                 tr("screen.universal_translator.blocked_keywords")));
         this.blockedKeywords.setMaxLength(4096);
         this.blockedKeywords.setText(blockedKeywordsValue);
@@ -400,8 +403,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
             refreshLabels();
         }).dimensions(left, engineRow(2), layout.totalWidth, 20).build());
 
-        this.endpoint = addSettingField(new TextFieldWidget(
-                textRenderer(), left, engineRow(1), layout.totalWidth, 20,
+        this.endpoint = addSettingField(newTextField(left, engineRow(1), layout.totalWidth, 20,
                 tr("screen.universal_translator.endpoint")));
         this.endpoint.setMaxLength(512);
         this.endpoint.setText(endpointValue);
@@ -428,8 +430,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
                 ? TranslationPrompt.toEditorText(original.customSystemPrompt())
                 : customPrompt.getText();
         int promptApplyWidth = Math.max(48, layout.buttonWidth - 24);
-        this.customPrompt = addSettingField(new TextFieldWidget(
-                textRenderer(), left, engineRow(4),
+        this.customPrompt = addSettingField(newTextField(left, engineRow(4),
                 layout.totalWidth - promptApplyWidth - 8, 20,
                 tr("screen.universal_translator.diagnostics.prompt")));
         this.customPrompt.setMaxLength(UiLimits.PROMPT_MAX_CHARS);
