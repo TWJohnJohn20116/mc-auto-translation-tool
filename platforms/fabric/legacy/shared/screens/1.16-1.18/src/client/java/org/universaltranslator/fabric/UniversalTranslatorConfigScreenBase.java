@@ -1,5 +1,6 @@
 package org.universaltranslator.fabric;
 
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.util.math.MatrixStack;
@@ -57,8 +58,8 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorCo
     }
 
     @Override
-    protected SettingsButtonBuilder of(Text message, ButtonWidget.PressAction action) {
-        ButtonWidget.Builder builder = ButtonWidget.builder(message, action);
+    protected SettingsButtonBuilder of(String message, ButtonWidget.PressAction action) {
+        ButtonWidget.Builder builder = ButtonWidget.builder(Component.literal(message), action);
         return new SettingsButtonBuilder() {
             @Override
             public SettingsButtonBuilder dimensions(int x, int y, int width, int height) {
@@ -74,34 +75,39 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorCo
     }
 
     @Override
-    protected Text literal(String value) {
-        return new LiteralText(value);
-    }
-
-    @Override
-    protected Text translatable(String key, Object... arguments) {
-        return new TranslatableText(key, arguments);
-    }
-
-    @Override
-    protected Text emptyText() {
-        return new LiteralText("");
-    }
-
-    @Override
     protected void fillRect(Object canvas, int x1, int y1, int x2, int y2, int color) {
         fill((MatrixStack) canvas, x1, y1, x2, y2, color);
     }
 
     @Override
-    protected void drawCentered(Object canvas, TextRenderer renderer, Text text, int centerX, int y,
+    protected void drawCentered(Object canvas, TextRenderer renderer, String text, int centerX, int y,
             int color) {
-        renderer.drawWithShadow((MatrixStack) canvas, text,
-                centerX - renderer.getWidth(text) / 2.0f, y, color);
+        renderer.drawWithShadow((MatrixStack) canvas, Component.literal(text),
+                centerX - renderer.getWidth(text) / 2, y, color);
     }
 
     @Override
-    protected void drawLeft(Object canvas, TextRenderer renderer, Text text, int x, int y, int color) {
-        renderer.drawWithShadow((MatrixStack) canvas, text, x, y, color);
+    protected void drawLeft(Object canvas, TextRenderer renderer, String text, int x, int y, int color) {
+        renderer.drawWithShadow((MatrixStack) canvas, Component.literal(text), x, y, color);
     }
+    @Override
+    protected String trStr(String key, Object... arguments) {
+        return new TranslatableText(key, arguments).getString();
+    }
+
+    @Override
+    protected String lit(String value) {
+        return value;
+    }
+
+    @Override
+    protected String emptyStr() {
+        return "";
+    }
+
+    @Override
+    protected MinecraftClient minecraftClient() {
+        return this.minecraft;
+    }
+
 }

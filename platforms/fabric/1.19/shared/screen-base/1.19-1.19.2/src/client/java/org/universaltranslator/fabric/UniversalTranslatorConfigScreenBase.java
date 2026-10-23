@@ -1,9 +1,11 @@
 package org.universaltranslator.fabric;
 
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.client.util.math.MatrixStack;
+import net.minecraft.text.Component;
 import net.minecraft.text.Text;
 
 /**
@@ -50,8 +52,8 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorSe
     }
 
     @Override
-    protected SettingsButtonBuilder of(Text message, ButtonWidget.PressAction action) {
-        ButtonWidget.Builder builder = ButtonWidget.builder(message, action);
+    protected SettingsButtonBuilder of(String message, ButtonWidget.PressAction action) {
+        ButtonWidget.Builder builder = ButtonWidget.builder(Component.literal(message), action);
         return new SettingsButtonBuilder() {
             @Override
             public SettingsButtonBuilder dimensions(int x, int y, int width, int height) {
@@ -72,15 +74,15 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorSe
     }
 
     @Override
-    protected void drawCentered(Object canvas, TextRenderer renderer, Text text, int centerX, int y,
+    protected void drawCentered(Object canvas, TextRenderer renderer, String text, int centerX, int y,
             int color) {
-        renderer.drawWithShadow((MatrixStack) canvas, text,
-                centerX - renderer.getWidth(text) / 2.0f, y, color);
+        renderer.drawWithShadow((MatrixStack) canvas, Component.literal(text),
+                centerX - renderer.getWidth(text) / 2, y, color);
     }
 
     @Override
-    protected void drawLeft(Object canvas, TextRenderer renderer, Text text, int x, int y, int color) {
-        renderer.drawWithShadow((MatrixStack) canvas, text, x, y, color);
+    protected void drawLeft(Object canvas, TextRenderer renderer, String text, int x, int y, int color) {
+        renderer.drawWithShadow((MatrixStack) canvas, Component.literal(text), x, y, color);
     }
 
     @Override
@@ -95,24 +97,9 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorSe
     }
 
     @Override
-    protected Text literal(String value) {
-        return Text.literal(value);
-    }
-
-    @Override
-    protected Text translatable(String key, Object... arguments) {
-        return Text.translatable(key, arguments);
-    }
-
-    @Override
-    protected Text emptyText() {
-        return Text.empty();
-    }
-
-    @Override
     protected void showScreen(Screen screen) {
-        if (this.client != null) {
-            this.client.setScreen(screen);
+        if (minecraftClient() != null) {
+            minecraftClient().setScreen(screen);
         }
     }
 
@@ -125,4 +112,24 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorSe
     public boolean shouldPause() {
         return false;
     }
+    @Override
+    protected String trStr(String key, Object... arguments) {
+        return Component.translatable(key, arguments).getString();
+    }
+
+    @Override
+    protected String lit(String value) {
+        return value;
+    }
+
+    @Override
+    protected String emptyStr() {
+        return "";
+    }
+
+    @Override
+    protected MinecraftClient minecraftClient() {
+        return this.client;
+    }
+
 }
