@@ -220,6 +220,8 @@ tasks.register("validateOpaqueSelectionTextColors") {
         def transparentRgb = ~/0x[0-9A-Fa-f]{6}\b/
         def violations = fileTree("platforms") {
             include "**/UniversalTranslatorConfigScreen.java"
+            include "**/UniversalTranslatorConfigScreenBase.java"
+            include "**/UniversalTranslatorSettingsScreen.java"
             include "**/UniversalTranslatorScreens.java"
         }.files.findAll { source ->
             def text = source.getText("UTF-8")
@@ -242,6 +244,8 @@ tasks.register("validateNonOverlappingSettingsLabels") {
     doLast {
         def settingsScreens = fileTree("platforms") {
             include "**/UniversalTranslatorConfigScreen.java"
+            include "**/UniversalTranslatorConfigScreenBase.java"
+            include "**/UniversalTranslatorSettingsScreen.java"
             include "**/UniversalTranslatorScreens.java"
             include "**/LegacyConfigScreen.java"
         }.files.findAll { source ->

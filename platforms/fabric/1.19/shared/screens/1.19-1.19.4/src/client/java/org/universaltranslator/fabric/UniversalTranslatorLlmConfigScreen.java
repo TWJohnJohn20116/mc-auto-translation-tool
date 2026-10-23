@@ -19,7 +19,7 @@ final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorScreen
     private static final int LIST_FOOTER_HEIGHT = 62;
     private static final int ESCAPE_KEY = 256;
 
-    private final UniversalTranslatorConfigScreen parent;
+    private final UniversalTranslatorSettingsScreen parent;
     private final String initialEndpoint;
     private final String initialModel;
     private final boolean hasStoredKey;
@@ -34,7 +34,7 @@ final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorScreen
     private int modelPage;
 
     UniversalTranslatorLlmConfigScreen(
-            UniversalTranslatorConfigScreen parent,
+            UniversalTranslatorSettingsScreen parent,
             String endpoint,
             String model,
             boolean hasStoredKey

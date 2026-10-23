@@ -18,7 +18,7 @@ final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorLlmCon
     /** Room kept under the rows for the paging, back, and hint lines. */
     private static final int LIST_FOOTER_HEIGHT = 62;
 
-    private final UniversalTranslatorConfigScreen parent;
+    private final UniversalTranslatorSettingsScreen parent;
     private final String initialEndpoint;
     private final String initialModel;
     private final boolean hasStoredKey;
@@ -33,7 +33,7 @@ final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorLlmCon
     private int modelPage;
 
     UniversalTranslatorLlmConfigScreen(
-            UniversalTranslatorConfigScreen parent,
+            UniversalTranslatorSettingsScreen parent,
             String endpoint,
             String model,
             boolean hasStoredKey
