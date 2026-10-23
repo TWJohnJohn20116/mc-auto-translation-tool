@@ -217,6 +217,12 @@ if (splitEnvironment) {
             if (layers.contains("family/1.16-1.16.1") || layers.contains("family/1.16.5-1.19.2")) {
                 java.srcDir rootProject.file("platforms/fabric/shared/button-widget-1.16-1.19/src/client/java")
             }
+            // The settings screen body is identical for 1.14 through 1.21.11.
+            if (layers.contains("family/1.14-1.15-common") || layers.contains("screens/1.16-1.18")
+                    || layers.contains("screens/1.19-1.19.4")
+                    || layers.contains("screens/1.20.1-1.21.11")) {
+                java.srcDir rootProject.file("platforms/fabric/shared/screens-shared/src/client/java")
+            }
             // TitleScreenMixin is identical for 1.19.3–1.19.4, 1.20.x and 1.21.
             if (layers.contains("family/1.19.3-1.19.4") || layers.contains("family/1.20.1")) {
                 java.srcDir rootProject.file("platforms/fabric/shared/title-screen-1.19-1.21/src/client/java")
@@ -294,6 +300,12 @@ if (splitEnvironment) {
             // ButtonWidget is identical for 1.16–1.16.1 and 1.16.5–1.19.2.
             if (layers.contains("family/1.16-1.16.1") || layers.contains("family/1.16.5-1.19.2")) {
                 java.srcDir rootProject.file("platforms/fabric/shared/button-widget-1.16-1.19/src/client/java")
+            }
+            // The settings screen body is identical for 1.14 through 1.21.11.
+            if (layers.contains("family/1.14-1.15-common") || layers.contains("screens/1.16-1.18")
+                    || layers.contains("screens/1.19-1.19.4")
+                    || layers.contains("screens/1.20.1-1.21.11")) {
+                java.srcDir rootProject.file("platforms/fabric/shared/screens-shared/src/client/java")
             }
             // TitleScreenMixin is identical for 1.19.3–1.19.4, 1.20.x and 1.21.
             if (layers.contains("family/1.19.3-1.19.4") || layers.contains("family/1.20.1")) {
