@@ -38,7 +38,10 @@ public final class RenderedTextBridge {
         if (text == null) {
             return null;
         }
-        Component styled = translateStyledSiblings(text);
+        // A component with no children renders exactly its own literal under its own style, so the
+        // run walk below would collect a single run and decline to rebuild it every time. Skipping
+        // it keeps an ordinary label at one string copy and one cache lookup per frame.
+        Component styled = text.getSiblings().isEmpty() ? null : translateStyledSiblings(text);
         if (styled != null) {
             return styled;
         }

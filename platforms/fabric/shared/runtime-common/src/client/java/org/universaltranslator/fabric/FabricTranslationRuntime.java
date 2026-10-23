@@ -29,6 +29,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class FabricTranslationRuntime {
     private static final long PLAYER_NAME_SNAPSHOT_MILLIS = 5_000L;
@@ -38,9 +39,21 @@ public final class FabricTranslationRuntime {
 
     private static volatile RenderTranslationSession session;
     private static volatile FabricConfig activeConfig;
+    /**
+     * Settings snapshot the render hooks read.
+     *
+     * <p>Published by {@link #initialize} and read from the render thread, so it is a volatile field
+     * instead of a value rebuilt under the class monitor: {@code initialize} holds that monitor for
+     * the whole provider build, and a render hook waiting behind it is a visible frame hitch on every
+     * settings save and F8 toggle.
+     */
+    private static volatile HomeQuickSettingsState cachedHome;
     private static volatile TranslationProvider activeProvider;
     private static volatile List<String> protectedPlayerNames = Collections.emptyList();
     private static volatile long protectedPlayerNamesExpireAt;
+
+    /** Guards the player-name refresh so a burst of render-thread lookups rebuilds once per window. */
+    private static final AtomicBoolean playerNameRefresh = new AtomicBoolean();
     private static final RecentUserText RECENT_USER_TEXT = new RecentUserText();
     private static CompletableFuture<Void> outgoingTail = CompletableFuture.completedFuture(null);
     // A single daemon thread serializes the teardown of replaced sessions: at most one reaper
@@ -123,6 +136,7 @@ public final class FabricTranslationRuntime {
         activeConfig = config;
         activeProvider = createdProvider;
         session = created;
+        cachedHome = homeSettingsState(config);
         protectedPlayerNames = Collections.emptyList();
         protectedPlayerNamesExpireAt = 0L;
         RECENT_USER_TEXT.clear();
@@ -200,11 +214,27 @@ public final class FabricTranslationRuntime {
         }
     }
 
-    private static synchronized List<String> playerNameSnapshot() {
+    private static List<String> playerNameSnapshot() {
         long now = System.currentTimeMillis();
+        List<String> snapshot = protectedPlayerNames;
         if (now < protectedPlayerNamesExpireAt) {
-            return protectedPlayerNames;
+            return snapshot;
         }
+        // Refreshed outside the class monitor: the coordinator asks for this on every submitted
+        // string, so the render thread reaches it for every new line, and initialize() holds that
+        // monitor for the whole provider build. One refresher per window is enough; the rest keep
+        // using the published snapshot, which only decides which names are excluded.
+        if (!playerNameRefresh.compareAndSet(false, true)) {
+            return snapshot;
+        }
+        try {
+            return refreshPlayerNames(now);
+        } finally {
+            playerNameRefresh.set(false);
+        }
+    }
+
+    private static List<String> refreshPlayerNames(long now) {
         MinecraftClient client = MinecraftClient.getInstance();
         boolean protectPlayerNames = activeConfig == null || !activeConfig.translatePlayerNames;
         if (client.getNetworkHandler() == null) {
@@ -347,8 +377,17 @@ public final class FabricTranslationRuntime {
         return next;
     }
 
-    public static synchronized HomeQuickSettingsState homeSettings() {
-        return homeSettingsState(activeConfig);
+    /**
+     * Settings snapshot for the render hooks, taken without entering the class monitor.
+     *
+     * <p>The HUD reads this five times per frame, so it must not be {@code synchronized}: the build
+     * that publishes it ({@link #initialize}) holds that monitor for the whole provider
+     * construction. The fallback only runs before the first {@code initialize}, when no HUD exists
+     * yet, and reads the same {@code activeConfig} the previous synchronized body read.
+     */
+    public static HomeQuickSettingsState homeSettings() {
+        HomeQuickSettingsState snapshot = cachedHome;
+        return snapshot == null ? homeSettingsState(activeConfig) : snapshot;
     }
 
     public static synchronized HomeQuickSettingsState toggleHomeEnabled() throws Exception {

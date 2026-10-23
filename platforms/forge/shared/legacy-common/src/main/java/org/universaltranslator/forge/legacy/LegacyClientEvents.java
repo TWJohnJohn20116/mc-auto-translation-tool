@@ -17,6 +17,7 @@ import net.minecraftforge.fml.common.gameevent.TickEvent;
 import org.lwjgl.input.Keyboard;
 import org.universaltranslator.core.HudIndicatorContent;
 import org.universaltranslator.core.HudIndicatorCorner;
+import org.universaltranslator.core.HomeQuickSettingsState;
 import org.universaltranslator.core.HudIndicatorSettings;
 import org.universaltranslator.core.OutgoingTranslationPreview;
 import org.universaltranslator.core.TranslationActivity;
@@ -232,7 +233,10 @@ public final class LegacyClientEvents {
         // those passes happens while the overlay is on screen, so drawing on each of them paints the
         // same pixels; the extra drawRect calls are negligible and the result is version-independent.
         // Read the settings first: a disabled indicator draws nothing at all.
-        HudIndicatorSettings settings = LegacyTranslationRuntime.homeSettings().getHudIndicator();
+        // One read per frame: the runtime publishes a finished snapshot, and this method needs
+        // four different fields off the same one.
+        HomeQuickSettingsState quickSettings = LegacyTranslationRuntime.homeSettings();
+        HudIndicatorSettings settings = quickSettings.getHudIndicator();
         if (!settings.isIndicator()) {
             return;
         }
@@ -245,7 +249,7 @@ public final class LegacyClientEvents {
             case WHEN_DISABLED:
                 // The translation master switch, deliberately not the indicator's own option: the
                 // indicator option already gated every value of this enum above.
-                if (LegacyTranslationRuntime.homeSettings().isEnabled()) {
+                if (quickSettings.isEnabled()) {
                     return;
                 }
                 break;
@@ -280,7 +284,7 @@ public final class LegacyClientEvents {
         Gui.drawRect(left - 1, bottom, right + 1, bottom + 1, borderColor);
         Gui.drawRect(left - 1, top, left, bottom, borderColor);
         Gui.drawRect(right, top, right + 1, bottom, borderColor);
-        if (LegacyTranslationRuntime.homeSettings().isEnabled()) {
+        if (quickSettings.isEnabled()) {
             // Solid colour while translation is on: configurable, green by default.
             Gui.drawRect(left, top, right, bottom, settings.getColor().argb());
         } else {
@@ -315,9 +319,9 @@ public final class LegacyClientEvents {
         }
         String label = null;
         if (content == HudIndicatorContent.LANGUAGE) {
-            label = LegacyTranslationRuntime.homeSettings().getTargetLanguage();
+            label = quickSettings.getTargetLanguage();
         } else if (content == HudIndicatorContent.PROVIDER) {
-            label = LegacyTranslationRuntime.homeSettings().getProvider();
+            label = quickSettings.getProvider();
         } else if (content == HudIndicatorContent.ACTIVITY && TranslationActivity.isTranslating()) {
             label = I18n.format("value.universal_translator.hud_content.activity");
         }
