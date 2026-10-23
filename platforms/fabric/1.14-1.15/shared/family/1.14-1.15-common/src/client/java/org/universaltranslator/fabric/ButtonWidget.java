@@ -16,6 +16,12 @@ public final class ButtonWidget extends net.minecraft.client.gui.widget.ButtonWi
         super.setMessage(message.getString());
     }
 
+    /** Used by the shared settings body, which carries localized labels as plain strings. */
+    @Override
+    public void setMessage(String message) {
+        super.setMessage(message);
+    }
+
     public static final class Builder {
         private final Text message;
         private final PressAction action;

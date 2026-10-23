@@ -4,6 +4,7 @@ import java.net.URI;
 import java.util.Collections;
 import java.util.List;
 
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
@@ -52,27 +53,36 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     private static final String LANGUAGES_PATH = "/languages";
 
     /** Builds one settings button with the factory this Minecraft version exposes. */
-    protected abstract SettingsButtonBuilder of(Text message, ButtonWidget.PressAction action);
+    /** Creates one button; every generation builds and labels these differently. */
+    protected abstract SettingsButtonBuilder of(String label, ButtonWidget.PressAction action);
 
     /** Fills a rectangle on the render surface of this Minecraft version. */
     protected abstract void fillRect(Object canvas, int x1, int y1, int x2, int y2, int color);
 
     /** Draws horizontally centred shadowed text on the render surface of this Minecraft version. */
-    protected abstract void drawCentered(Object canvas, TextRenderer renderer, Text text,
+    protected abstract void drawCentered(Object canvas, TextRenderer renderer, String text,
             int centerX, int y, int color);
 
     /** Draws left-aligned shadowed text on the render surface of this Minecraft version. */
-    protected abstract void drawLeft(Object canvas, TextRenderer renderer, Text text,
+    protected abstract void drawLeft(Object canvas, TextRenderer renderer, String text,
             int x, int y, int color);
 
-    /** Builds a literal text component with the factory this Minecraft version exposes. */
-    protected abstract Text literal(String value);
+    /**
+     * Builds one of the on-screen strings. Every generation localizes differently and 1.14 to 1.18
+     * only accept a plain {@code String} where 1.19 onwards take a text component, so this seam
+     * yields the localized text and the per-generation base wraps it back into whatever object
+     * its widgets want.
+     */
+    protected abstract String trStr(String key, Object... arguments);
 
-    /** Builds a translatable text component with the factory this Minecraft version exposes. */
-    protected abstract Text translatable(String key, Object... arguments);
+    /** Same as {@link #trStr}, for a string that needs no lookup. */
+    protected abstract String lit(String value);
 
-    /** Builds an empty text component with the factory this Minecraft version exposes. */
-    protected abstract Text emptyText();
+    /** The empty on-screen string; {@link #lit} with nothing in it, kept named for readability. */
+    protected abstract String emptyStr();
+
+    /** The client instance; {@code this.client} only exists from 1.20 onwards. */
+    protected abstract MinecraftClient minecraftClient();
 
     /** Opens another screen; every generation spells this differently. */
     protected abstract void showScreen(Screen screen);
@@ -248,93 +258,93 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         int left = layout.left;
 
         // Navigation Tabs (positioned right below header at tabY)
-        this.tabGeneralButton = addSettingButton(of(emptyText(), button -> {
+        this.tabGeneralButton = addSettingButton(of(emptyStr(), button -> {
             activeTab = Tab.GENERAL;
             updateTabVisibility();
         }).dimensions(layout.tabX(0), layout.tabY(), layout.tabWidth(), 20).build());
 
-        this.tabScopesButton = addSettingButton(of(emptyText(), button -> {
+        this.tabScopesButton = addSettingButton(of(emptyStr(), button -> {
             activeTab = Tab.SCOPES;
             updateTabVisibility();
         }).dimensions(layout.tabX(1), layout.tabY(), layout.tabWidth(), 20).build());
 
-        this.tabEngineButton = addSettingButton(of(emptyText(), button -> {
+        this.tabEngineButton = addSettingButton(of(emptyStr(), button -> {
             activeTab = Tab.ENGINE;
             updateTabVisibility();
         }).dimensions(layout.tabX(2), layout.tabY(), layout.tabWidth(), 20).build());
 
-        this.tabOutgoingButton = addSettingButton(of(emptyText(), button -> {
+        this.tabOutgoingButton = addSettingButton(of(emptyStr(), button -> {
             activeTab = Tab.OUTGOING;
             updateTabVisibility();
         }).dimensions(layout.tabX(3), layout.tabY(), layout.tabWidth(), 20).build());
 
-        this.tabHudButton = addSettingButton(of(emptyText(), button -> {
+        this.tabHudButton = addSettingButton(of(emptyStr(), button -> {
             activeTab = Tab.HUD;
             updateTabVisibility();
         }).dimensions(layout.tabX(4), layout.tabY(), layout.tabWidth(), 20).build());
 
         // --- Tab 1: General (常規) ---
-        this.enabledButton = addSettingButton(of(emptyText(), button -> {
+        this.enabledButton = addSettingButton(of(emptyStr(), button -> {
             enabled = !enabled;
             refreshLabels();
         }).dimensions(left, layout.contentRow(0), layout.buttonWidth, 20).build());
 
-        this.targetLanguageButton = addSettingButton(of(emptyText(), button -> {
+        this.targetLanguageButton = addSettingButton(of(emptyStr(), button -> {
             openSelection = SettingsSelectionList.Kind.TARGET_LANGUAGE;
         }).dimensions(layout.right, layout.contentRow(0), layout.buttonWidth, 20).build());
 
-        this.displayButton = addSettingButton(of(emptyText(), button -> {
+        this.displayButton = addSettingButton(of(emptyStr(), button -> {
             displayMode = displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED
                     ? TranslationDisplayMode.TRANSLATED_ONLY
                     : TranslationDisplayMode.ORIGINAL_AND_TRANSLATED;
             refreshLabels();
         }).dimensions(left, layout.contentRow(1), layout.buttonWidth, 20).build());
 
-        this.colorButton = addSettingButton(of(emptyText(), button -> {
+        this.colorButton = addSettingButton(of(emptyStr(), button -> {
             translatedTextColor = translatedTextColor.next();
             refreshLabels();
         }).dimensions(layout.right, layout.contentRow(1), layout.buttonWidth, 20).build());
 
-        this.cacheButton = addSettingButton(of(emptyText(), button -> {
+        this.cacheButton = addSettingButton(of(emptyStr(), button -> {
             diskCache = !diskCache;
             refreshLabels();
         }).dimensions(left, layout.contentRow(2), layout.buttonWidth, 20).build());
 
-        this.uiStyleButton = addSettingButton(of(emptyText(), button -> {
+        this.uiStyleButton = addSettingButton(of(emptyStr(), button -> {
             animatedUi = !animatedUi;
             animationStartedNanos = System.nanoTime();
             refreshLabels();
         }).dimensions(layout.right, layout.contentRow(2), layout.buttonWidth, 20).build());
 
         this.diagnosticsButton = addSettingButton(of(
-                translatable("screen.universal_translator.diagnostics.title"), button -> {
-            if (client != null) {
+                trStr("screen.universal_translator.diagnostics.title"), button -> {
+            if (minecraftClient() != null) {
                 showScreen(new UniversalTranslatorDiagnosticsScreen(this));
             }
         }).dimensions(left, layout.contentRow(3), layout.totalWidth, 20).build());
 
         // --- Tab 2: Scopes (範圍) ---
-        this.chatButton = addSettingButton(of(emptyText(), button -> {
+        this.chatButton = addSettingButton(of(emptyStr(), button -> {
             translateChat = !translateChat;
             refreshLabels();
         }).dimensions(left, layout.contentRow(0), layout.buttonWidth, 20).build());
 
-        this.otherButton = addSettingButton(of(emptyText(), button -> {
+        this.otherButton = addSettingButton(of(emptyStr(), button -> {
             translateOther = !translateOther;
             refreshLabels();
         }).dimensions(layout.right, layout.contentRow(0), layout.buttonWidth, 20).build());
 
-        this.vanillaButton = addSettingButton(of(emptyText(), button -> {
+        this.vanillaButton = addSettingButton(of(emptyStr(), button -> {
             translateVanilla = !translateVanilla;
             refreshLabels();
         }).dimensions(left, layout.contentRow(1), layout.buttonWidth, 20).build());
 
-        this.playerNamesButton = addSettingButton(of(emptyText(), button -> {
+        this.playerNamesButton = addSettingButton(of(emptyStr(), button -> {
             translatePlayerNames = !translatePlayerNames;
             refreshLabels();
         }).dimensions(layout.right, layout.contentRow(1), layout.buttonWidth, 20).build());
 
-        this.mixedTextButton = addSettingButton(of(emptyText(), button -> {
+        this.mixedTextButton = addSettingButton(of(emptyStr(), button -> {
             translateEnglishOnly = !translateEnglishOnly;
             refreshLabels();
         }).dimensions(left, layout.contentRow(2), layout.totalWidth, 20).build());
@@ -350,21 +360,21 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         // The engine rows are centred in the free band (see engineRow) so the tab does not sit in
         // the top third of an otherwise empty panel, and every row is reachable without moving the
         // shared Save/Cancel row that the other tabs and the HUD preview depend on.
-        this.providerButton = addSettingButton(of(emptyText(), button -> {
+        this.providerButton = addSettingButton(of(emptyStr(), button -> {
             openSelection = SettingsSelectionList.Kind.PROVIDER;
         }).dimensions(left, engineRow(0), layout.totalWidth, 20).build());
 
-        this.modelButton = addSettingButton(of(emptyText(), button -> {
+        this.modelButton = addSettingButton(of(emptyStr(), button -> {
             offlineModel = offlineModel.next();
             refreshLabels();
         }).dimensions(left, engineRow(1), layout.buttonWidth, 20).build());
 
-        this.downloadButton = addSettingButton(of(emptyText(), button -> {
+        this.downloadButton = addSettingButton(of(emptyStr(), button -> {
             offlineAutoDownload = !offlineAutoDownload;
             refreshLabels();
         }).dimensions(layout.right, engineRow(1), layout.buttonWidth, 20).build());
 
-        this.modelPickButton = addSettingButton(of(emptyText(), button -> {
+        this.modelPickButton = addSettingButton(of(emptyStr(), button -> {
             if (fetchedModels.isEmpty()) {
                 fetchModels();
             } else {
@@ -373,24 +383,24 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         }).dimensions(left, engineRow(1), layout.buttonWidth, 20).build());
 
         this.fetchModelsButton = addSettingButton(of(
-                translatable("screen.universal_translator.llm.fetch_models"), button -> fetchModels())
+                trStr("screen.universal_translator.llm.fetch_models"), button -> fetchModels())
                 .dimensions(layout.right, engineRow(1), layout.buttonWidth, 20).build());
 
         this.llmConfigButton = addSettingButton(of(
-                translatable("screen.universal_translator.option.llm_settings"), button -> {
-            if (this.client != null) {
+                trStr("screen.universal_translator.option.llm_settings"), button -> {
+            if (minecraftClient() != null) {
                 showScreen(new UniversalTranslatorLlmConfigScreen(
                         this, llmEndpoint, llmModel, !llmApiKey.isEmpty()));
             }
         }).dimensions(left, engineRow(2), layout.buttonWidth, 20).build());
 
-        this.testConnectionButton = addSettingButton(of(emptyText(), button -> testConnection())
+        this.testConnectionButton = addSettingButton(of(emptyStr(), button -> testConnection())
                 .dimensions(layout.right, engineRow(2), layout.buttonWidth, 20).build());
 
-        this.checkSettingsButton = addSettingButton(of(emptyText(), button -> testConnection())
+        this.checkSettingsButton = addSettingButton(of(emptyStr(), button -> testConnection())
                 .dimensions(left, engineRow(2), layout.totalWidth, 20).build());
 
-        this.fallbackButton = addSettingButton(of(emptyText(), button -> {
+        this.fallbackButton = addSettingButton(of(emptyStr(), button -> {
             apiFallback = !apiFallback;
             refreshLabels();
         }).dimensions(left, engineRow(2), layout.totalWidth, 20).build());
@@ -405,16 +415,16 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         // rather than on the diagnostics screen. They take the two rows under the existing three,
         // which leaves every other engine control exactly where it was; the prompt shares its row
         // with its own Apply button.
-        this.qualityButton = addSettingButton(of(emptyText(), button -> {
+        this.qualityButton = addSettingButton(of(emptyStr(), button -> {
             quality = quality.next();
             refreshQualityLabel();
         }).dimensions(left, engineRow(3), layout.totalWidth, 20).build());
-        this.workersButton = addSettingButton(of(emptyText(), button -> {
+        this.workersButton = addSettingButton(of(emptyStr(), button -> {
             workers = cycleChoice(workers, 1, 2, 4, 6, 8, 12, 16);
             refreshWorkersLabel();
         }).dimensions(left, engineRow(5), layout.buttonWidth, 20).build());
 
-        this.batchSizeButton = addSettingButton(of(emptyText(), button -> {
+        this.batchSizeButton = addSettingButton(of(emptyStr(), button -> {
             batchSize = cycleChoice(batchSize, 1, 2, 4, 8, 12, 16);
             refreshBatchLabel();
         }).dimensions(layout.right, engineRow(5), layout.buttonWidth, 20).build());
@@ -431,67 +441,67 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         this.customPrompt.setText(promptValue);
         this.customPrompt.setSuggestion(tr("screen.universal_translator.diagnostics.prompt_hint"));
         this.applyPromptButton = addSettingButton(of(
-                translatable("screen.universal_translator.diagnostics.prompt_apply"),
+                trStr("screen.universal_translator.diagnostics.prompt_apply"),
                 button -> applyPromptSettings())
                 .dimensions(layout.right + layout.buttonWidth - promptApplyWidth, engineRow(4),
                         promptApplyWidth, 20).build());
 
         // --- Tab 4: Outgoing (傳送) ---
-        this.outgoingButton = addSettingButton(of(emptyText(), button -> {
+        this.outgoingButton = addSettingButton(of(emptyStr(), button -> {
             translateOutgoing = !translateOutgoing;
             refreshLabels();
         }).dimensions(left, layout.contentRow(0), layout.totalWidth, 20).build());
 
-        this.outgoingTargetLanguageButton = addSettingButton(of(emptyText(), button -> {
+        this.outgoingTargetLanguageButton = addSettingButton(of(emptyStr(), button -> {
             openSelection = SettingsSelectionList.Kind.OUTGOING_LANGUAGE;
         }).dimensions(left, layout.contentRow(1), layout.totalWidth, 20).build());
 
         // --- Tab 5: HUD (抬頭顯示) ---
-        this.hudIndicatorButton = addSettingButton(of(emptyText(), button -> {
+        this.hudIndicatorButton = addSettingButton(of(emptyStr(), button -> {
             hudIndicator = !hudIndicator;
             refreshLabels();
         }).dimensions(left, layout.contentRow(0), layout.buttonWidth, 20).build());
 
-        this.hudCornerButton = addSettingButton(of(emptyText(), button -> {
+        this.hudCornerButton = addSettingButton(of(emptyStr(), button -> {
             hudIndicatorCorner = HudIndicatorCorner.values()[
                     (hudIndicatorCorner.ordinal() + 1) % HudIndicatorCorner.values().length];
             refreshLabels();
         }).dimensions(layout.right, layout.contentRow(0), layout.buttonWidth, 20).build());
 
-        this.hudSizeButton = addSettingButton(of(emptyText(), button -> {
+        this.hudSizeButton = addSettingButton(of(emptyStr(), button -> {
             hudIndicatorSize = hudIndicatorSize >= HudIndicatorSettings.MAX_SIZE
                     ? HudIndicatorSettings.MIN_SIZE : hudIndicatorSize + 1;
             refreshLabels();
         }).dimensions(left, layout.contentRow(1), layout.buttonWidth, 20).build());
 
-        this.hudMarginButton = addSettingButton(of(emptyText(), button -> {
+        this.hudMarginButton = addSettingButton(of(emptyStr(), button -> {
             hudIndicatorMargin = hudIndicatorMargin >= HudIndicatorSettings.MAX_MARGIN
                     ? HudIndicatorSettings.MIN_MARGIN : hudIndicatorMargin + 1;
             refreshLabels();
         }).dimensions(layout.right, layout.contentRow(1), layout.buttonWidth, 20).build());
 
-        this.hudColorButton = addSettingButton(of(emptyText(), button -> {
+        this.hudColorButton = addSettingButton(of(emptyStr(), button -> {
             hudIndicatorColor = HudIndicatorColor.values()[
                     (hudIndicatorColor.ordinal() + 1) % HudIndicatorColor.values().length];
             refreshLabels();
         }).dimensions(left, layout.contentRow(2), layout.buttonWidth, 20).build());
 
-        this.hudContentButton = addSettingButton(of(emptyText(), button -> {
+        this.hudContentButton = addSettingButton(of(emptyStr(), button -> {
             hudIndicatorContent = HudIndicatorContent.values()[
                     (hudIndicatorContent.ordinal() + 1) % HudIndicatorContent.values().length];
             refreshLabels();
         }).dimensions(layout.right, layout.contentRow(2), layout.buttonWidth, 20).build());
 
-        this.hudVisibilityButton = addSettingButton(of(emptyText(), button -> {
+        this.hudVisibilityButton = addSettingButton(of(emptyStr(), button -> {
             hudIndicatorVisibility = HudIndicatorVisibility.values()[
                     (hudIndicatorVisibility.ordinal() + 1) % HudIndicatorVisibility.values().length];
             refreshLabels();
         }).dimensions(left, layout.contentRow(3), layout.buttonWidth, 20).build());
 
         // --- Bottom Action Row ---
-        addSettingButton(of(translatable("screen.universal_translator.save"), button -> saveAndApply())
+        addSettingButton(of(trStr("screen.universal_translator.save"), button -> saveAndApply())
                 .dimensions(left, layout.saveY, layout.buttonWidth, 20).build());
-        addSettingButton(of(translatable("gui.cancel"), button -> onBack())
+        addSettingButton(of(trStr("gui.cancel"), button -> onBack())
                 .dimensions(layout.right, layout.saveY, layout.buttonWidth, 20).build());
 
         refreshLabels();
@@ -501,22 +511,22 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     }
 
     private void refreshLabels() {
-        uiStyleButton.setMessage(translatable("screen.universal_translator.option.ui_style",
+        uiStyleButton.setMessage(trStr("screen.universal_translator.option.ui_style",
                 tr(animatedUi ? "value.universal_translator.ui_animated"
                         : "value.universal_translator.ui_classic")));
-        hudIndicatorButton.setMessage(translatable(
+        hudIndicatorButton.setMessage(trStr(
                 "screen.universal_translator.option.hud_indicator", onOff(hudIndicator)));
-        hudCornerButton.setMessage(translatable(
+        hudCornerButton.setMessage(trStr(
                 "screen.universal_translator.option.hud_corner", hudCornerLabel(hudIndicatorCorner)));
-        hudSizeButton.setMessage(translatable(
+        hudSizeButton.setMessage(trStr(
                 "screen.universal_translator.option.hud_size", hudIndicatorSize));
-        hudMarginButton.setMessage(translatable(
+        hudMarginButton.setMessage(trStr(
                 "screen.universal_translator.option.hud_margin", hudIndicatorMargin));
-        hudColorButton.setMessage(translatable(
+        hudColorButton.setMessage(trStr(
                 "screen.universal_translator.option.hud_color", hudColorLabel(hudIndicatorColor)));
-        hudContentButton.setMessage(translatable(
+        hudContentButton.setMessage(trStr(
                 "screen.universal_translator.option.hud_content", hudContentLabel(hudIndicatorContent)));
-        hudVisibilityButton.setMessage(translatable(
+        hudVisibilityButton.setMessage(trStr(
                 "screen.universal_translator.option.hud_visibility", hudVisibilityLabel(hudIndicatorVisibility)));
         hudCornerButton.active = hudIndicator;
         hudSizeButton.active = hudIndicator;
@@ -524,37 +534,37 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         hudColorButton.active = hudIndicator;
         hudContentButton.active = hudIndicator;
         hudVisibilityButton.active = hudIndicator;
-        enabledButton.setMessage(translatable("screen.universal_translator.option.automatic", onOff(enabled)));
-        chatButton.setMessage(translatable("screen.universal_translator.option.chat", onOff(translateChat)));
-        otherButton.setMessage(translatable("screen.universal_translator.option.other", onOff(translateOther)));
-        vanillaButton.setMessage(translatable("screen.universal_translator.option.vanilla", onOff(translateVanilla)));
-        playerNamesButton.setMessage(translatable(
+        enabledButton.setMessage(trStr("screen.universal_translator.option.automatic", onOff(enabled)));
+        chatButton.setMessage(trStr("screen.universal_translator.option.chat", onOff(translateChat)));
+        otherButton.setMessage(trStr("screen.universal_translator.option.other", onOff(translateOther)));
+        vanillaButton.setMessage(trStr("screen.universal_translator.option.vanilla", onOff(translateVanilla)));
+        playerNamesButton.setMessage(trStr(
                 "screen.universal_translator.option.player_names", onOff(translatePlayerNames)));
-        cacheButton.setMessage(translatable("screen.universal_translator.option.cache", onOff(diskCache)));
-        providerButton.setMessage(translatable("screen.universal_translator.option.provider", providerLabel()));
+        cacheButton.setMessage(trStr("screen.universal_translator.option.cache", onOff(diskCache)));
+        providerButton.setMessage(trStr("screen.universal_translator.option.provider", providerLabel()));
         String modelValue = llmModel == null || llmModel.trim().isEmpty()
                 ? tr("screen.universal_translator.engine.key_unset") : llmModel.trim();
-        modelPickButton.setMessage(translatable("screen.universal_translator.engine.model", modelValue));
-        testConnectionButton.setMessage(translatable("screen.universal_translator.engine.test"));
-        checkSettingsButton.setMessage(translatable(LIBRETRANSLATE_PROVIDER.equalsIgnoreCase(provider)
+        modelPickButton.setMessage(trStr("screen.universal_translator.engine.model", modelValue));
+        testConnectionButton.setMessage(trStr("screen.universal_translator.engine.test"));
+        checkSettingsButton.setMessage(trStr(LIBRETRANSLATE_PROVIDER.equalsIgnoreCase(provider)
                 ? "screen.universal_translator.engine.test"
                 : "screen.universal_translator.engine.check"));
-        displayButton.setMessage(translatable("screen.universal_translator.option.display",
+        displayButton.setMessage(trStr("screen.universal_translator.option.display",
                 tr(displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED
                         ? "value.universal_translator.display_bilingual"
                         : "value.universal_translator.display_translated")));
-        mixedTextButton.setMessage(translatable("screen.universal_translator.option.mixed", onOff(translateEnglishOnly)));
-        colorButton.setMessage(translatable("screen.universal_translator.option.color", colorLabel(translatedTextColor)));
-        downloadButton.setMessage(translatable("screen.universal_translator.option.download", onOff(offlineAutoDownload)));
-        modelButton.setMessage(translatable("screen.universal_translator.option.model", offlineModel.displayName()));
-        fallbackButton.setMessage(translatable("screen.universal_translator.option.fallback", onOff(apiFallback)));
+        mixedTextButton.setMessage(trStr("screen.universal_translator.option.mixed", onOff(translateEnglishOnly)));
+        colorButton.setMessage(trStr("screen.universal_translator.option.color", colorLabel(translatedTextColor)));
+        downloadButton.setMessage(trStr("screen.universal_translator.option.download", onOff(offlineAutoDownload)));
+        modelButton.setMessage(trStr("screen.universal_translator.option.model", offlineModel.displayName()));
+        fallbackButton.setMessage(trStr("screen.universal_translator.option.fallback", onOff(apiFallback)));
         refreshQualityLabel();
         refreshWorkersLabel();
         refreshBatchLabel();
-        outgoingButton.setMessage(translatable("screen.universal_translator.option.outgoing", onOff(translateOutgoing)));
-        targetLanguageButton.setMessage(translatable("screen.universal_translator.option.target_preset",
+        outgoingButton.setMessage(trStr("screen.universal_translator.option.outgoing", onOff(translateOutgoing)));
+        targetLanguageButton.setMessage(trStr("screen.universal_translator.option.target_preset",
                 TargetLanguage.displayName(targetLanguage)));
-        outgoingTargetLanguageButton.setMessage(translatable(
+        outgoingTargetLanguageButton.setMessage(trStr(
                 "screen.universal_translator.option.outgoing_target",
                 TargetLanguage.displayName(outgoingTargetLanguage)));
         outgoingTargetLanguageButton.active = translateOutgoing;
@@ -572,7 +582,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         if (qualityButton == null) {
             return;
         }
-        qualityButton.setMessage(translatable(
+        qualityButton.setMessage(trStr(
                 "screen.universal_translator.option.quality",
                 tr("value.universal_translator.quality." + quality.configName())));
     }
@@ -581,7 +591,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         if (workersButton == null) {
             return;
         }
-        workersButton.setMessage(translatable(
+        workersButton.setMessage(trStr(
                 "screen.universal_translator.option.workers", Integer.toString(workers)));
     }
 
@@ -589,7 +599,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         if (batchSizeButton == null) {
             return;
         }
-        batchSizeButton.setMessage(translatable(
+        batchSizeButton.setMessage(trStr(
                 "screen.universal_translator.option.batch_size", Integer.toString(batchSize)));
     }
 
@@ -706,7 +716,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
 
     private Text tabTitle(String key, boolean active) {
         String label = tr(key);
-        return literal(active ? "蝳宴蝳峽[ " + label + " ]" : "蝳?" + label);
+        return lit(active ? "蝳宴蝳峽[ " + label + " ]" : "蝳?" + label);
     }
 
     private String onOff(boolean value) {
@@ -802,7 +812,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
             int tabX = layout.tabX(tabIndex);
             fillRect(canvas, tabX, layout.tabY() + 20, tabX + layout.tabWidth(), layout.tabY() + 22, 0xFF55D6FF);
         }
-        drawCentered(canvas, this.font, this.title, this.width / 2, 16,
+        drawCentered(canvas, this.font, this.getTitle().getString(), this.width / 2, 16,
                 animatedUi ? SettingsUiAnimation.pulseColor(now) : 0xFFFFFFFF);
         String rawRuntimeStatus = FabricTranslationRuntime.status();
         String runtimeStatus = TranslationStatusLocalizer.localize(rawRuntimeStatus,
@@ -810,23 +820,23 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         int belowSave = layout.saveY + 24;
         int messageY = belowSave <= this.height - 10 ? belowSave : SettingsScreenLayout.COMPACT_STATUS_Y;
         if (!status.isEmpty()) {
-            drawCentered(canvas, this.font, literal(status),
+            drawCentered(canvas, this.font, lit(status),
                     this.width / 2, messageY, 0xFFFF5555);
         } else if (!testStatus.isEmpty()) {
-            drawCentered(canvas, this.font, literal(testStatus),
+            drawCentered(canvas, this.font, lit(testStatus),
                     this.width / 2, messageY, testStatusIsError ? 0xFFFF5555 : 0xFF55FF55);
         } else if (!runtimeStatus.isEmpty()) {
-            drawCentered(canvas, this.font, literal(runtimeStatus),
+            drawCentered(canvas, this.font, lit(runtimeStatus),
                     this.width / 2, messageY,
                     isFailureStatus(rawRuntimeStatus) ? 0xFFFF5555 : 0xFF55FF55);
         } else {
             if (activeTab == Tab.OUTGOING) {
                 drawCentered(canvas, this.font,
-                        translatable("screen.universal_translator.info.outgoing_hint"),
+                        trStr("screen.universal_translator.info.outgoing_hint"),
                         this.width / 2, layout.contentRow(2) + 6, 0xFFA0A0A0);
             } else if (activeTab == Tab.GENERAL) {
                 drawCentered(canvas, this.font,
-                        translatable("screen.universal_translator.info.keybind"),
+                        trStr("screen.universal_translator.info.keybind"),
                         this.width / 2, layout.contentRow(3) + 24, 0xFFA0A0A0);
             }
         }
@@ -1015,7 +1025,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         fillRect(canvas, list.panelLeft(), list.panelTop,
                 list.panelRight(), list.panelBottom, 0xF018202A);
         drawCentered(canvas, textRenderer,
-                translatable(selectionTitleKey()), width / 2, list.panelTop + 9, 0xFFFFFFFF);
+                trStr(selectionTitleKey()), width / 2, list.panelTop + 9, 0xFFFFFFFF);
         for (int index = 0; index < values.length; index++) {
             int x = list.x(index);
             int y = list.y(index);
@@ -1025,7 +1035,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
             fillRect(canvas, x, y, x + list.buttonWidth, y + list.buttonHeight,
                     hovered ? 0xFF3B6178 : selected ? 0xFF28533D : 0xFF303844);
             drawCentered(canvas, textRenderer,
-                    literal(SettingsSelectionList.displayName(openSelection, values[index])),
+                    lit(SettingsSelectionList.displayName(openSelection, values[index])),
                     x + list.buttonWidth / 2, y + Math.max(1, (list.buttonHeight - 8) / 2),
                     selected ? 0xFF55FF88 : 0xFFFFFFFF);
         }
@@ -1088,7 +1098,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     private void renderEngineInfo(Object canvas) {
         int y = engineRow(5) + 24;
         if (isLlm()) {
-            drawCentered(canvas, this.font, translatable(
+            drawCentered(canvas, this.font, trStr(
                             "screen.universal_translator.engine.summary",
                             trimForDisplay(llmEndpoint),
                             tr(llmApiKey == null || llmApiKey.isEmpty()
@@ -1097,11 +1107,11 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
                     this.width / 2, y, 0xFFA0A0A0);
         } else if (!isOffline() && !LIBRETRANSLATE_PROVIDER.equalsIgnoreCase(provider)) {
             drawCentered(canvas, this.font,
-                    translatable("screen.universal_translator.engine.config_file"),
+                    trStr("screen.universal_translator.engine.config_file"),
                     this.width / 2, y, 0xFFA0A0A0);
         }
         drawCentered(canvas, this.font,
-                translatable(isOffline()
+                trStr(isOffline()
                         ? "screen.universal_translator.info.offline"
                         : "screen.universal_translator.info.api"),
                 this.width / 2, y + 18, 0xFFFFAA55);
@@ -1234,7 +1244,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     private void renderModelList(Object canvas, int mouseX, int mouseY) {
         fillRect(canvas, 0, 0, this.width, this.height, 0xFF101010);
         drawCentered(canvas, this.font,
-                translatable("screen.universal_translator.llm.select_model", fetchedModels.size()),
+                trStr("screen.universal_translator.llm.select_model", fetchedModels.size()),
                 this.width / 2, 20, 0xFFFFFFFF);
         int rows = modelRowsPerPage();
         int first = modelPage * rows;
@@ -1242,18 +1252,18 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
             int rowY = MODEL_LIST_TOP + row * MODEL_ROW_HEIGHT;
             boolean hovered = mouseY >= rowY && mouseY < rowY + MODEL_ROW_HEIGHT;
             drawLeft(canvas, this.font,
-                    literal((hovered ? "> " : "  ") + fetchedModels.get(first + row)),
+                    lit((hovered ? "> " : "  ") + fetchedModels.get(first + row)),
                     24, rowY, hovered ? 0xFFFFD060 : 0xFFE0E0E0);
         }
         int pages = modelPageCount(rows);
         drawCentered(canvas, this.font,
-                literal("< " + (modelPage + 1) + "/" + pages + " >"),
+                lit("< " + (modelPage + 1) + "/" + pages + " >"),
                 this.width / 2, this.height - 46, 0xFFFFFFFF);
         drawCentered(canvas, this.font,
-                translatable("screen.universal_translator.llm.select_back"),
+                trStr("screen.universal_translator.llm.select_back"),
                 this.width / 2, this.height - 30, 0xFFFFD060);
         drawCentered(canvas, this.font,
-                translatable("screen.universal_translator.llm.select_hint"),
+                trStr("screen.universal_translator.llm.select_hint"),
                 this.width / 2, this.height - 16, 0xFFA0A0A0);
     }
 
@@ -1366,8 +1376,8 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         }
     }
 
-    protected String tr(String key, Object... arguments) {
-        return translatable(key, arguments).getString();
+    protected final String tr(String key, Object... arguments) {
+        return trStr(key, arguments);
     }
 
     private Layout layout() {

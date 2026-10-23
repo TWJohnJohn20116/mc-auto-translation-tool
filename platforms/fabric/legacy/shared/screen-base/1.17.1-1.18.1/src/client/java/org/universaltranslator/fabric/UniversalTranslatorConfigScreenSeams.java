@@ -31,8 +31,8 @@ abstract class UniversalTranslatorConfigScreenSeams extends UniversalTranslatorS
 
     @Override
     protected void showScreen(Screen screen) {
-        if (this.client != null) {
-            this.client.setScreen(screen);
+        if (minecraftClient() != null) {
+            minecraftClient().setScreen(screen);
         }
     }
 
