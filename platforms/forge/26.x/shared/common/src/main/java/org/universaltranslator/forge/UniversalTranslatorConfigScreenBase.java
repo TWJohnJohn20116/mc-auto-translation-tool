@@ -349,8 +349,11 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         llmConfigButton = addRenderableWidget(Button.builder(
                 Component.translatable("screen.universal_translator.option.llm_settings"), button -> {
             if (this.minecraft != null) {
+                // The model list editor hands this screen back to itself, so it takes the concrete
+                // type; the only instance of this class is the shared shell, which extends it.
                 showScreen(new UniversalTranslatorLlmConfigScreen(
-                        this, llmEndpoint, llmModel, !llmApiKey.isEmpty()));
+                        (UniversalTranslatorConfigScreen) this, llmEndpoint, llmModel,
+                        !llmApiKey.isEmpty()));
             }
         }).bounds(left, engineRow(2), layout.buttonWidth, 20).build());
 
@@ -790,7 +793,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                 animatedUi ? SettingsUiAnimation.pulseColor(now) : 0xFFFFFFFF);
         String rawRuntimeStatus = ForgeTranslationRuntime.status();
         String runtimeStatus = TranslationStatusLocalizer.localize(rawRuntimeStatus,
-                UniversalTranslatorConfigScreen::tr);
+                UniversalTranslatorConfigScreenBase::tr);
         int belowSave = layout.saveY + 24;
         int messageY = belowSave <= this.height - 10 ? belowSave : SettingsScreenLayout.COMPACT_STATUS_Y;
         if (!status.isEmpty()) {

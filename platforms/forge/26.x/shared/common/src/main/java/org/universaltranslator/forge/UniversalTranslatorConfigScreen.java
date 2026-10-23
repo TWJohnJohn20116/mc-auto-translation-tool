@@ -9,7 +9,7 @@ import net.minecraft.client.gui.screens.Screen;
  * call that moved inside 26.x through {@code UniversalTranslatorConfigScreenSeams}. Nothing here is
  * version specific, so Forge and NeoForge 26.1 through 26.2 share this single file.
  */
-final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScreenBase {
+final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScreenSeams {
     UniversalTranslatorConfigScreen(Screen parent, ForgeConfig config) {
         super(parent, config);
     }
