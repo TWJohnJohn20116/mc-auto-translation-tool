@@ -2,6 +2,7 @@ package org.universaltranslator.fabric;
 
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.text.Text;
 
@@ -16,8 +17,10 @@ import net.minecraft.text.Text;
  * that restores the newer builder shape, and an explicit import would shadow it.
  */
 abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorSettingsScreen {
+    static final Text SETTINGS_TITLE = Text.translatable("screen.universal_translator.settings.title");
+
     UniversalTranslatorConfigScreenBase(Screen parent, FabricConfig config) {
-        super(parent, config);
+        super(parent, config, SETTINGS_TITLE);
     }
 
     @Override
@@ -78,5 +81,48 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorSe
     @Override
     protected void drawLeft(Object canvas, TextRenderer renderer, Text text, int x, int y, int color) {
         renderer.drawWithShadow((MatrixStack) canvas, text, x, y, color);
+    }
+
+    @Override
+    protected net.minecraft.client.gui.widget.ButtonWidget addSettingButton(
+            net.minecraft.client.gui.widget.ButtonWidget button) {
+        return addDrawableChild(button);
+    }
+
+    @Override
+    protected TextFieldWidget addSettingField(TextFieldWidget field) {
+        return addDrawableChild(field);
+    }
+
+    @Override
+    protected Text literal(String value) {
+        return Text.literal(value);
+    }
+
+    @Override
+    protected Text translatable(String key, Object... arguments) {
+        return Text.translatable(key, arguments);
+    }
+
+    @Override
+    protected Text emptyText() {
+        return Text.empty();
+    }
+
+    @Override
+    protected void showScreen(Screen screen) {
+        if (this.client != null) {
+            this.client.setScreen(screen);
+        }
+    }
+
+    @Override
+    public void close() {
+        onBack();
+    }
+
+    @Override
+    public boolean shouldPause() {
+        return false;
     }
 }

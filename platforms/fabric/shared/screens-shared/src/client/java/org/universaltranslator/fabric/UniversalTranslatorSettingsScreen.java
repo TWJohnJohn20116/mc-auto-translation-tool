@@ -65,7 +65,25 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     protected abstract void drawLeft(Object canvas, TextRenderer renderer, Text text,
             int x, int y, int color);
 
-    private final Screen parent;
+    /** Builds a literal text component with the factory this Minecraft version exposes. */
+    protected abstract Text literal(String value);
+
+    /** Builds a translatable text component with the factory this Minecraft version exposes. */
+    protected abstract Text translatable(String key, Object... arguments);
+
+    /** Builds an empty text component with the factory this Minecraft version exposes. */
+    protected abstract Text emptyText();
+
+    /** Opens another screen; every generation spells this differently. */
+    protected abstract void showScreen(Screen screen);
+
+    /** Registers one button with this generation screen; 1.16 spells this differently. */
+    protected abstract ButtonWidget addSettingButton(ButtonWidget button);
+
+    /** Registers one text field with this generation screen; 1.16 spells this differently. */
+    protected abstract TextFieldWidget addSettingField(TextFieldWidget field);
+
+    protected final Screen parent;
     private final FabricConfig original;
     private boolean enabled;
     private boolean translateChat;
@@ -168,8 +186,8 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     private long animationStartedNanos = System.nanoTime();
     private SettingsSelectionList.Kind openSelection = SettingsSelectionList.Kind.NONE;
 
-    protected UniversalTranslatorSettingsScreen(Screen parent, FabricConfig config) {
-        super(Text.translatable("screen.universal_translator.settings.title"));
+    protected UniversalTranslatorSettingsScreen(Screen parent, FabricConfig config, Text title) {
+        super(title);
         this.parent = parent;
         this.original = config;
         this.enabled = config.enabled;
@@ -219,100 +237,100 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         int left = layout.left;
 
         // Navigation Tabs (positioned right below header at tabY)
-        this.tabGeneralButton = addDrawableChild(of(Text.empty(), button -> {
+        this.tabGeneralButton = addSettingButton(of(emptyText(), button -> {
             activeTab = Tab.GENERAL;
             updateTabVisibility();
         }).dimensions(layout.tabX(0), layout.tabY(), layout.tabWidth(), 20).build());
 
-        this.tabScopesButton = addDrawableChild(of(Text.empty(), button -> {
+        this.tabScopesButton = addSettingButton(of(emptyText(), button -> {
             activeTab = Tab.SCOPES;
             updateTabVisibility();
         }).dimensions(layout.tabX(1), layout.tabY(), layout.tabWidth(), 20).build());
 
-        this.tabEngineButton = addDrawableChild(of(Text.empty(), button -> {
+        this.tabEngineButton = addSettingButton(of(emptyText(), button -> {
             activeTab = Tab.ENGINE;
             updateTabVisibility();
         }).dimensions(layout.tabX(2), layout.tabY(), layout.tabWidth(), 20).build());
 
-        this.tabOutgoingButton = addDrawableChild(of(Text.empty(), button -> {
+        this.tabOutgoingButton = addSettingButton(of(emptyText(), button -> {
             activeTab = Tab.OUTGOING;
             updateTabVisibility();
         }).dimensions(layout.tabX(3), layout.tabY(), layout.tabWidth(), 20).build());
 
-        this.tabHudButton = addDrawableChild(of(Text.empty(), button -> {
+        this.tabHudButton = addSettingButton(of(emptyText(), button -> {
             activeTab = Tab.HUD;
             updateTabVisibility();
         }).dimensions(layout.tabX(4), layout.tabY(), layout.tabWidth(), 20).build());
 
         // --- Tab 1: General (常規) ---
-        this.enabledButton = addDrawableChild(of(Text.empty(), button -> {
+        this.enabledButton = addSettingButton(of(emptyText(), button -> {
             enabled = !enabled;
             refreshLabels();
         }).dimensions(left, layout.contentRow(0), layout.buttonWidth, 20).build());
 
-        this.targetLanguageButton = addDrawableChild(of(Text.empty(), button -> {
+        this.targetLanguageButton = addSettingButton(of(emptyText(), button -> {
             openSelection = SettingsSelectionList.Kind.TARGET_LANGUAGE;
         }).dimensions(layout.right, layout.contentRow(0), layout.buttonWidth, 20).build());
 
-        this.displayButton = addDrawableChild(of(Text.empty(), button -> {
+        this.displayButton = addSettingButton(of(emptyText(), button -> {
             displayMode = displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED
                     ? TranslationDisplayMode.TRANSLATED_ONLY
                     : TranslationDisplayMode.ORIGINAL_AND_TRANSLATED;
             refreshLabels();
         }).dimensions(left, layout.contentRow(1), layout.buttonWidth, 20).build());
 
-        this.colorButton = addDrawableChild(of(Text.empty(), button -> {
+        this.colorButton = addSettingButton(of(emptyText(), button -> {
             translatedTextColor = translatedTextColor.next();
             refreshLabels();
         }).dimensions(layout.right, layout.contentRow(1), layout.buttonWidth, 20).build());
 
-        this.cacheButton = addDrawableChild(of(Text.empty(), button -> {
+        this.cacheButton = addSettingButton(of(emptyText(), button -> {
             diskCache = !diskCache;
             refreshLabels();
         }).dimensions(left, layout.contentRow(2), layout.buttonWidth, 20).build());
 
-        this.uiStyleButton = addDrawableChild(of(Text.empty(), button -> {
+        this.uiStyleButton = addSettingButton(of(emptyText(), button -> {
             animatedUi = !animatedUi;
             animationStartedNanos = System.nanoTime();
             refreshLabels();
         }).dimensions(layout.right, layout.contentRow(2), layout.buttonWidth, 20).build());
 
-        this.diagnosticsButton = addDrawableChild(of(
-                Text.translatable("screen.universal_translator.diagnostics.title"), button -> {
+        this.diagnosticsButton = addSettingButton(of(
+                translatable("screen.universal_translator.diagnostics.title"), button -> {
             if (client != null) {
-                client.setScreen(new UniversalTranslatorDiagnosticsScreen(this));
+                showScreen(new UniversalTranslatorDiagnosticsScreen(this));
             }
         }).dimensions(left, layout.contentRow(3), layout.totalWidth, 20).build());
 
         // --- Tab 2: Scopes (範圍) ---
-        this.chatButton = addDrawableChild(of(Text.empty(), button -> {
+        this.chatButton = addSettingButton(of(emptyText(), button -> {
             translateChat = !translateChat;
             refreshLabels();
         }).dimensions(left, layout.contentRow(0), layout.buttonWidth, 20).build());
 
-        this.otherButton = addDrawableChild(of(Text.empty(), button -> {
+        this.otherButton = addSettingButton(of(emptyText(), button -> {
             translateOther = !translateOther;
             refreshLabels();
         }).dimensions(layout.right, layout.contentRow(0), layout.buttonWidth, 20).build());
 
-        this.vanillaButton = addDrawableChild(of(Text.empty(), button -> {
+        this.vanillaButton = addSettingButton(of(emptyText(), button -> {
             translateVanilla = !translateVanilla;
             refreshLabels();
         }).dimensions(left, layout.contentRow(1), layout.buttonWidth, 20).build());
 
-        this.playerNamesButton = addDrawableChild(of(Text.empty(), button -> {
+        this.playerNamesButton = addSettingButton(of(emptyText(), button -> {
             translatePlayerNames = !translatePlayerNames;
             refreshLabels();
         }).dimensions(layout.right, layout.contentRow(1), layout.buttonWidth, 20).build());
 
-        this.mixedTextButton = addDrawableChild(of(Text.empty(), button -> {
+        this.mixedTextButton = addSettingButton(of(emptyText(), button -> {
             translateEnglishOnly = !translateEnglishOnly;
             refreshLabels();
         }).dimensions(left, layout.contentRow(2), layout.totalWidth, 20).build());
 
-        this.blockedKeywords = addDrawableChild(new TextFieldWidget(
+        this.blockedKeywords = addSettingField(new TextFieldWidget(
                 this.textRenderer, left, layout.contentRow(3), layout.totalWidth, 20,
-                Text.translatable("screen.universal_translator.blocked_keywords")));
+                translatable("screen.universal_translator.blocked_keywords")));
         this.blockedKeywords.setMaxLength(4096);
         this.blockedKeywords.setText(blockedKeywordsValue);
         this.blockedKeywords.setSuggestion(tr("screen.universal_translator.blocked_keywords_hint"));
@@ -321,21 +339,21 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         // The engine rows are centred in the free band (see engineRow) so the tab does not sit in
         // the top third of an otherwise empty panel, and every row is reachable without moving the
         // shared Save/Cancel row that the other tabs and the HUD preview depend on.
-        this.providerButton = addDrawableChild(of(Text.empty(), button -> {
+        this.providerButton = addSettingButton(of(emptyText(), button -> {
             openSelection = SettingsSelectionList.Kind.PROVIDER;
         }).dimensions(left, engineRow(0), layout.totalWidth, 20).build());
 
-        this.modelButton = addDrawableChild(of(Text.empty(), button -> {
+        this.modelButton = addSettingButton(of(emptyText(), button -> {
             offlineModel = offlineModel.next();
             refreshLabels();
         }).dimensions(left, engineRow(1), layout.buttonWidth, 20).build());
 
-        this.downloadButton = addDrawableChild(of(Text.empty(), button -> {
+        this.downloadButton = addSettingButton(of(emptyText(), button -> {
             offlineAutoDownload = !offlineAutoDownload;
             refreshLabels();
         }).dimensions(layout.right, engineRow(1), layout.buttonWidth, 20).build());
 
-        this.modelPickButton = addDrawableChild(of(Text.empty(), button -> {
+        this.modelPickButton = addSettingButton(of(emptyText(), button -> {
             if (fetchedModels.isEmpty()) {
                 fetchModels();
             } else {
@@ -343,32 +361,32 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
             }
         }).dimensions(left, engineRow(1), layout.buttonWidth, 20).build());
 
-        this.fetchModelsButton = addDrawableChild(of(
-                Text.translatable("screen.universal_translator.llm.fetch_models"), button -> fetchModels())
+        this.fetchModelsButton = addSettingButton(of(
+                translatable("screen.universal_translator.llm.fetch_models"), button -> fetchModels())
                 .dimensions(layout.right, engineRow(1), layout.buttonWidth, 20).build());
 
-        this.llmConfigButton = addDrawableChild(of(
-                Text.translatable("screen.universal_translator.option.llm_settings"), button -> {
+        this.llmConfigButton = addSettingButton(of(
+                translatable("screen.universal_translator.option.llm_settings"), button -> {
             if (this.client != null) {
-                this.client.setScreen(new UniversalTranslatorLlmConfigScreen(
+                showScreen(new UniversalTranslatorLlmConfigScreen(
                         this, llmEndpoint, llmModel, !llmApiKey.isEmpty()));
             }
         }).dimensions(left, engineRow(2), layout.buttonWidth, 20).build());
 
-        this.testConnectionButton = addDrawableChild(of(Text.empty(), button -> testConnection())
+        this.testConnectionButton = addSettingButton(of(emptyText(), button -> testConnection())
                 .dimensions(layout.right, engineRow(2), layout.buttonWidth, 20).build());
 
-        this.checkSettingsButton = addDrawableChild(of(Text.empty(), button -> testConnection())
+        this.checkSettingsButton = addSettingButton(of(emptyText(), button -> testConnection())
                 .dimensions(left, engineRow(2), layout.totalWidth, 20).build());
 
-        this.fallbackButton = addDrawableChild(of(Text.empty(), button -> {
+        this.fallbackButton = addSettingButton(of(emptyText(), button -> {
             apiFallback = !apiFallback;
             refreshLabels();
         }).dimensions(left, engineRow(2), layout.totalWidth, 20).build());
 
-        this.endpoint = addDrawableChild(new TextFieldWidget(
+        this.endpoint = addSettingField(new TextFieldWidget(
                 this.textRenderer, left, engineRow(1), layout.totalWidth, 20,
-                Text.translatable("screen.universal_translator.endpoint")));
+                translatable("screen.universal_translator.endpoint")));
         this.endpoint.setMaxLength(512);
         this.endpoint.setText(endpointValue);
 
@@ -376,16 +394,16 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         // rather than on the diagnostics screen. They take the two rows under the existing three,
         // which leaves every other engine control exactly where it was; the prompt shares its row
         // with its own Apply button.
-        this.qualityButton = addDrawableChild(of(Text.empty(), button -> {
+        this.qualityButton = addSettingButton(of(emptyText(), button -> {
             quality = quality.next();
             refreshQualityLabel();
         }).dimensions(left, engineRow(3), layout.totalWidth, 20).build());
-        this.workersButton = addDrawableChild(of(Text.empty(), button -> {
+        this.workersButton = addSettingButton(of(emptyText(), button -> {
             workers = cycleChoice(workers, 1, 2, 4, 6, 8, 12, 16);
             refreshWorkersLabel();
         }).dimensions(left, engineRow(5), layout.buttonWidth, 20).build());
 
-        this.batchSizeButton = addDrawableChild(of(Text.empty(), button -> {
+        this.batchSizeButton = addSettingButton(of(emptyText(), button -> {
             batchSize = cycleChoice(batchSize, 1, 2, 4, 8, 12, 16);
             refreshBatchLabel();
         }).dimensions(layout.right, engineRow(5), layout.buttonWidth, 20).build());
@@ -394,75 +412,75 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
                 ? TranslationPrompt.toEditorText(original.customSystemPrompt())
                 : customPrompt.getText();
         int promptApplyWidth = Math.max(48, layout.buttonWidth - 24);
-        this.customPrompt = addDrawableChild(new TextFieldWidget(
+        this.customPrompt = addSettingField(new TextFieldWidget(
                 this.textRenderer, left, engineRow(4),
                 layout.totalWidth - promptApplyWidth - 8, 20,
-                Text.translatable("screen.universal_translator.diagnostics.prompt")));
+                translatable("screen.universal_translator.diagnostics.prompt")));
         this.customPrompt.setMaxLength(UiLimits.PROMPT_MAX_CHARS);
         this.customPrompt.setText(promptValue);
         this.customPrompt.setSuggestion(tr("screen.universal_translator.diagnostics.prompt_hint"));
-        this.applyPromptButton = addDrawableChild(of(
-                Text.translatable("screen.universal_translator.diagnostics.prompt_apply"),
+        this.applyPromptButton = addSettingButton(of(
+                translatable("screen.universal_translator.diagnostics.prompt_apply"),
                 button -> applyPromptSettings())
                 .dimensions(layout.right + layout.buttonWidth - promptApplyWidth, engineRow(4),
                         promptApplyWidth, 20).build());
 
         // --- Tab 4: Outgoing (傳送) ---
-        this.outgoingButton = addDrawableChild(of(Text.empty(), button -> {
+        this.outgoingButton = addSettingButton(of(emptyText(), button -> {
             translateOutgoing = !translateOutgoing;
             refreshLabels();
         }).dimensions(left, layout.contentRow(0), layout.totalWidth, 20).build());
 
-        this.outgoingTargetLanguageButton = addDrawableChild(of(Text.empty(), button -> {
+        this.outgoingTargetLanguageButton = addSettingButton(of(emptyText(), button -> {
             openSelection = SettingsSelectionList.Kind.OUTGOING_LANGUAGE;
         }).dimensions(left, layout.contentRow(1), layout.totalWidth, 20).build());
 
         // --- Tab 5: HUD (抬頭顯示) ---
-        this.hudIndicatorButton = addDrawableChild(of(Text.empty(), button -> {
+        this.hudIndicatorButton = addSettingButton(of(emptyText(), button -> {
             hudIndicator = !hudIndicator;
             refreshLabels();
         }).dimensions(left, layout.contentRow(0), layout.buttonWidth, 20).build());
 
-        this.hudCornerButton = addDrawableChild(of(Text.empty(), button -> {
+        this.hudCornerButton = addSettingButton(of(emptyText(), button -> {
             hudIndicatorCorner = HudIndicatorCorner.values()[
                     (hudIndicatorCorner.ordinal() + 1) % HudIndicatorCorner.values().length];
             refreshLabels();
         }).dimensions(layout.right, layout.contentRow(0), layout.buttonWidth, 20).build());
 
-        this.hudSizeButton = addDrawableChild(of(Text.empty(), button -> {
+        this.hudSizeButton = addSettingButton(of(emptyText(), button -> {
             hudIndicatorSize = hudIndicatorSize >= HudIndicatorSettings.MAX_SIZE
                     ? HudIndicatorSettings.MIN_SIZE : hudIndicatorSize + 1;
             refreshLabels();
         }).dimensions(left, layout.contentRow(1), layout.buttonWidth, 20).build());
 
-        this.hudMarginButton = addDrawableChild(of(Text.empty(), button -> {
+        this.hudMarginButton = addSettingButton(of(emptyText(), button -> {
             hudIndicatorMargin = hudIndicatorMargin >= HudIndicatorSettings.MAX_MARGIN
                     ? HudIndicatorSettings.MIN_MARGIN : hudIndicatorMargin + 1;
             refreshLabels();
         }).dimensions(layout.right, layout.contentRow(1), layout.buttonWidth, 20).build());
 
-        this.hudColorButton = addDrawableChild(of(Text.empty(), button -> {
+        this.hudColorButton = addSettingButton(of(emptyText(), button -> {
             hudIndicatorColor = HudIndicatorColor.values()[
                     (hudIndicatorColor.ordinal() + 1) % HudIndicatorColor.values().length];
             refreshLabels();
         }).dimensions(left, layout.contentRow(2), layout.buttonWidth, 20).build());
 
-        this.hudContentButton = addDrawableChild(of(Text.empty(), button -> {
+        this.hudContentButton = addSettingButton(of(emptyText(), button -> {
             hudIndicatorContent = HudIndicatorContent.values()[
                     (hudIndicatorContent.ordinal() + 1) % HudIndicatorContent.values().length];
             refreshLabels();
         }).dimensions(layout.right, layout.contentRow(2), layout.buttonWidth, 20).build());
 
-        this.hudVisibilityButton = addDrawableChild(of(Text.empty(), button -> {
+        this.hudVisibilityButton = addSettingButton(of(emptyText(), button -> {
             hudIndicatorVisibility = HudIndicatorVisibility.values()[
                     (hudIndicatorVisibility.ordinal() + 1) % HudIndicatorVisibility.values().length];
             refreshLabels();
         }).dimensions(left, layout.contentRow(3), layout.buttonWidth, 20).build());
 
         // --- Bottom Action Row ---
-        addDrawableChild(of(Text.translatable("screen.universal_translator.save"), button -> saveAndApply())
+        addSettingButton(of(translatable("screen.universal_translator.save"), button -> saveAndApply())
                 .dimensions(left, layout.saveY, layout.buttonWidth, 20).build());
-        addDrawableChild(of(Text.translatable("gui.cancel"), button -> close())
+        addSettingButton(of(translatable("gui.cancel"), button -> onBack())
                 .dimensions(layout.right, layout.saveY, layout.buttonWidth, 20).build());
 
         refreshLabels();
@@ -472,22 +490,22 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     }
 
     private void refreshLabels() {
-        uiStyleButton.setMessage(Text.translatable("screen.universal_translator.option.ui_style",
+        uiStyleButton.setMessage(translatable("screen.universal_translator.option.ui_style",
                 tr(animatedUi ? "value.universal_translator.ui_animated"
                         : "value.universal_translator.ui_classic")));
-        hudIndicatorButton.setMessage(Text.translatable(
+        hudIndicatorButton.setMessage(translatable(
                 "screen.universal_translator.option.hud_indicator", onOff(hudIndicator)));
-        hudCornerButton.setMessage(Text.translatable(
+        hudCornerButton.setMessage(translatable(
                 "screen.universal_translator.option.hud_corner", hudCornerLabel(hudIndicatorCorner)));
-        hudSizeButton.setMessage(Text.translatable(
+        hudSizeButton.setMessage(translatable(
                 "screen.universal_translator.option.hud_size", hudIndicatorSize));
-        hudMarginButton.setMessage(Text.translatable(
+        hudMarginButton.setMessage(translatable(
                 "screen.universal_translator.option.hud_margin", hudIndicatorMargin));
-        hudColorButton.setMessage(Text.translatable(
+        hudColorButton.setMessage(translatable(
                 "screen.universal_translator.option.hud_color", hudColorLabel(hudIndicatorColor)));
-        hudContentButton.setMessage(Text.translatable(
+        hudContentButton.setMessage(translatable(
                 "screen.universal_translator.option.hud_content", hudContentLabel(hudIndicatorContent)));
-        hudVisibilityButton.setMessage(Text.translatable(
+        hudVisibilityButton.setMessage(translatable(
                 "screen.universal_translator.option.hud_visibility", hudVisibilityLabel(hudIndicatorVisibility)));
         hudCornerButton.active = hudIndicator;
         hudSizeButton.active = hudIndicator;
@@ -495,37 +513,37 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         hudColorButton.active = hudIndicator;
         hudContentButton.active = hudIndicator;
         hudVisibilityButton.active = hudIndicator;
-        enabledButton.setMessage(Text.translatable("screen.universal_translator.option.automatic", onOff(enabled)));
-        chatButton.setMessage(Text.translatable("screen.universal_translator.option.chat", onOff(translateChat)));
-        otherButton.setMessage(Text.translatable("screen.universal_translator.option.other", onOff(translateOther)));
-        vanillaButton.setMessage(Text.translatable("screen.universal_translator.option.vanilla", onOff(translateVanilla)));
-        playerNamesButton.setMessage(Text.translatable(
+        enabledButton.setMessage(translatable("screen.universal_translator.option.automatic", onOff(enabled)));
+        chatButton.setMessage(translatable("screen.universal_translator.option.chat", onOff(translateChat)));
+        otherButton.setMessage(translatable("screen.universal_translator.option.other", onOff(translateOther)));
+        vanillaButton.setMessage(translatable("screen.universal_translator.option.vanilla", onOff(translateVanilla)));
+        playerNamesButton.setMessage(translatable(
                 "screen.universal_translator.option.player_names", onOff(translatePlayerNames)));
-        cacheButton.setMessage(Text.translatable("screen.universal_translator.option.cache", onOff(diskCache)));
-        providerButton.setMessage(Text.translatable("screen.universal_translator.option.provider", providerLabel()));
+        cacheButton.setMessage(translatable("screen.universal_translator.option.cache", onOff(diskCache)));
+        providerButton.setMessage(translatable("screen.universal_translator.option.provider", providerLabel()));
         String modelValue = llmModel == null || llmModel.trim().isEmpty()
                 ? tr("screen.universal_translator.engine.key_unset") : llmModel.trim();
-        modelPickButton.setMessage(Text.translatable("screen.universal_translator.engine.model", modelValue));
-        testConnectionButton.setMessage(Text.translatable("screen.universal_translator.engine.test"));
-        checkSettingsButton.setMessage(Text.translatable(LIBRETRANSLATE_PROVIDER.equalsIgnoreCase(provider)
+        modelPickButton.setMessage(translatable("screen.universal_translator.engine.model", modelValue));
+        testConnectionButton.setMessage(translatable("screen.universal_translator.engine.test"));
+        checkSettingsButton.setMessage(translatable(LIBRETRANSLATE_PROVIDER.equalsIgnoreCase(provider)
                 ? "screen.universal_translator.engine.test"
                 : "screen.universal_translator.engine.check"));
-        displayButton.setMessage(Text.translatable("screen.universal_translator.option.display",
+        displayButton.setMessage(translatable("screen.universal_translator.option.display",
                 tr(displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED
                         ? "value.universal_translator.display_bilingual"
                         : "value.universal_translator.display_translated")));
-        mixedTextButton.setMessage(Text.translatable("screen.universal_translator.option.mixed", onOff(translateEnglishOnly)));
-        colorButton.setMessage(Text.translatable("screen.universal_translator.option.color", colorLabel(translatedTextColor)));
-        downloadButton.setMessage(Text.translatable("screen.universal_translator.option.download", onOff(offlineAutoDownload)));
-        modelButton.setMessage(Text.translatable("screen.universal_translator.option.model", offlineModel.displayName()));
-        fallbackButton.setMessage(Text.translatable("screen.universal_translator.option.fallback", onOff(apiFallback)));
+        mixedTextButton.setMessage(translatable("screen.universal_translator.option.mixed", onOff(translateEnglishOnly)));
+        colorButton.setMessage(translatable("screen.universal_translator.option.color", colorLabel(translatedTextColor)));
+        downloadButton.setMessage(translatable("screen.universal_translator.option.download", onOff(offlineAutoDownload)));
+        modelButton.setMessage(translatable("screen.universal_translator.option.model", offlineModel.displayName()));
+        fallbackButton.setMessage(translatable("screen.universal_translator.option.fallback", onOff(apiFallback)));
         refreshQualityLabel();
         refreshWorkersLabel();
         refreshBatchLabel();
-        outgoingButton.setMessage(Text.translatable("screen.universal_translator.option.outgoing", onOff(translateOutgoing)));
-        targetLanguageButton.setMessage(Text.translatable("screen.universal_translator.option.target_preset",
+        outgoingButton.setMessage(translatable("screen.universal_translator.option.outgoing", onOff(translateOutgoing)));
+        targetLanguageButton.setMessage(translatable("screen.universal_translator.option.target_preset",
                 TargetLanguage.displayName(targetLanguage)));
-        outgoingTargetLanguageButton.setMessage(Text.translatable(
+        outgoingTargetLanguageButton.setMessage(translatable(
                 "screen.universal_translator.option.outgoing_target",
                 TargetLanguage.displayName(outgoingTargetLanguage)));
         outgoingTargetLanguageButton.active = translateOutgoing;
@@ -543,7 +561,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         if (qualityButton == null) {
             return;
         }
-        qualityButton.setMessage(Text.translatable(
+        qualityButton.setMessage(translatable(
                 "screen.universal_translator.option.quality",
                 tr("value.universal_translator.quality." + quality.configName())));
     }
@@ -552,7 +570,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         if (workersButton == null) {
             return;
         }
-        workersButton.setMessage(Text.translatable(
+        workersButton.setMessage(translatable(
                 "screen.universal_translator.option.workers", Integer.toString(workers)));
     }
 
@@ -560,7 +578,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         if (batchSizeButton == null) {
             return;
         }
-        batchSizeButton.setMessage(Text.translatable(
+        batchSizeButton.setMessage(translatable(
                 "screen.universal_translator.option.batch_size", Integer.toString(batchSize)));
     }
 
@@ -677,10 +695,10 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
 
     private Text tabTitle(String key, boolean active) {
         String label = tr(key);
-        return Text.literal(active ? "蝳宴蝳峽[ " + label + " ]" : "蝳?" + label);
+        return literal(active ? "蝳宴蝳峽[ " + label + " ]" : "蝳?" + label);
     }
 
-    private static String onOff(boolean value) {
+    private String onOff(boolean value) {
         return tr(UiTextKeys.onOff(value));
     }
 
@@ -777,27 +795,27 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
                 animatedUi ? SettingsUiAnimation.pulseColor(now) : 0xFFFFFFFF);
         String rawRuntimeStatus = FabricTranslationRuntime.status();
         String runtimeStatus = TranslationStatusLocalizer.localize(rawRuntimeStatus,
-                UniversalTranslatorSettingsScreen::tr);
+                this::tr);
         int belowSave = layout.saveY + 24;
         int messageY = belowSave <= this.height - 10 ? belowSave : SettingsScreenLayout.COMPACT_STATUS_Y;
         if (!status.isEmpty()) {
-            drawCentered(canvas, this.textRenderer, Text.literal(status),
+            drawCentered(canvas, this.textRenderer, literal(status),
                     this.width / 2, messageY, 0xFFFF5555);
         } else if (!testStatus.isEmpty()) {
-            drawCentered(canvas, this.textRenderer, Text.literal(testStatus),
+            drawCentered(canvas, this.textRenderer, literal(testStatus),
                     this.width / 2, messageY, testStatusIsError ? 0xFFFF5555 : 0xFF55FF55);
         } else if (!runtimeStatus.isEmpty()) {
-            drawCentered(canvas, this.textRenderer, Text.literal(runtimeStatus),
+            drawCentered(canvas, this.textRenderer, literal(runtimeStatus),
                     this.width / 2, messageY,
                     isFailureStatus(rawRuntimeStatus) ? 0xFFFF5555 : 0xFF55FF55);
         } else {
             if (activeTab == Tab.OUTGOING) {
                 drawCentered(canvas, this.textRenderer,
-                        Text.translatable("screen.universal_translator.info.outgoing_hint"),
+                        translatable("screen.universal_translator.info.outgoing_hint"),
                         this.width / 2, layout.contentRow(2) + 6, 0xFFA0A0A0);
             } else if (activeTab == Tab.GENERAL) {
                 drawCentered(canvas, this.textRenderer,
-                        Text.translatable("screen.universal_translator.info.keybind"),
+                        translatable("screen.universal_translator.info.keybind"),
                         this.width / 2, layout.contentRow(3) + 24, 0xFFA0A0A0);
             }
         }
@@ -986,7 +1004,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         fillRect(canvas, list.panelLeft(), list.panelTop,
                 list.panelRight(), list.panelBottom, 0xF018202A);
         drawCentered(canvas, textRenderer,
-                Text.translatable(selectionTitleKey()), width / 2, list.panelTop + 9, 0xFFFFFFFF);
+                translatable(selectionTitleKey()), width / 2, list.panelTop + 9, 0xFFFFFFFF);
         for (int index = 0; index < values.length; index++) {
             int x = list.x(index);
             int y = list.y(index);
@@ -996,7 +1014,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
             fillRect(canvas, x, y, x + list.buttonWidth, y + list.buttonHeight,
                     hovered ? 0xFF3B6178 : selected ? 0xFF28533D : 0xFF303844);
             drawCentered(canvas, textRenderer,
-                    Text.literal(SettingsSelectionList.displayName(openSelection, values[index])),
+                    literal(SettingsSelectionList.displayName(openSelection, values[index])),
                     x + list.buttonWidth / 2, y + Math.max(1, (list.buttonHeight - 8) / 2),
                     selected ? 0xFF55FF88 : 0xFFFFFFFF);
         }
@@ -1059,7 +1077,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     private void renderEngineInfo(Object canvas) {
         int y = engineRow(5) + 24;
         if (isLlm()) {
-            drawCentered(canvas, this.textRenderer, Text.translatable(
+            drawCentered(canvas, this.textRenderer, translatable(
                             "screen.universal_translator.engine.summary",
                             trimForDisplay(llmEndpoint),
                             tr(llmApiKey == null || llmApiKey.isEmpty()
@@ -1068,11 +1086,11 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
                     this.width / 2, y, 0xFFA0A0A0);
         } else if (!isOffline() && !LIBRETRANSLATE_PROVIDER.equalsIgnoreCase(provider)) {
             drawCentered(canvas, this.textRenderer,
-                    Text.translatable("screen.universal_translator.engine.config_file"),
+                    translatable("screen.universal_translator.engine.config_file"),
                     this.width / 2, y, 0xFFA0A0A0);
         }
         drawCentered(canvas, this.textRenderer,
-                Text.translatable(isOffline()
+                translatable(isOffline()
                         ? "screen.universal_translator.info.offline"
                         : "screen.universal_translator.info.api"),
                 this.width / 2, y + 18, 0xFFFFAA55);
@@ -1205,7 +1223,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     private void renderModelList(Object canvas, int mouseX, int mouseY) {
         fillRect(canvas, 0, 0, this.width, this.height, 0xFF101010);
         drawCentered(canvas, this.textRenderer,
-                Text.translatable("screen.universal_translator.llm.select_model", fetchedModels.size()),
+                translatable("screen.universal_translator.llm.select_model", fetchedModels.size()),
                 this.width / 2, 20, 0xFFFFFFFF);
         int rows = modelRowsPerPage();
         int first = modelPage * rows;
@@ -1213,18 +1231,18 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
             int rowY = MODEL_LIST_TOP + row * MODEL_ROW_HEIGHT;
             boolean hovered = mouseY >= rowY && mouseY < rowY + MODEL_ROW_HEIGHT;
             drawLeft(canvas, this.textRenderer,
-                    Text.literal((hovered ? "> " : "  ") + fetchedModels.get(first + row)),
+                    literal((hovered ? "> " : "  ") + fetchedModels.get(first + row)),
                     24, rowY, hovered ? 0xFFFFD060 : 0xFFE0E0E0);
         }
         int pages = modelPageCount(rows);
         drawCentered(canvas, this.textRenderer,
-                Text.literal("< " + (modelPage + 1) + "/" + pages + " >"),
+                literal("< " + (modelPage + 1) + "/" + pages + " >"),
                 this.width / 2, this.height - 46, 0xFFFFFFFF);
         drawCentered(canvas, this.textRenderer,
-                Text.translatable("screen.universal_translator.llm.select_back"),
+                translatable("screen.universal_translator.llm.select_back"),
                 this.width / 2, this.height - 30, 0xFFFFD060);
         drawCentered(canvas, this.textRenderer,
-                Text.translatable("screen.universal_translator.llm.select_hint"),
+                translatable("screen.universal_translator.llm.select_hint"),
                 this.width / 2, this.height - 16, 0xFFA0A0A0);
     }
 
@@ -1263,16 +1281,12 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         return Math.max(1, (fetchedModels.size() + rows - 1) / rows);
     }
 
-    @Override
-    public void close() {
-        if (this.client != null) {
-            this.client.setScreen(parent);
-        }
-    }
-
-    @Override
-    public boolean shouldPause() {
-        return false;
+    /**
+     * Leaves this screen. Every generation spells the exit hook differently, so each per-generation
+     * base maps its own vanilla method onto this one.
+     */
+    protected void onBack() {
+        showScreen(parent);
     }
 
     private boolean isOffline() {
@@ -1306,7 +1320,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         return llmApiKey;
     }
 
-    private static String colorLabel(TranslationTextColor color) {
+    private String colorLabel(TranslationTextColor color) {
         switch (color) {
             case ORIGINAL: return tr("value.universal_translator.color.original");
             case GREEN: return tr("value.universal_translator.color.green");
@@ -1319,19 +1333,19 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         }
     }
 
-    private static String hudColorLabel(HudIndicatorColor color) {
+    private String hudColorLabel(HudIndicatorColor color) {
         return tr("value.universal_translator.color." + color.configName().replace('-', '_'));
     }
 
-    private static String hudContentLabel(HudIndicatorContent content) {
+    private String hudContentLabel(HudIndicatorContent content) {
         return tr("value.universal_translator.hud_content." + content.configName().replace('-', '_'));
     }
 
-    private static String hudVisibilityLabel(HudIndicatorVisibility visibility) {
+    private String hudVisibilityLabel(HudIndicatorVisibility visibility) {
         return tr("value.universal_translator.hud_visibility." + visibility.configName().replace('-', '_'));
     }
 
-    private static String hudCornerLabel(HudIndicatorCorner corner) {
+    private String hudCornerLabel(HudIndicatorCorner corner) {
         switch (corner) {
             case TOP_RIGHT: return tr("value.universal_translator.hud_corner.top_right");
             case BOTTOM_LEFT: return tr("value.universal_translator.hud_corner.bottom_left");
@@ -1341,8 +1355,8 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         }
     }
 
-    private static String tr(String key, Object... arguments) {
-        return Text.translatable(key, arguments).getString();
+    private String tr(String key, Object... arguments) {
+        return translatable(key, arguments).getString();
     }
 
     private Layout layout() {
