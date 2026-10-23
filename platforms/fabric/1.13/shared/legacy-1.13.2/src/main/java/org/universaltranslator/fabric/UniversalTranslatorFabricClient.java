@@ -109,7 +109,10 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
 
         @Override
         protected void executeOnClientThread(Runnable task) {
-            MinecraftClient.getInstance().execute(task);
+            MinecraftClient.getInstance().execute(() -> {
+                task.run();
+                return null;
+            });
         }
 
         @Override
