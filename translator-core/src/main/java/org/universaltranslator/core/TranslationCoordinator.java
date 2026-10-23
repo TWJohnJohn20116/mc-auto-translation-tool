@@ -407,6 +407,8 @@ public final class TranslationCoordinator implements AutoCloseable {
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
         }
+        // The store may coalesce writes, so the last burst is only durable once this runs.
+        cache.flush();
         if (provider instanceof AutoCloseable) {
             try {
                 ((AutoCloseable) provider).close();

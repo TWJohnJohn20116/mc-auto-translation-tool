@@ -36,6 +36,15 @@ public final class ForgeTranslationRuntime {
 
     private static volatile RenderTranslationSession session;
     private static volatile ForgeConfig activeConfig;
+    /**
+     * Settings snapshot the render hooks read.
+     *
+     * <p>Published by {@link #initialize} and read from the render thread, so it is a volatile field
+     * instead of a value rebuilt under the class monitor: {@code initialize} holds that monitor for
+     * the whole provider build, and a render hook waiting behind it is a visible frame hitch on every
+     * settings save and F8 toggle.
+     */
+    private static volatile HomeQuickSettingsState cachedHome;
     private static volatile TranslationProvider activeProvider;
     private static volatile List<String> protectedPlayerNames = Collections.emptyList();
     private static volatile long protectedPlayerNamesExpireAt;
@@ -134,6 +143,7 @@ public final class ForgeTranslationRuntime {
         activeConfig = config;
         activeProvider = createdProvider;
         session = created;
+        cachedHome = homeSettingsState(config);
         protectedPlayerNames = Collections.emptyList();
         protectedPlayerNamesExpireAt = 0L;
         RECENT_USER_TEXT.clear();
@@ -340,8 +350,17 @@ public final class ForgeTranslationRuntime {
         return next;
     }
 
-    public static synchronized HomeQuickSettingsState homeSettings() {
-        return homeSettingsState(activeConfig);
+    /**
+     * Settings snapshot for the render hooks, taken without entering the class monitor.
+     *
+     * <p>The HUD reads this five times per frame, so it must not be {@code synchronized}: the build
+     * that publishes it ({@link #initialize}) holds that monitor for the whole provider
+     * construction. The fallback only runs before the first {@code initialize}, when no HUD exists
+     * yet, and reads the same {@code activeConfig} the previous synchronized body read.
+     */
+    public static HomeQuickSettingsState homeSettings() {
+        HomeQuickSettingsState snapshot = cachedHome;
+        return snapshot == null ? homeSettingsState(activeConfig) : snapshot;
     }
 
     public static synchronized HomeQuickSettingsState toggleHomeEnabled() throws Exception {
