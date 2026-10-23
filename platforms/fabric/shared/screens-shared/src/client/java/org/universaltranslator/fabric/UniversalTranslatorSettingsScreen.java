@@ -222,6 +222,17 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         this.batchSize = config.batchSize();
     }
 
+    /**
+     * The two things the model list editor needs from the screen that opened it. Kept as an
+     * interface so eras where the editor lives in a different source layer can be typed against it
+     * without naming a class they cannot see.
+     */
+    interface LlmEditorHost {
+        String llmApiKey();
+
+        void applyLlmSettings(String endpoint, String model, String apiKey);
+    }
+
     @Override
     protected void init() {
         if (targetLanguage == null) {
@@ -329,8 +340,8 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         }).dimensions(left, layout.contentRow(2), layout.totalWidth, 20).build());
 
         this.blockedKeywords = addSettingField(new TextFieldWidget(
-                this.textRenderer, left, layout.contentRow(3), layout.totalWidth, 20,
-                translatable("screen.universal_translator.blocked_keywords")));
+                this.font, left, layout.contentRow(3), layout.totalWidth, 20,
+                tr("screen.universal_translator.blocked_keywords")));
         this.blockedKeywords.setMaxLength(4096);
         this.blockedKeywords.setText(blockedKeywordsValue);
         this.blockedKeywords.setSuggestion(tr("screen.universal_translator.blocked_keywords_hint"));
@@ -385,8 +396,8 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         }).dimensions(left, engineRow(2), layout.totalWidth, 20).build());
 
         this.endpoint = addSettingField(new TextFieldWidget(
-                this.textRenderer, left, engineRow(1), layout.totalWidth, 20,
-                translatable("screen.universal_translator.endpoint")));
+                this.font, left, engineRow(1), layout.totalWidth, 20,
+                tr("screen.universal_translator.endpoint")));
         this.endpoint.setMaxLength(512);
         this.endpoint.setText(endpointValue);
 
@@ -413,9 +424,9 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
                 : customPrompt.getText();
         int promptApplyWidth = Math.max(48, layout.buttonWidth - 24);
         this.customPrompt = addSettingField(new TextFieldWidget(
-                this.textRenderer, left, engineRow(4),
+                this.font, left, engineRow(4),
                 layout.totalWidth - promptApplyWidth - 8, 20,
-                translatable("screen.universal_translator.diagnostics.prompt")));
+                tr("screen.universal_translator.diagnostics.prompt")));
         this.customPrompt.setMaxLength(UiLimits.PROMPT_MAX_CHARS);
         this.customPrompt.setText(promptValue);
         this.customPrompt.setSuggestion(tr("screen.universal_translator.diagnostics.prompt_hint"));
@@ -752,7 +763,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
             FabricTranslationRuntime.initialize(updated);
             updated.save();
             status = tr("status.universal_translator.saved");
-            close();
+            onBack();
         } catch (Exception exception) {
             if (runtimeChanged) {
                 try {
@@ -791,30 +802,30 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
             int tabX = layout.tabX(tabIndex);
             fillRect(canvas, tabX, layout.tabY() + 20, tabX + layout.tabWidth(), layout.tabY() + 22, 0xFF55D6FF);
         }
-        drawCentered(canvas, this.textRenderer, this.title, this.width / 2, 16,
+        drawCentered(canvas, this.font, this.title, this.width / 2, 16,
                 animatedUi ? SettingsUiAnimation.pulseColor(now) : 0xFFFFFFFF);
         String rawRuntimeStatus = FabricTranslationRuntime.status();
         String runtimeStatus = TranslationStatusLocalizer.localize(rawRuntimeStatus,
-                this::tr);
+                (key, arguments) -> tr(key, arguments));
         int belowSave = layout.saveY + 24;
         int messageY = belowSave <= this.height - 10 ? belowSave : SettingsScreenLayout.COMPACT_STATUS_Y;
         if (!status.isEmpty()) {
-            drawCentered(canvas, this.textRenderer, literal(status),
+            drawCentered(canvas, this.font, literal(status),
                     this.width / 2, messageY, 0xFFFF5555);
         } else if (!testStatus.isEmpty()) {
-            drawCentered(canvas, this.textRenderer, literal(testStatus),
+            drawCentered(canvas, this.font, literal(testStatus),
                     this.width / 2, messageY, testStatusIsError ? 0xFFFF5555 : 0xFF55FF55);
         } else if (!runtimeStatus.isEmpty()) {
-            drawCentered(canvas, this.textRenderer, literal(runtimeStatus),
+            drawCentered(canvas, this.font, literal(runtimeStatus),
                     this.width / 2, messageY,
                     isFailureStatus(rawRuntimeStatus) ? 0xFFFF5555 : 0xFF55FF55);
         } else {
             if (activeTab == Tab.OUTGOING) {
-                drawCentered(canvas, this.textRenderer,
+                drawCentered(canvas, this.font,
                         translatable("screen.universal_translator.info.outgoing_hint"),
                         this.width / 2, layout.contentRow(2) + 6, 0xFFA0A0A0);
             } else if (activeTab == Tab.GENERAL) {
-                drawCentered(canvas, this.textRenderer,
+                drawCentered(canvas, this.font,
                         translatable("screen.universal_translator.info.keybind"),
                         this.width / 2, layout.contentRow(3) + 24, 0xFFA0A0A0);
             }
@@ -1077,7 +1088,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     private void renderEngineInfo(Object canvas) {
         int y = engineRow(5) + 24;
         if (isLlm()) {
-            drawCentered(canvas, this.textRenderer, translatable(
+            drawCentered(canvas, this.font, translatable(
                             "screen.universal_translator.engine.summary",
                             trimForDisplay(llmEndpoint),
                             tr(llmApiKey == null || llmApiKey.isEmpty()
@@ -1085,11 +1096,11 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
                                     : "screen.universal_translator.engine.key_set")),
                     this.width / 2, y, 0xFFA0A0A0);
         } else if (!isOffline() && !LIBRETRANSLATE_PROVIDER.equalsIgnoreCase(provider)) {
-            drawCentered(canvas, this.textRenderer,
+            drawCentered(canvas, this.font,
                     translatable("screen.universal_translator.engine.config_file"),
                     this.width / 2, y, 0xFFA0A0A0);
         }
-        drawCentered(canvas, this.textRenderer,
+        drawCentered(canvas, this.font,
                 translatable(isOffline()
                         ? "screen.universal_translator.info.offline"
                         : "screen.universal_translator.info.api"),
@@ -1222,7 +1233,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     /** Draws the fetched catalog over the settings so a served model can be picked. */
     private void renderModelList(Object canvas, int mouseX, int mouseY) {
         fillRect(canvas, 0, 0, this.width, this.height, 0xFF101010);
-        drawCentered(canvas, this.textRenderer,
+        drawCentered(canvas, this.font,
                 translatable("screen.universal_translator.llm.select_model", fetchedModels.size()),
                 this.width / 2, 20, 0xFFFFFFFF);
         int rows = modelRowsPerPage();
@@ -1230,18 +1241,18 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         for (int row = 0; row < rows && first + row < fetchedModels.size(); row++) {
             int rowY = MODEL_LIST_TOP + row * MODEL_ROW_HEIGHT;
             boolean hovered = mouseY >= rowY && mouseY < rowY + MODEL_ROW_HEIGHT;
-            drawLeft(canvas, this.textRenderer,
+            drawLeft(canvas, this.font,
                     literal((hovered ? "> " : "  ") + fetchedModels.get(first + row)),
                     24, rowY, hovered ? 0xFFFFD060 : 0xFFE0E0E0);
         }
         int pages = modelPageCount(rows);
-        drawCentered(canvas, this.textRenderer,
+        drawCentered(canvas, this.font,
                 literal("< " + (modelPage + 1) + "/" + pages + " >"),
                 this.width / 2, this.height - 46, 0xFFFFFFFF);
-        drawCentered(canvas, this.textRenderer,
+        drawCentered(canvas, this.font,
                 translatable("screen.universal_translator.llm.select_back"),
                 this.width / 2, this.height - 30, 0xFFFFD060);
-        drawCentered(canvas, this.textRenderer,
+        drawCentered(canvas, this.font,
                 translatable("screen.universal_translator.llm.select_hint"),
                 this.width / 2, this.height - 16, 0xFFA0A0A0);
     }
@@ -1310,13 +1321,13 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         this.llmModel = original.editorModel(selectedProvider);
     }
 
-    void applyLlmSettings(String endpoint, String model, String apiKey) {
+    public final void applyLlmSettings(String endpoint, String model, String apiKey) {
         this.llmEndpoint = endpoint;
         this.llmModel = model;
         this.llmApiKey = apiKey;
     }
 
-    String llmApiKey() {
+    public final String llmApiKey() {
         return llmApiKey;
     }
 
@@ -1355,7 +1366,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         }
     }
 
-    private String tr(String key, Object... arguments) {
+    protected String tr(String key, Object... arguments) {
         return translatable(key, arguments).getString();
     }
 

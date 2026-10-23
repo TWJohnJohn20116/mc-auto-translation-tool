@@ -113,7 +113,8 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorSe
     @Override
     protected net.minecraft.client.gui.widget.TextFieldWidget addSettingField(
             TextFieldWidget field) {
-        return addButton(field);
+        addButton(field);
+        return field;
     }
 
     @Override

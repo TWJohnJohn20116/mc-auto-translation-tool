@@ -20,7 +20,11 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
     private static final int LIST_FOOTER_HEIGHT = 62;
     private static final int ESCAPE_KEY = 256;
 
-    private final UniversalTranslatorSettingsScreen parent;
+    /**
+     * The screen that opened this one. Typed against the shared body rather than the concrete
+     * settings screen so this file does not have to name a per-generation class.
+     */
+    private final LlmEditorHost parent;
     private final String initialEndpoint;
     private final String initialModel;
     private final boolean hasStoredKey;
@@ -35,7 +39,7 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
     private int modelPage;
 
     UniversalTranslatorLlmConfigScreen(
-            UniversalTranslatorSettingsScreen parent,
+            LlmEditorHost parent,
             String endpoint,
             String model,
             boolean hasStoredKey
