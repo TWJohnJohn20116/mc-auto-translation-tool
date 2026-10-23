@@ -39,6 +39,13 @@ abstract class UniversalTranslatorConfigScreenSeams extends UniversalTranslatorS
         return false;
     }
     @Override
+    protected void showScreen(Screen screen) {
+        if (minecraftClient() != null) {
+            minecraftClient().openScreen(screen);
+        }
+    }
+
+    @Override
     protected void setLabel(net.minecraft.client.gui.widget.ButtonWidget button, String label) {
         button.setMessage(new LiteralText(label));
     }

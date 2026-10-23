@@ -91,12 +91,8 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorCo
         renderer.drawWithShadow((MatrixStack) canvas, new LiteralText(text), x, y, color);
     }
     @Override
-    protected void showScreen(Screen screen) {
-        if (client != null) {
-            // Every 1.16 to 1.18 build inherited this unqualified call, so it resolves
-            // through Screen in all of them.
-            openScreen(screen);
-        }
+    protected TextRenderer textRenderer() {
+        return this.textRenderer;
     }
 
     @Override

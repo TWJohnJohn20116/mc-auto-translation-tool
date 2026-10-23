@@ -113,6 +113,11 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorSe
         return false;
     }
     @Override
+    protected TextRenderer textRenderer() {
+        return this.textRenderer;
+    }
+
+    @Override
     protected String trStr(String key, Object... arguments) {
         return Text.translatable(key, arguments).getString();
     }
