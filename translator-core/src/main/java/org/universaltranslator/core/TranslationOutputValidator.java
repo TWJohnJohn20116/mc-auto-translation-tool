@@ -173,12 +173,34 @@ public final class TranslationOutputValidator {
             index += Character.charCount(codePoint) - 1;
             if (!Character.isWhitespace(codePoint)
                     && !Character.isSpaceChar(codePoint)
-                    && !Character.isPunctuation(codePoint)
+                    && !isPunctuation(codePoint)
                     && Character.getType(codePoint) != Character.FORMAT) {
                 return;
             }
         }
         throw new IllegalArgumentException("Translation output is empty");
+    }
+
+    /**
+     * Whether the code point belongs to one of the Unicode punctuation categories.
+     *
+     * <p>{@link Character} exposes {@code isLetter} / {@code isDigit} / {@code isSpaceChar} but no
+     * {@code isPunctuation}, so the categories have to be listed. Symbols (including emoji) are
+     * deliberately not punctuation: an answer made of emoji is content.
+     */
+    private static boolean isPunctuation(int codePoint) {
+        switch (Character.getType(codePoint)) {
+            case Character.CONNECTOR_PUNCTUATION:
+            case Character.DASH_PUNCTUATION:
+            case Character.START_PUNCTUATION:
+            case Character.END_PUNCTUATION:
+            case Character.INITIAL_QUOTE_PUNCTUATION:
+            case Character.FINAL_QUOTE_PUNCTUATION:
+            case Character.OTHER_PUNCTUATION:
+                return true;
+            default:
+                return false;
+        }
     }
 
     private static boolean containsInstructionArtifact(String text) {
