@@ -7,6 +7,7 @@ import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.universaltranslator.fabric.TranslationRenderContext;
 import org.universaltranslator.fabric.UniversalTranslatorFabricClient;
 
 @Mixin(MinecraftClient.class)
@@ -18,6 +19,9 @@ abstract class MinecraftMixin {
 
     @Inject(method = "tick()V", at = @At("RETURN"), require = 0)
     private void universalTranslator$pollKeys(CallbackInfo callback) {
+        // Restore first, so a render method that threw between its HEAD and RETURN injection cannot
+        // leave a text-input depth above zero and silently disable translation for the session.
+        TranslationRenderContext.reset();
         MinecraftClient client = (MinecraftClient) (Object) this;
         long window = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
         boolean u = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_U) == GLFW.GLFW_PRESS;

@@ -87,8 +87,18 @@ jobs:
           check "UserAgent.VALUE" "$agent"
           check "website 的 releaseVersion" "$web"
           for readme in README.md docs/Zh-cn/README.md docs/Zh-tw/README.md docs/en/README.md; do
-            linked="$(grep -o 'releases/download/v[^/]*/' "$readme" | head -n 1 | sed 's|releases/download/v||; s|/$||')"
-            check "$readme 的下載連結" "$linked"
+            # 必須「唯一」，不是「取第一個」。`head -n 1` 只看每份文件的第一個下載連結，於是
+            # 其餘 15 個 Forge／NeoForge 連結即使整批留在舊版本號，這一步照樣輸出「版本號一致」
+            # 並讓 CI 綠燈，合併後那些連結 404。這正是這條檢查存在的唯一目的（見上面註解）。
+            linked="$(grep -o 'releases/download/v[^/]*/' "$readme" \
+              | sed 's|releases/download/v||; s|/$||' | sort -u)"
+            count="$(printf '%s\n' "$linked" | grep -c . || true)"
+            if [[ "$count" -ne 1 ]]; then
+              echo "::error::${readme} 的下載連結混用了 ${count} 個版本：$(printf '%s' "$linked" | tr '\n' ' ')"
+              failed=1
+              continue
+            fi
+            check "${readme} 的下載連結" "$linked"
           done
           # 這個常數只能有一份：兩份就會各自漂移。
           copies="$(grep -rl 'MCAutoTranslationTool/' translator-core/src/main/java | wc -l)"

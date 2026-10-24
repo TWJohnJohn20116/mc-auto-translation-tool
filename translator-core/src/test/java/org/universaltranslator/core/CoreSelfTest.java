@@ -53,6 +53,7 @@ public final class CoreSelfTest {
         handlesJsonStrings();
         updatesRenderLookupsWithoutBlocking();
         translatesRelatedTooltipLinesTogether();
+        distinguishesHandledListsByIdentity();
         translatesOutgoingChatAsynchronously();
         publishesOutgoingTranslationWhileItIsGenerated();
         boundsOutgoingPreviewState();
@@ -1051,6 +1052,15 @@ public final class CoreSelfTest {
         assertFalse(bulleted.getTemplate().contains("\u2022"));
         assertTrue(bulleted.getTemplate().startsWith("__UT_0__"));
         assertEquals("\u2022 \u52dd\u5229: 0", bulleted.restore("__UT_0__\u52dd\u5229: 0"));
+        // With a protected literal present the pattern is compiled from a different branch, and that
+        // branch used to lose Pattern.MULTILINE: the bullet guard is anchored with '^', so every
+        // bullet below the first line of a scoreboard block stopped matching and went to the
+        // provider. A single-line check could never see that, which is why this case is multi-line.
+        ProtectedText multiLine = ProtectedText.parse(
+                "\u2022 Wins: 0\n\u2022 Losses: 1", Arrays.asList("Steve"));
+        assertFalse(multiLine.getTemplate().contains("\u2022"));
+        assertEquals("\u2022 \u52dd\u5229: 0\n\u2022 \u5931\u6557: 1",
+                multiLine.restore("__UT_0__\u52dd\u5229: __UT_1__\n__UT_2__\u5931\u6557: __UT_3__"));
     }
 
     private static void skipsAlreadyChineseAndNonTextValues() {
@@ -1117,6 +1127,21 @@ public final class CoreSelfTest {
         assertFalse(TranslationTextStyling.hasLegacyColor("\u00a7lINFORMATION"));
     }
 
+    private static void distinguishesHandledListsByIdentity() {
+        WeakIdentitySet handled = new WeakIdentitySet();
+        List<String> first = new ArrayList<String>();
+        List<String> second = new ArrayList<String>();
+        assertFalse(handled.contains(first));
+        handled.add(first);
+        assertTrue(handled.contains(first));
+        // Value equality must not count. Two separately produced tooltips with identical content are
+        // different lists, and both still have to be translated; a value-based set would skip the
+        // second one and leave that tooltip untranslated for the rest of the session.
+        assertFalse(handled.contains(second));
+        handled.clear();
+        assertFalse(handled.contains(first));
+    }
+
     private static void plansPerRunStyling() {
         java.util.List<TranslationStyleRuns.Run> merged = TranslationStyleRuns.mergeAdjacent(
                 Arrays.asList("[Guild] ", "Steve", " says hi"),
@@ -1161,6 +1186,22 @@ public final class CoreSelfTest {
         assertFalse(TranslationStyleRuns.shouldRebuildRuns(null));
         assertFalse(TranslationStyleRuns.shouldRebuildRuns(null, "plain"));
         assertEquals(0, TranslationStyleRuns.distinctStyleCount(null));
+
+        // A scoreboard side bar arrives as one component with dozens of same-styled siblings. The
+        // merge has to fold all of them into one run and keep the text in order; the accumulation
+        // that replaces the quadratic join is what makes this cheap enough for the render thread.
+        List<String> many = new ArrayList<String>();
+        List<Object> manyKeys = new ArrayList<Object>();
+        StringBuilder expected = new StringBuilder();
+        for (int index = 0; index < 40; index++) {
+            many.add("p" + index);
+            manyKeys.add("same");
+            expected.append("p").append(index);
+        }
+        List<TranslationStyleRuns.Run> bulk = TranslationStyleRuns.mergeAdjacent(many, manyKeys);
+        assertEquals(1, bulk.size());
+        assertEquals(expected.toString(), bulk.get(0).text());
+        assertEquals(0, bulk.get(0).sourceIndex());
 
         assertEquals(TranslationTextColor.AQUA, TranslationStyleRuns.resolveTranslatedColor(
                 false, TranslationTextColor.AQUA));

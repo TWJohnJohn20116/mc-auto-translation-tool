@@ -273,7 +273,10 @@ public final class OpenAiModelCatalog {
             return;
         }
         Map<?, ?> object = (Map<?, ?>) entry;
-        String[] keys = {"id", "name", "model"};
+        // "baseModelId" comes before "name": Gemini's ListModels puts the bare id there and the
+        // resource path ("models/gemini-2.5-flash") in "name", and only the bare id can be pasted
+        // back into a provider whose URL builder already supplies the /models segment.
+        String[] keys = {"id", "baseModelId", "name", "model"};
         for (String key : keys) {
             Object value = object.get(key);
             if (value instanceof String && addIdentifier(identifiers, (String) value)) {

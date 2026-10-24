@@ -67,26 +67,75 @@ def _expected_release_version(label: str) -> str | None:
     return match.group("version") if match else None
 
 
+# Highest class-file major version each published Minecraft target may contain, taken from the
+# `options.release` / `legacyJavaRelease` / `neoforgeJavaRelease` of the module that builds it.
+# `_validate_class_versions` is a ceiling check, so the value has to be the real target: 1.20.5 and
+# 1.20.6 moved to release 21 on every loader, which is what makes them 65 and not 61.
+_CLASS_MAJORS = {
+    "1.8.9": 52,
+    "1.12.2": 52,
+    "1.16": 52,
+    "1.16.1": 52,
+    "1.16.2": 52,
+    "1.16.3": 52,
+    "1.16.4": 52,
+    "1.16.5": 52,
+    "1.17": 61,
+    "1.17.1": 61,
+    "1.18": 61,
+    "1.18.1": 61,
+    "1.18.2": 61,
+    "1.19": 61,
+    "1.19.1": 61,
+    "1.19.2": 61,
+    "1.19.3": 61,
+    "1.19.4": 61,
+    "1.20": 61,
+    "1.20.1": 61,
+    "1.20.2": 61,
+    "1.20.3": 61,
+    "1.20.4": 61,
+    "1.20.5": 65,
+    "1.20.6": 65,
+}
+_OUTER_MC_LABEL = re.compile(
+    r"-mc(?P<minecraft>.+)-(?:fabric|forge|neoforge|forge-neoforge)\.jar$"
+)
+
+
 def _class_major_for_minecraft(minecraft: str) -> int | None:
-    if minecraft in {"1.8.9", "1.12.2", "1.16.5"} or minecraft.startswith(
-        ("1.13", "1.14", "1.15")
-    ):
+    """Highest class-file major version a JAR published for this Minecraft label may contain.
+
+    Returns ``None`` only for the aggregate bundle labels (``1.16.x``, ``1.17-1.18.x``,
+    ``1.21.x``, ``26.x``, ...). Those archives hold no classes of their own — their nested
+    implementations carry concrete versions and are checked one at a time — so there is no single
+    answer for them. Every other label must have a rule: the previous version of this function
+    returned ``None`` for anything it did not recognise, ``_validate_class_versions`` reads ``None``
+    as "nothing to check", and so 19 nested Fabric implementations plus the two 1.20.x NeoForge
+    JARs silently lost the class-version gate.
+    """
+    # Aggregate labels first: they are checked before any prefix rule can claim them, because a
+    # prefix rule would otherwise answer for a range (`26.x` is not `26.2`).
+    if "x" in minecraft or "-" in minecraft:
+        return None
+    if minecraft in _CLASS_MAJORS:
+        return _CLASS_MAJORS[minecraft]
+    if minecraft.startswith(("1.13", "1.14", "1.15")):
         return 52
-    if minecraft in {"1.18.2", "1.19.2", "1.20.1"}:
-        return 61
     if minecraft.startswith("1.21"):
         return 65
     if minecraft.startswith("26."):
         return 69
-    return None
+    raise VerificationError(f"no class-version rule for Minecraft {minecraft}")
 
 
 def _expected_class_major(label: str) -> int | None:
     outer_name = _archive_basename(label)
-    match = re.search(
-        r"-mc(.+)-(?:fabric|forge|neoforge|forge-neoforge)\.jar$", outer_name
-    )
-    return _class_major_for_minecraft(match.group(1)) if match else None
+    match = _OUTER_MC_LABEL.search(outer_name)
+    if match is None:
+        # `-fabric-all` and the Forge family archives are aggregates without top-level classes.
+        return None
+    return _class_major_for_minecraft(match.group("minecraft"))
 
 
 def _validate_class_versions(

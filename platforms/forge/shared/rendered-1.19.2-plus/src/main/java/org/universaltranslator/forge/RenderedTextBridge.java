@@ -10,6 +10,7 @@ import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TranslationTextStyling;
 import org.universaltranslator.core.TranslationStyleRuns;
 import org.universaltranslator.core.TextKind;
+import org.universaltranslator.core.WeakIdentitySet;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -18,6 +19,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class RenderedTextBridge {
     private static final AtomicBoolean ITEM_TOOLTIP_REACHED = new AtomicBoolean();
     private static final AtomicBoolean ITEM_TOOLTIP_APPLIED = new AtomicBoolean();
+    /**
+     * Tooltip lists this class already produced.
+     *
+     * <p>Two hooks are mounted on the same line of work: {@code Screen.getTooltipFromItem}
+     * produces the list and {@code GuiGraphics.renderTooltip} consumes it. Both are injected, so
+     * without a mark the consumer receives the already translated list and translates it again —
+     * a second provider request per hover, and with the English-only filter off the Chinese result
+     * is translated a second time and can change between frames.
+     */
+    private static final WeakIdentitySet HANDLED_TOOLTIPS = new WeakIdentitySet();
 
     private RenderedTextBridge() {
     }
@@ -67,9 +78,15 @@ public final class RenderedTextBridge {
             return true;
         });
         if (multiStyle[0]) {
-            // Flattening would keep only the first segment's colour and drop bold,
-            // italic and click events from later segments, so leave the line intact.
-            return text;
+            // Flattening would keep only the first segment's colour and drop bold, italic and
+            // click events from later segments, so rebuild the line run by run instead. Returning
+            // the line untouched — as this used to — skipped translation for every server-built
+            // chat line, because a chat line is multi-style as soon as a team prefix or a player
+            // name carries a colour.
+            FormattedCharSequence rebuilt = rebuildStyledRuns(text);
+            if (rebuilt != null) {
+                return rebuilt;
+            }
         }
         String translated = translateRaw(original.toString());
         if (original.toString().equals(translated)) {
@@ -78,6 +95,65 @@ public final class RenderedTextBridge {
         MutableComponent replacement = Component.literal(translated)
                 .setStyle(translatedStyle(firstStyle[0]));
         return replacement.getVisualOrderText();
+    }
+
+    /**
+     * Rebuilds a multi-style ordered line as one child per style run, or {@code null} when the walk
+     * produced nothing to rebuild.
+     *
+     * <p>The same algorithm the 1.16.5 and 1.18.2 bridges use: split the visual order text into
+     * runs of one style each, merge neighbours that share a style, translate each run separately
+     * and re-attach its own style. {@code Style}, {@code MutableComponent} and
+     * {@code FormattedCharSequence} have the same shape in 1.19.2 and later, so nothing about this
+     * needed to differ when the three bridges were collapsed into this shared layer.
+     */
+    private static FormattedCharSequence rebuildStyledRuns(FormattedCharSequence text) {
+        List<String> texts = new ArrayList<String>();
+        List<Object> styleKeys = new ArrayList<Object>();
+        List<Style> styles = new ArrayList<Style>();
+        StringBuilder current = new StringBuilder();
+        final Style[] currentStyle = new Style[]{null};
+        text.accept((index, style, codePoint) -> {
+            if (currentStyle[0] == null || !style.equals(currentStyle[0])) {
+                addRun(texts, styleKeys, styles, current, currentStyle[0]);
+                currentStyle[0] = style;
+            }
+            current.appendCodePoint(codePoint);
+            return true;
+        });
+        addRun(texts, styleKeys, styles, current, currentStyle[0]);
+        List<TranslationStyleRuns.Run> runs = TranslationStyleRuns.mergeAdjacent(texts, styleKeys);
+        if (!TranslationStyleRuns.shouldRebuildRuns(runs)) {
+            return null;
+        }
+        boolean sourceHasColor = false;
+        for (Style style : styles) {
+            sourceHasColor |= style.getColor() != null;
+        }
+        TranslationTextColor color = TranslationStyleRuns.resolveTranslatedColor(
+                sourceHasColor, ForgeTranslationRuntime.translatedTextColor());
+        MutableComponent rebuilt = Component.literal("");
+        for (TranslationStyleRuns.Run run : runs) {
+            rebuilt.append(Component.literal(translateRaw(run.text()))
+                    .setStyle(applyColor(styles.get(run.sourceIndex()), color)));
+        }
+        return rebuilt.getVisualOrderText();
+    }
+
+    private static void addRun(
+            List<String> texts,
+            List<Object> styleKeys,
+            List<Style> styles,
+            StringBuilder current,
+            Style style
+    ) {
+        if (current.length() == 0) {
+            return;
+        }
+        texts.add(current.toString());
+        styleKeys.add(style);
+        styles.add(style);
+        current.setLength(0);
     }
 
     public static FormattedText translate(FormattedText text) {
@@ -97,7 +173,15 @@ public final class RenderedTextBridge {
 
     /** Translates item names and lore before DrawContext creates tooltip components. */
     public static List<Component> translateTooltip(List<Component> lines) {
-        return translateTooltip(lines, false);
+        if (HANDLED_TOOLTIPS.contains(lines)) {
+            // Produced by translateItemTooltip a moment ago; the answer is already in this list.
+            return lines;
+        }
+        List<Component> result = translateTooltip(lines, false);
+        if (result != lines) {
+            HANDLED_TOOLTIPS.add(result);
+        }
+        return result;
     }
 
     /** Canonical Screen.getTooltipFromItem hook for inventories and containers. */
