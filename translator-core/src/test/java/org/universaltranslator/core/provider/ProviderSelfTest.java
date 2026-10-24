@@ -81,6 +81,7 @@ public final class ProviderSelfTest {
         describesTheJsonBatchProtocolInEveryQualityMode();
         declaresTheJsonOutputModeOfEachProvider();
         roundTripsTheQualitySetting();
+        keepsThePromptKeysTheCallerWritesOnPurpose();
         replacesTheBuiltInPromptWithACustomOne();
         expandsTheSupportedPlaceholders();
         acceptsEditorNewlineEscapes();
@@ -1981,6 +1982,58 @@ public final class ProviderSelfTest {
             assertEquals("high", stale.getProperty("translation-quality"));
             OnlineProviderConfig.preservePromptSettings(null, stale);
             assertEquals("high", stale.getProperty("translation-quality"));
+        } finally {
+            Files.deleteIfExists(file);
+        }
+    }
+
+    /**
+     * The advanced keys are re-read from disk before every save so a stale settings snapshot cannot
+     * undo a change made in the diagnostics panel. The exception is the save that is writing one of
+     * them on purpose: it claims the key through {@code ownedKeys}, and the value on disk must then
+     * lose instead of overwriting the new one.
+     */
+    private static void keepsThePromptKeysTheCallerWritesOnPurpose() throws Exception {
+        Path file = Files.createTempFile("universal-translator-owned-keys", ".properties");
+        try {
+            Properties onDisk = new Properties();
+            onDisk.setProperty("custom-system-prompt", "old prompt from disk");
+            onDisk.setProperty("translation-quality", "high");
+            onDisk.setProperty("target-language", "zh-TW");
+            try (Writer writer = Files.newBufferedWriter(file, StandardCharsets.UTF_8)) {
+                onDisk.store(writer, "test");
+            }
+
+            // A save that is writing custom-system-prompt itself keeps the value it is writing.
+            Properties claimed = new Properties();
+            claimed.setProperty("custom-system-prompt", "new prompt");
+            claimed.setProperty("translation-quality", "fast");
+            claimed.setProperty("target-language", "en");
+            OnlineProviderConfig.preservePromptSettings(
+                    file, claimed, Collections.singleton("custom-system-prompt"));
+            assertEquals("new prompt", claimed.getProperty("custom-system-prompt"));
+            // Keys the caller did not claim are still refreshed from disk, which is the whole point
+            // of the re-read: the settings screen owns them, so a stale snapshot must not win.
+            assertEquals("high", claimed.getProperty("translation-quality"));
+            // Keys outside the advanced set are never touched either way.
+            assertEquals("en", claimed.getProperty("target-language"));
+
+            // The same save without the claim is the stale-snapshot case: the disk value wins.
+            Properties unclaimed = new Properties();
+            unclaimed.setProperty("custom-system-prompt", "new prompt");
+            OnlineProviderConfig.preservePromptSettings(file, unclaimed);
+            assertEquals("old prompt from disk", unclaimed.getProperty("custom-system-prompt"));
+
+            // A null claim set means "owns nothing", not "owns everything".
+            Properties nullClaim = new Properties();
+            nullClaim.setProperty("custom-system-prompt", "new prompt");
+            OnlineProviderConfig.preservePromptSettings(file, nullClaim, null);
+            assertEquals("old prompt from disk", nullClaim.getProperty("custom-system-prompt"));
+
+            // promptKeys() is the whitelist a caller builds its claim from, so it has to agree.
+            assertTrue(OnlineProviderConfig.promptKeys().contains("custom-system-prompt"));
+            assertTrue(OnlineProviderConfig.promptKeys().contains("translation-quality"));
+            assertFalse(OnlineProviderConfig.promptKeys().contains("target-language"));
         } finally {
             Files.deleteIfExists(file);
         }

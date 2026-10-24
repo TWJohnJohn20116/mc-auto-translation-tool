@@ -1,8 +1,10 @@
 package org.universaltranslator.core;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -41,6 +43,16 @@ public final class TranslationOutputValidator {
     private TranslationOutputValidator() {
     }
 
+    /**
+     * Validates translated text before it can be cached.
+     *
+     * <p>There is deliberately no length floor derived from {@code source}. CJK targets pack the
+     * same meaning into far fewer characters, so a short translation of a short line is legitimate
+     * and any source-relative floor rejects those systematically. Truncation is answered where it
+     * originates: the providers judge completeness from the completion reason and the stream
+     * terminator, which know what a finished answer looks like. The only floor here is absolute —
+     * text that carries no letter or digit at all is not a translation.
+     */
     public static String requireValid(String source, String translated) {
         if (source == null || translated == null || translated.trim().isEmpty()) {
             throw new IllegalArgumentException("Translation output is empty");
@@ -53,6 +65,7 @@ public final class TranslationOutputValidator {
         if (output.length() > maximumLength) {
             throw new IllegalArgumentException("Translation output is unexpectedly long");
         }
+        requireContent(output);
         if (!source.contains("\n") && (output.contains("\n") || output.contains("\r"))) {
             throw new IllegalArgumentException("Translation output unexpectedly contains multiple lines");
         }
@@ -65,8 +78,50 @@ public final class TranslationOutputValidator {
         return output;
     }
 
-    /** Validates the restored text immediately before it can enter a render cache. */
+    /**
+     * Validates the restored text immediately before it can enter a render cache.
+     *
+     * <p>This overload deliberately performs no placeholder scan.
+     * {@link ProtectedText#getSegments()} hands protected values back verbatim, so the restored
+     * string reproduces their original text, and {@code __UT_0__} is a legal Minecraft player name
+     * ({@code [A-Za-z0-9_]}, three to sixteen characters). Scanning the restored string therefore
+     * rejects valid content while proving nothing: the segment path never puts a token into a
+     * provider request, so a genuine leak has no route to happen in this architecture.
+     *
+     * <p>What does work is the token-sequence comparison in
+     * {@link #requireValid(String, String)}: source and output must carry an identical token
+     * sequence, which catches a placeholder that was changed, dropped or reordered on the way
+     * through the provider.
+     *
+     * <p>Do not bring a {@code matcher.find()} scan back here. A caller that really does hand
+     * tokens to a provider must use {@link #requireDisplaySafe(String, String, Set)}, which looks
+     * only at the tokens that were actually sent.
+     */
     public static String requireDisplaySafe(String source, String restored) {
+        // Nothing was sent, so nothing can come back: the segment path never puts tokens into a
+        // provider request, which is the same rule ProtectedText.restore() relies on.
+        return requireDisplaySafe(source, restored, Collections.<String>emptySet());
+    }
+
+    /**
+     * Validates restored text and looks for placeholders among {@code liveTokens} only.
+     *
+     * <p>This overload exists for a caller that hands tokens to a provider and therefore needs to
+     * know whether one came back. No such caller exists today: the segment pipeline translates
+     * unprotected segments and splices protected values back in afterwards, so it always passes an
+     * empty set through the two-argument overload. It is kept because this is the shape the check
+     * must take the moment a request does carry tokens, and deleting it would invite the unsafe
+     * whole-string scan back into that path.
+     *
+     * <p>{@code liveTokens} must hold exactly the tokens sent with this request. Any other token in
+     * the output is ordinary text, not a leak. An empty set switches the check off, which is the
+     * correct answer for a request that carried none.
+     *
+     * @param liveTokens tokens handed to the provider for this request, never {@code null} in
+     *                   practice but tolerated as {@code null} to mean "nothing was sent"
+     */
+    public static String requireDisplaySafe(
+            String source, String restored, Set<String> liveTokens) {
         if (source == null || restored == null || restored.trim().isEmpty()) {
             throw new IllegalArgumentException("Restored translation output is empty");
         }
@@ -78,8 +133,14 @@ public final class TranslationOutputValidator {
         if (!source.contains("\n") && (output.contains("\n") || output.contains("\r"))) {
             throw new IllegalArgumentException("Restored translation unexpectedly contains multiple lines");
         }
-        if (TOKEN.matcher(output).find()) {
-            throw new IllegalArgumentException("Restored translation leaked an internal placeholder");
+        if (liveTokens != null) {
+            for (String token : liveTokens) {
+                // Only a token that actually travelled to the provider can travel back out of it.
+                if (token != null && !token.isEmpty() && output.contains(token)) {
+                    throw new IllegalArgumentException(
+                            "Restored translation leaked an internal placeholder");
+                }
+            }
         }
         if (containsInstructionArtifact(output)) {
             throw new IllegalArgumentException("Restored translation echoed its instructions");
@@ -93,6 +154,53 @@ public final class TranslationOutputValidator {
             return false;
         }
         return TOKEN.matcher(text).find() || containsInstructionArtifact(text);
+    }
+
+    /**
+     * Rejects output that carries no content at all, the only length-independent floor available.
+     *
+     * <p>{@code trim()} stops at U+0020, so an answer made of ideographic spaces or no-break spaces
+     * slips past the emptiness check in {@link #requireValid(String, String)}, and an answer that
+     * reduced to punctuation ("...") is not a translation of anything either. Both are rejected
+     * here and nowhere else: a floor scaled by source length would misfire on CJK targets, whose
+     * translations are legitimately much shorter than the English source.
+     */
+    private static void requireContent(String output) {
+        // Anything that is not whitespace, punctuation or an invisible format character is content,
+        // so an emoji answer ("😂😂😂" for "lol") passes while "..." and "　　" do not.
+        for (int index = 0; index < output.length(); index++) {
+            int codePoint = output.codePointAt(index);
+            index += Character.charCount(codePoint) - 1;
+            if (!Character.isWhitespace(codePoint)
+                    && !Character.isSpaceChar(codePoint)
+                    && !isPunctuation(codePoint)
+                    && Character.getType(codePoint) != Character.FORMAT) {
+                return;
+            }
+        }
+        throw new IllegalArgumentException("Translation output is empty");
+    }
+
+    /**
+     * Whether the code point belongs to one of the Unicode punctuation categories.
+     *
+     * <p>{@link Character} exposes {@code isLetter} / {@code isDigit} / {@code isSpaceChar} but no
+     * {@code isPunctuation}, so the categories have to be listed. Symbols (including emoji) are
+     * deliberately not punctuation: an answer made of emoji is content.
+     */
+    private static boolean isPunctuation(int codePoint) {
+        switch (Character.getType(codePoint)) {
+            case Character.CONNECTOR_PUNCTUATION:
+            case Character.DASH_PUNCTUATION:
+            case Character.START_PUNCTUATION:
+            case Character.END_PUNCTUATION:
+            case Character.INITIAL_QUOTE_PUNCTUATION:
+            case Character.FINAL_QUOTE_PUNCTUATION:
+            case Character.OTHER_PUNCTUATION:
+                return true;
+            default:
+                return false;
+        }
     }
 
     private static boolean containsInstructionArtifact(String text) {

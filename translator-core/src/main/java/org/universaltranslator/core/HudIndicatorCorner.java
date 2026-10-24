@@ -10,10 +10,14 @@ package org.universaltranslator.core;
  * variables alone. That mixin deliberately declares no fields and no helper methods of its own,
  * because a mixin member can collide with a member of its target class.
  *
- * <p>Unlike {@link TranslationDisplayMode#fromConfig}, an unrecognised value falls back to
- * {@link #TOP_LEFT} rather than throwing. The indicator is purely cosmetic, so a hand-edited
- * properties file must never be able to fail configuration loading: that exception would surface
- * from the config's {@code load()} during runtime initialisation.
+ * <p>An unrecognised value falls back to {@link #TOP_LEFT} rather than throwing, the same silent
+ * fallback {@link TranslationDisplayMode#fromConfig} and
+ * {@link TranslationTextColor#fromConfig} already perform. The indicator is purely cosmetic, so a
+ * hand-edited properties file must never be able to fail configuration loading: that exception
+ * would surface from the config's {@code load()} during runtime initialisation, the
+ * platform bootstrap answers it with {@code shutdown()}, and because the settings screen is built
+ * in the same {@code try} block it never opens, so {@code save()} never runs and the bad value
+ * would stay in the file forever.
  */
 public enum HudIndicatorCorner {
     TOP_LEFT,
