@@ -47,7 +47,7 @@ public final class OutgoingTranslationPreview {
      */
     public static Handle begin() {
         Handle handle = new Handle(SEQUENCE.incrementAndGet());
-        publish(handle.state);
+        handle.publishOwn(handle.state);
         return handle;
     }
 
@@ -73,19 +73,6 @@ public final class OutgoingTranslationPreview {
         staleMillis = Math.max(0L, millis);
     }
 
-    private static void publish(State next) {
-        while (true) {
-            State current = CURRENT.get();
-            if (current != null && current.sequence > next.sequence) {
-                // A newer outgoing translation already owns the line.
-                return;
-            }
-            if (CURRENT.compareAndSet(current, next)) {
-                return;
-            }
-        }
-    }
-
     /** One published preview: its text, when it was published, and which request owns it. */
     private static final class State {
         private final long sequence;
@@ -103,6 +90,8 @@ public final class OutgoingTranslationPreview {
     public static final class Handle implements TranslationStreamListener {
         private final long sequence;
         private volatile State state;
+        /** The state this handle last put into {@link #CURRENT}, or {@code null} when it never did. */
+        private volatile State published;
         private volatile boolean finished;
 
         private Handle(long sequence) {
@@ -117,15 +106,49 @@ public final class OutgoingTranslationPreview {
             }
             State next = new State(sequence, sanitize(partialText), System.currentTimeMillis());
             state = next;
-            publish(next);
+            publishOwn(next);
         }
 
         /** Releases the line. Safe to call more than once and from any thread. */
         public void finish() {
             finished = true;
-            // Only clears the line this handle still owns: a newer outgoing translation that has
-            // already claimed it must keep its own preview.
-            CURRENT.compareAndSet(state, null);
+            // Clear the state that actually reached CURRENT. CAS-ing the handle's newest state was
+            // not enough: onPartialText assigns that field *before* publishing, so a finish() that
+            // landed in between compared against a state CURRENT never held, the CAS failed, and the
+            // following publish put a finished preview back on the HUD for the whole staleness
+            // window. Clearing `published` closes that window, and the second attempt covers the
+            // reverse order (published already replaced, assignment still pending).
+            State owned = published;
+            if (owned != null) {
+                CURRENT.compareAndSet(owned, null);
+            }
+            State newest = state;
+            if (newest != null && newest != owned) {
+                CURRENT.compareAndSet(newest, null);
+            }
+        }
+
+        /**
+         * Publishes one state for this handle unless a newer request owns the line or the handle was
+         * finished in the meantime.
+         */
+        private void publishOwn(State next) {
+            while (true) {
+                State current = CURRENT.get();
+                if (current != null && current.sequence > next.sequence) {
+                    // A newer outgoing translation already owns the line.
+                    return;
+                }
+                if (finished) {
+                    // finish() ran after the caller's own check; writing now would resurrect a line
+                    // the player has already been told is finished.
+                    return;
+                }
+                if (CURRENT.compareAndSet(current, next)) {
+                    published = next;
+                    return;
+                }
+            }
         }
     }
 
@@ -155,6 +178,12 @@ public final class OutgoingTranslationPreview {
         if (value.length() <= MAXIMUM_PREVIEW_CHARS) {
             return value;
         }
-        return value.substring(0, MAXIMUM_PREVIEW_CHARS - TRUNCATION_SUFFIX.length()) + TRUNCATION_SUFFIX;
+        int end = MAXIMUM_PREVIEW_CHARS - TRUNCATION_SUFFIX.length();
+        if (Character.isHighSurrogate(value.charAt(end - 1))) {
+            // Cutting between the halves of one code point (an emoji, an extension-plane ideograph)
+            // leaves a lone surrogate, which the HUD draws as a replacement glyph.
+            end--;
+        }
+        return value.substring(0, end) + TRUNCATION_SUFFIX;
     }
 }

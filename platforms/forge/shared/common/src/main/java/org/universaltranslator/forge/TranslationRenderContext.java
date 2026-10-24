@@ -60,11 +60,16 @@ public final class TranslationRenderContext {
     }
 
     /**
-     * Marks the start of a render frame. Any text-input depth left behind by a widget
-     * whose render method threw before its pop runs is discarded here, so the guard
-     * cannot latch permanently.
+     * Marks the start of a client tick, discarding whatever a previous frame left latched.
+     *
+     * <p>Both stacks are frame-scoped and both can be left behind by a render method that threw
+     * between its push and its pop. Clearing only the text-input depth meant a leaked
+     * {@link TextKind} survived the whole session: every later string was then classified as that
+     * kind, so chat lines were translated as tooltips and tooltips as chat. The Fabric tree already
+     * resets both on every tick for the same reason.
      */
     public static void beginFrame() {
         TEXT_INPUT_DEPTH.remove();
+        KINDS.remove();
     }
 }

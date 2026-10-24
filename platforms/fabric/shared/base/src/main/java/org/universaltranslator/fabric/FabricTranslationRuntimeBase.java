@@ -382,7 +382,16 @@ public abstract class FabricTranslationRuntimeBase {
                 && message != null && !message.trim().isEmpty() && !message.startsWith("/");
     }
 
-    /** Serializes outgoing requests so rapidly sent chat lines keep their original order. */
+    /**
+     * Starts an outgoing translation and chains it behind the previous one for completion order.
+     *
+     * <p>The request itself starts here, on the calling (client) thread: {@code translateInteractive}
+     * captures the tab-list and server literals while it runs, and those must not be read from a
+     * worker. {@code outgoingTail} therefore orders the resulting futures, not the requests — a burst
+     * of chat lines does occupy several provider slots at once, and what the chain guarantees is that
+     * the completions are delivered in the order the lines were typed. The previous comment claimed
+     * the requests were serialized, which sent anyone debugging provider load in the wrong direction.
+     */
     synchronized CompletableFuture<TranslationResult> translateOutgoing(String message) {
         final RenderTranslationSession active = session;
         final FabricConfig config = activeConfig;

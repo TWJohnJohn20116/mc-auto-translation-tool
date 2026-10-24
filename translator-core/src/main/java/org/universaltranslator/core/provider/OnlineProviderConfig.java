@@ -646,17 +646,18 @@ public final class OnlineProviderConfig {
         return values.getProperty(key, "");
     }
 
+    /**
+     * Reads a numeric setting, clamping instead of rejecting.
+     *
+     * <p>These four keys have no in-game control, so the only way to set them is to edit the file by
+     * hand — and a hand edit is exactly where a typo happens. Throwing here disabled translation for
+     * the whole session, which is the opposite of what every other numeric key in this file does:
+     * {@link TranslationTuning#clamp(int, int, int)} is what {@code translationWorkers},
+     * {@code batchSize} and {@code batchWindowMillis} already use, and its class comment says a typo
+     * there must not stop translation from working. One file, one policy.
+     */
     private int integer(String key, int fallback, int minimum, int maximum) {
-        int parsed;
-        try {
-            parsed = Integer.parseInt(value(key));
-        } catch (NumberFormatException ignored) {
-            parsed = fallback;
-        }
-        if (parsed < minimum || parsed > maximum) {
-            throw new IllegalArgumentException(key + " must be between " + minimum + " and " + maximum);
-        }
-        return parsed;
+        return TranslationTuning.clamp(value(key), fallback, minimum, maximum);
     }
 
     private static void putDefault(Properties properties, String key, String value) {

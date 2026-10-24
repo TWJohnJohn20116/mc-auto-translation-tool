@@ -48,11 +48,15 @@ public final class LanguageHeuristics {
         // "123 / 456" therefore skips the lower casing and the fragment scans entirely.
         int letters = 0;
         int han = 0;
-        for (int i = 0; i < text.length(); i++) {
-            char value = text.charAt(i);
-            if (Character.isLetter(value)) {
+        // Code points, not chars: a character outside the BMP is two surrogates, and
+        // Character.isLetter(char) answers false for each half. Scan by char and a name written in
+        // CJK Extension B reports zero letters, so it is never translated and never protected.
+        for (int index = 0; index < text.length(); ) {
+            int codePoint = text.codePointAt(index);
+            index += Character.charCount(codePoint);
+            if (Character.isLetter(codePoint)) {
                 letters++;
-                if (isHanIdeograph(value)) {
+                if (isHanIdeograph(codePoint)) {
                     han++;
                 }
             }
@@ -90,16 +94,21 @@ public final class LanguageHeuristics {
     }
 
     /**
-     * Exact code point ranges of the three CJK ideograph blocks that count as existing Han
-     * text. Identical to comparing {@code Character.UnicodeBlock.of(value)} against
-     * CJK_UNIFIED_IDEOGRAPHS (4E00..9FFF), CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A (3400..4DBF) and
-     * CJK_COMPATIBILITY_IDEOGRAPHS (F900..FAFF), but without the block table binary search for
-     * every letter.
+     * Exact code point ranges that count as existing Han text.
+     *
+     * <p>Five ranges, in code points rather than chars: the three BMP blocks the old version listed
+     * (CJK_UNIFIED_IDEOGRAPHS 4E00..9FFF, CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A 3400..4DBF and
+     * CJK_COMPATIBILITY_IDEOGRAPHS F900..FAFF) plus CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
+     * (20000..2A6DF, inside the supplementary ideographic plane) and EXTENSION C..F, which live in
+     * plane 3. A char cannot express any of those, so a mixed label used to report
+     * {@code han < letters} and have its rare characters sent to the provider.
      */
-    private static boolean isHanIdeograph(char value) {
-        return (value >= '\u3400' && value <= '\u4dbf')
-                || (value >= '\u4e00' && value <= '\u9fff')
-                || (value >= '\uf900' && value <= '\ufaff');
+    private static boolean isHanIdeograph(int codePoint) {
+        return (codePoint >= 0x3400 && codePoint <= 0x4dbf)
+                || (codePoint >= 0x4e00 && codePoint <= 0x9fff)
+                || (codePoint >= 0xf900 && codePoint <= 0xfaff)
+                || (codePoint >= 0x20000 && codePoint <= 0x2fa1f)
+                || (codePoint >= 0x30000 && codePoint <= 0x323af);
     }
 
     /** True when {@code language} is {@code zh} or a {@code zh-*} variant. */

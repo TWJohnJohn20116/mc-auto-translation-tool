@@ -95,9 +95,23 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
     /** True when the toggle key was pressed this tick (consumed here). */
     protected abstract boolean toggleKeyPressed();
 
-    /** True for the chat screen; only the Ornithe trees gate the settings key on it. */
+    /**
+     * True when {@code screen} is a chat screen.
+     *
+     * <p>Answered by class name rather than {@code instanceof}: this base is compiled once for every
+     * generation from 1.14 to 26.3, and a compile-time {@code ChatScreen} reference would tie it to
+     * one generation's package. The trees that can name the class (the Ornithe ones) still override
+     * this with an exact {@code instanceof} check.
+     *
+     * <p>Used by {@link #openSettingsFor(Object)}: while the chat screen is open, the settings key
+     * belongs to the chat box, not to this mod.
+     */
     protected boolean isChatScreen(Object screen) {
-        return false;
+        if (screen == null) {
+            return false;
+        }
+        String name = screen.getClass().getName();
+        return name.endsWith(".ChatScreen") || name.endsWith(".ChatScreenBase");
     }
 
     /** Longest accepted chat payload; the Ornithe trees read it from the game instead. */
@@ -205,23 +219,23 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
     /**
      * The settings key, as the Ornithe generations reach it.
      *
-     * <p>Those trees hand the key to a mixin, which is why the chat screen and the text-input state
-     * are checked here rather than in the tick body. The modern generations use
-     * {@link #openSettingsFor(Object)} directly.
+     * <p>Those trees hand the key to a mixin instead of doing their own key handling in the tick
+     * body. The guards now live in {@link #openSettingsFor(Object)}, which both entry points use, so
+     * this method is only the "read the key, open the screen" half.
      */
     final void openSettingsFromKey() {
-        Object screen = currentScreen();
-        if (screen instanceof UniversalTranslatorConfigScreen
-                || isChatScreen(screen)
-                || TranslationRenderContext.isTextInput()) {
-            return;
-        }
-        openSettingsFor(screen);
+        openSettingsFor(currentScreen());
     }
 
     /** Opens the settings screen on top of {@code parent}, logging any failure. */
     final void openSettingsFor(Object parent) {
-        if (parent instanceof UniversalTranslatorConfigScreen) {
+        // Every entry point funnels through here, so the guard belongs here: the tick loop called
+        // this method directly and skipped the chat-screen and text-input checks that
+        // openSettingsFromKey applied, which is how the settings screen could open on top of an
+        // active chat field and take the player's half-typed line with it.
+        if (parent instanceof UniversalTranslatorConfigScreen
+                || isChatScreen(parent)
+                || TranslationRenderContext.isTextInput()) {
             return;
         }
         try {

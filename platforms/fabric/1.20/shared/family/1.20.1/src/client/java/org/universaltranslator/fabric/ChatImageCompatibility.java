@@ -5,6 +5,7 @@ import net.minecraft.text.Text;
 import net.minecraft.text.TranslatableTextContent;
 import net.minecraft.text.MutableText;
 import net.minecraft.text.StringVisitable;
+import org.universaltranslator.core.DebugLog;
 
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
@@ -34,7 +35,9 @@ public final class ChatImageCompatibility {
         Normalization normalized = normalize(
                 message, new IdentityHashMap<Text, Normalization>(), 0);
         if (normalized.replacements > 0 && REPORTED.compareAndSet(false, true)) {
-            System.out.println("[MC Auto Translation Tool] Enabled ChatImage chat-component compatibility");
+            // Once per session, through DebugLog so the debug-log switch controls it and the line is
+            // stamped like every other tool line. A bare System.out.println bypassed both.
+            DebugLog.global().log("chatimage", "compatibility", "normalized");
         }
         return normalized.text;
     }

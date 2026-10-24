@@ -495,11 +495,15 @@ public final class OfflineProcessSupport {
                 || lower.contains("failed to load model")) {
             return "离线模型文件读取失败（退出码 " + code + "）：" + detail;
         }
+        // The exit code has to be read before the generic branch: llama.cpp always writes something
+        // to its log while loading, so `detail` was never empty and the one failure the user can
+        // actually fix (kill another program, drop to a smaller model) never reached them.
+        if (exitCode == 9 || exitCode == 137) {
+            String hint = "离线引擎被系统终止（退出码 " + code + "），请检查可用内存";
+            return detail.isEmpty() ? hint : hint + "：" + detail;
+        }
         if (!detail.isEmpty()) {
             return "离线引擎启动失败（退出码 " + code + "）：" + detail;
-        }
-        if (exitCode == 9 || exitCode == 137) {
-            return "离线引擎被系统终止（退出码 " + code + "），请检查可用内存";
         }
         return "离线引擎启动失败（退出码 " + code + "），详细信息见 llama-server.log";
     }

@@ -34,6 +34,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class LegacyTranslationRuntime {
     private static final long PLAYER_NAME_SNAPSHOT_MILLIS = 5_000L;
+    // Short-lived diagnostics snapshot: see diagnostics().
+    private static final long DIAGNOSTICS_CACHE_MILLIS = 250L;
+    private static volatile TranslationDiagnosticsSnapshot diagnosticsSnapshot;
+    private static volatile long diagnosticsSnapshotAt;
     // Match ProtectedText's bounded literal limit so large network lobbies do not silently
     // drop names after the first few tab-list pages.
     private static final int MAX_PROTECTED_PLAYER_NAMES = 1_000;
@@ -183,6 +187,7 @@ public final class LegacyTranslationRuntime {
                 && MinecraftContentScope.isVanillaScreen(minecraft.currentScreen))
                 || minecraft.currentScreen instanceof LegacyConfigScreen
                 || minecraft.currentScreen instanceof LegacyDiagnosticsScreen
+                || minecraft.currentScreen instanceof LegacyLlmConfigScreen
                 || LegacyLocalTextGuard.isLocalChatInput(minecraft.currentScreen, original)
                 || RECENT_USER_TEXT.shouldPreserve(original)) {
             return original;
@@ -281,24 +286,36 @@ public final class LegacyTranslationRuntime {
     }
 
     static TranslationDiagnosticsSnapshot diagnostics() {
+        // Same short-lived reuse as the modern Forge runtimes: the diagnostics screen asks once per
+        // frame and every answer costs two filesystem queries plus a full page rebuild.
+        TranslationDiagnosticsSnapshot cached = diagnosticsSnapshot;
+        long now = System.currentTimeMillis();
+        if (cached != null && now - diagnosticsSnapshotAt < DIAGNOSTICS_CACHE_MILLIS) {
+            return cached;
+        }
         LegacyConfig config = activeConfig;
         TranslationProvider provider = activeProvider;
+        TranslationDiagnosticsSnapshot snapshot;
         if (config == null) {
-            return new TranslationDiagnosticsSnapshot(
+            snapshot = new TranslationDiagnosticsSnapshot(
                     false, "", "", "", null, false, false, -1L, -1L, "尚未载入设置");
+        } else {
+            Path modelFile = config.offlineDirectory.toPath().resolve(config.offlineModel.modelFile());
+            snapshot = new TranslationDiagnosticsSnapshot(
+                    config.enabled,
+                    config.provider,
+                    provider == null ? "" : provider.id(),
+                    config.targetLanguage,
+                    config.offlineModel,
+                    config.offlineAutoDownload,
+                    config.diskCache,
+                    fileSize(modelFile),
+                    fileSize(config.cacheFile.toPath()),
+                    status());
         }
-        Path modelFile = config.offlineDirectory.toPath().resolve(config.offlineModel.modelFile());
-        return new TranslationDiagnosticsSnapshot(
-                config.enabled,
-                config.provider,
-                provider == null ? "" : provider.id(),
-                config.targetLanguage,
-                config.offlineModel,
-                config.offlineAutoDownload,
-                config.diskCache,
-                fileSize(modelFile),
-                fileSize(config.cacheFile.toPath()),
-                status());
+        diagnosticsSnapshot = snapshot;
+        diagnosticsSnapshotAt = now;
+        return snapshot;
     }
 
     static Path exportDiagnostics(List<String> localizedLines) throws IOException {
@@ -327,6 +344,7 @@ public final class LegacyTranslationRuntime {
         if (active == null || config == null || !config.allows(kind)
                 || minecraft.currentScreen instanceof LegacyConfigScreen
                 || minecraft.currentScreen instanceof LegacyDiagnosticsScreen
+                || minecraft.currentScreen instanceof LegacyLlmConfigScreen
                 || LegacyRenderContext.isTextInput()) {
             return originals;
         }
