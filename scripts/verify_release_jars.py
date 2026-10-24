@@ -114,6 +114,10 @@ def _class_major_for_minecraft(minecraft: str) -> int | None:
     as "nothing to check", and so 19 nested Fabric implementations plus the two 1.20.x NeoForge
     JARs silently lost the class-version gate.
     """
+    # Aggregate labels first: they are checked before any prefix rule can claim them, because a
+    # prefix rule would otherwise answer for a range (`26.x` is not `26.2`).
+    if "x" in minecraft or "-" in minecraft:
+        return None
     if minecraft in _CLASS_MAJORS:
         return _CLASS_MAJORS[minecraft]
     if minecraft.startswith(("1.13", "1.14", "1.15")):
@@ -122,8 +126,6 @@ def _class_major_for_minecraft(minecraft: str) -> int | None:
         return 65
     if minecraft.startswith("26."):
         return 69
-    if "x" in minecraft or "-" in minecraft:
-        return None
     raise VerificationError(f"no class-version rule for Minecraft {minecraft}")
 
 
