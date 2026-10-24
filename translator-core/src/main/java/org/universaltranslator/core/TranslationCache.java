@@ -29,6 +29,11 @@ public final class TranslationCache implements TranslationStore {
         entries.put(key, value);
     }
 
+    @Override
+    public synchronized void remove(String key) {
+        entries.remove(key);
+    }
+
     public synchronized int size() {
         return entries.size();
     }

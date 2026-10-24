@@ -6,6 +6,17 @@ public interface TranslationStore {
 
     void put(String key, String value);
 
+    /**
+     * Forgets one stored mapping.
+     *
+     * <p>Used to revoke a write that was already committed but was afterwards found to be unusable,
+     * so the bad value cannot be served again from memory or, for a disk-backed store, from the file.
+     * Removing a key that is not stored is a no-op.
+     *
+     * @param key the source key that was passed to {@link #put(String, String)}
+     */
+    void remove(String key);
+
     void clear();
 
     /**

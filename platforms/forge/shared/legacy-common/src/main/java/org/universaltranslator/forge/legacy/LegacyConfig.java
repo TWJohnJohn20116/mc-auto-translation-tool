@@ -32,7 +32,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.Properties;
+import java.util.Set;
 
 final class LegacyConfig {
     final boolean enabled;
@@ -76,8 +79,29 @@ final class LegacyConfig {
     final int hudIndicatorOffsetY;
     private final OnlineProviderConfig onlineProviderConfig;
     private final File configFile;
+    /**
+     * The advanced-panel keys ({@code translation-quality}, {@code custom-system-prompt},
+     * {@code debug-log}) this snapshot changed itself, and must therefore keep.
+     *
+     * <p>{@code toProperties()} re-reads those keys from disk so a settings screen holding an older
+     * snapshot cannot undo a change the diagnostics panel made meanwhile. A snapshot that wrote one
+     * of them on purpose claims exactly that key here, which is what stops the re-read from restoring
+     * the value it just replaced. The claim is carried through the {@code withXxx} chain, so a later
+     * rebuild — including the one {@code save()} performs — still writes the new value.
+     */
+    private final Set<String> ownedPromptKeys;
 
     private LegacyConfig(Properties properties, File configFile, File cacheFile) {
+        this(properties, configFile, cacheFile, Collections.<String>emptySet());
+    }
+
+    /**
+     * @param ownedPromptKeys advanced-panel keys this snapshot wrote itself and must not re-read
+     */
+    private LegacyConfig(
+            Properties properties, File configFile, File cacheFile, Set<String> ownedPromptKeys) {
+        this.ownedPromptKeys = Collections.unmodifiableSet(
+                new LinkedHashSet<String>(ownedPromptKeys));
         enabled = Boolean.parseBoolean(properties.getProperty("enabled", "false"));
         translateChat = Boolean.parseBoolean(properties.getProperty("translate-chat", "true"));
         translateOther = Boolean.parseBoolean(properties.getProperty("translate-other", "true"));
@@ -94,12 +118,14 @@ final class LegacyConfig {
         targetLanguage = properties.getProperty("target-language", TargetLanguage.SIMPLIFIED_CHINESE).trim();
         outgoingTargetLanguage = properties.getProperty(
                 "outgoing-target-language", "en").trim();
-        displayMode = TranslationDisplayMode.fromConfig(
-                properties.getProperty("display-mode", "translated-only"));
+        displayMode = parseField("display-mode",
+                properties.getProperty("display-mode", "translated-only"),
+                TranslationDisplayMode.TRANSLATED_ONLY, TranslationDisplayMode::fromConfig);
         translateEnglishOnly = Boolean.parseBoolean(
                 properties.getProperty("translate-english-only", "true"));
-        translatedTextColor = TranslationTextColor.fromConfig(
-                properties.getProperty("translated-text-color", "original"));
+        translatedTextColor = parseField("translated-text-color",
+                properties.getProperty("translated-text-color", "original"),
+                TranslationTextColor.ORIGINAL, TranslationTextColor::fromConfig);
         provider = properties.getProperty("provider", "offline").trim();
         endpoint = properties.getProperty(
                 "libretranslate-endpoint", "http://127.0.0.1:5000/translate").trim();
@@ -114,7 +140,9 @@ final class LegacyConfig {
         llmModel = properties.getProperty("llm-api-model", "local-model").trim();
         offlineAutoDownload = Boolean.parseBoolean(
                 properties.getProperty("offline-auto-download", "true"));
-        offlineModel = OfflineModel.fromConfig(properties.getProperty("offline-model", "lite"));
+        offlineModel = parseField("offline-model",
+                properties.getProperty("offline-model", "lite"),
+                OfflineModel.LITE, OfflineModel::fromConfig);
         apiFallback = Boolean.parseBoolean(properties.getProperty("api-fallback", "false"));
         apiFallbackProvider = properties.getProperty(
                 "api-fallback-provider", "libretranslate").trim();
@@ -124,20 +152,24 @@ final class LegacyConfig {
         this.cacheFile = cacheFile;
         this.offlineDirectory = new File(configFile.getParentFile(), "universal-translator-offline");
         this.hudIndicator = Boolean.parseBoolean(properties.getProperty("hud-indicator", "true"));
-        this.hudIndicatorCorner = HudIndicatorCorner.fromConfig(
-                properties.getProperty("hud-indicator-corner", "top-left"));
+        this.hudIndicatorCorner = parseField("hud-indicator-corner",
+                properties.getProperty("hud-indicator-corner", "top-left"),
+                HudIndicatorCorner.TOP_LEFT, HudIndicatorCorner::fromConfig);
         this.hudIndicatorSize = parseBoundedInt(
                 properties.getProperty("hud-indicator-size", "6"), 6,
                 HudIndicatorSettings.MIN_SIZE, HudIndicatorSettings.MAX_SIZE);
         this.hudIndicatorMargin = parseBoundedInt(
                 properties.getProperty("hud-indicator-margin", "4"), 4,
                 HudIndicatorSettings.MIN_MARGIN, HudIndicatorSettings.MAX_MARGIN);
-        this.hudIndicatorColor = HudIndicatorColor.fromConfig(
-                properties.getProperty("hud-indicator-color", "green"));
-        this.hudIndicatorContent = HudIndicatorContent.fromConfig(
-                properties.getProperty("hud-indicator-content", "dot"));
-        this.hudIndicatorVisibility = HudIndicatorVisibility.fromConfig(
-                properties.getProperty("hud-indicator-visibility", "always"));
+        this.hudIndicatorColor = parseField("hud-indicator-color",
+                properties.getProperty("hud-indicator-color", "green"),
+                HudIndicatorColor.GREEN, HudIndicatorColor::fromConfig);
+        this.hudIndicatorContent = parseField("hud-indicator-content",
+                properties.getProperty("hud-indicator-content", "dot"),
+                HudIndicatorContent.DOT, HudIndicatorContent::fromConfig);
+        this.hudIndicatorVisibility = parseField("hud-indicator-visibility",
+                properties.getProperty("hud-indicator-visibility", "always"),
+                HudIndicatorVisibility.ALWAYS, HudIndicatorVisibility::fromConfig);
         this.hudIndicatorOffsetX = parseBoundedInt(
                 properties.getProperty("hud-indicator-offset-x", "0"),
                 0, HudIndicatorSettings.MIN_OFFSET, HudIndicatorSettings.MAX_OFFSET);
@@ -151,6 +183,18 @@ final class LegacyConfig {
                 hudIndicator, hudIndicatorCorner, hudIndicatorSize, hudIndicatorMargin, hudIndicatorColor,
                 hudIndicatorContent, hudIndicatorVisibility,
                 hudIndicatorOffsetX, hudIndicatorOffsetY);
+    }
+
+    /**
+     * The keys this snapshot already claimed plus {@code keys}, as an immutable set.
+     *
+     * <p>Each {@code withXxx} claims exactly what it writes and inherits the rest, so
+     * {@code toProperties()} keeps the protection for every advanced key the caller did not touch.
+     */
+    private Set<String> claimedKeys(String... keys) {
+        Set<String> claimed = new LinkedHashSet<String>(ownedPromptKeys);
+        Collections.addAll(claimed, keys);
+        return Collections.unmodifiableSet(claimed);
     }
 
     static LegacyConfig load(File configDirectory) throws IOException {
@@ -254,13 +298,15 @@ final class LegacyConfig {
         properties.setProperty("hud-indicator-visibility", hudIndicator.getVisibility().configName());
         properties.setProperty("hud-indicator-offset-x", Integer.toString(hudIndicator.getOffsetX()));
         properties.setProperty("hud-indicator-offset-y", Integer.toString(hudIndicator.getOffsetY()));
-        return new LegacyConfig(properties, configFile, cacheFile);
+        // This save does not edit the advanced keys, so it passes the claim along unchanged: whichever
+        // of them an earlier step wrote stays written, and the rest are still re-read from disk.
+        return new LegacyConfig(properties, configFile, cacheFile, ownedPromptKeys);
     }
 
     LegacyConfig withEnabled(boolean enabled) {
         Properties properties = toProperties();
         properties.setProperty("enabled", Boolean.toString(enabled));
-        return new LegacyConfig(properties, configFile, cacheFile);
+        return new LegacyConfig(properties, configFile, cacheFile, ownedPromptKeys);
     }
 
     LegacyConfig withHomeSettings(
@@ -272,7 +318,7 @@ final class LegacyConfig {
         properties.setProperty("enabled", Boolean.toString(enabled));
         properties.setProperty("translate-vanilla", Boolean.toString(translateVanilla));
         properties.setProperty("target-language", targetLanguage.trim());
-        return new LegacyConfig(properties, configFile, cacheFile);
+        return new LegacyConfig(properties, configFile, cacheFile, ownedPromptKeys);
     }
 
     /** Selected translation quality mode; the default reproduces the historical prompt. */
@@ -305,7 +351,12 @@ final class LegacyConfig {
     LegacyConfig withPromptSettings(TranslationQuality quality, String customSystemPrompt) {
         Properties properties = toProperties();
         OnlineProviderConfig.applyPromptSettings(properties, quality, customSystemPrompt);
-        return new LegacyConfig(properties, configFile, cacheFile);
+        // Claim exactly the two keys just overwritten, so the next toProperties() keeps them instead
+        // of restoring the older value from disk. debug-log is deliberately not claimed: this call
+        // does not write it.
+        return new LegacyConfig(properties, configFile, cacheFile,
+                claimedKeys(OnlineProviderConfig.QUALITY_KEY,
+                        OnlineProviderConfig.CUSTOM_PROMPT_KEY));
     }
 
     /**
@@ -318,7 +369,10 @@ final class LegacyConfig {
     LegacyConfig withTranslationTuning(int workers, int batchSize) {
         Properties properties = toProperties();
         OnlineProviderConfig.applyTranslationTuning(properties, workers, batchSize);
-        return new LegacyConfig(properties, configFile, cacheFile);
+        // Only throughput keys are written here, so the claim is passed along unchanged rather than
+        // widened: claiming the prompt keys would stop toProperties() from picking up a change the
+        // diagnostics panel made after this snapshot was taken.
+        return new LegacyConfig(properties, configFile, cacheFile, ownedPromptKeys);
     }
 
     /** Whether the opt-in request trace is written; off by default. */
@@ -336,7 +390,10 @@ final class LegacyConfig {
     LegacyConfig withDebugLog(boolean debugEnabled) {
         Properties properties = toProperties();
         OnlineProviderConfig.applyDebugLog(properties, debugEnabled);
-        return new LegacyConfig(properties, configFile, cacheFile);
+        // The diagnostics screen saves this copy straight away, so the switch it just wrote has to
+        // survive the rebuild; the two prompt keys stay unclaimed and are still re-read from disk.
+        return new LegacyConfig(properties, configFile, cacheFile,
+                claimedKeys(OnlineProviderConfig.DEBUG_LOG_KEY));
     }
 
     /** The configuration file this instance was loaded from, for the diagnostics export. */
@@ -455,8 +512,10 @@ final class LegacyConfig {
     private Properties toProperties() {
         Properties properties = new Properties();
         onlineProviderConfig.writeTo(properties);
-        // Keep the advanced settings the diagnostics panel may have changed after this snapshot.
-        OnlineProviderConfig.preservePromptSettings(configFile.toPath(), properties);
+        // Keep the advanced settings the diagnostics panel may have changed after this snapshot,
+        // except for the ones this snapshot wrote itself (see ownedPromptKeys).
+        OnlineProviderConfig.preservePromptSettings(configFile.toPath(), properties,
+                ownedPromptKeys);
         properties.setProperty("config-version", "7");
         properties.setProperty("enabled", Boolean.toString(enabled));
         properties.setProperty("translate-chat", Boolean.toString(translateChat));
@@ -511,10 +570,45 @@ final class LegacyConfig {
         try {
             int value = Integer.parseInt(raw.trim());
             return Math.max(min, Math.min(max, value));
-        } catch (NumberFormatException ignored) {
+        } catch (RuntimeException ignored) {
+            // Covers a null or non-numeric value as well, so this cannot escape load().
             return fallback;
         }
     }
+
+    /**
+     * Runs one field's parser and substitutes {@code fallback} when it throws.
+     *
+     * <p>Every enum helper these configs call already falls back on its own, but this wrapper keeps
+     * that guarantee when one of them forgets: a throw here escapes the constructor, and therefore
+     * {@code load()}; the platform bootstrap answers that by shutting the client down, and the
+     * settings screen is built after it — so nothing ever saves and the value that caused the
+     * exception stays in the file for every following start. One cosmetic key must never do that.
+     *
+     * @param key configuration key, only used to make the ignored value visible in the debug log
+     * @param raw value as stored, possibly {@code null}
+     * @param fallback value used when the parser throws
+     * @param parser reader for the non-null case
+     * @param <T> parsed type
+     * @return the parsed value, or {@code fallback}
+     */
+    private static <T> T parseField(String key, String raw, T fallback, FieldParser<T> parser) {
+        try {
+            return parser.parse(raw);
+        } catch (RuntimeException malformed) {
+            // The debug log is off while this runs, so the message is normally discarded; it is
+            // here for the case where a previous line of the same session already enabled it.
+            DebugLog.global().log("config-fallback", "setting", key, "value", raw,
+                    "used", String.valueOf(fallback));
+            return fallback;
+        }
+    }
+
+    /** A single configuration value reader; the throwing case is handled by {@link #parseField}. */
+    private interface FieldParser<T> {
+        T parse(String raw);
+    }
+
     private static String boundedKeywords(String value) {
         String normalized = value == null ? "" : value.trim();
         return normalized.length() <= TranslationBlocklist.MAX_CONFIG_LENGTH

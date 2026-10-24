@@ -54,6 +54,18 @@ public final class LlamaCppOfflineProvider
             "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e";
 
     /**
+     * Chat-template and system-prompt tokens the loopback server charges on top of the text. It
+     * mirrors the same allowance in {@link OpenAiChatTranslationProvider}, which turns the leftover
+     * of the shared window into the completion budget this class refuses to send underneath.
+     */
+    private static final int PROMPT_OVERHEAD_TOKENS = 128;
+    /**
+     * Smallest completion budget worth sending. Below this the server still answers, but it answers
+     * a fragment: a non-empty fragment passes validation and is cached as a finished translation.
+     */
+    private static final int MINIMUM_ANSWER_TOKENS = 64;
+
+    /**
      * Header line of the sidecar that records the last completed full-file verification
      * of an installed model. The trailing version lets a future format change invalidate
      * every older marker instead of misreading it as a valid entry.
@@ -180,6 +192,9 @@ public final class LlamaCppOfflineProvider
     @Override
     public String translate(TranslationRequest request) throws Exception {
         try {
+            // Refused before the model is started: the text does not fit the window, so there is
+            // nothing a download or a startup wait could change about it.
+            requireRoomToAnswer(request.getText());
             ensureRunning();
             OpenAiChatTranslationProvider api = localApi;
             if (api == null) {
@@ -704,6 +719,40 @@ public final class LlamaCppOfflineProvider
             for (Path path : (Iterable<Path>) paths.sorted(Comparator.reverseOrder())::iterator) {
                 Files.deleteIfExists(path);
             }
+        }
+    }
+
+    /**
+     * Rejects text that leaves too little of the loopback context for the answer.
+     *
+     * <p>The server runs one shared window ({@link LoopbackContext#TOKENS}) and the completion
+     * budget is whatever the prompt leaves over. When that leftover shrinks to a few dozen tokens
+     * the request still succeeds: the model emits one or two characters, and a non-empty answer
+     * passes validation and enters the persistent cache, so that line would stay a fragment for
+     * every later session.
+     *
+     * <p>The authoritative refusal lives in {@link OpenAiChatTranslationProvider}'s completion
+     * budget, which cannot run before a request is built — by then this provider may have
+     * downloaded a few hundred megabytes and waited for the model to load. Repeating the same
+     * arithmetic here rejects the text first, which is the only thing a download could never fix.
+     *
+     * <p>{@link OpenAiChatTranslationProvider#estimatePromptTokens(String)} is reused rather than
+     * copied so this refusal sits exactly at the boundary the budget arithmetic clamps at.
+     *
+     * @param text text about to be sent to the loopback server
+     * @throws IllegalArgumentException when the text leaves room for a fragment, not a translation
+     */
+    private static void requireRoomToAnswer(String text) {
+        if (text == null) {
+            return;
+        }
+        int promptTokens = OpenAiChatTranslationProvider.estimatePromptTokens(text);
+        int remaining = LoopbackContext.TOKENS - PROMPT_OVERHEAD_TOKENS - promptTokens;
+        if (remaining < MINIMUM_ANSWER_TOKENS) {
+            throw new IllegalArgumentException("Text is too long for the offline context: about "
+                    + promptTokens + " prompt tokens leave " + Math.max(0, remaining) + " of the "
+                    + LoopbackContext.TOKENS + " tokens for the answer, but at least "
+                    + MINIMUM_ANSWER_TOKENS + " are needed; shorten the text");
         }
     }
 

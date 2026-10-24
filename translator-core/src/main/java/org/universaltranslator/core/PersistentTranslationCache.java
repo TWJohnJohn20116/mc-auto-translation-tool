@@ -8,11 +8,14 @@ import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Small disk cache that hashes source/cache keys before persistence. Translated values remain local.
@@ -27,9 +30,9 @@ import java.util.Properties;
  * dirty flag plus the in-memory LRU map itself.
  *
  * <p>The file is read lazily on the first {@link #get(String)}, {@link #put(String, String)},
- * {@link #size()} or {@link #clear()} instead of in the constructor. Callers build this cache while
- * handling a settings change on the client tick thread, whereas the first lookup normally happens
- * on a worker thread, so the constructor performs no disk I/O at all.
+ * {@link #remove(String)}, {@link #size()} or {@link #clear()} instead of in the constructor. Callers
+ * build this cache while handling a settings change on the client tick thread, whereas the first
+ * lookup normally happens on a worker thread, so the constructor performs no disk I/O at all.
  */
 public final class PersistentTranslationCache implements TranslationStore {
     /** Changed entries tolerated before a rewrite is forced. */
@@ -37,8 +40,19 @@ public final class PersistentTranslationCache implements TranslationStore {
     /** Longest a changed entry may wait for the next rewrite, in milliseconds. */
     private static final long FLUSH_INTERVAL_MILLIS = 5_000L;
 
-    private final Object diskLock = new Object();
+    /**
+     * One lock per cache file path rather than one per instance. {@code initialize()} on a settings
+     * change builds a new cache while the previous session is still alive, so two instances routinely
+     * point at the same file; a per-instance lock let both of them write the same temporary file and
+     * then move that file onto the target. Entries are never removed from this map, which is what
+     * makes the lock object stable for the life of the process.
+     */
+    private static final ConcurrentHashMap<String, Object> PATH_LOCKS =
+            new ConcurrentHashMap<String, Object>();
+
     private final Path file;
+    /** Key of {@link #file} in {@link #PATH_LOCKS}, identical for every instance on that path. */
+    private final String pathKey;
     private final Map<String, String> entries;
 
     /**
@@ -47,6 +61,13 @@ public final class PersistentTranslationCache implements TranslationStore {
      * so a cleared cache cannot read the deleted entries back from disk.
      */
     private boolean loaded;
+    /**
+     * Guarded by {@code this}. True when the file exists but could not be read. Such a session never
+     * writes: it knows only the entries it translated itself, so persisting them would replace a full
+     * cache file with a near-empty one. Never reset, so a single failed read keeps the file intact
+     * until the next session reads it again.
+     */
+    private boolean loadFailed;
     /** Guarded by {@code this}. Bumped by every in-memory mutation, including {@link #clear()}. */
     private long revision;
     /** Guarded by {@code this}. True while a thread is running {@link #flushLoop}. */
@@ -57,7 +78,11 @@ public final class PersistentTranslationCache implements TranslationStore {
     private int unsaved;
     /** Guarded by {@code this}. When the file was last rewritten, in wall-clock milliseconds. */
     private long lastFlushMillis;
-    /** Guarded by {@link #diskLock}. Revision of the newest state already written to the file. */
+    /**
+     * Guarded by the {@link #PATH_LOCKS} entry of {@link #pathKey}, and per instance: each cache
+     * keeps its own revision sequence, the shared lock only orders the writes. Revision of the newest
+     * state already written to the file.
+     */
     private long persistedRevision;
 
     /**
@@ -70,6 +95,9 @@ public final class PersistentTranslationCache implements TranslationStore {
             throw new IllegalArgumentException("maximumEntries must be positive");
         }
         this.file = file;
+        // Normalized so that "config/cache.properties" and "config\..\config\cache.properties" from
+        // two different callers resolve to the same PATH_LOCKS entry and therefore the same monitor.
+        this.pathKey = file.toAbsolutePath().normalize().toString();
         // Insertion order, not access order: every worker thread reads through get(), and an
         // access-ordered map re-links the entry it reads, which turns a hit into a structural
         // modification under the instance monitor and serializes all workers behind it.
@@ -130,6 +158,41 @@ public final class PersistentTranslationCache implements TranslationStore {
     }
 
     @Override
+    public void remove(String key) {
+        Map<String, String> snapshot;
+        long snapshotRevision;
+        synchronized (this) {
+            ensureLoadedLocked();
+            if (entries.remove(hash(key)) == null) {
+                // Nothing stored under this key, so memory and file already agree.
+                return;
+            }
+            snapshotRevision = ++revision;
+            unsaved++;
+            if (flushing) {
+                // Fold the removal into the running writer's next pass, exactly like an added entry.
+                dirty = true;
+                return;
+            }
+            // Same coalescing as put(): a revocation is one more changed entry, and giving it a
+            // separate write path would reintroduce the rewrite-per-change cost put() exists to
+            // avoid. The bumped revision is what makes a later flush() carry the removal even when it
+            // stays deferred below either bound.
+            long now = System.currentTimeMillis();
+            if (unsaved < UNSAVED_ENTRIES_BEFORE_FLUSH
+                    && now - lastFlushMillis < FLUSH_INTERVAL_MILLIS) {
+                return;
+            }
+            flushing = true;
+            unsaved = 0;
+            lastFlushMillis = now;
+            dirty = false;
+            snapshot = snapshot();
+        }
+        flushLoop(snapshot, snapshotRevision);
+    }
+
+    @Override
     public void clear() {
         Map<String, String> snapshot;
         long snapshotRevision;
@@ -141,6 +204,8 @@ public final class PersistentTranslationCache implements TranslationStore {
             // Clearing is an explicit user action, so this thread writes the empty map itself and
             // only returns once the file reflects it. A flush still in flight carries an older
             // revision and is dropped by persistBestEffort, so it cannot resurrect deleted entries.
+            // The one exception is a session whose read failed: it declines to write at all, and the
+            // file keeps whatever it holds until a session that can read it clears it.
             dirty = false;
             unsaved = 0;
             lastFlushMillis = System.currentTimeMillis();
@@ -218,6 +283,11 @@ public final class PersistentTranslationCache implements TranslationStore {
      * observe a half-loaded map. The flag is also set when the read fails, which keeps a permanently
      * unreadable file from retrying disk I/O on every lookup; an unreadable cache is treated as an
      * empty one, so translation still works and only the cached entries are lost.
+     *
+     * <p>A missing file is a normal first run: the cache starts empty and the next write creates the
+     * file. A file that exists but cannot be parsed is the opposite case, because its entries are
+     * unknown rather than absent. That difference is what {@link #loadFailed} records: the session
+     * keeps translating into memory but stops writing, so the file it could not read survives as it is.
      */
     private void ensureLoadedLocked() {
         if (loaded) {
@@ -230,7 +300,22 @@ public final class PersistentTranslationCache implements TranslationStore {
             // get/put/clear cannot declare IOException without breaking every platform caller. The
             // constructor used to propagate this, so a corrupt or locked cache file now degrades to
             // an empty cache instead of failing the settings change that built this instance.
+            markLoadFailed(unreadableCache);
+        } catch (IllegalArgumentException malformedCache) {
+            // A truncated Properties escape must not prevent the mod from starting, and
+            // Properties.load reports one as an unchecked exception rather than an IOException.
+            markLoadFailed(malformedCache);
         }
+    }
+
+    /**
+     * Records an unusable cache file and turns persistence off for this session. Translation keeps
+     * running from memory, which is the cheap side of the trade: overwriting the file with the empty
+     * or partial map a failed read produced would throw away everything the file still holds.
+     */
+    private void markLoadFailed(Exception failure) {
+        loadFailed = true;
+        DebugLog.global().logFailure("cache-load", failure);
     }
 
     private void load() throws IOException {
@@ -239,12 +324,7 @@ public final class PersistentTranslationCache implements TranslationStore {
         }
         Properties properties = new Properties();
         try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-            try {
-                properties.load(reader);
-            } catch (IllegalArgumentException malformedCache) {
-                // A truncated Properties escape must not prevent the mod from starting.
-                return;
-            }
+            properties.load(reader);
         }
         for (String key : properties.stringPropertyNames()) {
             entries.put(key, properties.getProperty(key));
@@ -254,34 +334,99 @@ public final class PersistentTranslationCache implements TranslationStore {
     /**
      * Best-effort write of one snapshot. A snapshot older than what already reached the file is
      * skipped, so a flush that was in flight while {@link #clear()} ran cannot undo the clear.
+     *
+     * <p>Writes nothing once the file could not be read, which is checked before the path lock is
+     * taken so the flag keeps the same monitor as the rest of the state without nesting two locks.
      */
     private void persistBestEffort(Map<String, String> snapshot, long snapshotRevision) {
-        synchronized (diskLock) {
+        if (persistenceUnavailable()) {
+            return;
+        }
+        synchronized (lockForPath()) {
             if (snapshotRevision < persistedRevision) {
                 return;
             }
+            Path temporary = null;
             try {
                 Path parent = file.getParent();
                 if (parent != null) {
                     Files.createDirectories(parent);
                 }
-                Path temporary = file.resolveSibling(file.getFileName().toString() + ".tmp");
+                // Unique per attempt. Writers on the same path used to share one "<file>.tmp" name,
+                // and the default TRUNCATE_EXISTING of newBufferedWriter let the later writer cut off
+                // the file the earlier one was still filling before both moved it into place.
+                temporary = file.resolveSibling(
+                        file.getFileName().toString() + "." + UUID.randomUUID() + ".tmp");
                 Properties properties = new Properties();
                 properties.putAll(snapshot);
                 try (Writer writer = Files.newBufferedWriter(temporary, StandardCharsets.UTF_8)) {
                     properties.store(writer, "MC Auto Translation Tool cache; source keys are SHA-256 hashes");
                 }
-                try {
-                    Files.move(temporary, file,
-                            StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-                } catch (AtomicMoveNotSupportedException exception) {
-                    Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
+                if (moveIntoPlace(temporary)) {
+                    persistedRevision = snapshotRevision;
                 }
-                persistedRevision = snapshotRevision;
             } catch (IOException ignored) {
                 // Translation must remain available even when the cache directory is read-only.
+            } finally {
+                // A write we gave up on must not leave a file behind, and deleting the already moved
+                // name is a no-op. The previous cache file is untouched either way.
+                if (temporary != null) {
+                    try {
+                        Files.deleteIfExists(temporary);
+                    } catch (IOException ignored) {
+                        // Cannot be helped; the name is unique so the leftover is never read again.
+                    }
+                }
             }
         }
+    }
+
+    /**
+     * Whether this session must not write. Synchronized because {@link #loadFailed} is guarded by the
+     * same monitor as the rest of the state.
+     */
+    private synchronized boolean persistenceUnavailable() {
+        return loadFailed;
+    }
+
+    /**
+     * The lock shared by every instance pointing at this cache file.
+     *
+     * <p>{@code computeIfAbsent} stores the object for the life of the process, so two threads asking
+     * for the same path always end up on the same monitor.
+     */
+    private Object lockForPath() {
+        return PATH_LOCKS.computeIfAbsent(pathKey, key -> new Object());
+    }
+
+    /**
+     * Moves a finished temporary file onto the cache file.
+     *
+     * @param temporary completed temporary file, unique to this attempt
+     * @return {@code true} when the target file now holds this snapshot
+     * @throws IOException when the move failed for a reason the caller should not ignore
+     */
+    private boolean moveIntoPlace(Path temporary) throws IOException {
+        try {
+            try {
+                Files.move(temporary, file,
+                        StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException unsupported) {
+                // A filesystem without atomic rename, such as some network shares. The temporary file
+                // is already complete, so a plain replace is close enough to atomic for a cache.
+                Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (NoSuchFileException race) {
+            // NoSuchFileException does not say which side was missing. The temporary name belongs to
+            // this attempt alone, so a source that is already gone was removed from outside this
+            // cache and the write is simply lost, while a source that is still there means the
+            // destination side vanished and this really is a failure.
+            if (!Files.exists(temporary)) {
+                return false;
+            }
+            throw race;
+        }
+        return true;
     }
 
     /** Caller must hold the monitor of {@code this}. */

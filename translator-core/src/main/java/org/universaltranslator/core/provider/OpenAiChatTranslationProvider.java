@@ -27,6 +27,13 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
     private static final int OFFLINE_CONTEXT_TOKENS = LoopbackContext.TOKENS;
     /** System prompt plus chat-template tokens charged against the offline context. */
     private static final int OFFLINE_PROMPT_OVERHEAD_TOKENS = 128;
+    /**
+     * Smallest completion budget worth sending to the loopback server. Below this the model answers
+     * with a character or two, and that fragment is still long enough to pass
+     * {@link TranslationOutputValidator}, so it entered the persistent cache as a finished
+     * translation.
+     */
+    private static final int MINIMUM_OFFLINE_COMPLETION_TOKENS = 64;
     /** Upper bound for the completion budget of a hosted OpenAI-compatible endpoint. */
     private static final int MAXIMUM_TOKENS_LIMIT = 2048;
     /** Smallest completion budget a hosted endpoint gets, so a reasoning model can finish. */
@@ -409,8 +416,15 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         }
         if (attempt.content == null) {
             // The stream stopped early, carried a relay error object, or was empty. A partial text is
-            // never shown as the answer: the plain path is the one that recovers from all of those,
-            // and its result is what callers have always received.
+            // never shown as the answer: only a stream that reached its own end marker becomes
+            // attempt.content, so a connection that died mid-answer is refused here instead of
+            // being cached as a finished translation. The plain path is the one that recovers from
+            // all of those, and its result is what callers have always received.
+            //
+            // The trace matters because that recovery is a second, complete request: an endpoint
+            // that never declares its own end turns every line into two paid calls, and without a
+            // record of it the doubled cost is invisible.
+            DebugLog.global().logStreamEvent(providerId, "incomplete", 0);
             return TranslationProvider.super.translateStreaming(request, listener);
         }
         return TranslationOutputValidator.requireValid(text, attempt.content);
@@ -419,6 +433,13 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
     /** What one streaming request produced, and whether the endpoint can stream at all. */
     private static final class StreamAttempt {
         private String content;
+        /**
+         * Set only by an explicit end marker — the {@code [DONE]} sentinel or a normal
+         * {@code finish_reason}, because not every relay sends the sentinel. Without one there is no
+         * way to tell a finished answer from a connection that died after a few chunks: both arrive
+         * as a prefix of the translation.
+         */
+        private boolean complete;
         private boolean sawReasoning;
         private boolean unsupported;
     }
@@ -458,7 +479,11 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             attempt.unsupported = true;
             return attempt;
         }
-        if (accumulated.length() > 0) {
+        // Only a stream that reached its own end marker may become the answer. An endpoint, a relay
+        // or a mobile network dropping the connection mid-answer leaves a half translation that is
+        // still long enough to pass the validator, so without this test it would be written to the
+        // persistent cache as a finished translation.
+        if (attempt.complete && accumulated.length() > 0) {
             attempt.content = accumulated.toString();
         }
         return attempt;
@@ -478,6 +503,9 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             StreamAttempt attempt
     ) {
         if ("[DONE]".equals(payload.trim())) {
+            // The sentinel is the unambiguous end: it needs no reading of a finish reason, and a
+            // connection that simply goes silent is the opposite of what it looks like.
+            attempt.complete = true;
             DebugLog.global().logStreamEvent(provider, "done", 0);
             return false;
         }
@@ -489,6 +517,9 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             accumulated.append(delta);
             DebugLog.global().logStreamEvent(provider, "delta", delta.length());
             listener.onPartialText(accumulated.toString());
+            // A relay may put the finish reason on the very chunk that carries the last text, so the
+            // completion test runs here as well instead of only on the events that follow.
+            markFinished(attempt, payload);
             return true;
         }
         if (JsonStrings.readStringPath(payload, "choices[0].delta.reasoning_content") != null) {
@@ -496,14 +527,65 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             DebugLog.global().logStreamEvent(provider, "reasoning", 0);
             return true;
         }
-        if (JsonStrings.readStringField(payload, "error") != null
-                || JsonStrings.readStringField(payload, "message") != null) {
+        markFinished(attempt, payload);
+        if (isRelayError(payload)) {
             // Relays report a failure as an ordinary event behind HTTP 200. Stop reading and let the
             // plain path produce the message the user has always seen.
             DebugLog.global().logStreamEvent(provider, "error-event", 0);
             return false;
         }
         return true;
+    }
+
+    /**
+     * Marks the attempt complete when the event names a normal finish.
+     *
+     * <p>Not every relay sends the {@code [DONE]} sentinel: Azure OpenAI and several self-hosted
+     * gateways put {@code finish_reason} on their last chunk instead. Accepting only the sentinel
+     * made every line of those endpoints look incomplete, and each one then paid for a second,
+     * complete request.
+     *
+     * <p>Only a normal stop counts. {@code length} means the completion budget ran out mid-sentence
+     * and {@code content_filter} means the provider cut the answer, so both are exactly the
+     * truncated results this completeness test exists to reject.
+     *
+     * @param attempt attempt to mark
+     * @param payload one parsed event payload
+     */
+    private static void markFinished(StreamAttempt attempt, String payload) {
+        String finishReason = JsonStrings.readStringPath(payload, "choices[0].finish_reason");
+        if (finishReason == null) {
+            return;
+        }
+        String reason = finishReason.trim();
+        if (reason.isEmpty() || "length".equals(reason) || "content_filter".equals(reason)) {
+            return;
+        }
+        attempt.complete = true;
+    }
+
+    /**
+     * Whether one event is the relay's own error object rather than a chat-completion chunk.
+     *
+     * <p>The test has to name the event an error explicitly. Treating any event that carries a
+     * {@code message} field as a failure stopped the read on endpoints that send progress events
+     * such as {@code {"type":"ping","message":"keep-alive"}}, which clipped a perfectly healthy
+     * stream at the first keep-alive. {@link JsonStrings#readStringField} only matches a string
+     * value, so the nested {@code {"error":{"message":...}}} shape OpenAI itself sends is looked up
+     * through its own path.
+     *
+     * @param payload one {@code data:} payload of the event stream
+     * @return {@code true} when the payload is a relay-side error object
+     */
+    private static boolean isRelayError(String payload) {
+        if ("error".equals(JsonStrings.readStringField(payload, "type"))) {
+            return true;
+        }
+        if (JsonStrings.readStringField(payload, "error") != null) {
+            return true;
+        }
+        return JsonStrings.readStringPath(payload, "error.message") != null
+                || JsonStrings.readStringPath(payload, "error.type") != null;
     }
 
     /**
@@ -541,9 +623,19 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             // The loopback llama.cpp server runs --ctx-size 1024 and shares that window
             // between prompt and completion. Cap the completion to what is left after a
             // conservative prompt estimate, with no floor that could overflow the context.
-            int remaining = OFFLINE_CONTEXT_TOKENS - OFFLINE_PROMPT_OVERHEAD_TOKENS
-                    - estimatePromptTokens(text);
-            return Math.max(1, Math.min(Math.max(64, requestedTokens), remaining));
+            int promptTokens = estimatePromptTokens(text);
+            int remaining = OFFLINE_CONTEXT_TOKENS - OFFLINE_PROMPT_OVERHEAD_TOKENS - promptTokens;
+            if (remaining < MINIMUM_OFFLINE_COMPLETION_TOKENS) {
+                // Sending the remainder anyway asked for one or two tokens, the model answered with a
+                // character or two, and that fragment passed the output validator and was cached
+                // permanently as the translation of the whole text. A text that does not fit the
+                // context window has no answer here, so it is reported instead of half-translated.
+                throw new IllegalArgumentException("Text needs about " + promptTokens
+                        + " prompt tokens of the " + OFFLINE_CONTEXT_TOKENS
+                        + "-token offline context, which leaves " + Math.max(0, remaining)
+                        + " for the translation; shorten the text or raise the server context size");
+            }
+            return Math.min(Math.max(MINIMUM_OFFLINE_COMPLETION_TOKENS, requestedTokens), remaining);
         }
         if (reasoningModel) {
             // This endpoint already proved it thinks before it answers, so start with the larger
@@ -587,7 +679,19 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
                     batchServing = true;
                     serve = true;
                 } else {
-                    batchLock.wait(1000L);
+                    try {
+                        batchLock.wait(1000L);
+                    } catch (InterruptedException interrupted) {
+                        // A shutdown that arrives while this entry waits for a batch has to take the
+                        // entry out of the queue: left behind, it would be served later by a batch
+                        // request nobody is waiting for, which spends a paid call on a translation
+                        // whose caller is already gone.
+                        pendingBatch.remove(entry);
+                        entry.settled = true;
+                        entry.failure = interrupted;
+                        Thread.currentThread().interrupt();
+                        throw interrupted;
+                    }
                     continue;
                 }
             }
@@ -623,6 +727,16 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
                 translateGroup(group);
             }
         } catch (InterruptedException interrupted) {
+            // Leaving the leader queued with the interrupt flag set was an endless spin: the flag
+            // made the collection window's sleep throw immediately, this handler set the flag again,
+            // and the loop above re-elected the same entry as the leader every time — one CPU core
+            // burned per shutdown until the game exited. Dropping the entry from the queue and
+            // settling it is what lets that loop break.
+            synchronized (batchLock) {
+                pendingBatch.remove(leader);
+                leader.settled = true;
+            }
+            leader.failure = interrupted;
             Thread.currentThread().interrupt();
             failGroup(group, interrupted);
         } catch (Exception unexpected) {

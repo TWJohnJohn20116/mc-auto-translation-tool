@@ -38,6 +38,16 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
     private static final String MESSAGES_SUFFIX = "/messages";
     private static final int MAXIMUM_TOKENS_LIMIT = 4096;
     private static final int MINIMUM_COMPLETION_TOKENS = 512;
+    /**
+     * Field that reports why the model stopped, on a plain reply and inside a
+     * {@code message_delta} stream event alike. Without it a reply cut off at {@code max_tokens}
+     * looks exactly like a short translation.
+     */
+    private static final String STOP_REASON_FIELD = "stop_reason";
+    /** The only {@code stop_reason} that means the model finished its answer by itself. */
+    private static final String STOP_REASON_END_TURN = "end_turn";
+    /** {@code stop_reason} of an answer cut off at {@code max_tokens}. */
+    private static final String STOP_REASON_MAX_TOKENS = "max_tokens";
     private static final String PROBE_TEXT = "ping";
 
     private final URI endpoint;
@@ -89,13 +99,17 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
         String text = request.getText();
         DebugLog.global().logRequest("claude:" + model, model, endpoint.toString(),
                 request.getKind().name(), text);
-        String response = post(text, TranslationPrompt.single(prompt, request),
-                completionBudget(text), false);
+        int budget = completionBudget(text);
+        String response = post(text, TranslationPrompt.single(prompt, request), budget, false);
         String translated = extractContent(response);
         if (translated == null || translated.trim().isEmpty()) {
             throw new IllegalStateException(
                     ProviderJson.describeMissingContent("Claude", response));
         }
+        // Completeness is only worth asking about once there is content to judge: an empty answer is
+        // explained far better by the provider's own message and the body excerpt than by a stop
+        // reason, while a cut-off answer is distinguishable from a short one only here.
+        requireCompleteAnswer(JsonStrings.readStringField(response, STOP_REASON_FIELD), budget);
         if (response.indexOf("\"usage\"") >= 0) {
             TranslationStats.global().recordUsage("claude:" + model, response);
         }
@@ -113,10 +127,17 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
             return TranslationProvider.super.translateStreaming(request, listener);
         }
         String text = request.getText();
+        int budget = completionBudget(text);
         StringBuilder accumulated = new StringBuilder(64);
         boolean[] sawEvent = new boolean[1];
+        // A stream reports how generation ended in its message_delta event, and message_stop is its
+        // own statement that the answer is complete; both have to be captured while the body is
+        // still being read. They are separate because only the latter proves the stream ended: a
+        // connection that died mid-answer never sends it.
+        String[] stopReason = new String[1];
+        boolean[] sawEnd = new boolean[1];
         try (HttpJsonClient.StreamedResponse response = http.postStreaming(endpoint, requestBody(
-                text, TranslationPrompt.single(prompt, request), completionBudget(text), true),
+                text, TranslationPrompt.single(prompt, request), budget, true),
                 headers())) {
             if (!isEventStream(response.getContentType())) {
                 streamingUnsupported = true;
@@ -124,7 +145,13 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
             }
             ServerSentEvents.read(response.getBody(), payload -> {
                 if ("message_stop".equals(JsonStrings.readStringField(payload, "type"))) {
+                    sawEnd[0] = true;
+                    DebugLog.global().logStreamEvent("claude:" + model, "end", 0);
                     return false;
+                }
+                String reported = JsonStrings.readStringField(payload, STOP_REASON_FIELD);
+                if (reported != null && !STOP_REASON_END_TURN.equals(reported)) {
+                    stopReason[0] = reported;
                 }
                 String fragment = JsonStrings.readStringPath(payload, "delta.text");
                 if (fragment == null) {
@@ -152,6 +179,19 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
             streamingUnsupported = !sawEvent[0];
             return TranslationProvider.super.translateStreaming(request, listener);
         }
+        if (!sawEnd[0]) {
+            // The body ended without message_stop, so the fragments are a prefix of the translation
+            // and must not be cached as the whole of it. The plain path is the one that recovers: it
+            // sends one non-streaming request whose body carries the complete answer, which keeps a
+            // relay that always drops the tail usable instead of failing every line from now on.
+            DebugLog.global().log("stream-fallback",
+                    "provider", "claude:" + model,
+                    "reason", "stream ended without an end marker",
+                    "action", "fell back to a plain request",
+                    "characters", Integer.toString(accumulated.length()));
+            return TranslationProvider.super.translateStreaming(request, listener);
+        }
+        requireCompleteAnswer(stopReason[0], budget);
         return TranslationOutputValidator.requireValid(text, accumulated.toString());
     }
 
@@ -194,6 +234,38 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
             return null;
         }
         return ProviderJson.joinField(response, "content", "text");
+    }
+
+    /**
+     * Rejects an answer Anthropic reported as unfinished.
+     *
+     * <p>{@code stop_reason} is the only thing that separates a complete translation from the first
+     * half of one: {@link TranslationOutputValidator} bounds the length from above but has no floor
+     * that a half sentence would miss, and whatever passes it is written into the persistent cache,
+     * so one truncated answer would be replayed for the rest of the installation with no further
+     * request ever being made.
+     *
+     * <p>The field is read through {@link JsonStrings#readStringField} rather than a JSON path
+     * because a body that is not JSON at all is reported by the caller's own diagnostics, and a
+     * missing field must not turn into a parse failure here. A streamed call only reaches this
+     * method once {@code message_stop} proved the stream ended, so an absent reason here means the
+     * plain path, where an endpoint is free not to report one.
+     *
+     * @param stopReason value the endpoint reported, {@code null} when it reported none
+     * @param budget     completion budget the request was sent with, quoted in the message
+     * @throws IllegalStateException when generation stopped for any reason other than a clean end
+     */
+    private static void requireCompleteAnswer(String stopReason, int budget) {
+        if (stopReason == null || STOP_REASON_END_TURN.equals(stopReason)) {
+            return;
+        }
+        if (STOP_REASON_MAX_TOKENS.equals(stopReason)) {
+            throw new IllegalStateException("Claude used up its " + budget
+                    + "-token max_tokens budget before finishing the translation; raise the budget"
+                    + " or shorten the text");
+        }
+        throw new IllegalStateException("Claude stopped early (stop_reason: " + stopReason
+                + "); shorten the text or try another model");
     }
 
     /** Completion budget for one text; {@code max_tokens} is required by this API. */

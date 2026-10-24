@@ -12,29 +12,56 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 
 /** Immutable, whitelisted online-provider settings shared by every loader/version. */
 public final class OnlineProviderConfig {
     private static final String CUSTOM_HEADER_PREFIX = "custom-api-header.";
     /**
+     * The quality key, as a constant the platform configuration classes reuse.
+     *
+     * <p>They have to claim exactly the key they write when they save (see
+     * {@link #preservePromptSettings(Path, Properties, Set)}); a literal per config class would drift
+     * from this list silently, and a wrong claim either loses the change or drops the protection.
+     */
+    public static final String QUALITY_KEY = "translation-quality";
+    /** The custom system prompt key; see {@link #QUALITY_KEY}. */
+    public static final String CUSTOM_PROMPT_KEY = "custom-system-prompt";
+    /** The opt-in request trace switch; see {@link #QUALITY_KEY}. */
+    public static final String DEBUG_LOG_KEY = "debug-log";
+    /**
      * Keys edited by the in-game advanced panel rather than by a settings screen.
      *
      * <p>They are re-read from disk before every save (see {@link #preservePromptSettings}) so that
      * pressing Save on a settings screen that was opened before the panel ran cannot write a stale
-     * snapshot back over them.
+     * snapshot back over them. The one exception is a save that is writing one of them on purpose;
+     * that caller has to claim the key through
+     * {@link #preservePromptSettings(Path, Properties, Set)}, otherwise the re-read would undo its
+     * own change.
      */
     private static final String[] PROMPT_KEYS = {
-            "translation-quality", "custom-system-prompt", "debug-log"};
+            QUALITY_KEY, CUSTOM_PROMPT_KEY, DEBUG_LOG_KEY};
+    /**
+     * {@link #PROMPT_KEYS} as a lookup set.
+     *
+     * <p>A caller that is writing these keys on purpose has to say so (see the three-argument
+     * {@link #preservePromptSettings}), and it compares against this set; exposing the array itself
+     * would let a caller mutate the whitelist for everyone.
+     */
+    private static final Set<String> PROMPT_KEYS_SET = Collections.unmodifiableSet(
+            new LinkedHashSet<String>(Arrays.asList(PROMPT_KEYS)));
     private static final String[] KEYS = {
             "libretranslate-endpoint", "api-key",
             "tencent-secret-id", "tencent-secret-key", "tencent-model",
             "llm-api-endpoint", "llm-api-key", "llm-api-model",
-            "translation-quality", "custom-system-prompt", "debug-log",
+            QUALITY_KEY, CUSTOM_PROMPT_KEY, DEBUG_LOG_KEY,
             "api-connect-timeout-ms", "api-read-timeout-ms", "api-max-attempts",
             "api-min-request-interval-ms",
             "translation-workers", "batch-size", "batch-window-ms",
@@ -118,10 +145,10 @@ public final class OnlineProviderConfig {
         putDefault(properties, "llm-api-endpoint", "http://127.0.0.1:8080/v1/chat/completions");
         putDefault(properties, "llm-api-key", "");
         putDefault(properties, "llm-api-model", "local-model");
-        putDefault(properties, "translation-quality", TranslationQuality.DEFAULT.configName());
-        putDefault(properties, "custom-system-prompt", "");
+        putDefault(properties, QUALITY_KEY, TranslationQuality.DEFAULT.configName());
+        putDefault(properties, CUSTOM_PROMPT_KEY, "");
         // Off by default: the trace records text previews, so it is only written when asked for.
-        putDefault(properties, "debug-log", "false");
+        putDefault(properties, DEBUG_LOG_KEY, "false");
         putDefault(properties, "api-connect-timeout-ms", "5000");
         putDefault(properties, "api-read-timeout-ms", "120000");
         putDefault(properties, "api-max-attempts", "3");
@@ -225,12 +252,12 @@ public final class OnlineProviderConfig {
 
     /** Selected translation quality mode; an unknown value falls back to the historical prompt. */
     public TranslationQuality translationQuality() {
-        return TranslationQuality.fromConfig(value("translation-quality"));
+        return TranslationQuality.fromConfig(value(QUALITY_KEY));
     }
 
     /** Custom system prompt, or an empty string to use the built-in prompt of the active mode. */
     public String customSystemPrompt() {
-        return value("custom-system-prompt");
+        return value(CUSTOM_PROMPT_KEY);
     }
 
     /** The prompt configuration every chat-completion provider built from here receives. */
@@ -374,7 +401,7 @@ public final class OnlineProviderConfig {
      * call returns immediately and the translation path is unchanged.
      */
     public boolean debugLog() {
-        return Boolean.parseBoolean(value("debug-log"));
+        return Boolean.parseBoolean(value(DEBUG_LOG_KEY));
     }
 
     /**
@@ -388,7 +415,7 @@ public final class OnlineProviderConfig {
         if (target == null) {
             throw new IllegalArgumentException("Target properties are required");
         }
-        target.setProperty("debug-log", Boolean.toString(debugEnabled));
+        target.setProperty(DEBUG_LOG_KEY, Boolean.toString(debugEnabled));
     }
 
     /**
@@ -406,10 +433,23 @@ public final class OnlineProviderConfig {
         if (target == null) {
             throw new IllegalArgumentException("Target properties are required");
         }
-        target.setProperty("translation-quality",
+        target.setProperty(QUALITY_KEY,
                 (quality == null ? TranslationQuality.DEFAULT : quality).configName());
-        target.setProperty("custom-system-prompt",
+        target.setProperty(CUSTOM_PROMPT_KEY,
                 customSystemPrompt == null ? "" : customSystemPrompt.trim());
+    }
+
+    /**
+     * All the advanced-panel keys, as an unmodifiable set.
+     *
+     * <p>The platform configuration classes claim the keys they write one by one, using the three
+     * {@code *_KEY} constants; this accessor is for callers that have to reason about the whole set
+     * and keeps them from re-spelling the names.
+     *
+     * @return unmodifiable set of the advanced-panel keys
+     */
+    public static Set<String> promptKeys() {
+        return PROMPT_KEYS_SET;
     }
 
     /**
@@ -420,10 +460,33 @@ public final class OnlineProviderConfig {
      * would write that stale snapshot back and silently undo the change. Every other key remains
      * owned by the settings screen, so only {@link #PROMPT_KEYS} are re-read.
      *
+     * <p>Equivalent to {@link #preservePromptSettings(Path, Properties, Set)} with no keys owned by
+     * the caller, which is what a plain settings-screen save wants.
+     *
      * @param configFile configuration file to read; {@code null} does nothing
      * @param target properties about to be written back
      */
     public static void preservePromptSettings(Path configFile, Properties target) {
+        preservePromptSettings(configFile, target, Collections.<String>emptySet());
+    }
+
+    /**
+     * Copies the advanced settings from disk into {@code target}, leaving {@code ownedKeys} alone.
+     *
+     * <p>Needed because "re-read from disk" is the wrong answer for the caller that just changed one
+     * of these keys itself: the platform config classes re-read on every {@code toProperties()}, so
+     * a value written by {@code applyPromptSettings} (or {@code applyDebugLog}) was restored to the
+     * older on-disk value by the very next rebuild — including the one {@code save()} does. The
+     * settings screen still wants the stale-snapshot protection for keys it does not touch, hence
+     * the per-call opt-out instead of dropping the re-read.
+     *
+     * @param configFile configuration file to read; {@code null} does nothing
+     * @param target properties about to be written back
+     * @param ownedKeys keys the caller is writing on purpose this time; they must not be overwritten
+     *                  by the value already on disk. {@code null} is treated as an empty set.
+     */
+    public static void preservePromptSettings(
+            Path configFile, Properties target, Set<String> ownedKeys) {
         if (configFile == null || target == null) {
             return;
         }
@@ -438,6 +501,9 @@ public final class OnlineProviderConfig {
             return;
         }
         for (String key : PROMPT_KEYS) {
+            if (ownedKeys != null && ownedKeys.contains(key)) {
+                continue;
+            }
             if (stored.containsKey(key)) {
                 target.setProperty(key, stored.getProperty(key, ""));
             }

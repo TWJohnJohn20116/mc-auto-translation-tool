@@ -25,6 +25,7 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.io.OutputStream;
@@ -88,6 +89,7 @@ public final class CoreSelfTest {
         promotesCompleteVerifiedPartialDownloads();
         extractsOfflineEngineArchivesSafely();
         normalizesOfflineModelSelections();
+        fallsBackToDefaultsForHandEditedCosmeticSettings();
         supportsTraditionalChineseTargets();
         cyclesSelectableTargetLanguages();
         identifiesVanillaScreenContent();
@@ -138,21 +140,31 @@ public final class CoreSelfTest {
     private static void publishesOutgoingTranslationWhileItIsGenerated() throws Exception {
         final CountDownLatch firstPartial = new CountDownLatch(1);
         final CountDownLatch resume = new CountDownLatch(1);
-        final List<String> stored = Collections.synchronizedList(new ArrayList<String>());
+        final Map<String, String> storedByKey = Collections.synchronizedMap(
+                new LinkedHashMap<String, String>());
         TranslationStore store = new TranslationStore() {
             @Override
             public String get(String key) {
+                // Reads stay empty on purpose: this store is a journal of the writes, so every
+                // request is forced down the streaming path this check is about.
                 return null;
             }
 
             @Override
             public void put(String key, String value) {
-                stored.add(value);
+                storedByKey.put(key, value);
+            }
+
+            @Override
+            public void remove(String key) {
+                // Revokes a write that was already committed, the contract the coordinator's
+                // rollback relies on and PersistentTranslationCache implements the same way.
+                storedByKey.remove(key);
             }
 
             @Override
             public void clear() {
-                stored.clear();
+                storedByKey.clear();
             }
         };
         TranslationProvider provider = new TranslationProvider() {
@@ -185,12 +197,13 @@ public final class CoreSelfTest {
             // The partial translation is on the HUD line while the provider is still working.
             assertEquals("Hel", OutgoingTranslationPreview.text());
             // Nothing partial was cached: only the validated final translation is written.
-            assertTrue(stored.isEmpty());
+            assertTrue(storedByKey.isEmpty());
             resume.countDown();
             TranslationResult result = pending.get(5, TimeUnit.SECONDS);
             assertTrue(result.isTranslated());
             assertEquals("Hello Steve_42", result.getTranslatedText());
-            assertEquals(Collections.singletonList("Hello"), new ArrayList<String>(stored));
+            assertEquals(Collections.singletonList("Hello"),
+                    new ArrayList<String>(storedByKey.values()));
             // The line is released once the request settles, so it cannot outlive its own message.
             long deadline = System.currentTimeMillis() + 5_000L;
             while (OutgoingTranslationPreview.text() != null && System.currentTimeMillis() < deadline) {
@@ -334,6 +347,27 @@ public final class CoreSelfTest {
                 directory, false, "invalid-selection")) {
             assertEquals("offline-llama:" + OfflineModel.LITE.modelId(), provider.id());
         }
+    }
+
+    /**
+     * Every cosmetic setting is parsed inside a config {@code load()}, so a hand-edited or
+     * unknown value has to fall back instead of throwing. An exception there escapes the
+     * constructor, the bootstrap answers it with {@code shutdown()} and the settings screen never
+     * opens, which leaves the bad value in the file forever.
+     */
+    private static void fallsBackToDefaultsForHandEditedCosmeticSettings() {
+        assertEquals(TranslationTextColor.AQUA, TranslationTextColor.fromConfig("cyan-bogus"));
+        assertEquals(TranslationTextColor.AQUA, TranslationTextColor.fromConfig(""));
+        assertEquals(TranslationTextColor.AQUA, TranslationTextColor.fromConfig(null));
+        assertEquals(TranslationDisplayMode.TRANSLATED_ONLY,
+                TranslationDisplayMode.fromConfig("both"));
+        assertEquals(TranslationDisplayMode.TRANSLATED_ONLY,
+                TranslationDisplayMode.fromConfig(null));
+        // The spelled-out forms still have to be understood, or the fallback would hide a rename.
+        assertEquals(TranslationTextColor.LIGHT_PURPLE,
+                TranslationTextColor.fromConfig(" light_purple "));
+        assertEquals(TranslationDisplayMode.ORIGINAL_AND_TRANSLATED,
+                TranslationDisplayMode.fromConfig("BILINGUAL"));
     }
 
     private static void formatsSecretFreeDiagnostics() {
@@ -1154,10 +1188,26 @@ public final class CoreSelfTest {
                 "Minecraft server interface text from auto to zh-CN. Return only the translation. __UT_0__"));
         assertThrows(() -> TranslationOutputValidator.requireValid(
                 "Welcome", "游戏服务器界面文本从自动翻译为中文，不要解释"));
-        assertThrows(() -> TranslationOutputValidator.requireDisplaySafe(
+        // A restored protected value may itself look like an internal token: a player is allowed to
+        // be named __UT_0__, and the segment path never sends tokens to a provider, so the
+        // two-argument form has to accept the value it just restored.
+        assertEquals("欢迎 __UT_0__", TranslationOutputValidator.requireDisplaySafe(
                 "Welcome Steve", "欢迎 __UT_0__"));
+        // The leak the check exists for is still caught: a token that really travelled to the
+        // provider must not be able to come back out of it.
+        try {
+            TranslationOutputValidator.requireDisplaySafe(
+                    "Welcome Steve", "欢迎 __UT_0__", Collections.singleton("__UT_0__"));
+            throw new AssertionError("Expected the restored placeholder to be rejected");
+        } catch (IllegalArgumentException expected) {
+            assertTrue(expected.getMessage().contains("internal placeholder"));
+        }
         assertThrows(() -> TranslationOutputValidator.requireDisplaySafe(
                 "Welcome", "欢迎\n不要解释"));
+        // The only length floor is absolute: an answer made of ideographic spaces carries no
+        // content, while a short translation of a short line is legitimate and must survive.
+        assertThrows(() -> TranslationOutputValidator.requireValid("OK", "\u3000\u3000"));
+        assertEquals("你好", TranslationOutputValidator.requireValid("Welcome back", "你好"));
         assertFalse(LanguageHeuristics.shouldTranslate(
                 "Minecraft server interface text from auto to zh-CN", "zh-CN"));
     }

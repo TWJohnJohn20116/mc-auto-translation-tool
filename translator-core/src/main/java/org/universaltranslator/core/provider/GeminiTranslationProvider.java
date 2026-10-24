@@ -38,6 +38,16 @@ public final class GeminiTranslationProvider implements TranslationProvider {
     private static final String STREAM_GENERATE = ":streamGenerateContent";
     private static final int MAXIMUM_TOKENS_LIMIT = 2048;
     private static final int MINIMUM_COMPLETION_TOKENS = 512;
+    /**
+     * Field that reports why the model stopped. It is the only signal that tells a finished
+     * translation apart from the first half of one, so it is read from a plain reply and from the
+     * last event of a stream alike.
+     */
+    private static final String FINISH_REASON_FIELD = "finishReason";
+    /** {@code finishReason} of a candidate the model finished on its own. */
+    private static final String FINISH_REASON_STOP = "STOP";
+    /** {@code finishReason} of a candidate cut off at the output budget. */
+    private static final String FINISH_REASON_MAX_TOKENS = "MAX_TOKENS";
     /** The probe only has to prove the key and the model resolve, so it asks for one token. */
     private static final String PROBE_TEXT = "ping";
 
@@ -97,13 +107,17 @@ public final class GeminiTranslationProvider implements TranslationProvider {
         String text = request.getText();
         DebugLog.global().logRequest("gemini:" + model, model, base,
                 request.getKind().name(), text);
-        String response = post(text, TranslationPrompt.single(prompt, request),
-                completionBudget(text), false);
+        int budget = completionBudget(text);
+        String response = post(text, TranslationPrompt.single(prompt, request), budget, false);
         String translated = extractContent(response);
         if (translated == null || translated.trim().isEmpty()) {
             throw new IllegalStateException(
                     ProviderJson.describeMissingContent("Gemini", response));
         }
+        // Completeness is only worth asking about once there is content to judge: an empty answer is
+        // explained far better by the provider's own message and the body excerpt than by a finish
+        // reason, while a cut-off answer is distinguishable from a short one only here.
+        requireCompleteAnswer(JsonStrings.readStringField(response, FINISH_REASON_FIELD), budget);
         if (response.indexOf("\"usageMetadata\"") >= 0) {
             TranslationStats.global().recordUsage("gemini:" + model, response);
         }
@@ -121,12 +135,17 @@ public final class GeminiTranslationProvider implements TranslationProvider {
             return TranslationProvider.super.translateStreaming(request, listener);
         }
         String text = request.getText();
+        int budget = completionBudget(text);
         StringBuilder accumulated = new StringBuilder(64);
         boolean[] sawEvent = new boolean[1];
+        // Only the last chunk of a stream reports a finish reason, so that report is both the
+        // truncation signal and this protocol's only end marker: streamGenerateContent ends by
+        // closing the array, which an interrupted connection does just as well.
+        String[] finishReason = new String[1];
+        boolean[] sawEnd = new boolean[1];
         try (HttpJsonClient.StreamedResponse response = http.postStreaming(
                 URI.create(streamUrl()), requestBody(
-                        text, TranslationPrompt.single(prompt, request),
-                        completionBudget(text)), headers())) {
+                        text, TranslationPrompt.single(prompt, request), budget), headers())) {
             if (!isEventStream(response.getContentType())) {
                 streamingUnsupported = true;
                 return TranslationProvider.super.translateStreaming(request, listener);
@@ -137,6 +156,17 @@ public final class GeminiTranslationProvider implements TranslationProvider {
                     sawEvent[0] = true;
                     accumulated.append(fragment);
                     listener.onPartialText(accumulated.toString());
+                }
+                String reported = JsonStrings.readStringField(payload, FINISH_REASON_FIELD);
+                if (reported != null) {
+                    // A reported reason proves the model reached the end of its answer, whatever
+                    // the reason is; an absent one proves nothing, which is why the two cases are
+                    // tracked separately instead of sharing a null.
+                    sawEnd[0] = true;
+                    DebugLog.global().logStreamEvent("gemini:" + model, "end", 0);
+                    if (!FINISH_REASON_STOP.equals(reported)) {
+                        finishReason[0] = reported;
+                    }
                 }
                 return true;
             });
@@ -155,6 +185,20 @@ public final class GeminiTranslationProvider implements TranslationProvider {
             streamingUnsupported = !sawEvent[0];
             return TranslationProvider.super.translateStreaming(request, listener);
         }
+        if (!sawEnd[0]) {
+            // The body ended before any chunk reported a finish reason, so what arrived is a prefix
+            // of the translation and must not be cached as the whole of it. The plain path is the
+            // one that recovers: it sends one non-streaming request whose body carries the complete
+            // answer, which keeps an endpoint that never streams a finish reason usable instead of
+            // failing every line from now on.
+            DebugLog.global().log("stream-fallback",
+                    "provider", "gemini:" + model,
+                    "reason", "stream ended without an end marker",
+                    "action", "fell back to a plain request",
+                    "characters", Integer.toString(accumulated.length()));
+            return TranslationProvider.super.translateStreaming(request, listener);
+        }
+        requireCompleteAnswer(finishReason[0], budget);
         return TranslationOutputValidator.requireValid(text, accumulated.toString());
     }
 
@@ -180,6 +224,38 @@ public final class GeminiTranslationProvider implements TranslationProvider {
             return null;
         }
         return ProviderJson.joinField(response, "candidates[0].content.parts", "text");
+    }
+
+    /**
+     * Rejects an answer Gemini reported as unfinished.
+     *
+     * <p>{@code finishReason} is the only thing that separates a complete translation from the
+     * first half of one: {@link TranslationOutputValidator} bounds the length from above but has no
+     * floor that a half sentence would miss, and whatever passes it is written into the persistent
+     * cache, so one truncated answer would be replayed for the rest of the installation with no
+     * further request ever being made.
+     *
+     * <p>The field is read through {@link JsonStrings#readStringField} rather than a JSON path
+     * because a body that is not JSON at all is reported by the caller's own diagnostics, and a
+     * missing field must not turn into a parse failure here. A streamed call only reaches this
+     * method once the stream proved it ended, so an absent reason here means the plain path, where
+     * an endpoint is free not to report one.
+     *
+     * @param finishReason value the endpoint reported, {@code null} when it reported none
+     * @param budget       completion budget the request was sent with, quoted in the message
+     * @throws IllegalStateException when generation stopped for any reason other than a clean end
+     */
+    private static void requireCompleteAnswer(String finishReason, int budget) {
+        if (finishReason == null || FINISH_REASON_STOP.equals(finishReason)) {
+            return;
+        }
+        if (FINISH_REASON_MAX_TOKENS.equals(finishReason)) {
+            throw new IllegalStateException("Gemini used up its " + budget
+                    + "-token output budget before finishing the translation; raise the budget or"
+                    + " shorten the text");
+        }
+        throw new IllegalStateException("Gemini stopped early (finishReason: " + finishReason
+                + "); shorten the text or try another model");
     }
 
     /**
