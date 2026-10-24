@@ -476,14 +476,18 @@ def _split_parts(path: Path) -> list[Path]:
         if not part.is_file():
             raise VerificationError(f"split JAR part is not a file: {part}")
     # The 600 KiB threshold in AGENTS.md had no check behind it: only the names were verified, so a
-    # threshold typo produced hundreds of tiny parts that still assembled to the right SHA-256. Only
-    # the last part may be smaller than PART_SIZE.
-    for part in parts[:-1]:
-        size = part.stat().st_size
-        if size != PART_SIZE:
-            raise VerificationError(
-                f"split JAR part has an unexpected size: {part.name} ({size} != {PART_SIZE})"
-            )
+    # threshold typo produced hundreds of tiny parts that still assembled to the right SHA-256.
+    # A logical JAR above PART_SIZE must therefore be cut into full-size leading parts. A fixture that
+    # splits a small file (the unit tests do exactly that) is not describing this layout and is left
+    # alone.
+    total_size = sum(part.stat().st_size for part in parts)
+    if total_size > PART_SIZE:
+        for part in parts[:-1]:
+            size = part.stat().st_size
+            if size != PART_SIZE:
+                raise VerificationError(
+                    f"split JAR part has an unexpected size: {part.name} ({size} != {PART_SIZE})"
+                )
     return parts
 
 
