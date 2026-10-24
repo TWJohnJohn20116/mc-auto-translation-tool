@@ -1,6 +1,8 @@
 package org.universaltranslator.forge.legacy;
 
 import net.minecraft.launchwrapper.IClassTransformer;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.ClassWriter;
@@ -9,6 +11,9 @@ import org.objectweb.asm.Opcodes;
 
 /** Injects one string substitution call into FontRenderer render and width methods. */
 public final class FontRendererTransformer implements IClassTransformer {
+    // Forge's log4j, not System.out: a transformer write to stdout has no level, no timestamp and
+    // cannot be filtered, and launch wrappers highlight it as an error line.
+    private static final Logger LOGGER = LogManager.getLogger("MCAutoTranslationTool");
     private static final String FONT_RENDERER = "net.minecraft.client.gui.FontRenderer";
     private static final String CHAT_HUD = "net.minecraft.client.gui.GuiNewChat";
     private static final String GUI_SCREEN = "net.minecraft.client.gui.GuiScreen";
@@ -44,15 +49,14 @@ public final class FontRendererTransformer implements IClassTransformer {
                     : guiScreen ? "tooltip context"
                     : guiTextField ? "text input context" : "sign input context";
             if (visitor.modifiedMethods() == 0) {
-                System.err.println("[MC Auto Translation Tool] No compatible " + hookName
-                        + " methods were found; text translation hook is inactive");
+                LOGGER.warn("No compatible {} methods were found; text translation hook is inactive",
+                        hookName);
                 return basicClass;
             }
-            System.out.println("[MC Auto Translation Tool] Installed " + visitor.modifiedMethods()
-                    + " " + hookName + " hook(s)");
+            LOGGER.info("Installed {} {} hook(s)", visitor.modifiedMethods(), hookName);
             return writer.toByteArray();
         } catch (Throwable error) {
-            System.err.println("[MC Auto Translation Tool] FontRenderer transformation failed: " + error);
+            LOGGER.error("FontRenderer transformation failed", error);
             return basicClass;
         }
     }

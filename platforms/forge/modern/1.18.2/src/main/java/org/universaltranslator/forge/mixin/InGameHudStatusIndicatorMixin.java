@@ -20,6 +20,7 @@ import org.universaltranslator.core.HudIndicatorVisibility;
 import org.universaltranslator.core.OutgoingTranslationPreview;
 import org.universaltranslator.core.TranslationActivity;
 import org.universaltranslator.forge.ForgeTranslationRuntime;
+import org.universaltranslator.forge.TranslationRenderContext;
 
 /**
  * Paints a small translation status indicator on the HUD so the player can tell at a glance whether
@@ -104,7 +105,9 @@ abstract class InGameHudStatusIndicatorMixin {
         if (outgoingPreview != null) {
             int previewCenterX = screenWidth / 2;
             int previewY = Math.max(0, screenHeight - 60);
+            TranslationRenderContext.pushTextInput();
             Screen.drawCenteredString(pose, Minecraft.getInstance().font, new TextComponent(outgoingPreview), previewCenterX, previewY, 0xFFFFFFFF);
+            TranslationRenderContext.popTextInput();
         }
 
         // The label is drawn in both states: the target language and the provider are settings, so
@@ -126,6 +129,7 @@ abstract class InGameHudStatusIndicatorMixin {
             if (label != null && !label.isEmpty()) {
                 Font font = Minecraft.getInstance().font;
                 Component text = new TextComponent(label);
+                TranslationRenderContext.pushTextInput();
                 int labelWidth = font.width(text);
                 // Beside the square, never over it: a 6px square cannot hold "zh-TW", and a label
                 // centred on a right-corner square would run off the screen edge.
@@ -135,6 +139,7 @@ abstract class InGameHudStatusIndicatorMixin {
                 // y is the top of the text line, so centre it against the square by hand.
                 int labelY = top + (size - 8) / 2;
                 Screen.drawCenteredString(pose, font, text, labelCenterX, labelY, 0xFFFFFFFF);
+                TranslationRenderContext.popTextInput();
             }
         }
     }

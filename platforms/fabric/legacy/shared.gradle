@@ -3,13 +3,19 @@ def requiredProperties = [
         "legacyYarnMappings",
         "legacyLoaderVersion",
         "legacyFabricApiVersion",
-        "legacyJavaRelease",
-        "legacyFabricDependency"
+        "legacyJavaRelease"
 ]
 requiredProperties.each { propertyName ->
     if (!project.ext.has(propertyName)) {
         throw new GradleException("Missing ${propertyName} before applying Fabric legacy shared.gradle")
     }
+}
+// Fabric API's mod id is `fabric-api` — that is what the 1.21 and 26.x fabric.mod.json declare, and
+// what Fabric Loader matches against `depends`. It used to be written out per version, and eighteen
+// of them said `fabric` while the 1.19.2+ ones said `fabric-api`; the two spellings cannot both be
+// right, so the value now has one default and a version only overrides it if it really differs.
+if (!project.ext.has("legacyFabricDependency")) {
+    project.ext.legacyFabricDependency = "fabric-api"
 }
 
 def sourceLayers = [

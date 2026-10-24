@@ -6,6 +6,7 @@ import net.minecraft.text.Style;
 import net.minecraft.text.Text;
 import net.minecraft.text.StringVisitable;
 import net.minecraft.util.Formatting;
+import org.universaltranslator.core.DebugLog;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TranslationTextStyling;
 import org.universaltranslator.core.TranslationStyleRuns;
@@ -175,7 +176,9 @@ public final class RenderedTextBridge {
     /** Canonical Screen.getTooltipFromItem hook for inventories and containers. */
     public static List<Text> translateItemTooltip(List<Text> lines) {
         if (ITEM_TOOLTIP_REACHED.compareAndSet(false, true)) {
-            System.out.println("[MC Auto Translation Tool] Item tooltip producer reached");
+            // Behind the debug-log switch instead of a bare System.out line: that one could not be
+            // turned off and bypassed the redaction every other log path goes through.
+            DebugLog.global().log("item-tooltip", "producer", "reached");
         }
         return translateTooltip(lines, true);
     }
@@ -208,7 +211,8 @@ public final class RenderedTextBridge {
         }
         if (itemTooltip && replacement != null
                 && ITEM_TOOLTIP_APPLIED.compareAndSet(false, true)) {
-            System.out.println("[MC Auto Translation Tool] Item tooltip translation applied");
+            // Logged once per session, and only when debug logging is on.
+            DebugLog.global().log("item-tooltip", "result", "translated");
         }
         return replacement == null ? lines : replacement;
     }

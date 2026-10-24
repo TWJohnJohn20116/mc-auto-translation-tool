@@ -139,11 +139,16 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     /** Result of the engine tab's connection test; written by its worker thread. */
     private volatile String testStatus = "";
     private volatile boolean testStatusIsError;
-    private boolean testing;
-    private boolean fetchingModels;
+    // volatile because the fetch/test workers clear them and the render thread reads them as a
+    // re-entry guard. Without it a worker could clear the flag without the render thread ever
+    // observing the write, and the tab's "fetch models" and "test" buttons stayed dead for the life
+    // of that screen instance. Every write below is a plain scalar store, which is what makes the
+    // volatile alone sufficient here.
+    private volatile boolean testing;
+    private volatile boolean fetchingModels;
     private volatile List<String> fetchedModels = Collections.emptyList();
     private volatile boolean modelListOpen;
-    private int modelPage;
+    private volatile int modelPage;
     private long animationStartedNanos = System.nanoTime();
     private SettingsSelectionList.Kind openSelection = SettingsSelectionList.Kind.NONE;
 
@@ -1668,8 +1673,9 @@ abstract class UniversalTranslatorLlmConfigScreenBase extends Screen {
     private volatile boolean statusIsError;
     private volatile List<String> fetchedModels = Collections.emptyList();
     private volatile boolean fetching;
-    private boolean modelListOpen;
-    private int modelPage;
+    // Written by the fetch worker, read by the render thread: see the note on the engine tab's flags.
+    private volatile boolean modelListOpen;
+    private volatile int modelPage;
     /** Canvas captured by renderLlm so the catalog overlay can be drawn over the widgets. */
     private ForgeScreenCanvas canvas;
 

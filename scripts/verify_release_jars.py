@@ -16,10 +16,11 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Iterable
 
+from release_layout import PART_PATTERN, PART_SIZE, part_suffix
+
 
 PLACEHOLDER = re.compile(r"\$\{[^}]+}")
 SHA256_LINE = re.compile(r"^([0-9a-fA-F]{64})\s+[* ]?(.+?)\s*$")
-SPLIT_JAR_PART = re.compile(r"^(?P<jar>.+\.jar)\.part-(?P<suffix>[a-z]{2})$")
 RELEASE_JAR = re.compile(
     r"^MCAutoTranslationTool-(?P<version>.+)"
     r"(?:-mc.+-(?:fabric|forge|neoforge|forge-neoforge)|-fabric-all)\.jar$"
@@ -131,10 +132,20 @@ def _class_major_for_minecraft(minecraft: str) -> int | None:
 
 def _expected_class_major(label: str) -> int | None:
     outer_name = _archive_basename(label)
+    # Both answers about "what is a release JAR name" come from RELEASE_JAR. `_expected_class_major`
+    # used to carry its own, narrower pattern that did not know `-fabric-all`, so the two could
+    # disagree about a name and the class-version gate would quietly skip the archive.
+    if RELEASE_JAR.fullmatch(outer_name) is None:
+        return None
     match = _OUTER_MC_LABEL.search(outer_name)
     if match is None:
-        # `-fabric-all` and the Forge family archives are aggregates without top-level classes.
-        return None
+        if outer_name.endswith("-fabric-all.jar"):
+            # The aggregate bundle: no classes of its own, its nested implementations are checked
+            # one at a time.
+            return None
+        raise VerificationError(
+            f"cannot derive a Minecraft label for the class-version gate: {outer_name}"
+        )
     return _class_major_for_minecraft(match.group("minecraft"))
 
 
@@ -445,10 +456,6 @@ def verify_jar_bytes(
         raise VerificationError(f"invalid ZIP/JAR: {error}") from error
 
 
-def _part_suffix(index: int) -> str:
-    return chr(ord("a") + index // 26) + chr(ord("a") + index % 26)
-
-
 def _split_parts(path: Path) -> list[Path]:
     parts = sorted(path.parent.glob(f"{path.name}.part-*"))
     if path.is_file() and parts:
@@ -460,14 +467,23 @@ def _split_parts(path: Path) -> list[Path]:
     if len(parts) < 2:
         raise VerificationError(f"split JAR requires at least two parts: {path}")
     for index, part in enumerate(parts):
-        match = SPLIT_JAR_PART.match(part.name)
-        expected = _part_suffix(index)
+        match = PART_PATTERN.match(part.name)
+        expected = part_suffix(index)
         if not match or match.group("jar") != path.name or match.group("suffix") != expected:
             raise VerificationError(
                 f"split JAR parts must be contiguous from part-aa: {path}"
             )
         if not part.is_file():
             raise VerificationError(f"split JAR part is not a file: {part}")
+    # The 600 KiB threshold in AGENTS.md had no check behind it: only the names were verified, so a
+    # threshold typo produced hundreds of tiny parts that still assembled to the right SHA-256. Only
+    # the last part may be smaller than PART_SIZE.
+    for part in parts[:-1]:
+        size = part.stat().st_size
+        if size != PART_SIZE:
+            raise VerificationError(
+                f"split JAR part has an unexpected size: {part.name} ({size} != {PART_SIZE})"
+            )
     return parts
 
 
@@ -511,7 +527,7 @@ def verify_checksums(checksum_file: Path, require_complete: bool) -> int:
     if require_complete:
         jars = {path.resolve() for path in checksum_file.parent.glob("*.jar")}
         for part in checksum_file.parent.glob("*.jar.part-*"):
-            match = SPLIT_JAR_PART.match(part.name)
+            match = PART_PATTERN.match(part.name)
             if not match:
                 raise VerificationError(f"invalid split JAR part name: {part.name}")
             jars.add((part.parent / match.group("jar")).resolve())

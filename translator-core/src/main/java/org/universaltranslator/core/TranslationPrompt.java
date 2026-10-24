@@ -199,26 +199,60 @@ public final class TranslationPrompt {
     }
 
     /**
-     * Turns the literal two-character {@code \n} a single-line editor produces into a real line
-     * break, so a prompt written in the in-game box reads the same as one written in
+     * Turns the escape sequences a single-line editor produces into the characters they stand for, so
+     * a prompt written in the in-game box reads the same as one written in
      * {@code universal-translator.properties} (where {@code Properties.load} does the same thing).
      *
+     * <p>Single pass, and {@code \\} is an escape of its own: {@code \\n} stays a backslash followed
+     * by an n, which is what {@link #toEditorText(String)} emits for a stored {@code \n}. The old
+     * version replaced {@code \n} without ever escaping a backslash, so a prompt that wanted a
+     * literal {@code \n} (a regex, a JSON example) lost a level of backslashes on every save, and
+     * {@code \\n} silently became a line break.
+     *
      * @param value raw editor text, possibly {@code null}
-     * @return the text with {@code \n} sequences replaced by line breaks
+     * @return the text with the escapes resolved
      */
     public static String fromEditorText(String value) {
-        return value == null ? "" : value.replace("\\n", "\n");
+        if (value == null) {
+            return "";
+        }
+        StringBuilder out = new StringBuilder(value.length());
+        for (int index = 0; index < value.length(); index++) {
+            char current = value.charAt(index);
+            if (current == '\\' && index + 1 < value.length()) {
+                char next = value.charAt(index + 1);
+                if (next == 'n') {
+                    out.append('\n');
+                    index++;
+                    continue;
+                }
+                if (next == '\\') {
+                    out.append('\\');
+                    index++;
+                    continue;
+                }
+            }
+            out.append(current);
+        }
+        return out.toString();
     }
 
     /**
      * The inverse of {@link #fromEditorText}: makes a stored prompt safe to show in a single-line
      * editor without losing its structure.
      *
+     * <p>A backslash is escaped before the line breaks are encoded, so this really is reversible:
+     * {@code fromEditorText(toEditorText(x))} returns {@code x} for every string. Stored values from
+     * older versions contain no doubled backslash, so they read back unchanged.
+     *
      * @param value stored prompt, possibly {@code null}
-     * @return the text with line breaks written as {@code \n}
+     * @return the text with backslashes escaped and line breaks written as {@code \n}
      */
     public static String toEditorText(String value) {
-        return value == null ? "" : value.replace("\r\n", "\n").replace("\n", "\\n");
+        if (value == null) {
+            return "";
+        }
+        return value.replace("\\", "\\\\").replace("\r\n", "\n").replace("\n", "\\n");
     }
 
     /** {@code 繁體中文 (zh-TW)} style description; the source side says so when it is auto-detected. */

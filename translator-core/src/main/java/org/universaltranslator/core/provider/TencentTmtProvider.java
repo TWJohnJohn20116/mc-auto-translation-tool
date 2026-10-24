@@ -47,7 +47,14 @@ public final class TencentTmtProvider implements TranslationProvider {
 
     @Override
     public String translate(TranslationRequest request) throws Exception {
-        ProviderSupport.requireUtf8Bytes("Tencent TMT source text", request.getText(), 2000);
+        // Characters, not UTF-8 bytes: TMT documents a 2000-character limit, and every other provider
+        // in this package checks characters (Aliyun 5000, Huawei 2000, Youdao 5000). Counting bytes
+        // made a Chinese source hit the ceiling at ~666 characters — a third of the documented
+        // limit — and rejected the request locally with a message the user could not act on.
+        // Baidu keeps its byte check because its documented unit really is 6000 bytes.
+        if (request.getText().length() > 2000) {
+            throw new IllegalArgumentException("Tencent TMT source text exceeds 2000 characters");
+        }
         String payload = "{"
                 + "\"SourceText\":" + JsonStrings.quote(request.getText()) + ','
                 + "\"Source\":" + JsonStrings.quote(

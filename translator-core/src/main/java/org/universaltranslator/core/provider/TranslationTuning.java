@@ -47,7 +47,21 @@ public final class TranslationTuning {
                 MINIMUM_BATCH_WINDOW_MILLIS, MAXIMUM_BATCH_WINDOW_MILLIS);
     }
 
-    /** Concurrent translation threads; 1 means every translation runs one after another. */
+    /**
+     * Concurrent translation threads, as configured.
+     *
+     * <p>No provider reads this. The concurrency of provider requests is bounded by the platform's
+     * thread pool, not by the provider: {@code translation-workers} →
+     * {@code FabricTranslationRuntimeBase.threads()} → {@code TranslationCoordinator}'s
+     * {@code ThreadPoolExecutor}. The provider only ever consults {@link #batchSize()} and
+     * {@link #batchWindowMillis()}, so this value is reported twice and changing it here changes
+     * nothing at runtime — which is why {@link #toString()} no longer prints it and why anyone
+     * looking for "why does raising the worker count change nothing" should start at the executor.
+     *
+     * @deprecated kept so existing callers and the configuration round trip still compile; read the
+     *     platform's worker count instead.
+     */
+    @Deprecated
     public int workers() {
         return workers;
     }
@@ -96,9 +110,9 @@ public final class TranslationTuning {
         return clamp(parsed, minimum, maximum);
     }
 
+    /** The two settings this object actually decides; the worker count is not one of them. */
     @Override
     public String toString() {
-        return "workers=" + workers + ", batchSize=" + batchSize
-                + ", batchWindowMillis=" + batchWindowMillis;
+        return "batchSize=" + batchSize + ", batchWindowMillis=" + batchWindowMillis;
     }
 }

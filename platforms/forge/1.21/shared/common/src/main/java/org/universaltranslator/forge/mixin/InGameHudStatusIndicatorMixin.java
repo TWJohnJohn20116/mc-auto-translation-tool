@@ -15,6 +15,7 @@ import org.universaltranslator.core.HudIndicatorVisibility;
 import org.universaltranslator.core.OutgoingTranslationPreview;
 import org.universaltranslator.core.TranslationActivity;
 import org.universaltranslator.forge.ForgeTranslationRuntime;
+import org.universaltranslator.forge.TranslationRenderContext;
 
 /**
  * Paints a small translation status indicator on the HUD so the player can tell at a glance whether
@@ -99,10 +100,20 @@ abstract class InGameHudStatusIndicatorMixin {
         if (outgoingPreview != null) {
             int previewCenterX = graphics.guiWidth() / 2;
             int previewY = Math.max(0, graphics.guiHeight() - 60);
-            graphics.drawCenteredString(
-                    net.minecraft.client.Minecraft.getInstance().font,
-                    net.minecraft.network.chat.Component.literal(outgoingPreview),
-                    previewCenterX, previewY, 0xFFFFFFFF);
+            // Both hooks this mod installs cover the calls below: drawCenteredString goes through
+            // DrawContext and font.width goes through TextRenderer. Without the text-input guard the
+            // indicator's own text — a language code, a provider id, or an already translated preview
+            // — would be submitted for translation again, picked from the cache under a new key and
+            // drawn back with a different width.
+            TranslationRenderContext.pushTextInput();
+            try {
+                graphics.drawCenteredString(
+                        net.minecraft.client.Minecraft.getInstance().font,
+                        net.minecraft.network.chat.Component.literal(outgoingPreview),
+                        previewCenterX, previewY, 0xFFFFFFFF);
+            } finally {
+                TranslationRenderContext.popTextInput();
+            }
         }
 
         // The label is drawn in both states: the target language and the provider are settings, so
@@ -124,15 +135,22 @@ abstract class InGameHudStatusIndicatorMixin {
                         net.minecraft.client.Minecraft.getInstance().font;
                 net.minecraft.network.chat.Component text =
                         net.minecraft.network.chat.Component.literal(label);
-                int labelWidth = font.width(text);
-                // Beside the square, never over it: a 6px square cannot hold "zh-TW", and a label
-                // centred on a right-corner square would run off the screen edge.
-                int labelCenterX = corner.isRight()
-                        ? left - 2 - labelWidth / 2
-                        : right + 2 + labelWidth / 2;
-                // y is the top of the text line, so centre it against the square by hand.
-                int labelY = top + (size - 8) / 2;
-                graphics.drawCenteredString(font, text, labelCenterX, labelY, 0xFFFFFFFF);
+                // Measuring is inside the guard too: TextRenderer.getWidth is one of the hooked
+                // methods, so an unguarded width makes the label jump once a translation lands.
+                TranslationRenderContext.pushTextInput();
+                try {
+                    int labelWidth = font.width(text);
+                    // Beside the square, never over it: a 6px square cannot hold "zh-TW", and a label
+                    // centred on a right-corner square would run off the screen edge.
+                    int labelCenterX = corner.isRight()
+                            ? left - 2 - labelWidth / 2
+                            : right + 2 + labelWidth / 2;
+                    // y is the top of the text line, so centre it against the square by hand.
+                    int labelY = top + (size - 8) / 2;
+                    graphics.drawCenteredString(font, text, labelCenterX, labelY, 0xFFFFFFFF);
+                } finally {
+                    TranslationRenderContext.popTextInput();
+                }
             }
         }
     }

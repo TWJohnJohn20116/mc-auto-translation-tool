@@ -21,7 +21,10 @@ if ($cleanTarget.EndsWith(":build")) { $cleanTarget = $cleanTarget.Substring(0, 
 if ($cleanTarget.StartsWith("platform-")) { $cleanTarget = $cleanTarget.Substring(9) }
 
 # Handle Legacy 1.8.9 / 1.12.2
-if ($cleanTarget -eq "1.8.9" -or $cleanTarget -eq "legacy-1.8.9" -or $cleanTarget -eq "forge-1.8.9") {
+# The published target names are `forge-legacy-1.8.9` / `forge-legacy-1.12.2` (see AGENTS.md and
+# legacy-targets.yml); passing those used to fall through to the modern branch below and ask Gradle
+# for a project that does not exist, because these two are standalone builds.
+if ($cleanTarget -match '^(forge-)?legacy-1\.8\.9$' -or $cleanTarget -eq "1.8.9" -or $cleanTarget -eq "forge-1.8.9") {
     $env:JAVA_HOME = $j8
     Write-Host "Building Legacy Forge 1.8.9 using JDK 8..." -ForegroundColor Cyan
     Push-Location "$root\platforms\forge\legacy\1.8.9"
@@ -29,7 +32,7 @@ if ($cleanTarget -eq "1.8.9" -or $cleanTarget -eq "legacy-1.8.9" -or $cleanTarge
     Pop-Location
     exit $LASTEXITCODE
 }
-if ($cleanTarget -eq "1.12.2" -or $cleanTarget -eq "legacy-1.12.2" -or $cleanTarget -eq "forge-1.12.2") {
+if ($cleanTarget -match '^(forge-)?legacy-1\.12\.2$' -or $cleanTarget -eq "1.12.2" -or $cleanTarget -eq "forge-1.12.2") {
     $env:JAVA_HOME = $j8
     Write-Host "Building Legacy Forge 1.12.2 using JDK 8..." -ForegroundColor Cyan
     Push-Location "$root\platforms\forge\legacy\1.12.2"

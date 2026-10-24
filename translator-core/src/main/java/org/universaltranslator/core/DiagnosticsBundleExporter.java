@@ -93,7 +93,13 @@ public final class DiagnosticsBundleExporter {
         content.append("OS: ").append(System.getProperty("os.name", "unknown"))
                 .append(' ').append(System.getProperty("os.version", "unknown"))
                 .append(' ').append(System.getProperty("os.arch", "unknown")).append('\n');
-        content.append("Privacy: API keys, endpoints and translated text are excluded.\n");
+        // The statement has to describe this archive, not a hypothetical one. The debug log in the
+        // zip is redacted for credentials only (DebugLog.redact), so its request/response lines keep
+        // the first 120 characters of what the player saw and what the provider answered. Promising
+        // "translated text is excluded" while shipping that file was the one inconsistency here.
+        content.append("Privacy: API keys and full endpoints are excluded. The debug log inside this "
+                + "archive may contain up to 120 characters of source and translated text per "
+                + "request.\n");
         return content.toString();
     }
 

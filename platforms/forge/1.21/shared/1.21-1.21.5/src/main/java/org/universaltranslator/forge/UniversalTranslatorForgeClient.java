@@ -78,6 +78,13 @@ public final class UniversalTranslatorForgeClient {
 
         @SubscribeEvent
         public static void clientTick(TickEvent.ClientTickEvent event) {
+            // START and END are both delivered for every client tick; without this guard the whole
+            // body — beginFrame, the join hint countdown and the status notifier — ran twice per
+            // tick, which made the "translation ready" hint appear after 1.5 s instead of 3 s. Every
+            // other tree in this repo either checks the phase or subscribes to Post.
+            if (event.phase != TickEvent.Phase.END) {
+                return;
+            }
             TranslationRenderContext.beginFrame();
             Minecraft client = Minecraft.getInstance();
             boolean connected = client.level != null && client.getConnection() != null;

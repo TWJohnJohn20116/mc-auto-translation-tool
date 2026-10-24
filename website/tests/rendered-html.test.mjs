@@ -45,7 +45,6 @@ test("server-renders the public-benefit project home page", async () => {
   assert.match(html, /1\.21\.11/);
   assert.match(html, /26\.2/);
   assert.match(html, new RegExp(`${escapeRe(releaseVersion)} 正式版`));
-  assert.match(html, /31 个经过校验的 JAR/);
   assert.match(html, /自行配置的 API/);
   assert.match(html, /从 GitHub 下载/);
   const version = escapeRe(releaseVersion);
@@ -56,6 +55,17 @@ test("server-renders the public-benefit project home page", async () => {
     ),
   ) ?? [];
   assert.equal(new Set(releaseDownloads).size, 32);
+  // 文案宣稱的 JAR 數量必須等於實際渲染出的 .jar 連結數，而不是把當下的數字寫死在測試裡：
+  // 原本這裡是 assert.match(html, /31 个经过校验的 JAR/)，每次發布都要多改一處，而且它守的
+  // 不是真契約——文案與下載卡可以各自漂移而測試全綠。
+  const claimedJars = source.match(/(\d+) 个经过校验的 JAR/)?.[1];
+  assert.ok(claimedJars, "app/page.tsx 找不到「N 个经过校验的 JAR」");
+  const jarLinks = new Set(releaseDownloads.filter((href) => href.endsWith(".jar"))).size;
+  assert.equal(
+    Number(claimedJars),
+    jarLinks,
+    `文案宣稱 ${claimedJars} 顆 JAR，但頁面只渲染出 ${jarLinks} 個 .jar 連結`,
+  );
   assert.match(html, new RegExp(`MCAutoTranslationTool-${version}-mc1\\.8\\.9-forge\\.jar`));
   assert.match(html, new RegExp(`MCAutoTranslationTool-${version}-fabric-all\\.jar`));
   assert.match(html, new RegExp(`MCAutoTranslationTool-${version}-mc1\\.21\\.9-1\\.21\\.11-forge\\.jar`));

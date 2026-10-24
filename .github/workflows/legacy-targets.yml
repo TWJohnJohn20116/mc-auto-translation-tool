@@ -157,6 +157,8 @@ jobs:
           args: --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
 
       - name: 上傳舊版 Fabric JAR
+        # Artifact policy: never from a pull_request run (this workflow has none today).
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7
         with:
           name: legacy-fabric-${{ matrix.target }}
@@ -218,6 +220,8 @@ jobs:
           working-directory: ${{ matrix.dir }}
 
       - name: 上傳舊版 Forge JAR
+        # Artifact policy: never from a pull_request run (this workflow has none today).
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target }}
@@ -285,6 +289,8 @@ jobs:
           args: --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
 
       - name: 上傳 NeoForge JAR
+        # Artifact policy: never from a pull_request run (this workflow has none today).
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7
         with:
           name: platform-${{ matrix.target }}

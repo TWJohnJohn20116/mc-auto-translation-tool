@@ -47,6 +47,11 @@ public final class ForgeTranslationRuntime {
      */
     private static volatile HomeQuickSettingsState cachedHome;
     private static volatile TranslationProvider activeProvider;
+    // Short-lived diagnostics snapshot: see diagnostics(). Read only by the UI, so one writer and any
+    // number of readers is all this needs.
+    private static final long DIAGNOSTICS_CACHE_MILLIS = 250L;
+    private static volatile TranslationDiagnosticsSnapshot diagnosticsSnapshot;
+    private static volatile long diagnosticsSnapshotAt;
     private static volatile List<String> protectedPlayerNames = Collections.emptyList();
     private static volatile long protectedPlayerNamesExpireAt;
 
@@ -296,24 +301,39 @@ public final class ForgeTranslationRuntime {
     }
 
     static TranslationDiagnosticsSnapshot diagnostics() {
+        // Reused when fresh. The diagnostics screen calls this once per frame and every call did two
+        // filesystem queries (model file and cache file, each an isRegularFile plus a size) and then
+        // rebuilt the whole page of lines on top of it. On a config directory backed by a cloud sync
+        // folder that was visible stutter while translation was running. 250 ms is far below what a
+        // reader can notice and far above one frame.
+        TranslationDiagnosticsSnapshot cached = diagnosticsSnapshot;
+        long now = System.currentTimeMillis();
+        if (cached != null && now - diagnosticsSnapshotAt < DIAGNOSTICS_CACHE_MILLIS) {
+            return cached;
+        }
         ForgeConfig config = activeConfig;
         TranslationProvider provider = activeProvider;
+        TranslationDiagnosticsSnapshot snapshot;
         if (config == null) {
-            return new TranslationDiagnosticsSnapshot(
+            snapshot = new TranslationDiagnosticsSnapshot(
                     false, "", "", "", null, false, false, -1L, -1L, "尚未载入设置");
+        } else {
+            Path modelFile = config.offlineDirectory.resolve(config.offlineModel.modelFile());
+            snapshot = new TranslationDiagnosticsSnapshot(
+                    config.enabled,
+                    config.provider,
+                    provider == null ? "" : provider.id(),
+                    config.targetLanguage,
+                    config.offlineModel,
+                    config.offlineAutoDownload,
+                    config.diskCache,
+                    fileSize(modelFile),
+                    fileSize(config.cacheFile),
+                    status());
         }
-        Path modelFile = config.offlineDirectory.resolve(config.offlineModel.modelFile());
-        return new TranslationDiagnosticsSnapshot(
-                config.enabled,
-                config.provider,
-                provider == null ? "" : provider.id(),
-                config.targetLanguage,
-                config.offlineModel,
-                config.offlineAutoDownload,
-                config.diskCache,
-                fileSize(modelFile),
-                fileSize(config.cacheFile),
-                status());
+        diagnosticsSnapshot = snapshot;
+        diagnosticsSnapshotAt = now;
+        return snapshot;
     }
 
     private static long fileSize(Path file) {
