@@ -34,6 +34,9 @@ sourceSets {
     main {
         java.srcDir project(":translator-core").file("src/main/java")
         java.srcDir rootProject.file("platforms/fabric/shared/settings/legacy/src/main/java")
+        // FabricTranslationRuntimeBase is the single copy of the runtime body every Fabric tree
+        // shares; each tree keeps only its generation-specific FabricTranslationRuntime.
+        java.srcDir rootProject.file("platforms/fabric/shared/base/src/main/java")
         java.srcDir new File(sharedRoot, "src/main/java")
         java.srcDir rootProject.file("platforms/fabric/shared/rendered-legacy/src/main/java")
         // TextRendererMixin is shared with Fabric 1.0–1.8; 1.13 has its own.
