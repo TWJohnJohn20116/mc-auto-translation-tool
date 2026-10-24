@@ -309,6 +309,19 @@ final class LegacyConfig {
         return new LegacyConfig(properties, configFile, cacheFile, ownedPromptKeys);
     }
 
+    /**
+     * Same configuration with a different provider name, without saving anything.
+     *
+     * <p>The engine tab's "check settings" button must answer for the provider the screen shows,
+     * but that value only reaches a config object when the form is saved. Building the snapshot
+     * here lets the button ask the real question, with no write to disk.
+     */
+    LegacyConfig withProvider(String newProvider) {
+        Properties properties = toProperties();
+        properties.setProperty("provider", newProvider == null ? "" : newProvider.trim());
+        return new LegacyConfig(properties, configFile, cacheFile, ownedPromptKeys);
+    }
+
     LegacyConfig withHomeSettings(
             boolean enabled,
             boolean translateVanilla,

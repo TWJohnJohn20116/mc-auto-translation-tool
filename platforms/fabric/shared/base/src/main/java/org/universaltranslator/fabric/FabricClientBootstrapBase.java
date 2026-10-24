@@ -140,6 +140,11 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
      * the body is the same either way.
      */
     final void onClientTick() {
+        // Before anything else: a render method that threw between its HEAD and RETURN injection
+        // left a TextKind and a text-input depth latched on this thread, which silently disables
+        // translation for the rest of the session. Every generation already calls this hook once
+        // per tick, so this is the single place that guarantees recovery.
+        TranslationRenderContext.reset();
         boolean connected = inWorld() && isConnected();
         if (connected && !connectedLastTick) {
             joinHintTicks = 60;

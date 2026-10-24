@@ -65,21 +65,43 @@ public final class TranslationStyleRuns {
         }
         int count = Math.min(texts.size(), styleKeys.size());
         List<Run> runs = new ArrayList<Run>(count);
+        // Accumulate the text of the open run in a builder: a scoreboard side bar arrives as one
+        // component with 40 same-styled siblings, and previous.text + text would copy the growing
+        // prefix once per sibling, turning a per-frame merge into quadratic character copying.
+        StringBuilder open = new StringBuilder();
+        boolean hasOpen = false;
+        Object openStyle = null;
+        int openSourceIndex = -1;
         for (int index = 0; index < count; index++) {
             String text = texts.get(index) == null ? "" : texts.get(index);
             Object styleKey = styleKeys.get(index);
-            Run previous = runs.isEmpty() ? null : runs.get(runs.size() - 1);
-            if (previous != null && equalKeys(previous.styleKey, styleKey)) {
-                runs.set(runs.size() - 1,
-                        new Run(previous.text + text, previous.styleKey, previous.sourceIndex));
-            } else {
-                runs.add(new Run(text, styleKey, index));
+            if (hasOpen && equalKeys(openStyle, styleKey)) {
+                open.append(text);
+                continue;
             }
+            if (hasOpen) {
+                runs.add(new Run(open.toString(), openStyle, openSourceIndex));
+                open.setLength(0);
+            }
+            open.append(text);
+            openStyle = styleKey;
+            openSourceIndex = index;
+            hasOpen = true;
+        }
+        if (hasOpen) {
+            runs.add(new Run(open.toString(), openStyle, openSourceIndex));
         }
         return runs;
     }
 
-    /** Number of distinct styles among the runs. */
+    /**
+     * Number of distinct styles among the runs.
+     *
+     * <p>Diagnostic helper only. It is quadratic in the run count because the style keys are
+     * opaque and compared by {@link Object#equals(Object)}, which for a Minecraft {@code Style}
+     * compares every field. Do not call it on the render path; {@link #shouldRebuildRuns(List)}
+     * does not need it.
+     */
     public static int distinctStyleCount(List<Run> runs) {
         if (runs == null || runs.isEmpty()) {
             return 0;
@@ -101,9 +123,13 @@ public final class TranslationStyleRuns {
      * True when the caller must rebuild the component run by run: flattening it into a single
      * literal would keep only the first style. A single-style source stays on the ordinary
      * flattened path, where the whole line is translated as one unit.
+     *
+     * <p>{@link #mergeAdjacent} only merges neighbours that share a style, so two runs always
+     * carry two different styles. More than one run is therefore enough: the counting scan this
+     * used to run per frame was pure cost on the render thread.
      */
     public static boolean shouldRebuildRuns(List<Run> runs) {
-        return runs != null && runs.size() > 1 && distinctStyleCount(runs) > 1;
+        return runs != null && runs.size() > 1;
     }
 
     /**
@@ -124,11 +150,11 @@ public final class TranslationStyleRuns {
         if (runs == null || runs.isEmpty()) {
             return false;
         }
-        if (distinctStyleCount(runs) > 1) {
+        if (runs.size() > 1) {
             return true;
         }
-        // Neighbouring runs always differ after mergeAdjacent, so one distinct style means one
-        // run: the whole visible text renders with that single style.
+        // Neighbouring runs always differ after mergeAdjacent, so one run means the whole visible
+        // text renders with that single style: compare it with the root directly.
         return !equalKeys(runs.get(0).styleKey(), rootStyleKey);
     }
 

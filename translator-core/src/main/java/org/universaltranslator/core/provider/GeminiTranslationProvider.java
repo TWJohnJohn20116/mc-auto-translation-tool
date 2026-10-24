@@ -80,7 +80,7 @@ public final class GeminiTranslationProvider implements TranslationProvider {
             HttpJsonClient http,
             TranslationPrompt.Settings prompt
     ) {
-        this.base = stripMethod(endpoint == null || endpoint.trim().isEmpty()
+        this.base = collectionBase(endpoint == null || endpoint.trim().isEmpty()
                 ? DEFAULT_ENDPOINT : endpoint.trim());
         // Validate at construction like the other providers, so a plaintext remote host is refused
         // before any credential could be sent rather than on the first translation.
@@ -269,13 +269,26 @@ public final class GeminiTranslationProvider implements TranslationProvider {
      * @return the {@code /models} collection URL
      */
     static String modelsUrl(String endpoint) {
-        String base = stripMethod(endpoint == null || endpoint.trim().isEmpty()
+        String base = collectionBase(endpoint == null || endpoint.trim().isEmpty()
                 ? DEFAULT_ENDPOINT : endpoint.trim());
+        return base.endsWith("/models") ? base : base + "/models";
+    }
+
+    /**
+     * Truncates a configured endpoint back to the models collection.
+     *
+     * <p>{@link #generateUrl()} always appends {@code /<model><method>}, so a pasted full method
+     * URL ({@code .../models/gemini-2.0-flash:generateContent}) would otherwise produce
+     * {@code .../models/gemini-2.0-flash/gemini-2.0-flash:generateContent}. The collection base is
+     * the only usable form here, which is why {@link #modelsUrl} already normalised to it.
+     */
+    private static String collectionBase(String endpoint) {
+        String base = stripMethod(endpoint);
         int marker = base.lastIndexOf("/models/");
         if (marker >= 0) {
             base = base.substring(0, marker + "/models".length());
         }
-        return base.endsWith("/models") ? base : base + "/models";
+        return base;
     }
 
     /**
@@ -369,6 +382,11 @@ public final class GeminiTranslationProvider implements TranslationProvider {
         if (model == null || model.trim().isEmpty()) {
             throw new IllegalArgumentException("Gemini model is required");
         }
-        return model.trim();
+        String value = model.trim();
+        // The ListModels reply puts the resource name ("models/gemini-2.5-flash") in "name" and the
+        // bare id in "baseModelId", so the settings screen can store either form. Only the bare id
+        // belongs in the URL, because generateUrl already supplies the /models segment.
+        String prefix = "models/";
+        return value.startsWith(prefix) ? value.substring(prefix.length()) : value;
     }
 }

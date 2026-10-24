@@ -45,6 +45,24 @@ tasks.register("verifyBundle") {
         (['fabric.mod.json'] + supportedVersions.collect { "META-INF/jars/universal-translator-${it}.jar" }).each { path ->
             if (!zipTree(archive).matching { include path }.files) throw new GradleException("Missing bundle entry: ${path}")
         }
+        // The reverse direction. Presence checks above only prove that everything in
+        // supportedVersions was packed; they cannot see a fabric.mod.json that declares versions
+        // nobody builds. That is exactly how this bundle came to advertise 38 Minecraft versions
+        // while shipping 26 implementations: the Loader then treats 1.0.0-1.2.5 and the four
+        // unmappable 1.6/1.7 builds as supported and fails them at resolution time.
+        def metadata = new groovy.json.JsonSlurper().parse(file("src/main/resources/fabric.mod.json"))
+        def declaredJars = metadata.jars.collect { entry ->
+            entry.file.tokenize('/').last()
+                    .replace('universal-translator-', '')
+                    .replace('.jar', '')
+        }
+        def declaredMinecraft = metadata.depends.minecraft
+        if (declaredJars != supportedVersions) {
+            throw new GradleException("fabric.mod.json jars ${declaredJars} != supportedVersions ${supportedVersions}")
+        }
+        if (declaredMinecraft != supportedVersions) {
+            throw new GradleException("fabric.mod.json depends.minecraft ${declaredMinecraft} != supportedVersions ${supportedVersions}")
+        }
         println "Verified ${archive.name}: all ${supportedVersions.size()} legacy Fabric implementations present"
     }
 }

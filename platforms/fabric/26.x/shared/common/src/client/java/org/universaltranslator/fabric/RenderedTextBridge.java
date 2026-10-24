@@ -10,6 +10,7 @@ import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TranslationTextStyling;
 import org.universaltranslator.core.TranslationStyleRuns;
 import org.universaltranslator.core.TextKind;
+import org.universaltranslator.core.WeakIdentitySet;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -19,6 +20,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class RenderedTextBridge {
     private static final AtomicBoolean ITEM_TOOLTIP_REACHED = new AtomicBoolean();
     private static final AtomicBoolean ITEM_TOOLTIP_APPLIED = new AtomicBoolean();
+    /**
+     * Tooltip lists this class already produced.
+     *
+     * <p>Two hooks are mounted on the same line of work: {@code Screen.getTooltipFromItem}
+     * produces the list and the GUI graphics extractor consumes it. Both are injected, so without
+     * a mark the consumer receives the already translated list and translates it again — a second
+     * provider request per hover, and with the English-only filter off the Chinese result is
+     * translated a second time and can change between frames.
+     */
+    private static final WeakIdentitySet HANDLED_TOOLTIPS = new WeakIdentitySet();
 
     private RenderedTextBridge() {
     }
@@ -151,7 +162,15 @@ public final class RenderedTextBridge {
 
     /** Translates item names and lore before GuiGraphicsExtractor creates tooltip components. */
     public static List<Component> translateTooltip(List<Component> lines) {
-        return translateTooltip(lines, false);
+        if (HANDLED_TOOLTIPS.contains(lines)) {
+            // Produced by translateItemTooltip a moment ago; the answer is already in this list.
+            return lines;
+        }
+        List<Component> result = translateTooltip(lines, false);
+        if (result != lines) {
+            HANDLED_TOOLTIPS.add(result);
+        }
+        return result;
     }
 
     /** Canonical Screen.getTooltipFromItem hook for inventories and containers. */

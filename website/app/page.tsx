@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "MC 自动翻译工具｜1.4 正式版",
   description:
-    "MC 自动翻译工具 1.4 正式版，下载按 Fabric／Forge／NeoForge 分组；Fabric 覆盖 1.3.1–26.3（1.16 已涵盖 1.16.0–1.16.4，1.13.2 也支援 HUD 指示器），Forge 覆盖 1.8.9–26.2，NeoForge 覆盖 1.20.1–26.2。",
+    "MC 自动翻译工具 1.4 正式版，下载按 Fabric／Forge／NeoForge 分组；Fabric 覆盖 1.13–1.21.11 与 26.1–26.3（1.16 已涵盖 1.16.0–1.16.4，1.13.2 也支援 HUD 指示器），Forge 覆盖 1.8.9–26.2，NeoForge 覆盖 1.20.1–26.2，每个版本一颗独立 JAR。1.0.0–1.12.2 的 Fabric／Ornithe 目标仍需自行构建。",
 };
 
 const features = [
@@ -30,7 +30,7 @@ const features = [
 ];
 
 const versions = [
-  ["1.3.1–1.8.8、1.8–1.12.2", "Fabric（Legacy／Ornithe bundle）", "正式版已发布", "ready"],
+  ["1.3.1–1.8.8、1.8–1.12.2", "Fabric（Legacy／Ornithe bundle）", "源码可构建，未随 1.4 发布", "planned"],
   ["1.8.9、1.12.2", "Forge", "正式版已发布", "ready"],
   ["1.13–1.15.2", "Fabric 单一 JAR", "正式版已发布", "ready"],
   ["1.16–1.20.6", "Fabric（按已实现版本）", "正式版已发布", "ready"],
@@ -94,7 +94,7 @@ const downloadGroups = [
     featured: false,
     items: [
       { version: "1.20.1", loader: "NeoForge 47.1.106", java: "Java 17", file: releaseFile("1.20.1-neoforge") },
-      { version: "1.20.4", loader: "NeoForge 20.4.251", java: "Java 21", file: releaseFile("1.20.4-neoforge") },
+      { version: "1.20.4", loader: "NeoForge 20.4.251", java: "Java 17", file: releaseFile("1.20.4-neoforge") },
       { version: "1.20.6", loader: "NeoForge 20.6.139", java: "Java 21", file: releaseFile("1.20.6-neoforge") },
       { version: "1.21", loader: "NeoForge 21.0.167", java: "Java 21", file: releaseFile("1.21-neoforge") },
       { version: "1.21.1", loader: "NeoForge 21.1.248", java: "Java 21", file: releaseFile("1.21.1-neoforge") },

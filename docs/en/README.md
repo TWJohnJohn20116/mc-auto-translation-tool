@@ -45,8 +45,8 @@ edited in `config/universal-translator.properties`.
 
 ## Downloads and version selection
 
-Pick the loader first, then the matching JAR. The stable release turns 33 build artifacts into
-**16 directly installable JARs**. These links are updated with the README whenever a new stable
+Pick the loader first, then the matching JAR. The stable release turns 48 build artifacts into
+**31 directly installable JARs**. These links are updated with the README whenever a new stable
 version is published.
 
 The source tree also contains Ornithe / early Fabric targets (26 releases in 1.3.1–1.8.8, plus
@@ -88,15 +88,30 @@ nested implementation selection.
 NeoForge / FML **cannot** nest several implementations that share the same `modId` and then enable
 only the one matching the current game, the way Fabric Loader does. Duplicate mod IDs fail to load,
 and Jar-in-Jar is for embedding libraries. 1.20.1 (Java 17, NeoForge 47) is also incompatible with
-1.21.1 / 1.21.3 / 1.21.11 (Java 21, NeoForge 21.1 / 21.3 / 21.11), so the stable release still ships
-four separate JARs.
+1.21.1 / 1.21.3 / 1.21.11 (Java 21, NeoForge 21.1 / 21.3 / 21.11), so the stable release ships one separate
+JAR per game version, nineteen in total.
 
 | Minecraft | NeoForge | Java | Download |
 | --- | --- | ---: | --- |
 | 1.20.1 | 47.1.106–47.1.x | 17 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4/MCAutoTranslationTool-1.4-mc1.20.1-neoforge.jar) |
+| 1.20.4 | 20.4.251 | 17 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4/MCAutoTranslationTool-1.4-mc1.20.4-neoforge.jar) |
+| 1.20.6 | 20.6.139 | 21 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4/MCAutoTranslationTool-1.4-mc1.20.6-neoforge.jar) |
+| 1.21 | 21.0.167 | 21 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4/MCAutoTranslationTool-1.4-mc1.21-neoforge.jar) |
 | 1.21.1 | 21.1.248 | 21 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4/MCAutoTranslationTool-1.4-mc1.21.1-neoforge.jar) |
+| 1.21.2 | 21.2.1-beta | 21 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4/MCAutoTranslationTool-1.4-mc1.21.2-neoforge.jar) |
 | 1.21.3 | 21.3.97 | 21 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4/MCAutoTranslationTool-1.4-mc1.21.3-neoforge.jar) |
+| 1.21.4 | 21.4.157 | 21 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4/MCAutoTranslationTool-1.4-mc1.21.4-neoforge.jar) |
+| 1.21.5 | 21.5.98 | 21 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4/MCAutoTranslationTool-1.4-mc1.21.5-neoforge.jar) |
+| 1.21.6 | 21.6.20-beta | 21 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4/MCAutoTranslationTool-1.4-mc1.21.6-neoforge.jar) |
+| 1.21.7 | 21.7.25-beta | 21 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4/MCAutoTranslationTool-1.4-mc1.21.7-neoforge.jar) |
+| 1.21.8 | 21.8.54 | 21 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4/MCAutoTranslationTool-1.4-mc1.21.8-neoforge.jar) |
+| 1.21.9 | 21.9.16-beta | 21 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4/MCAutoTranslationTool-1.4-mc1.21.9-neoforge.jar) |
+| 1.21.10 | 21.10.64 | 21 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4/MCAutoTranslationTool-1.4-mc1.21.10-neoforge.jar) |
 | 1.21.11 | 21.11.45 | 21 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4/MCAutoTranslationTool-1.4-mc1.21.11-neoforge.jar) |
+| 26.1 | 26.1.0.19-beta | 25 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4/MCAutoTranslationTool-1.4-mc26.1-neoforge.jar) |
+| 26.1.1 | 26.1.1.15-beta | 25 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4/MCAutoTranslationTool-1.4-mc26.1.1-neoforge.jar) |
+| 26.1.2 | 26.1.2.95 | 25 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4/MCAutoTranslationTool-1.4-mc26.1.2-neoforge.jar) |
+| 26.2 | 26.2.0.59 | 25 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4/MCAutoTranslationTool-1.4-mc26.2-neoforge.jar) |
 
 > **Do not mix loaders or use a JAR outside the range in its filename.** Adjacent Minecraft releases may
 > change rendering APIs and Mixin targets. Release metadata includes only versions that completed validation.

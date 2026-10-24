@@ -57,4 +57,19 @@ public final class TranslationRenderContext {
         Integer depth = TEXT_INPUT_DEPTH.get();
         return depth != null && depth > 0;
     }
+
+    /**
+     * Clears the classification latched on the current thread.
+     *
+     * <p>The mixin injections around a render method are a HEAD/RETURN pair, and Mixin 0.8.x has no
+     * exception-exit injection point, so a render method that throws between them never runs its
+     * {@link #pop()} or {@link #popTextInput()}. The stale {@link TextKind} then misclassifies every
+     * later call, and a text-input depth above zero makes {@code RenderedTextBridge} return every
+     * string untranslated for the rest of the session with nothing in the log. Called once per
+     * client tick, before the frame is rendered.
+     */
+    public static void reset() {
+        KINDS.remove();
+        TEXT_INPUT_DEPTH.remove();
+    }
 }

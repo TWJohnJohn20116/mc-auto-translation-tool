@@ -40,6 +40,12 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorSe
     }
 
     @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        // ESC closes the overlay, not the whole settings screen.
+        return handleSelectionKey(keyCode) || super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+    @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double deltaX, double deltaY) {
         return handleDragMove(mouseX, mouseY)
                 || super.mouseDragged(mouseX, mouseY, button, deltaX, deltaY);

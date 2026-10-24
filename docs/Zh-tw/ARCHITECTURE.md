@@ -6,7 +6,7 @@
 
 ## 1. 核心設計理念與架構分層
 
-本專案支援 **Minecraft 1.3.1 至 26.2（跨度超過 14 年、涵蓋 50+ 個 Minecraft 版本）**，並支援 **Fabric、Forge、NeoForge** 三大載入器與 **4 種 Java Runtime（Java 8, 17, 21, 25）**。
+本專案支援 **Minecraft 1.3.1 至 26.3（跨度超過 14 年、涵蓋 50+ 個 Minecraft 版本）**，並支援 **Fabric、Forge、NeoForge** 三大載入器與 **4 種 Java Runtime（Java 8, 17, 21, 25）**。
 
 為了避免在 60+ 個版本間複製貼上重複代碼，專案採用**五層架構**：
 
@@ -24,7 +24,7 @@ flowchart TD
 
     subgraph Layer3 [第 3 層：版本轉接層 Version Adapters]
         V_FabOrnithe["Fabric 1.3.1 ~ 1.13.2<br/>(Ornithe Calamus / Feather / LegacyFabric)"]
-        V_FabModern["Fabric 1.14 ~ 26.2<br/>(官方 Loom, Yarn 映射)"]
+        V_FabModern["Fabric 1.14 ~ 26.3<br/>(官方 Loom, Yarn 映射)"]
         V_ForgeLegacy["Legacy Forge 1.8.9 / 1.12.2<br/>(ForgeGradle 2, 專屬專案)"]
         V_ForgeModern["Modern Forge 1.16.5 ~ 26.2<br/>(ForgeGradle 5 / NeoDev)"]
         V_NeoForge["NeoForge 1.20.1 ~ 26.2<br/>(ModDev Gradle)"]
@@ -32,7 +32,7 @@ flowchart TD
 
     subgraph Layer4 [第 4 層：打包聚合層 Bundle Layer]
         SubBundle["次級 Bundle (例: fabric-1.21.x, fabric-1.20.x)<br/>內部巢狀打包各版本 JAR (META-INF/jars)"]
-        AllBundle["超級聚合 Bundle<br/>MCAutoTranslationTool-fabric-all.jar (45+ 版本合一)"]
+        AllBundle["超級聚合 Bundle<br/>MCAutoTranslationTool-fabric-all.jar (51 版本合一)"]
     end
 
     subgraph Layer5 [第 5 層：建置與自動化工具 Scripts]
@@ -66,7 +66,7 @@ flowchart TD
 | `platforms/fabric/1.19/` | 1.19 家族 | 1.19.0 ~ 1.19.4 (5 個版本) | Fabric Loom | **Java 17**| Fabric Loom 1.17 |
 | `platforms/fabric/1.20/` | 1.20 家族 | 1.20.0 ~ 1.20.6 (6 個版本) | Fabric Loom | **Java 17/21**| Fabric Loom 1.17 |
 | `platforms/fabric/1.21/` | 當前主流 | 1.21.0 ~ 1.21.11 (12 個版本)| Fabric Loom | **Java 21**| Fabric Loom 1.17 |
-| `platforms/fabric/26.x/` | 快照/未來版 | 26.1, 26.1.1, 26.1.2, 26.2 | Fabric Loom | **Java 25**| Fabric Loom 1.17 |
+| `platforms/fabric/26.x/` | 快照/未來版 | 26.1, 26.1.1, 26.1.2, 26.2, 26.3 | Fabric Loom | **Java 25**| Fabric Loom 1.17 |
 | `platforms/forge/modern/` | 現代過渡 Forge | 1.16.5, 1.18.2, 1.19.2, 1.20.1 | Forge | **Java 8/17** | ForgeGradle 5.1 |
 | `platforms/forge/1.21/` | 現代 Forge 1.21 | 1.21.0 ~ 1.21.11 | Forge | **Java 21**| ForgeGradle 6 / NeoDev |
 | `platforms/forge/26.x/` | 未來 Forge | 26.1 ~ 26.2 | Forge | **Java 25**| ForgeGradle / NeoDev |
@@ -112,7 +112,7 @@ Fabric Loader 原生支援 `META-INF/jars/` 巢狀 JAR 解壓機制：
        ...
    ]
    ```
-3. 最終透過 `scripts/prepare_release_assets.py`，將所有 Fabric 家族（1.13 至 26.2 共 45+ 個版本的子模組）聚合為單一 `MCAutoTranslationTool-fabric-all.jar`。玩家只要下載這一個 JAR，不論玩 1.14、1.16、1.20 或 1.21，Fabric Loader 就會自動精確加載對應的位元碼。
+3. 最終透過 `scripts/prepare_release_assets.py`，將所有 Fabric 家族（1.13 至 26.3 共 51 個版本的子模組）聚合為單一 `MCAutoTranslationTool-fabric-all.jar`。玩家只要下載這一個 JAR，不論玩 1.14、1.16、1.20 或 1.21，Fabric Loader 就會自動精確加載對應的位元碼。
 
 ---
 

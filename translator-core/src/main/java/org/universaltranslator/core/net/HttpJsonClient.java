@@ -105,10 +105,7 @@ public final class HttpJsonClient {
                     : connection.getErrorStream();
             String response = stream == null ? "" : readBounded(decoded(stream));
             if (status < 200 || status >= 300) {
-                String providerError = JsonStrings.readStringField(response, "error");
-                if (providerError == null) {
-                    providerError = JsonStrings.readStringField(response, "Message");
-                }
+                String providerError = providerErrorText(response);
                 throw new HttpStatusException(status, "Translation service returned HTTP " + status
                         + (providerError == null ? "" : ": " + providerError),
                         parseRetryAfterSeconds(connection.getHeaderField("Retry-After")));
@@ -126,6 +123,41 @@ public final class HttpJsonClient {
                 connection.disconnect();
             }
         }
+    }
+
+    /**
+     * Extracts the provider's own explanation from a non-2xx body.
+     *
+     * <p>Every large provider nests it: OpenAI and its compatible relays send
+     * {@code {"error":{"message":…,"type":…}}}, Anthropic {@code {"type":"error","error":{…}}} and
+     * Gemini {@code {"error":{"code":400,"message":…}}}. A flat {@code readStringField(body,
+     * "error")} never matches those because the value starts with {@code {}, so the exception
+     * message degraded to a bare status code and every downstream check that reads the message
+     * (the completion-budget learning in the OpenAI-compatible provider) silently stopped firing.
+     *
+     * @param response raw error body, possibly empty or not JSON at all
+     * @return the provider's message, or {@code null} when the body carries none
+     */
+    private static String providerErrorText(String response) {
+        String flat = JsonStrings.readStringField(response, "error");
+        if (flat != null) {
+            return flat;
+        }
+        try {
+            Object root = JsonStrings.parse(response);
+            if (root instanceof Map) {
+                Object error = ((Map<?, ?>) root).get("error");
+                if (error instanceof Map) {
+                    Object message = ((Map<?, ?>) error).get("message");
+                    if (message instanceof String && !((String) message).trim().isEmpty()) {
+                        return ((String) message).trim();
+                    }
+                }
+            }
+        } catch (RuntimeException malformed) {
+            // Not JSON (an HTML error page, an empty body): fall through to the legacy key.
+        }
+        return JsonStrings.readStringField(response, "Message");
     }
 
     /**
@@ -224,10 +256,7 @@ public final class HttpJsonClient {
             if (status < 200 || status >= 300) {
                 InputStream error = connection.getErrorStream();
                 String response = error == null ? "" : readBounded(error);
-                String providerError = JsonStrings.readStringField(response, "error");
-                if (providerError == null) {
-                    providerError = JsonStrings.readStringField(response, "Message");
-                }
+                String providerError = providerErrorText(response);
                 throw new HttpStatusException(status, "Translation service returned HTTP " + status
                         + (providerError == null ? "" : ": " + providerError),
                         parseRetryAfterSeconds(connection.getHeaderField("Retry-After")));

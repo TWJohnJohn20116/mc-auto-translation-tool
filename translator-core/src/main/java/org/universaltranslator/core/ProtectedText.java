@@ -172,8 +172,13 @@ public final class ProtectedText {
             source.append('|').append(HAN_SOURCE);
         }
         source.append(')');
+        // MULTILINE for the same reason as PROTECTED: an inlined bullet pattern anchors with '^',
+        // and without MULTILINE that anchor only matches the start of the whole text, so every
+        // bullet on the second and later lines of a scoreboard or lore block would be sent for
+        // translation as soon as the literal list is non-empty (which is always true in multiplayer).
         return Pattern.compile(
-                source.toString(), Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+                source.toString(),
+                Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE | Pattern.MULTILINE);
     }
 
     /**

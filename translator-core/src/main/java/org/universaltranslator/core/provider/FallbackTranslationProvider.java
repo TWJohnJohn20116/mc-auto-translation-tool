@@ -5,6 +5,7 @@ import org.universaltranslator.core.TranslationRequest;
 import org.universaltranslator.core.TranslationProviderStatus;
 
 import java.io.InterruptedIOException;
+import java.net.SocketTimeoutException;
 
 /** Tries a privacy-preserving primary provider before an optional online fallback. */
 public final class FallbackTranslationProvider
@@ -66,7 +67,17 @@ public final class FallbackTranslationProvider
 
     private static boolean isInterruption(Throwable failure) {
         for (Throwable current = failure; current != null; current = current.getCause()) {
-            if (current instanceof InterruptedException || current instanceof InterruptedIOException) {
+            if (current instanceof InterruptedException) {
+                return true;
+            }
+            // SocketTimeoutException extends InterruptedIOException, but a read or connect timeout
+            // is a network failure, not a cancellation. Treating it as one made api-fallback fail
+            // in exactly the situation it exists for: the local model too slow to answer within
+            // the loopback client's read timeout. Check the subclass first.
+            if (current instanceof SocketTimeoutException) {
+                return false;
+            }
+            if (current instanceof InterruptedIOException) {
                 return true;
             }
         }

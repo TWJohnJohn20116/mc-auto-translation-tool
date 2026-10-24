@@ -10,6 +10,8 @@ from pathlib import Path
 
 from verify_release_jars import (
     VerificationError,
+    _class_major_for_minecraft,
+    _expected_class_major,
     _expected_release_version,
     _validate_archive_paths,
     verify_checksums,
@@ -267,6 +269,7 @@ versionRange="[1.21.1,1.21.2)"
         # `zipfile` rewrites `\` to `/` while reading on Windows, which would hide the
         # rule; a duck-typed archive keeps the raw name so the check is exercised on
         # every platform.
+
         class Archive:
             @staticmethod
             def namelist() -> list[str]:
@@ -379,6 +382,50 @@ versionRange="[1.20.1,1.20.2)"
                 }),
                 "MCAutoTranslationTool-1.3.0-mc1.20.1-fabric.jar",
             )
+
+    def test_every_published_minecraft_label_has_a_class_rule(self) -> None:
+        # The gate used to answer "no rule" with None, and None means "nothing to check", so 19
+        # nested Fabric implementations and the two 1.20.x NeoForge JARs lost the check in silence.
+        for minecraft in (
+            "1.8.9",
+            "1.12.2",
+            "1.16",
+            "1.16.4",
+            "1.17",
+            "1.17.1",
+            "1.18.1",
+            "1.19",
+            "1.19.4",
+            "1.20.2",
+            "1.20.4",
+            "1.20.6",
+            "1.21",
+            "1.21.11",
+            "26.2",
+        ):
+            self.assertIsNotNone(_class_major_for_minecraft(minecraft), minecraft)
+        with self.assertRaisesRegex(VerificationError, "no class-version rule"):
+            _class_major_for_minecraft("9.99")
+
+    def test_bundle_range_labels_are_not_gated(self) -> None:
+        # Aggregate archives carry no classes; their nested implementations are checked one by one.
+        for minecraft in ("1.16.x", "1.17-1.18.x", "1.19.x", "1.20.x", "26.x"):
+            self.assertIsNone(_class_major_for_minecraft(minecraft), minecraft)
+
+    def test_one_point_twenty_six_may_not_exceed_release_21(self) -> None:
+        # 1.20.5/1.20.6 moved to release 21 on every loader, so their ceiling is 65 rather than 61.
+        self.assertEqual(65, _class_major_for_minecraft("1.20.6"))
+        self.assertEqual(65, _class_major_for_minecraft("1.20.5"))
+        self.assertEqual(61, _class_major_for_minecraft("1.20.4"))
+
+    def test_outer_label_drives_the_class_rule(self) -> None:
+        self.assertEqual(
+            65, _expected_class_major("MCAutoTranslationTool-1.4-mc1.20.6-neoforge.jar")
+        )
+        self.assertEqual(
+            69, _expected_class_major("build\\MCAutoTranslationTool-1.4-mc26.2-forge.jar")
+        )
+        self.assertIsNone(_expected_class_major("MCAutoTranslationTool-1.4-fabric-all.jar"))
 
 
 if __name__ == "__main__":

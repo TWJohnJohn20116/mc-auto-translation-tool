@@ -832,11 +832,37 @@ final class UniversalTranslatorConfigScreen extends Screen {
         if (handleDragStart(event.x(), event.y())) {
             return true;
         }
-        if (openSelection != SettingsSelectionList.Kind.NONE
-                && selectFromList(event.x(), event.y())) {
+        if (openSelection != SettingsSelectionList.Kind.NONE) {
+            // The overlay is modal: the click that dismisses it is consumed here, otherwise it fell
+            // through to the buttons underneath the dimmed area — including Save and Cancel.
+            selectFromList(event.x(), event.y());
             return true;
         }
         return super.mouseClicked(event, doubleClick);
+    }
+
+    /**
+     * ESC closes the open overlay instead of the screen.
+     *
+     * <p>This screen extends {@code Screen} directly (the 26.x generation does not sit on the
+     * shared settings screen), so it needs the hook itself. The keyboard callback changed shape in
+     * Minecraft 1.21.9, and this hook is the generation-independent half: it stops ESC from
+     * dropping a whole session of unsaved changes.
+     */
+    @Override
+    public boolean shouldCloseOnEsc() {
+        // ESC closes the overlay first, and only then the screen. Every Screen generation
+        // consults this hook exactly when ESC is pressed, so it is the one place that works
+        // without knowing the generation's key callback shape (1.21.9 changed it, 26.x again).
+        if (activeTab == Tab.ENGINE && modelListOpen) {
+            modelListOpen = false;
+            return false;
+        }
+        if (openSelection != SettingsSelectionList.Kind.NONE) {
+            openSelection = SettingsSelectionList.Kind.NONE;
+            return false;
+        }
+        return super.shouldCloseOnEsc();
     }
 
     @Override
@@ -875,10 +901,20 @@ final class UniversalTranslatorConfigScreen extends Screen {
         }
         // One preview pixel is not one GUI pixel: the panel is a scaled-down screen, so undo the
         // scale before turning the pointer delta into a real offset.
-        hudIndicatorOffsetX = clampOffset(hudIndicatorOffsetX
-                + (int) Math.round((mouseX - hudDragLastX) / hudScaleX()));
-        hudIndicatorOffsetY = clampOffset(hudIndicatorOffsetY
-                + (int) Math.round((mouseY - hudDragLastY) / hudScaleY()));
+        // One preview pixel is not one GUI pixel, so undo the scale before turning the pointer
+        // delta into a real offset, and bound the offset rather than the drawn position: clamping
+        // the drawing while the offset kept growing created a dead zone the user had to drag back
+        // through. Both axes share one scale, so a diagonal drag moves the handle diagonally.
+        double scale = hudScale();
+        if (scale <= 0.0D) {
+            return false;
+        }
+        hudIndicatorOffsetX = clampOffsetToPreview(hudIndicatorOffsetX
+                + (int) Math.round((mouseX - hudDragLastX) / scale),
+                hudAnchorX(), HUD_PREVIEW_SCREEN_WIDTH);
+        hudIndicatorOffsetY = clampOffsetToPreview(hudIndicatorOffsetY
+                + (int) Math.round((mouseY - hudDragLastY) / scale),
+                hudAnchorY(), HUD_PREVIEW_SCREEN_HEIGHT);
         hudDragLastX = mouseX;
         hudDragLastY = mouseY;
         return true;
@@ -892,9 +928,21 @@ final class UniversalTranslatorConfigScreen extends Screen {
         return true;
     }
 
-    private static int clampOffset(int value) {
-        return Math.max(HudIndicatorSettings.MIN_OFFSET,
-                Math.min(HudIndicatorSettings.MAX_OFFSET, value));
+    /**
+     * Bounds an offset so the indicator stays inside the previewed screen.
+     *
+     * <p>Clamping the offset instead of the drawn position is what removes the dead zone: while
+     * only the drawing was clamped the offset kept growing, so the handle stopped following the
+     * pointer and the user had to drag back through invisible distance before it moved again.
+     * One offset unit is one pixel of the 320x240 virtual screen.
+     */
+    private int clampOffsetToPreview(int value, int anchor, int extent) {
+        int lower = Math.max(HudIndicatorSettings.MIN_OFFSET, -anchor);
+        int upper = Math.min(HudIndicatorSettings.MAX_OFFSET, extent - anchor - hudIndicatorSize);
+        if (upper < lower) {
+            upper = lower;
+        }
+        return Math.max(lower, Math.min(upper, value));
     }
 
     private int hudPreviewX() {
@@ -941,25 +989,47 @@ final class UniversalTranslatorConfigScreen extends Screen {
                 : hudIndicatorMargin;
     }
 
-    private double hudScaleX() {
-        return hudPreviewW() / (double) HUD_PREVIEW_SCREEN_WIDTH;
+    /**
+     * One scale for both axes.
+     *
+     * <p>The panel is wide and short, so the horizontal and vertical factors used to differ by a
+     * factor of five: a 320x240 screen was drawn at the panel width across and at 0.2x down, which
+     * put the bottom corners in the wrong place before any drag and made the pointer delta mean a
+     * different number of pixels on each axis. The smaller of the two fits the whole screen.
+     */
+    private double hudScale() {
+        int width = hudPreviewW();
+        int height = hudPreviewH();
+        if (width <= 0 || height <= 0) {
+            return 0.0D;
+        }
+        return Math.min(width / (double) HUD_PREVIEW_SCREEN_WIDTH,
+                height / (double) HUD_PREVIEW_SCREEN_HEIGHT);
     }
 
-    private double hudScaleY() {
-        return hudPreviewH() / (double) HUD_PREVIEW_SCREEN_HEIGHT;
+    /** Left edge of the letterboxed screen inside the panel. */
+    private int hudContentX() {
+        int scaled = (int) Math.round(HUD_PREVIEW_SCREEN_WIDTH * hudScale());
+        return hudPreviewX() + Math.max(0, (hudPreviewW() - scaled) / 2);
+    }
+
+    /** Top edge of the letterboxed screen inside the panel. */
+    private int hudContentY() {
+        int scaled = (int) Math.round(HUD_PREVIEW_SCREEN_HEIGHT * hudScale());
+        return hudPreviewY() + Math.max(0, (hudPreviewH() - scaled) / 2);
     }
 
     private int hudHandleX() {
         int px = hudPreviewX();
         int pw = hudPreviewW();
-        int x = px + (int) Math.round((hudAnchorX() + hudIndicatorOffsetX) * hudScaleX());
+        int x = hudContentX() + (int) Math.round((hudAnchorX() + hudIndicatorOffsetX) * hudScale());
         return Math.max(px, Math.min(px + pw - HUD_DRAG_HANDLE_SIZE, x));
     }
 
     private int hudHandleY() {
         int py = hudPreviewY();
         int ph = hudPreviewH();
-        int y = py + (int) Math.round((hudAnchorY() + hudIndicatorOffsetY) * hudScaleY());
+        int y = hudContentY() + (int) Math.round((hudAnchorY() + hudIndicatorOffsetY) * hudScale());
         return Math.max(py, Math.min(py + ph - HUD_DRAG_HANDLE_SIZE, y));
     }
 
@@ -1036,8 +1106,11 @@ final class UniversalTranslatorConfigScreen extends Screen {
             refreshLabels();
             return true;
         } else if (!list.contains(mouseX, mouseY)) {
+            // The overlay is modal: the click that dismisses it is consumed here. Returning false
+            // reported the press as unhandled, so it fell through to the buttons underneath the
+            // dimmed area — including Save and Cancel.
             openSelection = SettingsSelectionList.Kind.NONE;
-            return false;
+            return true;
         }
         return true;
     }
@@ -1172,7 +1245,10 @@ final class UniversalTranslatorConfigScreen extends Screen {
                     message = tr("screen.universal_translator.engine.test_ok_libre");
                     error = false;
                 } else {
-                    original.validateProviderConfiguration();
+                    // Validate the provider the screen is showing, not the one this snapshot was
+                    // opened with: they differ until the form is saved, and answering for the old
+                    // one told users the wrong thing about the service they had just switched to.
+                    original.withProvider(provider).validateProviderConfiguration();
                     message = tr("screen.universal_translator.engine.test_ok_config");
                     error = false;
                 }
