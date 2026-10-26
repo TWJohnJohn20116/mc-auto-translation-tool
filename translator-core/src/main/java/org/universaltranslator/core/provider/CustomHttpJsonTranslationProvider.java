@@ -47,12 +47,44 @@ public final class CustomHttpJsonTranslationProvider implements TranslationProvi
         this.headerTemplates = validateHeaders(headerTemplates);
         // The coordinator keys both its in-flight map and the disk cache on this id, so two
         // configurations that share a host but differ in request/response semantics must not
-        // collide. Hash the raw path and the templates, never the credentials or header values.
-        // Every input is fixed once construction succeeds, so hash the template once here
-        // instead of hashing up to 64 KiB on every id() call from the render thread.
-        String fingerprint = this.endpoint.getRawPath()
-                + "\n" + this.method + "\n" + this.responsePath + "\n" + this.requestTemplate;
-        this.id = "custom-http-json:" + this.endpoint.getHost() + ":" + CryptoSupport.sha256Hex(fingerprint);
+        // collide. Hash the path, the query, the port, the content type and the templates, never
+        // the credentials or a resolved header value.
+        // The old fingerprint stopped at the path, so moving the endpoint from :8080 to :9090, or
+        // changing only a header (the usual way to switch models on a local server), kept the old
+        // id and served the previous translation from the disk cache.
+        // Every input is fixed once construction succeeds, so hash the template once here instead of
+        // hashing up to 64 KiB on every id() call from the render thread.
+        String fingerprint = this.endpoint.getScheme() + "://" + this.endpoint.getAuthority()
+                + this.endpoint.getRawPath()
+                + "\n" + (this.endpoint.getRawQuery() == null ? "" : this.endpoint.getRawQuery())
+                + "\n" + this.method
+                + "\n" + this.contentType
+                + "\n" + this.responsePath + "\n" + this.requestTemplate
+                + "\n" + headerFingerprint();
+        this.id = "custom-http-json:" + this.endpoint.getAuthority()
+                + ":" + CryptoSupport.sha256Hex(fingerprint);
+    }
+
+    /**
+     * Names and templates of the configured headers, with a pasted credential masked out.
+     *
+     * <p>The template decides the request semantics; the resolved value does not, and a user who put
+     * the key straight into a header must not get a different cache key every time that key is
+     * rotated. Insertion order is stable, so the same configuration always hashes the same way.
+     */
+    private String headerFingerprint() {
+        if (headerTemplates.isEmpty()) {
+            return "";
+        }
+        StringBuilder fingerprint = new StringBuilder(headerTemplates.size() * 32);
+        for (Map.Entry<String, String> header : headerTemplates.entrySet()) {
+            String template = header.getValue() == null ? "" : header.getValue();
+            if (!apiKey.isEmpty()) {
+                template = template.replace(apiKey, "{apiKey}");
+            }
+            fingerprint.append(header.getKey()).append('=').append(template).append('\n');
+        }
+        return fingerprint.toString();
     }
 
     @Override

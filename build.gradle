@@ -348,6 +348,7 @@ tasks.register("testJarVerifier", Exec) {
     description = "Runs unit tests for the release JAR verifier."
     inputs.files(
             file("scripts/verify_release_jars.py"),
+            file("scripts/release_layout.py"),
             file("scripts/test_verify_release_jars.py")
     )
     commandLine pythonCmd, file("scripts/test_verify_release_jars.py")
@@ -358,6 +359,7 @@ tasks.register("testReleaseAssetPreparer", Exec) {
     description = "Tests compatible Forge-family and all-version Fabric JAR preparation."
     inputs.files(
             file("scripts/prepare_release_assets.py"),
+            file("scripts/release_layout.py"),
             file("scripts/test_prepare_release_assets.py")
     )
     commandLine pythonCmd, file("scripts/test_prepare_release_assets.py")
@@ -368,6 +370,7 @@ tasks.register("verifyReleaseJars", Exec) {
     description = "Validates every tracked release JAR, Mixin class, mapping, and SHA-256 digest."
     dependsOn("testJarVerifier")
     inputs.file(file("scripts/verify_release_jars.py"))
+    inputs.file(file("scripts/release_layout.py"))
     inputs.file(new File(releaseDirectory, "SHA256SUMS.txt"))
     inputs.files(releaseArtifacts)
 

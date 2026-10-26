@@ -1,6 +1,7 @@
 package org.universaltranslator.forge.legacy;
 
 import org.universaltranslator.core.TranslationTextStyling;
+import org.universaltranslator.core.DebugLog;
 import org.universaltranslator.core.TextKind;
 
 import java.util.ArrayList;
@@ -42,7 +43,7 @@ public final class LegacyRenderedTextBridge {
     /** Canonical ItemStack tooltip producer hook used by inventory and container screens. */
     public static List<String> translateItemTooltipLines(List<String> lines) {
         if (ITEM_TOOLTIP_REACHED.compareAndSet(false, true)) {
-            System.out.println("[MC Auto Translation Tool] Item tooltip producer reached");
+            DebugLog.global().log("item-tooltip", "producer", "reached");
         }
         return translateTooltipLines(lines, true);
     }
@@ -70,7 +71,7 @@ public final class LegacyRenderedTextBridge {
         }
         if (itemTooltip && replacement != null
                 && ITEM_TOOLTIP_APPLIED.compareAndSet(false, true)) {
-            System.out.println("[MC Auto Translation Tool] Item tooltip translation applied");
+            DebugLog.global().log("item-tooltip", "result", "translated");
         }
         return replacement == null ? lines : replacement;
     }

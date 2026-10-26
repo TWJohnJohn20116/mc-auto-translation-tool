@@ -136,7 +136,13 @@ public final class TranslationCoordinator implements AutoCloseable {
             return CompletableFuture.completedFuture(
                     TranslationResult.failure(text, "Translation session is closed"));
         }
-        if (!LanguageHeuristics.shouldTranslate(text, targetLanguage)) {
+        // Resolved once per request. shouldTranslate(text, targetLanguage) re-normalizes the language
+        // identifier on every call (two String allocations) and this method used it twice — for the
+        // raw text and again for the unprotected template — on the caller's thread, which on the
+        // render path is the render thread. The identifier cannot change inside one request, so the
+        // boolean is a per-request constant.
+        final boolean chineseTarget = LanguageHeuristics.isChineseTarget(targetLanguage);
+        if (!LanguageHeuristics.shouldTranslateToTarget(text, chineseTarget)) {
             return CompletableFuture.completedFuture(TranslationResult.unchanged(text));
         }
 
@@ -174,8 +180,8 @@ public final class TranslationCoordinator implements AutoCloseable {
                     try {
                         ProtectedText protectedText = ProtectedText.parse(
                                 text, protectedLiterals, preserveHanText);
-                        if (!LanguageHeuristics.shouldTranslate(
-                                protectedText.getUnprotectedTemplateText(), targetLanguage)) {
+                        if (!LanguageHeuristics.shouldTranslateToTarget(
+                                protectedText.getUnprotectedTemplateText(), chineseTarget)) {
                             created.complete(TranslationResult.unchanged(text));
                             return;
                         }
@@ -191,7 +197,8 @@ public final class TranslationCoordinator implements AutoCloseable {
                         try {
                             restored = TranslationOutputValidator.requireDisplaySafe(
                                     text, translateSegments(protectedText, effectiveSource,
-                                            targetLanguage, effectiveKind, listener, pendingCommit));
+                                            targetLanguage, chineseTarget, effectiveKind, listener,
+                                            pendingCommit));
                         } catch (RuntimeException rejected) {
                             // Undo everything this request stored or reused: the next request for the
                             // same line has to reach the provider again instead of being served a
@@ -308,6 +315,7 @@ public final class TranslationCoordinator implements AutoCloseable {
             ProtectedText protectedText,
             String sourceLanguage,
             String targetLanguage,
+            boolean chineseTarget,
             TextKind kind,
             TranslationStreamListener listener,
             PendingCommit pendingCommit
@@ -321,8 +329,8 @@ public final class TranslationCoordinator implements AutoCloseable {
                 // method for every line the game draws and must not start allocating per segment.
                 String alreadyBuilt = listener == null ? null : output.toString();
                 output.append(translateSegment(
-                        segment.text(), sourceLanguage, targetLanguage, kind, listener, alreadyBuilt,
-                        pendingCommit));
+                        segment.text(), sourceLanguage, targetLanguage, chineseTarget, kind, listener,
+                        alreadyBuilt, pendingCommit));
             }
         }
         return output.toString();
@@ -332,6 +340,7 @@ public final class TranslationCoordinator implements AutoCloseable {
             String segment,
             String sourceLanguage,
             String targetLanguage,
+            boolean chineseTarget,
             TextKind kind,
             TranslationStreamListener listener,
             String alreadyBuilt,
@@ -346,7 +355,7 @@ public final class TranslationCoordinator implements AutoCloseable {
             end--;
         }
         String core = segment.substring(start, end);
-        if (!LanguageHeuristics.shouldTranslate(core, targetLanguage)) {
+        if (!LanguageHeuristics.shouldTranslateToTarget(core, chineseTarget)) {
             return segment;
         }
         String providerId = provider.id();
@@ -436,8 +445,11 @@ public final class TranslationCoordinator implements AutoCloseable {
         // hang Minecraft shutdown.
         try {
             if (!executor.awaitTermination(WORKER_SHUTDOWN_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
-                System.err.println("[MC Auto Translation Tool] translation workers did not stop within "
-                        + WORKER_SHUTDOWN_TIMEOUT_MILLIS + "ms; closing provider anyway");
+                // The debug log instead of stderr: this used to be the only core path that wrote to
+                // stdout regardless of the debug-log switch, so it printed with no level and no
+                // timestamp and could not be turned off.
+                DebugLog.global().log("shutdown", "workers", "did-not-stop",
+                        "timeoutMillis", String.valueOf(WORKER_SHUTDOWN_TIMEOUT_MILLIS));
             }
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();

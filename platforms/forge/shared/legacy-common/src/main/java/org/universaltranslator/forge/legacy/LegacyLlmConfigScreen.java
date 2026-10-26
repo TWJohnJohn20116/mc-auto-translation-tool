@@ -36,8 +36,8 @@ final class LegacyLlmConfigScreen extends GuiScreen {
     private volatile boolean statusIsError;
     private volatile List<String> fetchedModels = Collections.emptyList();
     private volatile boolean fetching;
-    private boolean modelListOpen;
-    private int modelPage;
+    private volatile boolean modelListOpen;
+    private volatile int modelPage;
 
     LegacyLlmConfigScreen(
             LegacyConfigScreen parent,

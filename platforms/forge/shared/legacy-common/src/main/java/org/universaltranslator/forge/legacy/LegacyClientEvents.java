@@ -14,6 +14,8 @@ import net.minecraftforge.client.event.RenderGameOverlayEvent;
 import net.minecraftforge.fml.client.registry.ClientRegistry;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.lwjgl.input.Keyboard;
 import org.universaltranslator.core.HudIndicatorContent;
 import org.universaltranslator.core.HudIndicatorCorner;
@@ -25,10 +27,17 @@ import org.universaltranslator.core.TranslationResult;
 import org.universaltranslator.core.TranslationStatusLocalizer;
 
 import java.io.File;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 
 /** Forge 1.8.9/1.12.2 compatible key binding and settings-screen launcher. */
 public final class LegacyClientEvents {
     private static final int HOME_OPEN = 31_700;
+    private static final Logger LOGGER = LogManager.getLogger("MCAutoTranslationTool");
+    // RenderGameOverlayEvent's element type, resolved once: 1.8.9 has a public field, 1.12.2 a getter.
+    private static boolean elementTypeResolved;
+    private static Method elementTypeGetter;
+    private static Field elementTypeField;
     private static final long FAILURE_NOTIFICATION_COOLDOWN_MILLIS = 60_000L;
     private static final LegacyClientEvents INSTANCE = new LegacyClientEvents();
     private static final KeyBinding OPEN_SETTINGS = new KeyBinding(
@@ -83,7 +92,7 @@ public final class LegacyClientEvents {
             minecraft.displayGuiScreen(new LegacyConfigScreen(
                     LegacyVersionAccess.eventScreen(event), config));
         } catch (Exception exception) {
-            System.err.println("[MC Auto Translation Tool] Could not open settings: " + exception);
+            LOGGER.error("Could not open settings", exception);
         }
     }
 
@@ -162,7 +171,7 @@ public final class LegacyClientEvents {
                         exception.addSuppressed(restoreFailure);
                     }
                 }
-                System.err.println("[MC Auto Translation Tool] Could not toggle translation: " + exception);
+                LOGGER.error("Could not toggle translation", exception);
             }
         }
         notifyRuntimeStatus(minecraft, connected);
@@ -176,7 +185,7 @@ public final class LegacyClientEvents {
             LegacyConfig config = LegacyConfig.load(configDirectory);
             minecraft.displayGuiScreen(new LegacyConfigScreen(minecraft.currentScreen, config));
         } catch (Exception exception) {
-            System.err.println("[MC Auto Translation Tool] Could not open settings: " + exception);
+            LOGGER.error("Could not open settings", exception);
         }
     }
 
@@ -227,11 +236,9 @@ public final class LegacyClientEvents {
      */
     @SubscribeEvent
     public void onRenderGameOverlay(RenderGameOverlayEvent.Post event) {
-        // Deliberately no element-type check: 1.8.9 exposes a public `type` field while 1.12.2
-        // makes it private and offers getType() instead, so reading it is not portable across the two
-        // versions this source set compiles for. Post fires once per HUD element, and every one of
-        // those passes happens while the overlay is on screen, so drawing on each of them paints the
-        // same pixels; the extra drawRect calls are negligible and the result is version-independent.
+        if (!isAllElementsPass(event)) {
+            return;
+        }
         // Read the settings first: a disabled indicator draws nothing at all.
         // One read per frame: the runtime publishes a finished snapshot, and this method needs
         // four different fields off the same one.
@@ -343,6 +350,47 @@ public final class LegacyClientEvents {
             font.drawStringWithShadow(label, (float) labelLeft, (float) labelY, 0xFFFFFFFF);
         } finally {
             LegacyRenderContext.popTextInput();
+        }
+    }
+
+    /**
+     * Whether this is the single {@code ALL} pass of {@link RenderGameOverlayEvent.Post}.
+     *
+     * <p>Post fires once per HUD element, so without this check the same square, border, label and
+     * preview were drawn a dozen times per frame — each pass also re-measuring the string, allocating
+     * a {@link ScaledResolution} and pushing the same label through the translation cache. 1.8.9
+     * exposes a public {@code type} field while 1.12.2 made it private and added {@code getType()},
+     * and this source set compiles for both, so the member is resolved once by reflection. If neither
+     * resolves, the answer is {@code true}: drawing too often is wasteful, drawing never is a
+     * regression.
+     */
+    private static boolean isAllElementsPass(RenderGameOverlayEvent event) {
+        Object type = elementType(event);
+        return type == null || type == RenderGameOverlayEvent.ElementType.ALL;
+    }
+
+    private static Object elementType(RenderGameOverlayEvent event) {
+        if (!elementTypeResolved) {
+            elementTypeResolved = true;
+            try {
+                elementTypeGetter = RenderGameOverlayEvent.class.getMethod("getType");
+            } catch (NoSuchMethodException preOneTwelve) {
+                try {
+                    elementTypeField = RenderGameOverlayEvent.class.getField("type");
+                } catch (NoSuchFieldException unexpected) {
+                    elementTypeField = null;
+                }
+            } catch (RuntimeException unsupported) {
+                elementTypeGetter = null;
+            }
+        }
+        try {
+            if (elementTypeGetter != null) {
+                return elementTypeGetter.invoke(event);
+            }
+            return elementTypeField == null ? null : elementTypeField.get(event);
+        } catch (ReflectiveOperationException | RuntimeException unsupported) {
+            return null;
         }
     }
 

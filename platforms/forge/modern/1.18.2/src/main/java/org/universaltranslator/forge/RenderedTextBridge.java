@@ -11,6 +11,7 @@ import net.minecraft.util.FormattedCharSequence;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TranslationTextStyling;
 import org.universaltranslator.core.TranslationStyleRuns;
+import org.universaltranslator.core.DebugLog;
 import org.universaltranslator.core.TextKind;
 
 import java.util.ArrayList;
@@ -159,7 +160,7 @@ public final class RenderedTextBridge {
     /** Canonical Screen.getTooltipFromItem hook for inventories and containers. */
     public static List<Component> translateItemTooltip(List<Component> lines) {
         if (ITEM_TOOLTIP_REACHED.compareAndSet(false, true)) {
-            System.out.println("[MC Auto Translation Tool] Item tooltip producer reached");
+            DebugLog.global().log("item-tooltip", "producer", "reached");
         }
         return translateTooltip(lines, true);
     }
@@ -192,7 +193,7 @@ public final class RenderedTextBridge {
         }
         if (itemTooltip && replacement != null
                 && ITEM_TOOLTIP_APPLIED.compareAndSet(false, true)) {
-            System.out.println("[MC Auto Translation Tool] Item tooltip translation applied");
+            DebugLog.global().log("item-tooltip", "result", "translated");
         }
         return replacement == null ? lines : replacement;
     }

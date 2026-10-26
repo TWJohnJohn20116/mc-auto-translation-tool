@@ -438,7 +438,25 @@ final class FabricConfig {
         LocalConfigSecurity.restrictToOwner(configFile);
     }
 
+    /**
+     * Checks that the configured provider can actually be built, before the settings are applied.
+     *
+     * <p>The offline engine used to pass this without checking anything: {@code createProvider()}
+     * only calls {@code LlamaCppOfflineProvider.forModel(...)}, which starts no server and opens no
+     * model file, so every offline configuration "validated" and the real failure surfaced a step
+     * later on the startup path. Check the one thing that can be checked without starting anything.
+     */
     void validateProviderConfiguration() throws Exception {
+        if ("offline".equalsIgnoreCase(provider)) {
+            if (!offlineAutoDownload && offlineDirectory != null) {
+                Path model = offlineDirectory.resolve(offlineModel.modelFile());
+                if (!Files.isRegularFile(model)) {
+                    throw new IOException("Offline model is missing: " + model.getFileName());
+                }
+            }
+            // Server start and model load belong to initialize, which may download first.
+            return;
+        }
         TranslationProvider candidate = createProvider();
         if (candidate instanceof AutoCloseable) {
             ((AutoCloseable) candidate).close();

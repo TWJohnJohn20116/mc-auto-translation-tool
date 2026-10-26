@@ -112,7 +112,8 @@ jobs:
           echo "版本號一致：${version}"
 
       - name: 上傳檢查報告
-        if: failure()
+        # Same artifact policy as the other three uploads: a PR run keeps nothing.
+        if: failure() && github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7
         with:
           name: check-reports

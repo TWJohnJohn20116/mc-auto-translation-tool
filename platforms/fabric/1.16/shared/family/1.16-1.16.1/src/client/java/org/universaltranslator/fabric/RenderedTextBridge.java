@@ -13,12 +13,8 @@ import org.universaltranslator.core.TranslationStyleRuns;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class RenderedTextBridge {
-    private static final AtomicBoolean ITEM_TOOLTIP_REACHED = new AtomicBoolean();
-    private static final AtomicBoolean ITEM_TOOLTIP_APPLIED = new AtomicBoolean();
-
     private RenderedTextBridge() {
     }
 
@@ -72,9 +68,6 @@ public final class RenderedTextBridge {
 
     /** Canonical Screen.getTooltipFromItem hook for inventories and containers. */
     public static List<Text> translateItemTooltip(List<Text> lines) {
-        if (ITEM_TOOLTIP_REACHED.compareAndSet(false, true)) {
-            System.out.println("[MC Auto Translation Tool] Item tooltip producer reached");
-        }
         return translateTooltip(lines, true);
     }
 
@@ -103,10 +96,6 @@ public final class RenderedTextBridge {
                 replacement.set(index,
                         new LiteralText(translated).setStyle(translatedStyle(line.getStyle())));
             }
-        }
-        if (itemTooltip && replacement != null
-                && ITEM_TOOLTIP_APPLIED.compareAndSet(false, true)) {
-            System.out.println("[MC Auto Translation Tool] Item tooltip translation applied");
         }
         return replacement == null ? lines : replacement;
     }

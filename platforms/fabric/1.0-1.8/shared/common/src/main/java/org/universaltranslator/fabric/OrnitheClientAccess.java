@@ -85,7 +85,9 @@ public final class OrnitheClientAccess {
             try {
                 task.run();
             } catch (RuntimeException exception) {
-                System.err.println("[MC Auto Translation Tool] Client task failed: " + exception);
+                // Through the mod's logger, so the line gets a level and can be filtered; stdout had
+                // neither and launch wrappers showed it as a plain error line.
+                LOGGER.log(Level.SEVERE, "Client task failed", exception);
             }
         }
     }

@@ -14,8 +14,9 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from release_layout import PART_PATTERN, part_suffix
 
-PART_PATTERN = re.compile(r"^(?P<jar>.+\.jar)\.part-(?P<suffix>[a-z]{2})$")
+
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 
 
@@ -54,10 +55,6 @@ FORGE_FAMILIES = (
 )
 
 
-def _part_suffix(index: int) -> str:
-    return chr(ord("a") + index // 26) + chr(ord("a") + index % 26)
-
-
 def _split_parts(jar: Path) -> list[Path]:
     parts = sorted(jar.parent.glob(f"{jar.name}.part-*"))
     if jar.is_file() and parts:
@@ -71,7 +68,7 @@ def _split_parts(jar: Path) -> list[Path]:
         if (
             not match
             or match.group("jar") != jar.name
-            or match.group("suffix") != _part_suffix(index)
+            or match.group("suffix") != part_suffix(index)
         ):
             raise PreparationError(f"split JAR parts must be contiguous from part-aa: {jar}")
     return parts

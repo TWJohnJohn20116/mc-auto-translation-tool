@@ -35,30 +35,43 @@ function Invoke-TargetBuild {
 
 $failed = 0
 
-# === JDK 25: 26.x platforms (Fabric + Forge merged) ===
-$jdk25Platforms = "fabric-26.x,forge-26.1,forge-26.1.1,forge-26.1.2,forge-26.2"
+# === JDK 25: 26.x platforms (Fabric + Forge + NeoForge) ===
+$jdk25Platforms = "fabric-26.x,forge-26.1,forge-26.1.1,forge-26.1.2,forge-26.2," +
+    "neoforge-26.1,neoforge-26.1.1,neoforge-26.1.2,neoforge-26.2"
 $jdk25Tasks = @(
     ":platform-fabric-26.x:build",
     ":platform-forge-26.1:build",
     ":platform-forge-26.1.1:build",
     ":platform-forge-26.1.2:build",
-    ":platform-forge-26.2:build"
+    ":platform-forge-26.2:build",
+    ":platform-neoforge-26.1:build",
+    ":platform-neoforge-26.1.1:build",
+    ":platform-neoforge-26.1.2:build",
+    ":platform-neoforge-26.2:build"
 )
 $failed += Invoke-TargetBuild "jdk25-combined" $j25 $jdk25Platforms $jdk25Tasks
 
 # === JDK 21: 1.13 through 1.21 platforms (Fabric + Forge + NeoForge merged) ===
-$jdk21Platforms = "fabric-1.13.x,fabric-1.14-1.15.x,fabric-1.16.5,fabric-1.17-1.18.x,fabric-1.19.x,fabric-1.20.x,fabric-1.21.x," +
+# fabric-1.16.x is the bundle project, which is what prepare-release.yml ships; building
+# platform-fabric-1.16.5 produced a single-version JAR that _assemble_* then treated as the bundle.
+$jdk21Platforms = "fabric-1.13.x,fabric-1.14-1.15.x,fabric-1.16.x,fabric-1.17-1.18.x,fabric-1.19.x,fabric-1.20.x,fabric-1.21.x," +
     "forge-1.21,forge-1.21.1,forge-1.21.3,forge-1.21.4,forge-1.21.5,forge-1.21.6,forge-1.21.7,forge-1.21.8,forge-1.21.9,forge-1.21.10,forge-1.21.11," +
-    "neoforge-1.21.1,neoforge-1.21.3,neoforge-1.21.11"
+    "neoforge-1.20.4,neoforge-1.20.6,neoforge-1.21,neoforge-1.21.1,neoforge-1.21.2,neoforge-1.21.3," +
+    "neoforge-1.21.4,neoforge-1.21.5,neoforge-1.21.6,neoforge-1.21.7,neoforge-1.21.8,neoforge-1.21.9," +
+    "neoforge-1.21.10,neoforge-1.21.11"
 $jdk21Tasks = @(
-    ":platform-fabric-1.13.x:build", ":platform-fabric-1.14-1.15.x:build", ":platform-fabric-1.16.5:build",
+    ":platform-fabric-1.13.x:build", ":platform-fabric-1.14-1.15.x:build", ":platform-fabric-1.16.x:build",
     ":platform-fabric-1.17-1.18.x:build", ":platform-fabric-1.19.x:build", ":platform-fabric-1.20.x:build",
     ":platform-fabric-1.21.x:build",
     ":platform-forge-1.21:build", ":platform-forge-1.21.1:build", ":platform-forge-1.21.3:build",
     ":platform-forge-1.21.4:build", ":platform-forge-1.21.5:build", ":platform-forge-1.21.6:build",
     ":platform-forge-1.21.7:build", ":platform-forge-1.21.8:build", ":platform-forge-1.21.9:build",
     ":platform-forge-1.21.10:build", ":platform-forge-1.21.11:build",
-    ":platform-neoforge-1.21.1:build", ":platform-neoforge-1.21.3:build", ":platform-neoforge-1.21.11:build"
+    ":platform-neoforge-1.20.4:build", ":platform-neoforge-1.20.6:build", ":platform-neoforge-1.21:build",
+    ":platform-neoforge-1.21.1:build", ":platform-neoforge-1.21.2:build", ":platform-neoforge-1.21.3:build",
+    ":platform-neoforge-1.21.4:build", ":platform-neoforge-1.21.5:build", ":platform-neoforge-1.21.6:build",
+    ":platform-neoforge-1.21.7:build", ":platform-neoforge-1.21.8:build", ":platform-neoforge-1.21.9:build",
+    ":platform-neoforge-1.21.10:build", ":platform-neoforge-1.21.11:build"
 )
 $failed += Invoke-TargetBuild "jdk21-combined" $j21 $jdk21Platforms $jdk21Tasks
 

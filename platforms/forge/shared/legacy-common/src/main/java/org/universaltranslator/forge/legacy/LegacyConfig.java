@@ -223,7 +223,7 @@ final class LegacyConfig {
             properties.setProperty("translate-english-only", "true");
             properties.setProperty("translated-text-color", "original");
         }
-        properties.setProperty("config-version", "7");
+        properties.setProperty("config-version", "6");
         LocalConfigSecurity.restrictToOwner(file.toPath());
         LegacyConfig loaded = new LegacyConfig(
                 properties, file, new File(configDirectory, "universal-translator-cache.properties"));
@@ -444,7 +444,25 @@ final class LegacyConfig {
         LocalConfigSecurity.restrictToOwner(file);
     }
 
+    /**
+     * Checks that the configured provider can actually be built, before the settings are applied.
+     *
+     * <p>The offline engine used to pass this without checking anything: {@code createProvider()}
+     * only calls {@code LlamaCppOfflineProvider.forModel(...)}, which starts no server and opens no
+     * model file, so every offline configuration "validated" and the real failure surfaced a step
+     * later on the startup path. Check the one thing that can be checked without starting anything.
+     */
     void validateProviderConfiguration() throws Exception {
+        if ("offline".equalsIgnoreCase(provider)) {
+            if (!offlineAutoDownload && offlineDirectory != null) {
+                Path model = offlineDirectory.toPath().resolve(offlineModel.modelFile());
+                if (!Files.isRegularFile(model)) {
+                    throw new IOException("Offline model is missing: " + model.getFileName());
+                }
+            }
+            // Server start and model load belong to initialize, which may download first.
+            return;
+        }
         TranslationProvider candidate = createProvider();
         if (candidate instanceof AutoCloseable) {
             ((AutoCloseable) candidate).close();
@@ -489,7 +507,7 @@ final class LegacyConfig {
 
     private static Properties defaults() {
         Properties properties = new Properties();
-        properties.setProperty("config-version", "7");
+        properties.setProperty("config-version", "6");
         properties.setProperty("enabled", "false");
         properties.setProperty("translate-chat", "true");
         properties.setProperty("translate-other", "true");
@@ -518,6 +536,18 @@ final class LegacyConfig {
         properties.setProperty("api-fallback", "false");
         properties.setProperty("api-fallback-provider", "libretranslate");
         properties.setProperty("disk-cache", "true");
+        // The same nine keys ForgeConfig.defaults() writes. Without them, a config file first created
+        // by 1.8.9/1.12.2 was missing every HUD-indicator line, and the next Forge version to save
+        // the same file added them — the file shape depended on which version touched it first.
+        properties.setProperty("hud-indicator", "true");
+        properties.setProperty("hud-indicator-corner", "top-left");
+        properties.setProperty("hud-indicator-size", "6");
+        properties.setProperty("hud-indicator-margin", "4");
+        properties.setProperty("hud-indicator-color", "green");
+        properties.setProperty("hud-indicator-content", "dot");
+        properties.setProperty("hud-indicator-visibility", "always");
+        properties.setProperty("hud-indicator-offset-x", "0");
+        properties.setProperty("hud-indicator-offset-y", "0");
         OnlineProviderConfig.applyDefaults(properties);
         return properties;
     }
@@ -529,7 +559,7 @@ final class LegacyConfig {
         // except for the ones this snapshot wrote itself (see ownedPromptKeys).
         OnlineProviderConfig.preservePromptSettings(configFile.toPath(), properties,
                 ownedPromptKeys);
-        properties.setProperty("config-version", "7");
+        properties.setProperty("config-version", "6");
         properties.setProperty("enabled", Boolean.toString(enabled));
         properties.setProperty("translate-chat", Boolean.toString(translateChat));
         properties.setProperty("translate-other", Boolean.toString(translateOther));
@@ -579,12 +609,23 @@ final class LegacyConfig {
         }
     }
 
+    /**
+     * Reads a bounded integer, falling back to {@code fallback} when the value is unusable.
+     *
+     * <p>Every other implementation in this repository (ForgeConfig, FabricConfig both generations)
+     * returns the fallback for an out-of-range value; this one clamped to the nearest end instead, so
+     * a hand-edited {@code hud-indicator-size=99} showed the maximum size on 1.8.9/1.12.2 and the
+     * default on every other Forge version — the same file, two different results.
+     */
     private static int parseBoundedInt(String raw, int fallback, int min, int max) {
+        if (raw == null) {
+            return fallback;
+        }
         try {
             int value = Integer.parseInt(raw.trim());
-            return Math.max(min, Math.min(max, value));
+            return value < min || value > max ? fallback : value;
         } catch (RuntimeException ignored) {
-            // Covers a null or non-numeric value as well, so this cannot escape load().
+            // Covers a non-numeric value as well, so this cannot escape load().
             return fallback;
         }
     }

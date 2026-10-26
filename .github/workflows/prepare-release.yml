@@ -275,21 +275,24 @@ jobs:
             exit 1
           fi
           # checksum 記的是「完整 JAR」的雜湊，而 fabric 的 JAR 超過 600 KiB 要切成
-          # .part-aa／.part-ab…（沿用專案既有慣例，見 scripts/tools/_assemble_*.py），
-          # 所以先算雜湊再切。分片之後就沒有完整檔了。
+          # .part-aa／.part-ab…，所以先算雜湊再切。分片之後就沒有完整檔了。
+          # 門檻與後綴公式只有一份定義：scripts/release_layout.py（驗證端也 import 同一份）。
           python3 - "$target_dir" <<'PY'
           import hashlib, pathlib, sys
-          part_size = 614400
+
+          sys.path.insert(0, "scripts")
+          from release_layout import PART_SIZE, part_suffix
+
           target = pathlib.Path(sys.argv[1])
           lines = []
           for jar in sorted(target.glob("*.jar")):
               data = jar.read_bytes()
               lines.append(f"{hashlib.sha256(data).hexdigest()}  {jar.name}")
-              if jar.name.endswith("-fabric.jar") and len(data) > part_size:
-                  for index in range(0, len(data), part_size):
-                      part = index // part_size
-                      suffix = chr(ord("a") + part // 26) + chr(ord("a") + part % 26)
-                      (jar.parent / f"{jar.name}.part-{suffix}").write_bytes(data[index:index + part_size])
+              if jar.name.endswith("-fabric.jar") and len(data) > PART_SIZE:
+                  for index in range(0, len(data), PART_SIZE):
+                      part = index // PART_SIZE
+                      suffix = part_suffix(part)
+                      (jar.parent / f"{jar.name}.part-{suffix}").write_bytes(data[index:index + PART_SIZE])
                   jar.unlink()
           (target / "SHA256SUMS.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
           print(f"寫入 {len(lines)} 顆邏輯 JAR 的 checksum")

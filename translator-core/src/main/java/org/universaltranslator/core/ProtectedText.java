@@ -76,8 +76,13 @@ public final class ProtectedText {
             "|(?:" + BULLET_CORE + ")" +
             "|(?:%[A-Za-z0-9_.:-]+%)" +
             "|(?:\\{[A-Za-z0-9_.:-]+})";
+    // The supplementary ranges are written as \x{...} code points: CJK Extension B (20000..2FA1F) and
+    // Extension C..F (30000..323AF) do not fit in a char, and leaving them out meant a rare Han
+    // character was not protected while preserveHanText was on, so it was sent to the provider and
+    // could come back rewritten or replaced by a different glyph.
     private static final String HAN_SOURCE =
-            "(?:[\\u3400-\\u4DBF\\u4E00-\\u9FFF\\uF900-\\uFAFF]+)";
+            "(?:[\\u3400-\\u4DBF\\u4E00-\\u9FFF\\uF900-\\uFAFF"
+                    + "\\x{20000}-\\x{2FA1F}\\x{30000}-\\x{323AF}]+)";
     // MULTILINE so the leading-bullet pattern anchors at the start of every line, not just the
     // start of the whole text; none of the other patterns use an anchor.
     private static final Pattern PROTECTED = Pattern.compile(PROTECTED_SOURCE, Pattern.MULTILINE);

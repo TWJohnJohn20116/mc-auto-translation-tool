@@ -5,6 +5,8 @@ public final class SettingsScreenLayout {
     public static final int BUTTON_HEIGHT = 20;
     public static final int HEADER_BOTTOM = 34;
     public static final int COMPACT_STATUS_Y = 6;
+    /** Narrowest tab that still has room for a two-character label. */
+    public static final int MINIMUM_TAB_WIDTH = 20;
 
     private SettingsScreenLayout() {
     }
@@ -56,7 +58,15 @@ public final class SettingsScreenLayout {
         int tabY = Math.max(22, Math.min(HEADER_BOTTOM + 2, top - 2));
         int safeTabCount = Math.max(1, tabCount);
         int tabGap = 3;
-        int tabWidth = Math.max(20, (totalWidth - tabGap * (safeTabCount - 1)) / safeTabCount);
+        int tabWidth = Math.max(MINIMUM_TAB_WIDTH, (totalWidth - tabGap * (safeTabCount - 1)) / safeTabCount);
+        if (tabWidth * safeTabCount + tabGap * (safeTabCount - 1) > totalWidth) {
+            // At a very small GUI scale the five-tab row no longer fits at the legible minimum, and
+            // the old code kept the 20px floor anyway, so the last tab was drawn past the right edge
+            // and could not be clicked. Tighten the gaps first, then the width, so the row always
+            // stays inside the form.
+            tabGap = 1;
+            tabWidth = Math.max(1, (totalWidth - tabGap * (safeTabCount - 1)) / safeTabCount);
+        }
         int contentTop = tabY + BUTTON_HEIGHT + 4;
         int contentRowStep = Math.max(22, Math.min(26, (saveY - contentTop) / 4));
 

@@ -86,6 +86,12 @@ public final class RenderTranslationSession implements AutoCloseable {
     private long probeSubstituted;
     private long probeNanos;
     private volatile boolean closed;
+    // Single-slot memo for the tooltip join. Screen.getTooltipFromItem calls the line path once per
+    // frame with the same list instance, so without this every frame built a fresh ~1 KB String and
+    // re-hashed it inside the lookup key. Reuse is decided by element identity, so a list that really
+    // changed can never serve a stale join.
+    private volatile List<String> joinedLinesSource;
+    private volatile String joinedLinesText;
     private volatile String lastFailureStatus = "";
     private volatile String lastReportedFailureStatus = "";
     private volatile TranslationBlocklist blockedKeywords = TranslationBlocklist.empty();
@@ -287,12 +293,34 @@ public final class RenderTranslationSession implements AutoCloseable {
      * @return true when a translated result was published, false when the submission produced no
      *         translation (unchanged, failure, blocked or closed).
      */
-    private synchronized boolean completeLookup(
+    /**
+     * Settles one lookup, and prints a changed failure status only after leaving the monitor.
+     *
+     * <p>The monitor is shared with {@link #clearRenderedTranslations()}, {@link #close()} and
+     * {@link #setBlockedKeywords}, so nothing inside it may block. A stderr write can: latest.log is
+     * flushed on write and a full console pipe blocks the writer for milliseconds. The line is
+     * therefore formatted under the monitor and printed outside it.
+     */
+    private boolean completeLookup(
             RenderKey key,
             Long submittedAt,
             String original,
             TranslationResult result,
             Throwable error
+    ) {
+        FailureReport report = new FailureReport();
+        boolean changed = completeLookupLocked(key, submittedAt, original, result, error, report);
+        report.print();
+        return changed;
+    }
+
+    private synchronized boolean completeLookupLocked(
+            RenderKey key,
+            Long submittedAt,
+            String original,
+            TranslationResult result,
+            Throwable error,
+            FailureReport report
     ) {
         // Always run, even when the session is closing: a pending entry that is never
         // removed permanently consumes one of the MAX_PENDING_TRANSLATIONS slots. The value
@@ -319,7 +347,7 @@ public final class RenderTranslationSession implements AutoCloseable {
                 retryOrder.add(key);
             }
             lastFailureStatus = safeFailureStatus(error, result);
-            reportFailureIfChanged(lastFailureStatus);
+            report.line = failureReportLineIfChanged(lastFailureStatus);
             return false;
         }
         lastFailureStatus = "";
@@ -418,29 +446,75 @@ public final class RenderTranslationSession implements AutoCloseable {
             }
             return changed ? replacement : originals;
         }
-        StringBuilder joined = new StringBuilder();
+        String originalText = joinedLines(originals);
+        if (originalText == null) {
+            return originals;
+        }
+        String translatedText = lookup(originalText, kind);
+        if (originalText.equals(translatedText)) {
+            return originals;
+        }
+        List<String> translatedLines = splitLines(translatedText);
+        if (translatedLines.size() != originals.size()) {
+            return originals;
+        }
+        return translatedLines;
+    }
+
+    /**
+     * Joins the lines with {@code '\n'}, reusing the previous result when the same lines are passed
+     * again, and returns {@code null} when one line cannot survive the round trip.
+     */
+    private String joinedLines(List<String> originals) {
+        String previous = joinedLinesText;
+        if (previous != null && sameLines(joinedLinesSource, originals)) {
+            return previous;
+        }
+        StringBuilder joined = new StringBuilder(originals.size() * 32);
         for (int index = 0; index < originals.size(); index++) {
             String line = originals.get(index);
             if (line == null || line.indexOf('\n') >= 0 || line.indexOf('\r') >= 0) {
-                return originals;
+                return null;
             }
             if (index > 0) {
                 joined.append('\n');
             }
             joined.append(line);
         }
-        String originalText = joined.toString();
-        String translatedText = lookup(originalText, kind);
-        if (originalText.equals(translatedText)) {
-            return originals;
+        String text = joined.toString();
+        joinedLinesSource = originals;
+        joinedLinesText = text;
+        return text;
+    }
+
+    /**
+     * Whether {@code cached} holds the same lines as {@code current}.
+     *
+     * <p>Content, not identity: the tooltip path rebuilds its list from the components on every
+     * frame, so an identity check would never hit. Equal lines always join to the same text, so a
+     * content match can never serve a stale join.
+     */
+    private static boolean sameLines(List<String> cached, List<String> current) {
+        return cached != null && cached.equals(current);
+    }
+
+    /**
+     * Splits on {@code '\n'} keeping empty fields, without compiling a regex per call.
+     *
+     * <p>{@code split("\\n", -1)} is a two-character pattern, so the JDK's fast paths do not apply and
+     * every hover recompiled it; this is the same thing by hand.
+     */
+    private static List<String> splitLines(String text) {
+        List<String> lines = new ArrayList<String>();
+        int from = 0;
+        for (int index = 0; index < text.length(); index++) {
+            if (text.charAt(index) == '\n') {
+                lines.add(text.substring(from, index));
+                from = index + 1;
+            }
         }
-        String[] translatedLines = translatedText.split("\\n", -1);
-        if (translatedLines.length != originals.size()) {
-            return originals;
-        }
-        List<String> replacement = new ArrayList<String>(translatedLines.length);
-        Collections.addAll(replacement, translatedLines);
-        return replacement;
+        lines.add(text.substring(from));
+        return lines;
     }
 
     /**
@@ -554,14 +628,31 @@ public final class RenderTranslationSession implements AutoCloseable {
         return "翻译失败：" + singleLine;
     }
 
-    private void reportFailureIfChanged(String status) {
+    /** Carries the failure line from inside the session monitor to the print that follows it. */
+    private static final class FailureReport {
+        private String line;
+
+        private void print() {
+            if (line == null) {
+                return;
+            }
+            // Minecraft captures stderr in latest.log. Log only the provider identifier and the
+            // sanitized status: never the source text, request body, endpoint path, or credentials.
+            System.err.println(line);
+        }
+    }
+
+    /**
+     * The line to print for {@code status}, or {@code null} when this status was already reported.
+     *
+     * <p>Must be called under the session monitor: it updates {@code lastReportedFailureStatus}.
+     */
+    private String failureReportLineIfChanged(String status) {
         if (status.equals(lastReportedFailureStatus)) {
-            return;
+            return null;
         }
         lastReportedFailureStatus = status;
-        // Minecraft captures stderr in latest.log. Log only the provider identifier and the
-        // sanitized status: never the source text, request body, endpoint path, or credentials.
-        System.err.println("[MC Auto Translation Tool] provider=" + providerCategory + " " + status);
+        return "[MC Auto Translation Tool] provider=" + providerCategory + " " + status;
     }
 
     static String safeProviderCategoryForLog(String providerId) {

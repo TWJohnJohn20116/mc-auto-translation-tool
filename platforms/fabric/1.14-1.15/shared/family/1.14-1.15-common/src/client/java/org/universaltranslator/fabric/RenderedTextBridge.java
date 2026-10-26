@@ -7,12 +7,8 @@ import org.universaltranslator.core.TranslationTextStyling;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class RenderedTextBridge {
-    private static final AtomicBoolean ITEM_TOOLTIP_REACHED = new AtomicBoolean();
-    private static final AtomicBoolean ITEM_TOOLTIP_APPLIED = new AtomicBoolean();
-
     private RenderedTextBridge() {
     }
 
@@ -34,8 +30,13 @@ public final class RenderedTextBridge {
         if (original.equals(translated)) {
             return text;
         }
+        // The translated-text colour travels as a § code inside the string (that is what
+        // TranslationTextStyling produces); this generation has no Style.withColor to build it with.
+        // The line's own style object is then applied on top, so rarity colours and bold/italic runs
+        // survive instead of every translated component being flattened to plain white.
         return new LiteralText(TranslationTextStyling.applyTranslatedStyle(
-                original, translated, FabricTranslationRuntime.translatedTextColor()));
+                original, translated, FabricTranslationRuntime.translatedTextColor()))
+                .setStyle(text.getStyle());
     }
 
     public static List<Text> translateTooltip(List<Text> lines) {
@@ -43,9 +44,6 @@ public final class RenderedTextBridge {
     }
 
     public static List<Text> translateItemTooltip(List<Text> lines) {
-        if (ITEM_TOOLTIP_REACHED.compareAndSet(false, true)) {
-            System.out.println("[MC Auto Translation Tool] Item tooltip producer reached");
-        }
         return translateTooltip(lines, true);
     }
 
@@ -71,13 +69,12 @@ public final class RenderedTextBridge {
                 if (replacement == null) {
                     replacement = new ArrayList<Text>(lines);
                 }
-                replacement.set(index, new LiteralText(TranslationTextStyling.applyTranslatedStyle(
-                        original, translated, FabricTranslationRuntime.translatedTextColor())));
+                replacement.set(index,
+                        new LiteralText(TranslationTextStyling.applyTranslatedStyle(
+                                original, translated,
+                                FabricTranslationRuntime.translatedTextColor()))
+                                .setStyle(line.getStyle()));
             }
-        }
-        if (itemTooltip && replacement != null
-                && ITEM_TOOLTIP_APPLIED.compareAndSet(false, true)) {
-            System.out.println("[MC Auto Translation Tool] Item tooltip translation applied");
         }
         return replacement == null ? lines : replacement;
     }

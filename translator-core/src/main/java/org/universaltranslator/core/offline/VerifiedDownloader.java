@@ -118,16 +118,26 @@ public final class VerifiedDownloader {
         }
 
         HttpURLConnection connection = open(source, offset, 0);
-        int status = connection.getResponseCode();
-        boolean append = offset > 0L && status == HttpURLConnection.HTTP_PARTIAL;
-        if (status < 200 || status >= 300) {
+        int status;
+        boolean append;
+        try {
+            status = connection.getResponseCode();
+            if (status < 200 || status >= 300) {
+                throw new IOException("Download returned HTTP " + status + " for " + source.getHost());
+            }
+            append = offset > 0L && status == HttpURLConnection.HTTP_PARTIAL;
+            if (!append) {
+                offset = 0L;
+            }
+            validateResponse(connection, status, offset, expectedSize, append);
+        } catch (IOException failure) {
+            // The one release point for every failure above. validateResponse throws with the body
+            // unread, and an unread body never goes back to the keep-alive pool, so without this the
+            // socket and its descriptor leaked once per mirror for an HTML error page, a mismatched
+            // Content-Range or a changed Content-Length.
             connection.disconnect();
-            throw new IOException("Download returned HTTP " + status + " for " + source.getHost());
+            throw failure;
         }
-        if (!append) {
-            offset = 0L;
-        }
-        validateResponse(connection, status, offset, expectedSize, append);
         progress.onProgress(offset, expectedSize);
 
         StandardOpenOption[] options = append
@@ -254,7 +264,15 @@ public final class VerifiedDownloader {
         if (offset > 0L) {
             connection.setRequestProperty("Range", "bytes=" + offset + "-");
         }
-        int status = connection.getResponseCode();
+        int status;
+        try {
+            status = connection.getResponseCode();
+        } catch (IOException failure) {
+            // A connect timeout or a TLS handshake failure used to drop this connection on the floor:
+            // the caller only ever sees the exception, so nothing was left to close it.
+            connection.disconnect();
+            throw failure;
+        }
         if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
             String location = connection.getHeaderField("Location");
             connection.disconnect();
