@@ -1,12 +1,8 @@
 package org.universaltranslator.fabric;
 
 import net.minecraft.text.LiteralText;
-import net.minecraft.text.Style;
 import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
 import org.universaltranslator.core.TextKind;
-import org.universaltranslator.core.TranslationStyleRuns;
-import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TranslationTextStyling;
 
 import java.util.ArrayList;
@@ -34,9 +30,13 @@ public final class RenderedTextBridge {
         if (original.equals(translated)) {
             return text;
         }
-        // Keeping the original style is what preserves rarity colours and bold/italic runs; building
-        // a bare LiteralText flattened every translated component to plain white.
-        return new LiteralText(translated).setStyle(translatedStyle(text.getStyle()));
+        // The translated-text colour travels as a § code inside the string (that is what
+        // TranslationTextStyling produces); this generation has no Style.withColor to build it with.
+        // The line's own style object is then applied on top, so rarity colours and bold/italic runs
+        // survive instead of every translated component being flattened to plain white.
+        return new LiteralText(TranslationTextStyling.applyTranslatedStyle(
+                original, translated, FabricTranslationRuntime.translatedTextColor()))
+                .setStyle(text.getStyle());
     }
 
     public static List<Text> translateTooltip(List<Text> lines) {
@@ -70,37 +70,13 @@ public final class RenderedTextBridge {
                     replacement = new ArrayList<Text>(lines);
                 }
                 replacement.set(index,
-                        new LiteralText(translated).setStyle(translatedStyle(line.getStyle())));
+                        new LiteralText(TranslationTextStyling.applyTranslatedStyle(
+                                original, translated,
+                                FabricTranslationRuntime.translatedTextColor()))
+                                .setStyle(line.getStyle()));
             }
         }
         return replacement == null ? lines : replacement;
-    }
-
-    /** Applies the configured translated-text colour to a style, leaving every other attribute. */
-    private static Style applyColor(Style original, TranslationTextColor color) {
-        if (color == null) {
-            return original;
-        }
-        switch (color) {
-            case GREEN: return original.withColor(Formatting.GREEN);
-            case GOLD: return original.withColor(Formatting.GOLD);
-            case LIGHT_PURPLE: return original.withColor(Formatting.LIGHT_PURPLE);
-            case YELLOW: return original.withColor(Formatting.YELLOW);
-            case WHITE: return original.withColor(Formatting.WHITE);
-            case AQUA: return original.withColor(Formatting.AQUA);
-            default: return original;
-        }
-    }
-
-    /**
-     * The style a translated component keeps: everything the original carried (colour, bold, italic,
-     * click and hover events), with the translated-text colour applied only when the original had no
-     * colour of its own. {@code ORIGINAL} therefore means "leave the style untouched".
-     */
-    private static Style translatedStyle(Style original) {
-        return applyColor(original, TranslationStyleRuns.resolveTranslatedColor(
-                original.getColor() != null,
-                FabricTranslationRuntime.translatedTextColor()));
     }
 
     private static String translateRaw(String text) {

@@ -455,7 +455,7 @@ final class LegacyConfig {
     void validateProviderConfiguration() throws Exception {
         if ("offline".equalsIgnoreCase(provider)) {
             if (!offlineAutoDownload && offlineDirectory != null) {
-                Path model = offlineDirectory.resolve(offlineModel.modelFile());
+                Path model = offlineDirectory.toPath().resolve(offlineModel.modelFile());
                 if (!Files.isRegularFile(model)) {
                     throw new IOException("Offline model is missing: " + model.getFileName());
                 }
