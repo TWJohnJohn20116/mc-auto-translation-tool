@@ -7,6 +7,7 @@ import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.universaltranslator.core.HotkeyKeys;
 import org.universaltranslator.fabric.TranslationRenderContext;
 import org.universaltranslator.fabric.UniversalTranslatorFabricClient;
 
@@ -27,8 +28,8 @@ abstract class MinecraftMixin {
             return;
         }
         long window = client.window.getWindow();
-        boolean u = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_U) == GLFW.GLFW_PRESS;
-        boolean f8 = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_F8) == GLFW.GLFW_PRESS;
+        boolean u = GLFW.glfwGetKey(window, HotkeyKeys.settingsCode()) == GLFW.GLFW_PRESS;
+        boolean f8 = GLFW.glfwGetKey(window, HotkeyKeys.toggleCode()) == GLFW.GLFW_PRESS;
         if (u && !universalTranslator$uHeld) {
             UniversalTranslatorFabricClient.openSettingsFromKey();
         }
