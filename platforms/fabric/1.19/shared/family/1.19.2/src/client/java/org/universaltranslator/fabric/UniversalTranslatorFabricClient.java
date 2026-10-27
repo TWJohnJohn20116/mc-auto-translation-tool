@@ -106,8 +106,15 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
         @Override
         protected void sendChat(String message) {
             MinecraftClient client = MinecraftClient.getInstance();
-            if (client.player != null) {
-                client.player.sendChatMessage(message, null);
+            if (client.player == null) {
+                return;
+            }
+            // The two-argument overload this used to call passes a null MessageSignatureData, so the
+            // message went out unsigned: a server running enforce-secure-profile rejects the chat and
+            // the player is never told. Going through the network handler lets the game sign it, which
+            // is what the 1.19.3+ layer already does.
+            if (client.getNetworkHandler() != null) {
+                client.getNetworkHandler().sendChatMessage(message);
             }
         }
 
