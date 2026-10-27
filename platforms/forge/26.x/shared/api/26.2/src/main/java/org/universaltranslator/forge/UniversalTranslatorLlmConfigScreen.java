@@ -22,8 +22,9 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
     private static final int LIST_FOOTER_HEIGHT = 62;
 
     private final UniversalTranslatorConfigScreen parent;
-    private final String initialEndpoint;
-    private final String initialModel;
+    private String initialEndpoint;
+    private String initialModel;
+    private String initialApiKey = "";
     private final boolean hasStoredKey;
     private EditBox endpoint;
     private EditBox model;

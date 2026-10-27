@@ -25,8 +25,9 @@ final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorScreen
     private static final int FETCH = 3;
 
     private final UniversalTranslatorConfigScreen parent;
-    private final String initialEndpoint;
-    private final String initialModel;
+    private String initialEndpoint;
+    private String initialModel;
+    private String initialApiKey = "";
     private final boolean hasStoredKey;
     private TextFieldWidget endpoint;
     private TextFieldWidget model;

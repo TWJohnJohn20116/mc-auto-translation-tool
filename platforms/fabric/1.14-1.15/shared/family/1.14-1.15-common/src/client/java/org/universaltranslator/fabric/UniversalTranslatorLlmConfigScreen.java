@@ -26,8 +26,9 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
      * settings screen so this file does not have to name a per-generation class.
      */
     private final UniversalTranslatorSettingsScreen parent;
-    private final String initialEndpoint;
-    private final String initialModel;
+    private String initialEndpoint;
+    private String initialModel;
+    private String initialApiKey = "";
     private final boolean hasStoredKey;
     private TextFieldWidget endpoint;
     private TextFieldWidget model;
