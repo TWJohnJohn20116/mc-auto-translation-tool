@@ -51,12 +51,12 @@ final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorScreen
 
     @Override
     protected void init() {
-                // init() also runs on every resize (window drag, F11, GUI scale). Re-applying the
+        // init() also runs on every resize (window drag, F11, GUI scale). Re-applying the
         // constructor snapshot silently discarded whatever had been typed, and the API key field had
         // no value at all - so a pasted key vanished on the first resize.
- (endpoint != null) { initialEndpoint = endpoint.getText(); }
- (model != null) { initialModel = model.getText(); }
- (apiKey != null) { initialApiKey = apiKey.getText(); }
+        if (endpoint != null) { initialEndpoint = endpoint.getText(); }
+        if (model != null) { initialModel = model.getText(); }
+        if (apiKey != null) { initialApiKey = apiKey.getText(); }
 int width = Math.max(180, Math.min(360, this.width - 20));
         int left = (this.width - width) / 2;
         int top = Math.max(42, (this.height - 174) / 2);
