@@ -17,9 +17,11 @@ import org.universaltranslator.fabric.TranslationRenderContext;
 /**
  * Draws the translation status indicator on the HUD.
  *
- * <p>Separate from the mixins so the body exists once: the 1.6-1.8 layer has to hook two render
- * entry points (1.6.1-1.7.10 use render(FZII)V, 1.8 uses render(F)V) and both must draw exactly
- * the same thing. Nothing here touches mixin members, so it is an ordinary class.
+ * <p>Separate from the mixins so the body exists once: this layer is applied by 1.3.1-1.7.10 only,
+ * and whichever render entry point those versions expose must draw exactly the same thing. The
+ * 1.8-1.8.8 versions sit under this tree but apply the 1.8-1.12 shared script, so they draw through
+ * platforms/fabric/1.8-1.12/shared/common instead - editing this file has no effect on 1.8.x.
+ * Nothing here touches mixin members, so it is an ordinary class.
  */
 final class HudIndicatorOverlay {
     private HudIndicatorOverlay() {

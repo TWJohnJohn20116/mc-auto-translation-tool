@@ -11,6 +11,9 @@ requiredProperties.each { propertyName ->
 
 def gameVersion = project.ext.ornitheMinecraftVersion.toString()
 def sharedRoot = rootProject.file("platforms/fabric/1.0-1.8/shared/common")
+// Applied by 1.3.1-1.7.10 only. The 1.8-1.8.8 versions live under versions/ here but their
+// build.gradle applies platforms/fabric/1.8-1.12/shared.gradle, so nothing in this file - including
+// the family layer chosen below - takes effect for 1.8.x. Change the 1.8-1.12 tree for those.
 def playerFamily = (gameVersion.startsWith("1.0") || gameVersion.startsWith("1.1")
         || gameVersion.startsWith("1.2") || gameVersion.startsWith("1.3")
         || gameVersion.startsWith("1.4") || gameVersion.startsWith("1.5"))

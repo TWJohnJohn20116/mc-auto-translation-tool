@@ -10,6 +10,33 @@ public final class UiLimits {
     /** Longest custom prompt the settings screen accepts, in characters. */
     public static final int PROMPT_MAX_CHARS = 4096;
 
+    /**
+     * Longest keyword text the blocklist field accepts, in characters.
+     *
+     * <p>Eight screens each wrote the literal {@code 4096} here, which happened to equal
+     * {@link TranslationBlocklist#MAX_CONFIG_LENGTH}. Deriving it means raising the blocklist limit
+     * cannot leave the field behind.
+     */
+    public static final int KEYWORDS_MAX_CHARS = TranslationBlocklist.MAX_CONFIG_LENGTH;
+
+    /**
+     * Number of keywords that actually take effect, and the number the hint text must name: anything
+     * past this is discarded, so the screen has to say so instead of reporting a clean save.
+     */
+    public static final int KEYWORDS_MAX_ENTRIES = TranslationBlocklist.MAX_KEYWORDS;
+
+    /** Longest single keyword that still matches; longer entries are cut to this length. */
+    public static final int KEYWORD_MAX_CHARS = TranslationBlocklist.MAX_KEYWORD_LENGTH;
+
+    /** Longest endpoint URL the settings screen accepts, in characters. */
+    public static final int ENDPOINT_MAX_CHARS = 512;
+
+    /** Longest API key or secret the settings screen accepts, in characters. */
+    public static final int SECRET_MAX_CHARS = 512;
+
+    /** Longest model identifier the settings screen accepts, in characters. */
+    public static final int MODEL_ID_MAX_CHARS = 128;
+
     private UiLimits() {
     }
 }

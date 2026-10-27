@@ -1,5 +1,6 @@
 package org.universaltranslator.fabric;
 
+import org.universaltranslator.core.UiLimits;
 import java.util.Collections;
 import java.util.List;
 
@@ -24,8 +25,9 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
     private static final int FETCH = 3;
 
     private final UniversalTranslatorConfigScreen parent;
-    private final String initialEndpoint;
-    private final String initialModel;
+    private String initialEndpoint;
+    private String initialModel;
+    private String initialApiKey = "";
     private final boolean hasStoredKey;
     private TextRenderer renderer;
     private TextFieldWidget endpoint;
@@ -52,19 +54,26 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
 
     @Override
     public void init() {
+        // init() also runs on every resize (window drag, F11, GUI scale). Re-applying the
+        // constructor snapshot silently discarded whatever had been typed, and the API key field had
+        // no value at all - so a pasted key vanished on the first resize.
+        if (endpoint != null) { initialEndpoint = endpoint.getText(); }
+        if (model != null) { initialModel = model.getText(); }
+        if (apiKey != null) { initialApiKey = apiKey.getText(); }
         buttons.clear();
         renderer = OrnitheClientAccess.textRenderer();
         int fieldWidth = Math.max(180, Math.min(360, width - 20));
         int left = (width - fieldWidth) / 2;
         int top = Math.max(42, (height - 174) / 2);
         endpoint = new TextFieldWidget(renderer, left, top, fieldWidth, 20);
-        endpoint.setMaxLength(512);
+        endpoint.setMaxLength(UiLimits.ENDPOINT_MAX_CHARS);
         endpoint.setText(initialEndpoint);
         model = new TextFieldWidget(renderer, left, top + 36, fieldWidth, 20);
-        model.setMaxLength(128);
+        model.setMaxLength(UiLimits.MODEL_ID_MAX_CHARS);
         model.setText(initialModel);
         apiKey = new TextFieldWidget(renderer, left, top + 72, fieldWidth, 20);
-        apiKey.setMaxLength(512);
+        apiKey.setMaxLength(UiLimits.SECRET_MAX_CHARS);
+        apiKey.setText(initialApiKey);
         int gap = 8;
         int buttonWidth = (fieldWidth - gap) / 2;
         buttons.add(new ButtonWidget(SAVE, left, top + 108, buttonWidth, 20,

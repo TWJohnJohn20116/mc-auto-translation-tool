@@ -107,6 +107,12 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
         protected void sendChat(String message) {
             MinecraftClient client = MinecraftClient.getInstance();
             if (client.player != null) {
+                // 1.19-1.19.2 has no sender that signs for us: ClientPlayNetworkHandler exposes only
+                // sendChatMessage(String, MessageSignatureData) in these versions, so
+                // `getNetworkHandler().sendChatMessage(message)` does not compile ("cannot find
+                // symbol", CI run 40490088499). The signature therefore stays null and the message
+                // goes out unsigned, which a server with enforce-secure-profile drops without telling
+                // the player. Fixing it needs the 1.19.3+ API, i.e. a per-version implementation.
                 client.player.sendChatMessage(message, null);
             }
         }

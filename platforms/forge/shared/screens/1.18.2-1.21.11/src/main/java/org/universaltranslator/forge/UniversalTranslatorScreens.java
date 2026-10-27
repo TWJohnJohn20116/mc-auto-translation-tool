@@ -1,5 +1,6 @@
 package org.universaltranslator.forge;
 
+import org.universaltranslator.core.ModelListPaging;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
@@ -159,11 +160,11 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     private static final int HUD_DRAG_PREVIEW_HEIGHT = 48;
     private static final int HUD_DRAG_HANDLE_SIZE = 8;
     /** Height of one row in the engine tab's model picker overlay. */
-    private static final int MODEL_ROW_HEIGHT = 12;
+    private static final int MODEL_ROW_HEIGHT = ModelListPaging.ROW_HEIGHT;
     /** Y of the first model row; the picker title sits above it. */
-    private static final int MODEL_LIST_TOP = 46;
+    private static final int MODEL_LIST_TOP = ModelListPaging.LIST_TOP;
     /** Room kept under the model rows for the paging, back, and hint lines. */
-    private static final int MODEL_LIST_FOOTER_HEIGHT = 62;
+    private static final int MODEL_LIST_FOOTER_HEIGHT = ModelListPaging.FOOTER_HEIGHT;
     private static final String LIBRETRANSLATE_PROVIDER = "libretranslate";
     private static final String TRANSLATE_PATH = "/translate";
     private static final String LANGUAGES_PATH = "/languages";
@@ -281,7 +282,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                 () -> translateEnglishOnly = !translateEnglishOnly));
         blockedKeywords = addRenderableWidget(new EditBox(font, left, layout.contentRow(3),
                 layout.totalWidth, 20, translatable("screen.universal_translator.blocked_keywords")));
-        blockedKeywords.setMaxLength(4096);
+        blockedKeywords.setMaxLength(UiLimits.KEYWORDS_MAX_CHARS);
         blockedKeywords.setValue(blockedKeywordsValue);
         hint(blockedKeywords, translatable("screen.universal_translator.blocked_keywords_hint"));
 
@@ -307,7 +308,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                 .bounds(layout.right, engineRow(1), layout.buttonWidth, 20).build());
         endpoint = addRenderableWidget(new EditBox(font, left, engineRow(1), layout.totalWidth,
                 20, translatable("screen.universal_translator.endpoint")));
-        endpoint.setMaxLength(512);
+        endpoint.setMaxLength(UiLimits.ENDPOINT_MAX_CHARS);
         endpoint.setValue(endpointValue);
         fallbackButton = addRenderableWidget(button(left, engineRow(2), layout.totalWidth,
                 () -> apiFallback = !apiFallback));
@@ -430,7 +431,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         chatButton.setMessage(translatable("screen.universal_translator.option.chat", onOff(translateChat)));
         otherButton.setMessage(translatable("screen.universal_translator.option.other", onOff(translateOther)));
         providerButton.setMessage(translatable("screen.universal_translator.option.provider",
-                TranslationProviderCatalog.displayName(provider)));
+                TranslationProviderCatalog.displayName(provider, key -> tr(key))));
         String modelValue = llmModel == null || llmModel.trim().isEmpty()
                 ? tr("screen.universal_translator.engine.key_unset") : llmModel.trim();
         modelPickButton.setMessage(translatable("screen.universal_translator.engine.model", modelValue));
@@ -754,7 +755,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
             graphics.fill(x, y, x + list.buttonWidth, y + list.buttonHeight,
                     hovered ? 0xFF3B6178 : selected ? 0xFF28533D : 0xFF303844);
             graphics.centered(literal(
-                    SettingsSelectionList.displayName(openSelection, values[index])),
+                    SettingsSelectionList.displayName(openSelection, values[index], key -> tr(key))),
                     x + list.buttonWidth / 2, y + Math.max(1, (list.buttonHeight - 8) / 2),
                     selected ? 0xFF55FF88 : 0xFFFFFFFF);
         }
@@ -1071,7 +1072,11 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         Layout layout = layout();
         int blockHeight = layout.contentRowStep * 5 + 20 + 46;
         int available = layout.saveY - 6 - layout.contentTop;
-        return layout.contentTop + Math.max(0, (available - blockHeight) / 2);
+        // Centring used to clamp at contentTop, so on a short window the whole block - the privacy
+// hint included - ran below the Save row and Save painted over it. Let the block start above
+// the content area instead, but never over the tab bar.
+int centred = layout.contentTop + (available - blockHeight) / 2;
+return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
     }
 
     private int engineRow(int index) {
@@ -1235,6 +1240,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         graphics.centered(translatable("screen.universal_translator.llm.select_model",
                 fetchedModels.size()), width / 2, 20, 0xFFFFFFFF);
         int rows = modelRowsPerPage();
+        modelPage = ModelListPaging.clampPage(modelPage, fetchedModels.size(), rows);
         int first = modelPage * rows;
         for (int row = 0; row < rows && first + row < fetchedModels.size(); row++) {
             int rowY = MODEL_LIST_TOP + row * MODEL_ROW_HEIGHT;
@@ -1268,6 +1274,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
             return;
         }
         int rows = modelRowsPerPage();
+        modelPage = ModelListPaging.clampPage(modelPage, fetchedModels.size(), rows);
         int row = (int) ((mouseY - MODEL_LIST_TOP) / MODEL_ROW_HEIGHT);
         int index = modelPage * rows + row;
         if (row >= rows || index >= fetchedModels.size()) {
@@ -1695,15 +1702,15 @@ abstract class UniversalTranslatorLlmConfigScreenBase extends Screen {
         int top = Math.max(42, (height - 174) / 2);
         endpoint = addRenderableWidget(new EditBox(font, left, top, formWidth, 20,
                 translatable("screen.universal_translator.llm.endpoint")));
-        endpoint.setMaxLength(512);
+        endpoint.setMaxLength(UiLimits.ENDPOINT_MAX_CHARS);
         endpoint.setValue(initialEndpoint);
         model = addRenderableWidget(new EditBox(font, left, top + 36, formWidth, 20,
                 translatable("screen.universal_translator.llm.model")));
-        model.setMaxLength(128);
+        model.setMaxLength(UiLimits.MODEL_ID_MAX_CHARS);
         model.setValue(initialModel);
         apiKey = addRenderableWidget(new EditBox(font, left, top + 72, formWidth, 20,
                 translatable("screen.universal_translator.llm.api_key")));
-        apiKey.setMaxLength(512);
+        apiKey.setMaxLength(UiLimits.SECRET_MAX_CHARS);
         int gap = 8;
         int buttonWidth = (formWidth - gap) / 2;
         addRenderableWidget(ButtonSpec.of(translatable("screen.universal_translator.llm.save"),

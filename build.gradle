@@ -55,12 +55,27 @@ tasks.register("validateMixinConfigs") {
             }
 
             def relativeConfigPath = relativePath(config).replace('\\', '/')
+            // Fabric's 1.20 family is shared by 1.20.5 and 1.20.6, which are compiled for Java 21, so
+            // its config carries JAVA_21; the Forge 1.20.1 tree still tops out at 17.
             def maximumLevel = relativeConfigPath.contains("/1.16.5/") ? "JAVA_8" :
-                    (relativeConfigPath.contains("/1.18.2/") || relativeConfigPath.contains("/1.19.2/") || relativeConfigPath.contains("/1.20.1/")) ?
-                            "JAVA_17" : "JAVA_21"
+                    (relativeConfigPath.contains("/1.18.2/") || relativeConfigPath.contains("/1.19.2/")
+                            || relativeConfigPath.contains("/1.20.1/")) ?
+                            (relativeConfigPath.contains("/fabric/1.20/shared/family/1.20.1/") ? "JAVA_21" : "JAVA_17") :
+                            "JAVA_21"
             if (level != null && compatibilityLevels.indexOf(level) > compatibilityLevels.indexOf(maximumLevel)) {
                 throw new GradleException(
                         "Mixin compatibilityLevel '${level}' exceeds ${maximumLevel} for ${relativeConfigPath}"
+                )
+            }
+            // Lower bound: a config declaring less than the class file version its platforms are compiled
+            // to makes Mixin refuse the target classes at runtime ("class file version 61 not supported"),
+            // and that only shows up when someone starts the game. 1.17-1.18 is compiled for Java 17.
+            def minimumLevel = (relativeConfigPath.contains("/fabric/1.17-1.18/")
+                    || relativeConfigPath.contains("/fabric/1.20/")) ? "JAVA_17" : null
+            if (minimumLevel != null && level != null
+                    && compatibilityLevels.indexOf(level) < compatibilityLevels.indexOf(minimumLevel)) {
+                throw new GradleException(
+                        "Mixin compatibilityLevel '${level}' is lower than ${minimumLevel} for ${relativeConfigPath}"
                 )
             }
             if ((relativeConfigPath.contains("/forge/modern/1.16.5/") ||

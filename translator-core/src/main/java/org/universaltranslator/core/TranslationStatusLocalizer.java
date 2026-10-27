@@ -49,7 +49,7 @@ public final class TranslationStatusLocalizer {
         }
         if (value.startsWith("离线翻译失败：")) {
             return translator.translate("status.universal_translator.offline_failed",
-                    value.substring("离线翻译失败：".length()));
+                    localizeOfflineReason(value.substring("离线翻译失败：".length()), translator));
         }
         if (value.startsWith("正在下载离线引擎（约 ") && value.endsWith(" MB）")) {
             return translator.translate("status.universal_translator.engine_downloading_size",
@@ -80,5 +80,33 @@ public final class TranslationStatusLocalizer {
 
     private static String normalizeMetrics(String value) {
         return value.replace('（', '(').replace('）', ')').trim();
+    }
+
+    /**
+     * Localizes the reason the offline engine reported.
+     *
+     * <p>{@code LlamaCppOfflineProvider} throws its reasons as Chinese literals, so the
+     * {@code offline_failed} message used to splice raw Chinese into an English or Japanese UI. The
+     * reasons it can produce are mapped here; anything else is passed through untouched, because it may
+     * be an operating-system message the player has to read verbatim.
+     */
+    private static String localizeOfflineReason(String reason, UiTranslator translator) {
+        String trimmed = reason == null ? "" : reason.trim();
+        if ("离线模型未安装，且自动下载已关闭".equals(trimmed)) {
+            return translator.translate("status.universal_translator.offline_model_missing");
+        }
+        if ("离线引擎未安装，且自动下载已关闭".equals(trimmed)) {
+            return translator.translate("status.universal_translator.offline_engine_missing");
+        }
+        if ("离线模型启动已被取消".equals(trimmed)) {
+            return translator.translate("status.universal_translator.offline_cancelled");
+        }
+        if ("离线模型正在启动中".equals(trimmed)) {
+            return translator.translate("status.universal_translator.offline_starting_busy");
+        }
+        if ("离线模型已停止".equals(trimmed)) {
+            return translator.translate("status.universal_translator.offline_stopped");
+        }
+        return reason;
     }
 }

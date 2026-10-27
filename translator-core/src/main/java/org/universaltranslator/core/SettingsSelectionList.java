@@ -1,5 +1,7 @@
 package org.universaltranslator.core;
 
+import java.util.function.Function;
+
 /** Shared values and compact two-column geometry for in-place settings lists. */
 public final class SettingsSelectionList {
     public enum Kind {
@@ -25,6 +27,19 @@ public final class SettingsSelectionList {
     public static String displayName(Kind kind, String value) {
         return kind == Kind.PROVIDER
                 ? TranslationProviderCatalog.displayName(value)
+                : TargetLanguage.displayName(value);
+    }
+
+    /**
+     * Localized label for a selection list row.
+     *
+     * <p>Provider rows go through {@code localizer} (the screen's {@code tr} adapter) so the list shows
+     * the service name in the player's language; target languages keep their self-name, which is a
+     * deliberate exception documented on {@link TargetLanguage#displayName(String)}.
+     */
+    public static String displayName(Kind kind, String value, Function<String, String> localizer) {
+        return kind == Kind.PROVIDER
+                ? TranslationProviderCatalog.displayName(value, localizer)
                 : TargetLanguage.displayName(value);
     }
 

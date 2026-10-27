@@ -1,5 +1,7 @@
 package org.universaltranslator.fabric.mixin;
 
+import org.universaltranslator.core.HotkeyKeys;
+
 import net.minecraft.client.Minecraft;
 import org.lwjgl.input.Keyboard;
 import org.spongepowered.asm.mixin.Mixin;
@@ -22,8 +24,12 @@ abstract class MinecraftMixin {
         // Drop any render context left latched by a render method that threw before its RETURN
         // injection could pop it (Mixin 0.8.x has no exception exit injection point).
         TranslationRenderContext.reset();
-        boolean u = Keyboard.isKeyDown(Keyboard.KEY_U);
-        boolean f8 = Keyboard.isKeyDown(Keyboard.KEY_F8);
+        // The hotkeys come from universal-translator.properties (settings-key / toggle-key): this
+// generation has no key-binding API, so they cannot live in the vanilla controls screen.
+int settingsCode = HotkeyKeys.settingsLwjgl2Code();
+int toggleCode = HotkeyKeys.toggleLwjgl2Code();
+boolean u = settingsCode > 0 && Keyboard.isKeyDown(settingsCode);
+        boolean f8 = toggleCode > 0 && Keyboard.isKeyDown(toggleCode);
         if (u && !universalTranslator$uHeld) {
             UniversalTranslatorFabricClient.openSettingsFromKey();
         }

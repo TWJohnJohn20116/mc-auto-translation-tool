@@ -1,5 +1,6 @@
 package org.universaltranslator.fabric;
 
+import org.universaltranslator.core.UiLimits;
 import java.util.Collections;
 import java.util.List;
 
@@ -22,8 +23,9 @@ final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorScreen
     private static final int ESCAPE_KEY = 256;
 
     private final UniversalTranslatorSettingsScreen parent;
-    private final String initialEndpoint;
-    private final String initialModel;
+    private String initialEndpoint;
+    private String initialModel;
+    private String initialApiKey = "";
     private final boolean hasStoredKey;
     private TextFieldWidget endpoint;
     private TextFieldWidget model;
@@ -50,20 +52,27 @@ final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorScreen
 
     @Override
     protected void init() {
-        int width = Math.max(180, Math.min(360, this.width - 20));
+        // init() also runs on every resize (window drag, F11, GUI scale). Re-applying the
+        // constructor snapshot silently discarded whatever had been typed, and the API key field had
+        // no value at all - so a pasted key vanished on the first resize.
+        if (endpoint != null) { initialEndpoint = endpoint.getText(); }
+        if (model != null) { initialModel = model.getText(); }
+        if (apiKey != null) { initialApiKey = apiKey.getText(); }
+int width = Math.max(180, Math.min(360, this.width - 20));
         int left = (this.width - width) / 2;
         int top = Math.max(42, (this.height - 174) / 2);
         endpoint = addDrawableChild(new TextFieldWidget(
                 this.textRenderer, left, top, width, 20, new TranslatableText("screen.universal_translator.llm.endpoint")));
-        endpoint.setMaxLength(512);
+        endpoint.setMaxLength(UiLimits.ENDPOINT_MAX_CHARS);
         endpoint.setText(initialEndpoint);
         model = addDrawableChild(new TextFieldWidget(
                 this.textRenderer, left, top + 36, width, 20, new TranslatableText("screen.universal_translator.llm.model")));
-        model.setMaxLength(128);
+        model.setMaxLength(UiLimits.MODEL_ID_MAX_CHARS);
         model.setText(initialModel);
         apiKey = addDrawableChild(new TextFieldWidget(
                 this.textRenderer, left, top + 72, width, 20, new TranslatableText("screen.universal_translator.llm.api_key")));
-        apiKey.setMaxLength(512);
+        apiKey.setMaxLength(UiLimits.SECRET_MAX_CHARS);
+        apiKey.setText(initialApiKey);
         int gap = 8;
         int buttonWidth = (width - gap) / 2;
         addDrawableChild(ButtonWidget.builder(new TranslatableText("screen.universal_translator.llm.save"), button -> save())

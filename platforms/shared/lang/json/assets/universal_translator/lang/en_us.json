@@ -7,12 +7,8 @@
   "screen.universal_translator.selection.target_language": "Select target language",
   "screen.universal_translator.selection.outgoing_language": "Select outgoing target language",
   "screen.universal_translator.save": "Save and Apply",
-  "screen.universal_translator.target_language": "Target language",
   "screen.universal_translator.endpoint": "LibreTranslate endpoint",
-  "screen.universal_translator.outgoing_target_language": "Outgoing target language",
-  "screen.universal_translator.target_language_hint": "Target language (for example, en or zh-TW)",
   "screen.universal_translator.endpoint_hint": "LibreTranslate /translate endpoint (API/fallback only)",
-  "screen.universal_translator.outgoing_target_hint": "Outgoing target (for example, en)",
   "screen.universal_translator.option.automatic": "Automatic translation: %s",
   "screen.universal_translator.option.chat": "Chat content: %s",
   "screen.universal_translator.option.other": "Other/mod/modpack content: %s",
@@ -35,8 +31,6 @@
   "screen.universal_translator.option.hud_content": "HUD content: %s",
   "screen.universal_translator.option.hud_visibility": "HUD show: %s",
   "screen.universal_translator.option.hud_drag_hint": "Drag the square to move the indicator",
-  "value.universal_translator.hud_drag.ready": "Drag me",
-  "value.universal_translator.hud_drag.dragging": "Moving",
   "screen.universal_translator.llm.title": "LLM API Settings",
   "screen.universal_translator.llm.endpoint": "API endpoint",
   "screen.universal_translator.llm.model": "Model name",
@@ -104,8 +98,6 @@
   "value.universal_translator.hud_visibility.always": "Always",
   "value.universal_translator.hud_visibility.while_translating": "While translating",
   "value.universal_translator.hud_visibility.when_disabled": "When disabled",
-  "error.universal_translator.target_required": "Target language cannot be empty",
-  "error.universal_translator.outgoing_target_required": "Outgoing target language cannot be empty",
   "error.universal_translator.llm_required": "API endpoint and model name cannot be empty",
   "error.universal_translator.tencent_credentials": "Add Tencent SecretId and SecretKey to the local configuration file first",
   "status.universal_translator.saved": "Settings saved",
@@ -125,13 +117,16 @@
   "status.universal_translator.fallback_failed": "Primary service and API fallback both failed",
   "status.universal_translator.translation_failed": "Translation failed: %s",
   "status.universal_translator.offline_failed": "Offline translation failed: %s",
+  "status.universal_translator.offline_model_missing": "The offline model is not installed and automatic download is off",
+  "status.universal_translator.offline_engine_missing": "The offline engine is not installed and automatic download is off",
+  "status.universal_translator.offline_cancelled": "Offline model startup was cancelled",
+  "status.universal_translator.offline_starting_busy": "The offline model is still starting",
   "status.universal_translator.engine_downloading_size": "Downloading offline engine (about %s MB)",
   "status.universal_translator.model_downloading_size": "Downloading offline model (China mirror first, about %s MB)",
   "status.universal_translator.engine_downloading_progress": "Downloading offline engine: %s",
   "status.universal_translator.model_downloading_progress": "Downloading offline model: %s",
   "message.universal_translator.join_hint": "§b[MC Auto Translation Tool] §fPress U to open settings; press F8 to toggle translation.",
   "message.universal_translator.settings_open_failed": "MC Auto Translation Tool: Could not open settings",
-  "message.universal_translator.settings_reloaded": "MC Auto Translation Tool: Settings reloaded from %s",
   "message.universal_translator.toggle": "MC Auto Translation Tool: %s",
   "message.universal_translator.toggle_failed": "MC Auto Translation Tool: Toggle failed",
   "message.universal_translator.runtime_failed": "§c[MC Auto Translation Tool] %s",
@@ -144,12 +139,9 @@
   "screen.universal_translator.option.vanilla": "Minecraft UI: %s",
   "screen.universal_translator.option.outgoing_target": "Outgoing target: %s",
   "screen.universal_translator.home.open": "Translation settings",
-  "screen.universal_translator.home.enabled": "Translation: %s",
-  "screen.universal_translator.home.vanilla": "Minecraft UI: %s",
-  "screen.universal_translator.home.target": "Target: %s",
   "screen.universal_translator.option.player_names": "Player names: %s",
   "screen.universal_translator.blocked_keywords": "Blocked keywords",
-  "screen.universal_translator.blocked_keywords_hint": "Blocked keywords (comma-separated)",
+  "screen.universal_translator.blocked_keywords_hint": "Blocked keywords (comma-separated, up to 100 entries of 128 characters each)",
   "screen.universal_translator.tab.general": "General",
   "screen.universal_translator.tab.scopes": "Scopes",
   "screen.universal_translator.tab.engine": "Engine",
@@ -211,4 +203,25 @@
   ,"screen.universal_translator.stats.reason.network": "network"
   ,"screen.universal_translator.stats.reason.invalid-output": "invalid output"
   ,"screen.universal_translator.stats.reason.other": "other"
+  ,"provider.universal_translator.unknown": "Unknown"
+  ,"provider.universal_translator.offline": "Offline"
+  ,"provider.universal_translator.libretranslate": "LibreTranslate"
+  ,"provider.universal_translator.baidu": "Baidu Translate"
+  ,"provider.universal_translator.tencent_tmt": "Tencent TMT"
+  ,"provider.universal_translator.tencent_hunyuan": "Tencent Hunyuan"
+  ,"provider.universal_translator.aliyun_mt": "Alibaba Cloud MT"
+  ,"provider.universal_translator.youdao": "Youdao"
+  ,"provider.universal_translator.volcengine_mt": "Volcengine MT"
+  ,"provider.universal_translator.iflytek_niutrans": "iFlytek NiuTrans"
+  ,"provider.universal_translator.huawei_cloud_mt": "Huawei Cloud MT"
+  ,"provider.universal_translator.deepseek": "DeepSeek"
+  ,"provider.universal_translator.dashscope": "Alibaba Qwen"
+  ,"provider.universal_translator.volcengine_ark": "Volcengine Ark"
+  ,"provider.universal_translator.zhipu": "Zhipu GLM"
+  ,"provider.universal_translator.openai_compatible": "OpenAI Compatible"
+  ,"provider.universal_translator.azure_openai": "Azure OpenAI"
+  ,"provider.universal_translator.deepl": "DeepL"
+  ,"provider.universal_translator.gemini": "Google Gemini"
+  ,"provider.universal_translator.claude": "Anthropic Claude"
+  ,"provider.universal_translator.custom_http_json": "Custom HTTP JSON"
 }

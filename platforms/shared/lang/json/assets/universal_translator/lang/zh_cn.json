@@ -7,12 +7,8 @@
   "screen.universal_translator.selection.target_language": "选择翻译目标语言",
   "screen.universal_translator.selection.outgoing_language": "选择发送目标语言",
   "screen.universal_translator.save": "保存并应用",
-  "screen.universal_translator.target_language": "目标语言",
   "screen.universal_translator.endpoint": "LibreTranslate 地址",
-  "screen.universal_translator.outgoing_target_language": "发送目标语言",
-  "screen.universal_translator.target_language_hint": "目标语言（例如 zh-CN）",
   "screen.universal_translator.endpoint_hint": "LibreTranslate /translate 地址（仅 API 模式/回退使用）",
-  "screen.universal_translator.outgoing_target_hint": "发送目标语言（例如 en）",
   "screen.universal_translator.option.automatic": "自动翻译：%s",
   "screen.universal_translator.option.chat": "聊天内容：%s",
   "screen.universal_translator.option.other": "其他界面/模组/整合包：%s",
@@ -35,8 +31,6 @@
   "screen.universal_translator.option.hud_content": "HUD 内容：%s",
   "screen.universal_translator.option.hud_visibility": "HUD 显示时机：%s",
   "screen.universal_translator.option.hud_drag_hint": "拖动方块来移动指示器",
-  "value.universal_translator.hud_drag.ready": "拖动我",
-  "value.universal_translator.hud_drag.dragging": "移动中",
   "screen.universal_translator.llm.title": "LLM API 设置",
   "screen.universal_translator.llm.endpoint": "API 地址",
   "screen.universal_translator.llm.model": "模型名称",
@@ -104,8 +98,6 @@
   "value.universal_translator.hud_visibility.always": "总是",
   "value.universal_translator.hud_visibility.while_translating": "翻译时",
   "value.universal_translator.hud_visibility.when_disabled": "关闭时",
-  "error.universal_translator.target_required": "目标语言不能为空",
-  "error.universal_translator.outgoing_target_required": "发送目标语言不能为空",
   "error.universal_translator.llm_required": "API 地址和模型名称不能为空",
   "error.universal_translator.tencent_credentials": "请先在本地配置文件填写腾讯 SecretId 和 SecretKey",
   "status.universal_translator.saved": "设置已保存",
@@ -125,13 +117,16 @@
   "status.universal_translator.fallback_failed": "主翻译服务和 API 回退均失败",
   "status.universal_translator.translation_failed": "翻译失败：%s",
   "status.universal_translator.offline_failed": "离线翻译失败：%s",
+  "status.universal_translator.offline_model_missing": "离线模型未安装，且自动下载已关闭",
+  "status.universal_translator.offline_engine_missing": "离线引擎未安装，且自动下载已关闭",
+  "status.universal_translator.offline_cancelled": "离线模型启动已被取消",
+  "status.universal_translator.offline_starting_busy": "离线模型正在启动中",
   "status.universal_translator.engine_downloading_size": "正在下载离线引擎（约 %s MB）",
   "status.universal_translator.model_downloading_size": "正在下载离线模型（国内源优先，约 %s MB）",
   "status.universal_translator.engine_downloading_progress": "正在下载离线引擎：%s",
   "status.universal_translator.model_downloading_progress": "正在下载离线模型：%s",
   "message.universal_translator.join_hint": "§b[MC 自动翻译工具] §f按 U 打开设置；按 F8 一键开关翻译。",
   "message.universal_translator.settings_open_failed": "MC 自动翻译工具：无法打开设置",
-  "message.universal_translator.settings_reloaded": "MC 自动翻译工具：已从 %s 重新载入设置",
   "message.universal_translator.toggle": "MC 自动翻译工具：%s",
   "message.universal_translator.toggle_failed": "MC 自动翻译工具：切换失败",
   "message.universal_translator.runtime_failed": "§c[MC 自动翻译工具] %s",
@@ -144,12 +139,9 @@
   "screen.universal_translator.option.vanilla": "原版界面翻译：%s",
   "screen.universal_translator.option.outgoing_target": "发送目标语言：%s",
   "screen.universal_translator.home.open": "翻译设置",
-  "screen.universal_translator.home.enabled": "翻译总开关：%s",
-  "screen.universal_translator.home.vanilla": "原版界面：%s",
-  "screen.universal_translator.home.target": "目标语言：%s",
   "screen.universal_translator.option.player_names": "玩家名称翻译：%s",
   "screen.universal_translator.blocked_keywords": "翻译屏蔽关键词",
-  "screen.universal_translator.blocked_keywords_hint": "屏蔽关键词（逗号分隔）",
+  "screen.universal_translator.blocked_keywords_hint": "屏蔽关键词（逗号分隔，最多 100 条、每条 128 字）",
   "screen.universal_translator.tab.general": "常规",
   "screen.universal_translator.tab.scopes": "范围",
   "screen.universal_translator.tab.engine": "引擎",
@@ -211,4 +203,25 @@
   ,"screen.universal_translator.stats.reason.network": "网络"
   ,"screen.universal_translator.stats.reason.invalid-output": "输出无效"
   ,"screen.universal_translator.stats.reason.other": "其他"
+  ,"provider.universal_translator.unknown": "未知"
+  ,"provider.universal_translator.offline": "本地离线引擎"
+  ,"provider.universal_translator.libretranslate": "LibreTranslate"
+  ,"provider.universal_translator.baidu": "百度翻译"
+  ,"provider.universal_translator.tencent_tmt": "腾讯机器翻译"
+  ,"provider.universal_translator.tencent_hunyuan": "腾讯混元"
+  ,"provider.universal_translator.aliyun_mt": "阿里云机器翻译"
+  ,"provider.universal_translator.youdao": "有道翻译"
+  ,"provider.universal_translator.volcengine_mt": "火山引擎机器翻译"
+  ,"provider.universal_translator.iflytek_niutrans": "讯飞机器翻译"
+  ,"provider.universal_translator.huawei_cloud_mt": "华为云机器翻译"
+  ,"provider.universal_translator.deepseek": "DeepSeek"
+  ,"provider.universal_translator.dashscope": "阿里云通义千问"
+  ,"provider.universal_translator.volcengine_ark": "火山方舟"
+  ,"provider.universal_translator.zhipu": "智谱 GLM"
+  ,"provider.universal_translator.openai_compatible": "OpenAI 兼容接口"
+  ,"provider.universal_translator.azure_openai": "Azure OpenAI"
+  ,"provider.universal_translator.deepl": "DeepL"
+  ,"provider.universal_translator.gemini": "Google Gemini"
+  ,"provider.universal_translator.claude": "Anthropic Claude"
+  ,"provider.universal_translator.custom_http_json": "自定义 HTTP JSON"
 }

@@ -11,6 +11,7 @@ import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TranslationQuality;
 import org.universaltranslator.core.TranslationStats;
 import org.universaltranslator.core.DebugLog;
+import org.universaltranslator.core.HotkeyKeys;
 import org.universaltranslator.core.TextKind;
 import org.universaltranslator.core.LocalConfigSecurity;
 import org.universaltranslator.core.OfflineModel;
@@ -114,6 +115,10 @@ final class FabricConfig {
                 properties.getProperty("translate-player-names", "false"));
         this.animatedUi = Boolean.parseBoolean(properties.getProperty("animated-ui", "true"));
         this.blockedKeywords = boundedKeywords(properties.getProperty("blocked-keywords", ""));
+        // Fabric 1.0-1.13.2 has no key-binding API (the 1.13 tree does not even depend on Fabric
+        // API), so the hotkeys are read from this file instead of the vanilla controls screen.
+        HotkeyKeys.install(properties.getProperty("settings-key", "U"),
+                properties.getProperty("toggle-key", "F8"));
         this.targetLanguage = properties.getProperty("target-language", TargetLanguage.SIMPLIFIED_CHINESE).trim();
         this.outgoingTargetLanguage = properties.getProperty(
                 "outgoing-target-language", "en").trim();
@@ -268,6 +273,8 @@ final class FabricConfig {
         properties.setProperty("stream-outgoing", Boolean.toString(streamOutgoing));
         properties.setProperty("translate-player-names", Boolean.toString(translatePlayerNames));
         properties.setProperty("blocked-keywords", boundedKeywords(blockedKeywords));
+        properties.setProperty("settings-key", HotkeyKeys.settingsName());
+        properties.setProperty("toggle-key", HotkeyKeys.toggleName());
         properties.setProperty("target-language", targetLanguage.trim());
         properties.setProperty("outgoing-target-language", outgoingTargetLanguage.trim());
         properties.setProperty("display-mode", displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED

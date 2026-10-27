@@ -1,5 +1,8 @@
 package org.universaltranslator.core;
 
+import java.util.Locale;
+import java.util.function.Function;
+
 /** Stable provider IDs shared by every Minecraft/loader configuration screen. */
 public final class TranslationProviderCatalog {
     private static final String[] PROVIDERS = {
@@ -64,6 +67,44 @@ public final class TranslationProviderCatalog {
         if ("claude".equalsIgnoreCase(provider)) return "Anthropic Claude";
         if ("custom-http-json".equalsIgnoreCase(provider)) return "Custom HTTP JSON";
         return provider;
+    }
+
+    /**
+     * Language key holding this provider's display name.
+     *
+     * <p>{@link #displayName(String)} returned an English literal, so "Tencent Hunyuan" and "Anthropic
+     * Claude" appeared in Chinese and Japanese interfaces too — the only untranslated block left in the
+     * settings screen. Keys are derived from the id so a new provider needs one language entry, not a
+     * branch in a screen.
+     */
+    public static String displayNameKey(String provider) {
+        String id = provider == null ? "" : provider.trim().toLowerCase(Locale.ROOT);
+        if (id.isEmpty()) {
+            return "provider.universal_translator.unknown";
+        }
+        return "provider.universal_translator." + id.replace('-', '_');
+    }
+
+    /**
+     * Display name localized through {@code localizer} (the screen's {@code tr} adapter).
+     *
+     * <p>Falls back to {@link #displayName(String)} when the language file has no entry, which happens
+     * for an unknown id or a language file older than the provider — the id is still shown instead of a
+     * raw key like {@code provider.universal_translator.foo}.
+     */
+    public static String displayName(String provider, Function<String, String> localizer) {
+        String english = displayName(provider);
+        if (localizer == null) {
+            return english;
+        }
+        String key = displayNameKey(provider);
+        String localized;
+        try {
+            localized = localizer.apply(key);
+        } catch (RuntimeException error) {
+            return english;
+        }
+        return localized == null || localized.isEmpty() || localized.equals(key) ? english : localized;
     }
 
     /**
