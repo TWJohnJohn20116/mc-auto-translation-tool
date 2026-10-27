@@ -1,5 +1,6 @@
 package org.universaltranslator.fabric;
 
+import org.universaltranslator.core.UiLimits;
 import java.util.Collections;
 import java.util.List;
 
@@ -53,15 +54,15 @@ final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorScreen
         int top = Math.max(42, (this.height - 174) / 2);
         endpoint = addDrawableChild(new TextFieldWidget(
                 this.textRenderer, left, top, width, 20, Text.translatable("screen.universal_translator.llm.endpoint")));
-        endpoint.setMaxLength(512);
+        endpoint.setMaxLength(UiLimits.ENDPOINT_MAX_CHARS);
         endpoint.setText(initialEndpoint);
         model = addDrawableChild(new TextFieldWidget(
                 this.textRenderer, left, top + 36, width, 20, Text.translatable("screen.universal_translator.llm.model")));
-        model.setMaxLength(128);
+        model.setMaxLength(UiLimits.MODEL_ID_MAX_CHARS);
         model.setText(initialModel);
         apiKey = addDrawableChild(new TextFieldWidget(
                 this.textRenderer, left, top + 72, width, 20, Text.translatable("screen.universal_translator.llm.api_key")));
-        apiKey.setMaxLength(512);
+        apiKey.setMaxLength(UiLimits.SECRET_MAX_CHARS);
         int gap = 8;
         int buttonWidth = (width - gap) / 2;
         addDrawableChild(of(Text.translatable("screen.universal_translator.llm.save"), button -> save())

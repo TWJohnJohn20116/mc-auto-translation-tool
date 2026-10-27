@@ -1,5 +1,6 @@
 package org.universaltranslator.fabric;
 
+import org.universaltranslator.core.UiLimits;
 import java.util.Collections;
 import java.util.List;
 
@@ -59,13 +60,13 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
         int left = (width - fieldWidth) / 2;
         int top = Math.max(42, (height - 174) / 2);
         endpoint = new TextFieldWidget(10, renderer, left, top, fieldWidth, 20);
-        endpoint.setMaxLength(512);
+        endpoint.setMaxLength(UiLimits.ENDPOINT_MAX_CHARS);
         endpoint.setText(initialEndpoint);
         model = new TextFieldWidget(11, renderer, left, top + 36, fieldWidth, 20);
-        model.setMaxLength(128);
+        model.setMaxLength(UiLimits.MODEL_ID_MAX_CHARS);
         model.setText(initialModel);
         apiKey = new TextFieldWidget(12, renderer, left, top + 72, fieldWidth, 20);
-        apiKey.setMaxLength(512);
+        apiKey.setMaxLength(UiLimits.SECRET_MAX_CHARS);
         int gap = 8;
         int buttonWidth = (fieldWidth - gap) / 2;
         buttons.add(new ButtonWidget(SAVE, left, top + 108, buttonWidth, 20,

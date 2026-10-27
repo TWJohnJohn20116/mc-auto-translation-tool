@@ -303,7 +303,7 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
         playerNamesButton = new ButtonWidget(PLAYER_NAMES, right, layout.contentRow(1), buttonWidth, 20, "");
         mixedTextButton = new ButtonWidget(MIXED_TEXT, left, layout.contentRow(2), totalWidth, 20, "");
         blockedKeywords = textField(22, renderer, left, layout.contentRow(3), totalWidth, 20);
-        blockedKeywords.setMaxLength(4096);
+        blockedKeywords.setMaxLength(UiLimits.KEYWORDS_MAX_CHARS);
         blockedKeywords.setText(blockedKeywordsValue);
 
         buttons.add(chatButton);
@@ -328,7 +328,7 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
         testConnectionButton = new ButtonWidget(TEST_CONNECTION, right, engineRow(2), buttonWidth, 20, "");
         checkSettingsButton = new ButtonWidget(CHECK_SETTINGS, left, engineRow(2), totalWidth, 20, "");
         endpoint = textField(21, renderer, left, engineRow(1), totalWidth, 20);
-        endpoint.setMaxLength(512);
+        endpoint.setMaxLength(UiLimits.ENDPOINT_MAX_CHARS);
         endpoint.setText(endpointValue);
 
         buttons.add(providerButton);
@@ -1249,7 +1249,7 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
             fill(x, y, x + list.buttonWidth, y + list.buttonHeight,
                     hovered ? 0xFF3B6178 : selected ? 0xFF28533D : 0xFF303844);
             drawCenteredString(renderer,
-                    SettingsSelectionList.displayName(openSelection, values[index]),
+                    SettingsSelectionList.displayName(openSelection, values[index], key -> tr(key)),
                     x + list.buttonWidth / 2, y + Math.max(1, (list.buttonHeight - 8) / 2),
                     selected ? 0xFF55FF88 : 0xFFFFFFFF);
         }
@@ -1517,7 +1517,7 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
     }
 
     private String providerLabel() {
-        return TranslationProviderCatalog.displayName(provider);
+        return TranslationProviderCatalog.displayName(provider, key -> tr(key));
     }
 
     private void loadLlmSettings(String selectedProvider) {

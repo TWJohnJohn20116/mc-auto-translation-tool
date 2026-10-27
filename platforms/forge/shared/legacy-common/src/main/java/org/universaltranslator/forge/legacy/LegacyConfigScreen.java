@@ -1249,7 +1249,7 @@ final class LegacyConfigScreen extends GuiScreen {
             drawRect(x, y, x + list.buttonWidth, y + list.buttonHeight,
                     hovered ? 0xFF3B6178 : selected ? 0xFF28533D : 0xFF303844);
             drawCenteredString(renderer,
-                    SettingsSelectionList.displayName(openSelection, values[index]),
+                    SettingsSelectionList.displayName(openSelection, values[index], key -> tr(key)),
                     x + list.buttonWidth / 2, y + Math.max(1, (list.buttonHeight - 8) / 2),
                     selected ? 0xFF55FF88 : 0xFFFFFFFF);
         }
@@ -1310,7 +1310,7 @@ final class LegacyConfigScreen extends GuiScreen {
     }
 
     private String providerLabel() {
-        return TranslationProviderCatalog.displayName(provider);
+        return TranslationProviderCatalog.displayName(provider, key -> tr(key));
     }
 
     /**

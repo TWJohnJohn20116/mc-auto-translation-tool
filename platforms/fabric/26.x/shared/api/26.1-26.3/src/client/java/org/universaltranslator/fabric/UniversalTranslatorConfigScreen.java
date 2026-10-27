@@ -302,7 +302,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         blockedKeywords = addRenderableWidget(new EditBox(
                 this.font, left, layout.contentRow(3), layout.totalWidth, 20,
                 Component.translatable("screen.universal_translator.blocked_keywords")));
-        blockedKeywords.setMaxLength(4096);
+        blockedKeywords.setMaxLength(UiLimits.KEYWORDS_MAX_CHARS);
         blockedKeywords.setValue(blockedKeywordsValue);
         blockedKeywords.setHint(Component.translatable(
                 "screen.universal_translator.blocked_keywords_hint"));
@@ -359,7 +359,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         endpoint = addRenderableWidget(new EditBox(
                 this.font, left, engineRow(1), layout.totalWidth, 20,
                 Component.translatable("screen.universal_translator.endpoint")));
-        endpoint.setMaxLength(512);
+        endpoint.setMaxLength(UiLimits.ENDPOINT_MAX_CHARS);
         endpoint.setValue(endpointValue);
 
         // Quality and the custom system prompt are engine settings, so they belong on this tab
@@ -1079,7 +1079,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
             graphics.fill(x, y, x + list.buttonWidth, y + list.buttonHeight,
                     hovered ? 0xFF3B6178 : selected ? 0xFF28533D : 0xFF303844);
             graphics.centeredText(font,
-                    Component.literal(SettingsSelectionList.displayName(openSelection, values[index])),
+                    Component.literal(SettingsSelectionList.displayName(openSelection, values[index], key -> tr(key))),
                     x + list.buttonWidth / 2, y + Math.max(1, (list.buttonHeight - 8) / 2),
                     selected ? 0xFF55FF88 : 0xFFFFFFFF);
         }
@@ -1364,7 +1364,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
     }
 
     private Component providerLabel() {
-        return Component.translatable(TranslationProviderCatalog.displayName(provider));
+        return Component.translatable(TranslationProviderCatalog.displayName(provider, key -> tr(key)));
     }
 
     private void loadLlmSettings(String selectedProvider) {

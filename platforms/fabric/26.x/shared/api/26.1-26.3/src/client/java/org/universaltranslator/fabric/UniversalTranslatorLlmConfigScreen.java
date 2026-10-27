@@ -1,5 +1,6 @@
 package org.universaltranslator.fabric;
 
+import org.universaltranslator.core.UiLimits;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
@@ -54,15 +55,15 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
         int top = Math.max(42, (this.height - 174) / 2);
         endpoint = addRenderableWidget(new EditBox(
                 this.font, left, top, formWidth, 20, Component.translatable("screen.universal_translator.llm.endpoint")));
-        endpoint.setMaxLength(512);
+        endpoint.setMaxLength(UiLimits.ENDPOINT_MAX_CHARS);
         endpoint.setValue(initialEndpoint);
         model = addRenderableWidget(new EditBox(
                 this.font, left, top + 36, formWidth, 20, Component.translatable("screen.universal_translator.llm.model")));
-        model.setMaxLength(128);
+        model.setMaxLength(UiLimits.MODEL_ID_MAX_CHARS);
         model.setValue(initialModel);
         apiKey = addRenderableWidget(new EditBox(
                 this.font, left, top + 72, formWidth, 20, Component.translatable("screen.universal_translator.llm.api_key")));
-        apiKey.setMaxLength(512);
+        apiKey.setMaxLength(UiLimits.SECRET_MAX_CHARS);
         int gap = 8;
         int buttonWidth = (formWidth - gap) / 2;
         addRenderableWidget(Button.builder(Component.translatable("screen.universal_translator.llm.save"), button -> save())

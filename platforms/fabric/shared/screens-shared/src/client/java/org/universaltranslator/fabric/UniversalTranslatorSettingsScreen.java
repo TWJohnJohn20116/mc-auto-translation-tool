@@ -350,7 +350,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
 
         this.blockedKeywords = addSettingField(newTextField(left, layout.contentRow(3), layout.totalWidth, 20,
                 tr("screen.universal_translator.blocked_keywords")));
-        this.blockedKeywords.setMaxLength(4096);
+        this.blockedKeywords.setMaxLength(UiLimits.KEYWORDS_MAX_CHARS);
         this.blockedKeywords.setText(blockedKeywordsValue);
         this.blockedKeywords.setSuggestion(tr("screen.universal_translator.blocked_keywords_hint"));
 
@@ -405,7 +405,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
 
         this.endpoint = addSettingField(newTextField(left, engineRow(1), layout.totalWidth, 20,
                 tr("screen.universal_translator.endpoint")));
-        this.endpoint.setMaxLength(512);
+        this.endpoint.setMaxLength(UiLimits.ENDPOINT_MAX_CHARS);
         this.endpoint.setText(endpointValue);
 
         // Quality and the custom system prompt are engine settings, so they belong on this tab
@@ -1075,7 +1075,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
             fillRect(canvas, x, y, x + list.buttonWidth, y + list.buttonHeight,
                     hovered ? 0xFF3B6178 : selected ? 0xFF28533D : 0xFF303844);
             drawCentered(canvas, textRenderer(),
-                    lit(SettingsSelectionList.displayName(openSelection, values[index])),
+                    lit(SettingsSelectionList.displayName(openSelection, values[index], key -> tr(key))),
                     x + list.buttonWidth / 2, y + Math.max(1, (list.buttonHeight - 8) / 2),
                     selected ? 0xFF55FF88 : 0xFFFFFFFF);
         }
@@ -1420,7 +1420,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     }
 
     private String providerLabel() {
-        return TranslationProviderCatalog.displayName(provider);
+        return TranslationProviderCatalog.displayName(provider, key -> tr(key));
     }
 
     private void loadLlmSettings(String selectedProvider) {

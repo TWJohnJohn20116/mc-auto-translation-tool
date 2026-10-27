@@ -272,7 +272,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                 () -> translateEnglishOnly = !translateEnglishOnly));
         blockedKeywords = addButton(new TextFieldWidget(font, left, layout.contentRow(3),
                 layout.totalWidth, 20, new TranslationTextComponent("screen.universal_translator.blocked_keywords")));
-        blockedKeywords.setMaxLength(4096);
+        blockedKeywords.setMaxLength(UiLimits.KEYWORDS_MAX_CHARS);
         blockedKeywords.setValue(blockedKeywordsValue);
 
         // --- Tab 3: Engine (引擎) ---
@@ -310,7 +310,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                 () -> apiFallback = !apiFallback));
         endpoint = addButton(new TextFieldWidget(font, left, engineRow(1), layout.totalWidth,
                 20, new TranslationTextComponent("screen.universal_translator.endpoint")));
-        endpoint.setMaxLength(512);
+        endpoint.setMaxLength(UiLimits.ENDPOINT_MAX_CHARS);
         endpoint.setValue(endpointValue);
 
         // Quality and the custom system prompt are engine settings, so they belong on
@@ -421,7 +421,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                 "screen.universal_translator.option.player_names", onOff(translatePlayerNames)));
         cacheButton.setMessage(new TranslationTextComponent("screen.universal_translator.option.cache", onOff(diskCache)));
         providerButton.setMessage(new TranslationTextComponent("screen.universal_translator.option.provider",
-                TranslationProviderCatalog.displayName(provider)));
+                TranslationProviderCatalog.displayName(provider, key -> tr(key))));
         String modelValue = llmModel == null || llmModel.trim().isEmpty()
                 ? tr("screen.universal_translator.engine.key_unset") : llmModel.trim();
         modelPickButton.setMessage(new TranslationTextComponent(
@@ -755,7 +755,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
             graphics.fill(x, y, x + list.buttonWidth, y + list.buttonHeight,
                     hovered ? 0xFF3B6178 : selected ? 0xFF28533D : 0xFF303844);
             graphics.centered(new StringTextComponent(
-                    SettingsSelectionList.displayName(openSelection, values[index])),
+                    SettingsSelectionList.displayName(openSelection, values[index], key -> tr(key))),
                     x + list.buttonWidth / 2, y + Math.max(1, (list.buttonHeight - 8) / 2),
                     selected ? 0xFF55FF88 : 0xFFFFFFFF);
         }
@@ -1692,15 +1692,15 @@ abstract class UniversalTranslatorLlmConfigScreenBase extends Screen {
         int top = Math.max(42, (height - 174) / 2);
         endpoint = addButton(new TextFieldWidget(font, left, top, formWidth, 20,
                 new TranslationTextComponent("screen.universal_translator.llm.endpoint")));
-        endpoint.setMaxLength(512);
+        endpoint.setMaxLength(UiLimits.ENDPOINT_MAX_CHARS);
         endpoint.setValue(initialEndpoint);
         model = addButton(new TextFieldWidget(font, left, top + 36, formWidth, 20,
                 new TranslationTextComponent("screen.universal_translator.llm.model")));
-        model.setMaxLength(128);
+        model.setMaxLength(UiLimits.MODEL_ID_MAX_CHARS);
         model.setValue(initialModel);
         apiKey = addButton(new TextFieldWidget(font, left, top + 72, formWidth, 20,
                 new TranslationTextComponent("screen.universal_translator.llm.api_key")));
-        apiKey.setMaxLength(512);
+        apiKey.setMaxLength(UiLimits.SECRET_MAX_CHARS);
         int gap = 8;
         int buttonWidth = (formWidth - gap) / 2;
         addButton(new Button(left, top + 108, buttonWidth, 20,

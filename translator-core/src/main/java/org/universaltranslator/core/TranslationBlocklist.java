@@ -30,14 +30,29 @@ public final class TranslationBlocklist {
 
     /** Accepts comma, semicolon, Chinese punctuation, or line-separated keywords. */
     public static TranslationBlocklist parse(String configuredKeywords) {
+        return parseWithReport(configuredKeywords).blocklist();
+    }
+
+    /**
+     * Parses the configured list and reports what had to be discarded.
+     *
+     * <p>{@link #parse(String)} used to truncate at {@link #MAX_KEYWORD_LENGTH} and stop at
+     * {@link #MAX_KEYWORDS} without telling anyone, so the screen said "saved" while every keyword
+     * after the hundredth was ignored and a long keyword was cut into something that matched nothing.
+     * For a feature whose whole purpose is "this text must not leave my machine", a silent drop is the
+     * wrong direction: the caller can now warn.
+     */
+    public static Parsed parseWithReport(String configuredKeywords) {
         if (configuredKeywords == null || configuredKeywords.trim().isEmpty()) {
-            return EMPTY;
+            return new Parsed(EMPTY, 0, 0);
         }
         String bounded = configuredKeywords.length() > MAX_CONFIG_LENGTH
                 ? configuredKeywords.substring(0, MAX_CONFIG_LENGTH)
                 : configuredKeywords;
         String[] candidates = bounded.split("[,;\\r\\n\uff0c\uff1b]+");
         Set<String> unique = new LinkedHashSet<String>();
+        int truncated = 0;
+        int dropped = 0;
         for (String candidate : candidates) {
             String keyword = candidate.trim();
             if (keyword.isEmpty()) {
@@ -45,17 +60,55 @@ public final class TranslationBlocklist {
             }
             if (keyword.length() > MAX_KEYWORD_LENGTH) {
                 keyword = keyword.substring(0, MAX_KEYWORD_LENGTH);
+                truncated++;
             }
-            unique.add(keyword.toLowerCase(Locale.ROOT));
+            String folded = keyword.toLowerCase(Locale.ROOT);
             if (unique.size() >= MAX_KEYWORDS) {
-                break;
+                // The list is full, so this entry cannot take effect; count it instead of ignoring it.
+                if (!unique.contains(folded)) {
+                    dropped++;
+                }
+                continue;
             }
+            unique.add(folded);
         }
         if (unique.isEmpty()) {
-            return EMPTY;
+            return new Parsed(EMPTY, dropped, truncated);
         }
-        return new TranslationBlocklist(Collections.unmodifiableList(
-                new ArrayList<String>(unique)));
+        return new Parsed(new TranslationBlocklist(Collections.unmodifiableList(
+                new ArrayList<String>(unique))), dropped, truncated);
+    }
+
+    /** One parse outcome plus the losses that the screen has to report. */
+    public static final class Parsed {
+        private final TranslationBlocklist blocklist;
+        private final int dropped;
+        private final int truncated;
+
+        private Parsed(TranslationBlocklist blocklist, int dropped, int truncated) {
+            this.blocklist = blocklist;
+            this.dropped = dropped;
+            this.truncated = truncated;
+        }
+
+        public TranslationBlocklist blocklist() {
+            return blocklist;
+        }
+
+        /** Keywords ignored because {@link #MAX_KEYWORDS} was already reached. */
+        public int dropped() {
+            return dropped;
+        }
+
+        /** Keywords cut short at {@link #MAX_KEYWORD_LENGTH}. */
+        public int truncated() {
+            return truncated;
+        }
+
+        /** Whether part of the configured list has no effect. */
+        public boolean lossy() {
+            return dropped > 0 || truncated > 0;
+        }
     }
 
     public boolean matches(String text) {

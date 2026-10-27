@@ -604,7 +604,15 @@ public final class RenderTranslationSession implements AutoCloseable {
 
     /** Replaces the configured whole-text keyword filter. */
     public void setBlockedKeywords(String configuredKeywords) {
-        this.blockedKeywords = TranslationBlocklist.parse(configuredKeywords);
+        TranslationBlocklist.Parsed parsed = TranslationBlocklist.parseWithReport(configuredKeywords);
+        if (parsed.lossy()) {
+            // The screen saves the whole field as if it took effect, so at least keep the loss
+            // visible: keywords past the cap never match, which leaves text the player asked to keep
+            // off the network on its way to the provider.
+            DebugLog.global().log("blocklist", "dropped", String.valueOf(parsed.dropped()),
+                    "truncated", String.valueOf(parsed.truncated()));
+        }
+        this.blockedKeywords = parsed.blocklist();
         clearRenderedTranslations();
     }
 
