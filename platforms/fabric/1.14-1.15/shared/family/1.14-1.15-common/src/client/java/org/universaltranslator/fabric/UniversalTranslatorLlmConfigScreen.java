@@ -54,7 +54,13 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
 
     @Override
     protected void init() {
-        int width = Math.max(180, Math.min(360, this.width - 20));
+                // init() also runs on every resize (window drag, F11, GUI scale). Re-applying the
+        // constructor snapshot silently discarded whatever had been typed, and the API key field had
+        // no value at all - so a pasted key vanished on the first resize.
+ (endpoint != null) { initialEndpoint = endpoint.getText(); }
+ (model != null) { initialModel = model.getText(); }
+ (apiKey != null) { initialApiKey = apiKey.getText(); }
+int width = Math.max(180, Math.min(360, this.width - 20));
         int left = (this.width - width) / 2;
         int top = Math.max(42, (this.height - 174) / 2);
         endpoint = addDrawableChild(new TextFieldWidget(
@@ -68,6 +74,7 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
         apiKey = addDrawableChild(new TextFieldWidget(
                 this.font, left, top + 72, width, 20, tr("screen.universal_translator.llm.api_key")));
         apiKey.setMaxLength(UiLimits.SECRET_MAX_CHARS);
+        apiKey.setText(initialApiKey);
         int gap = 8;
         int buttonWidth = (width - gap) / 2;
         addDrawableChild(ButtonWidget.builder(new TranslatableText("screen.universal_translator.llm.save"), button -> save())

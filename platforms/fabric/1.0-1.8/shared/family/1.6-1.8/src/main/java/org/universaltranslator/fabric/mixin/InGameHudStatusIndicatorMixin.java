@@ -8,12 +8,13 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * 1.6.1-1.8.1 render entry points.
+ * 1.6.1-1.7.10 render entry points.
  *
- * <p>Both injections carry require = 0: 1.6.1-1.7.10 render through render(FZII)V, which already
- * carries the GUI-scaled size, while 1.8 switched to render(F)V and only renderHotbar still
- * receives the Window. Exactly one resolves per version and the other must stay silent instead of
- * failing the build.
+ * <p>This layer is only compiled when a version applies platforms/fabric/1.0-1.8/shared.gradle, and
+ * that is 1.3.1-1.7.10: the nine 1.8-1.8.8 versions under this tree apply 1.8-1.12/shared.gradle
+ * instead. The renderHotbar injection below therefore never resolves for them - it stays as a
+ * defensive hook for 1.7.x builds whose GameGui exposes only that entry point, and require = 0
+ * keeps the unused one silent instead of failing the build.
  */
 @Mixin(GameGui.class)
 abstract class InGameHudStatusIndicatorMixin {

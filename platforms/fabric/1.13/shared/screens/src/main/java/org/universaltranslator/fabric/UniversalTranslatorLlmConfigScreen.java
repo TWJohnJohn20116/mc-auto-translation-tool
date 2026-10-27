@@ -52,7 +52,13 @@ final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorScreen
 
     @Override
     public void init() {
-        buttons.clear();
+                // init() also runs on every resize (window drag, F11, GUI scale). Re-applying the
+        // constructor snapshot silently discarded whatever had been typed, and the API key field had
+        // no value at all - so a pasted key vanished on the first resize.
+ (endpoint != null) { initialEndpoint = endpoint.getText(); }
+ (model != null) { initialModel = model.getText(); }
+ (apiKey != null) { initialApiKey = apiKey.getText(); }
+buttons.clear();
         renderer = OrnitheClientAccess.textRenderer();
         int fieldWidth = Math.max(180, Math.min(360, width - 20));
         int left = (width - fieldWidth) / 2;
@@ -65,6 +71,7 @@ final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorScreen
         model.setText(initialModel);
         apiKey = new TextFieldWidget(12, renderer, left, top + 72, fieldWidth, 20);
         apiKey.setMaxLength(UiLimits.SECRET_MAX_CHARS);
+        apiKey.setText(initialApiKey);
         int gap = 8;
         int buttonWidth = (fieldWidth - gap) / 2;
         addButton(new ActionButton(SAVE, left, top + 108, buttonWidth, 20,

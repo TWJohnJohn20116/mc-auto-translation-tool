@@ -10,7 +10,11 @@ import org.universaltranslator.fabric.RenderedTextBridge;
 @Mixin(TextRenderer.class)
 abstract class TextRendererMixin {
     @ModifyVariable(
+            // The four-argument draw(String,float,float,int) exists in 1.13.2 as well; it went missing
+            // when this file was rewritten for legacy-yarn mappings, so text drawn through it stayed
+            // untranslated with no log line (require = 0 and defaultRequire 0 keep a miss silent).
             method = {
+                    "draw(Ljava/lang/String;FFI)I",
                     "draw(Ljava/lang/String;FFIZ)I",
                     "drawWithShadow(Ljava/lang/String;FFI)I",
                     "drawLayer(Ljava/lang/String;FFIZ)I"
