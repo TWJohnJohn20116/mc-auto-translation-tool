@@ -35,7 +35,7 @@ chat, quest books, mod menus, scoreboards, item descriptions, and signs.
 1. Check the **Minecraft version, mod loader, and Java version** used by the game instance.
 2. Open the [latest release](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/latest) and select a JAR from the table below.
 3. Remove 1.4-beta4 and every older copy from that instance's `mods` folder, then add exactly one matching 1.4 JAR. Fabric also requires the matching version of Fabric API.
-4. Start the game. Press `F8` to toggle automatic translation. Open settings from the title-screen “Translation settings” button, by pressing `U`, or from the mods list if Mod Menu is installed.
+4. Start the game. Press `F8` to toggle automatic translation. Open settings from the title-screen “Translation settings” button, by pressing `U`, or from the mods list if Mod Menu is installed.On Fabric 1.0–1.13.2 there is no key-binding API, so both keys are configured in `config/universal-translator.properties` (`settings-key` / `toggle-key`, for example `F7` and `J`).
 5. For a first run, choose **Offline** and **Translated only**. See the [installation and usage guide](USER_GUIDE.md) for details.
 
 Fabric, Forge, and NeoForge all open the graphical settings with `U`, including blocked keywords
