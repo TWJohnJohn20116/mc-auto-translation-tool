@@ -1,5 +1,7 @@
 package org.universaltranslator.fabric.mixin;
 
+import org.universaltranslator.core.HotkeyKeys;
+
 import net.minecraft.client.Minecraft;
 import org.lwjgl.input.Keyboard;
 import org.spongepowered.asm.mixin.Mixin;
