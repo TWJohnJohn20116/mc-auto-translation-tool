@@ -705,15 +705,51 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
      * the save then wrote what had been typed into a field nobody could see.
      */
     private void releaseFieldFocus() {
-        if (endpoint != null) {
-            endpoint.setFocused(false);
+        clearFieldFocus(endpoint);
+        clearFieldFocus(customPrompt);
+        clearFieldFocus(blockedKeywords);
+    }
+
+    /**
+     * Clears a text field's focus through whichever accessor this Minecraft version exposes.
+     *
+     * <p>1.16–1.20 keep {@code setFocused} protected on {@code ClickableWidget} and only publish
+     * {@code setTextFieldFocused}, while 1.21 publishes {@code setFocused} itself. This screen is
+     * compiled against both trees, so the accessor is resolved once and cached; the method is only
+     * called while an overlay owns the keyboard.
+     */
+    private static void clearFieldFocus(Object field) {
+        if (field == null || CLEAR_TEXT_FIELD_FOCUS == null) {
+            return;
         }
-        if (customPrompt != null) {
-            customPrompt.setFocused(false);
+        try {
+            CLEAR_TEXT_FIELD_FOCUS.invoke(field, Boolean.FALSE);
+        } catch (ReflectiveOperationException | RuntimeException ignored) {
+            // Focus stays where it was; clearing it is an improvement, not a requirement.
         }
-        if (blockedKeywords != null) {
-            blockedKeywords.setFocused(false);
+    }
+
+    private static final java.lang.reflect.Method CLEAR_TEXT_FIELD_FOCUS = findFocusClearer();
+
+    private static java.lang.reflect.Method findFocusClearer() {
+        Class<?> type;
+        try {
+            type = Class.forName("net.minecraft.client.gui.widget.TextFieldWidget");
+        } catch (ClassNotFoundException missing) {
+            return null;
         }
+        for (String name : new String[] {"setTextFieldFocused", "setFocused"}) {
+            try {
+                java.lang.reflect.Method method = type.getMethod(name, boolean.class);
+                method.setAccessible(true);
+                return method;
+            } catch (NoSuchMethodException inaccessible) {
+                // Try the next accessor name; the older one is protected rather than absent.
+            } catch (RuntimeException denied) {
+                return null;
+            }
+        }
+        return null;
     }
 
     /**

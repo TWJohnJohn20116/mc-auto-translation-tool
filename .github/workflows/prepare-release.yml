@@ -144,7 +144,7 @@ jobs:
                   entry.setdefault("project", "")
                   continue
               name = entry["target"]
-              match = re.match(r"mc(.+)-(forge|neoforge|fabric)$", name)
+              match = re.match(r"mc(.+)-(forge|neoforge|fabric)\Z", name)
               if match is None:
                   # 先前這裡是 .groups()，名稱不符格式就丟 AttributeError，整段以 Python
                   # traceback 結束，訊息裡完全沒有目標名。

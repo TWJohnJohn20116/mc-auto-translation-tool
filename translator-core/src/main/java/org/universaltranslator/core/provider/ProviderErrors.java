@@ -35,10 +35,10 @@ final class ProviderErrors {
     static Exception of(String provider, String response, String codeField, String messageField) {
         String code = codeField == null ? null : JsonStrings.readStringField(response, codeField);
         String message = messageField == null ? null : JsonStrings.readStringField(response, messageField);
-        return of(provider, response, code, message);
+        return classify(provider, response, code, message);
     }
 
-    private static Exception of(String provider, String response, String code, String message) {
+    private static Exception classify(String provider, String response, String code, String message) {
         String detail = (code == null ? "" : " (" + code + ")")
                 + (message == null ? "" : ": " + message);
         String hint = hintFor(code);

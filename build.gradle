@@ -595,6 +595,17 @@ tasks.register("validateNeoForgeModuleCoordinates") {
             def matcher = text =~ /(?m)^\s*ext\.${name}\s*=\s*(.+)$/
             matcher.find() ? matcher.group(1).trim() : null
         }
+        // A coordinate may name a property instead of a literal ("minecraft_neoforge_1_20_1_version"),
+        // which keeps one source of truth in gradle.properties. Resolve that indirection before
+        // comparing against the directory name; a missing property stays unresolved and is reported.
+        def resolvedCoordinate = { String raw ->
+            def value = raw.trim()
+            if (value.startsWith('"') || value.startsWith("'")) {
+                return unquote(value).replaceAll("^'", '').replaceAll("'$", '')
+            }
+            def resolved = findProperty(value)
+            resolved == null ? "unresolved:${value}" : resolved.toString()
+        }
 
         def problems = []
         modules.each { module ->
@@ -609,9 +620,10 @@ tasks.register("validateNeoForgeModuleCoordinates") {
             }
 
             def declaredVersion = coordinateValue(text, "neoforgeMinecraftVersion")
-            if (declaredVersion != null && unquote(declaredVersion) != directoryVersion) {
+            def resolvedVersion = declaredVersion == null ? null : resolvedCoordinate(declaredVersion)
+            if (resolvedVersion != null && resolvedVersion != directoryVersion) {
                 problems.add(
-                        "${relative}: neoforgeMinecraftVersion '${unquote(declaredVersion)}' " +
+                        "${relative}: neoforgeMinecraftVersion '${resolvedVersion}' " +
                                 "does not match its directory '${directoryVersion}'".toString())
             }
 

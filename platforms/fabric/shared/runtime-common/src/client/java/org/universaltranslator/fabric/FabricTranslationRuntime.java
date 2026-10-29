@@ -10,6 +10,7 @@ import org.universaltranslator.core.TranslationTextColor;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
@@ -126,7 +127,7 @@ public final class FabricTranslationRuntime {
             }
             // A view over the tab list, not a copy: the caller stops after a thousand names anyway,
             // and collecting the whole list allocated one string per entry on the render thread.
-            final List<PlayerListEntry> entries = client.getNetworkHandler().getPlayerList();
+            final Collection<PlayerListEntry> entries = client.getNetworkHandler().getPlayerList();
             return new Iterable<String>() {
                 @Override
                 public Iterator<String> iterator() {
