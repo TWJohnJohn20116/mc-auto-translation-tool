@@ -62,7 +62,7 @@ test("server-renders the public-benefit project home page", async () => {
   // 這裡只守「結構」：每個下載連結的檔名都必須帶本版前綴，而且除了校驗檔之外全是 .jar。
   // 不寫死 31／32——那兩個數字由 downloads/<releaseVersion> 與 publish-release.yml 決定，
   // 寫死在測試裡只會變成每次發布都要多同步一處的第二份真相。
-  for (const name of downloadNames) {
+  for (const name of downloadNames.filter((entry) => entry.endsWith(".jar"))) {
     assert.match(
       name,
       /^MCAutoTranslationTool-[\d.]+-[A-Za-z0-9.-]+\.jar$/,

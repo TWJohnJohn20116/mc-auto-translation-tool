@@ -13,6 +13,13 @@
 // hand-copied into four bundles and had already drifted — three missed 26.3 and one missed
 // 1.16-1.16.4 — so the list is read from one place now, and any version the aggregate JAR does not
 // carry is reported instead of silently narrowing the check.
+//
+// CI 修-1: the argument list is built at configuration time, exactly like the previous per-bundle
+// tasks (`args([jar] + allVersions)`). It used to be assembled inside `doFirst`, which made the fork
+// see no versions at all and BundleResolutionVerifier failed with
+// `Usage: <bundle.jar> <minecraft-version>...`. Keeping `args(...)` at configuration time also
+// removes the configuration/execution mixing: the authoritative list is a constant for the build,
+// not something the execution phase can widen or narrow.
 
 tasks.register("verifyPreparedReleaseBundle", JavaExec) {
     dependsOn rootProject.tasks.named("verifyPreparedReleaseAssets"), testClasses
@@ -22,34 +29,39 @@ tasks.register("verifyPreparedReleaseBundle", JavaExec) {
     javaLauncher = javaToolchains.launcherFor {
         languageVersion = JavaLanguageVersion.of(25)
     }
+
     def aggregateJar = rootProject.layout.buildDirectory.file(
             "release-assets/MCAutoTranslationTool-${project.mod_version}-fabric-all.jar"
     ).get().asFile
-    def authoritativeVersions = gradle.ext.fabricReleaseVersions as List
+    def authoritativeVersions = (gradle.ext.fabricReleaseVersions as List).collect { it.toString() }
+
+    // Configuration time: the single authoritative list, no zipTree walk involved. This is what the
+    // JVM fork actually receives.
+    args([aggregateJar.absolutePath] + authoritativeVersions)
 
     doFirst {
+        // Execution time: only diagnostics and existence checks live here, never the arguments.
         if (!aggregateJar.isFile()) {
             throw new GradleException(
                     "Missing release aggregate ${aggregateJar}; run :prepareReleaseAssets first.")
         }
+        println "Verifying Fabric Loader resolution for ${authoritativeVersions.size()} versions: " +
+                authoritativeVersions.join(', ')
         // One walk of the archive: the names of the nested implementation JARs it really carries.
+        // This is a warning only — the args above stay the full authoritative list.
         def carried = project.zipTree(aggregateJar)
                 .matching { include "META-INF/jars/universal-translator-*.jar" }
                 .files.collect { it.name }
-        def present = authoritativeVersions.findAll {
-            carried.contains("universal-translator-${it}.jar")
-        }
         def absent = authoritativeVersions.findAll {
             !carried.contains("universal-translator-${it}.jar")
         }
         if (!absent.isEmpty()) {
             logger.warn(
-                    "${aggregateJar.name} carries ${present.size()} of ${authoritativeVersions.size()} " +
-                            "authoritative Fabric versions; not present: ${absent.join(', ')}. " +
-                            "The aggregate is built by prepareReleaseAssets from downloads/, so a version " +
-                            "listed in settings.gradle but missing there means downloads/ is stale.")
+                    "${aggregateJar.name} carries ${authoritativeVersions.size() - absent.size()} of " +
+                            "${authoritativeVersions.size()} authoritative Fabric versions; not present: " +
+                            "${absent.join(', ')}. The aggregate is built by prepareReleaseAssets from " +
+                            "downloads/, so a version listed in settings.gradle but missing there means " +
+                            "downloads/ is stale.")
         }
-        println "Verifying Fabric Loader resolution for ${present.size()} versions: ${present.join(', ')}"
-        args([aggregateJar.absolutePath] + present)
     }
 }

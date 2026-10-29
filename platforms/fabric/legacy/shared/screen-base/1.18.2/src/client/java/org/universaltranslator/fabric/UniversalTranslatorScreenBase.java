@@ -6,8 +6,9 @@ import net.minecraft.text.Text;
 /**
  * Per-generation half of the Universal Translator screens for Minecraft 1.18.2.
  *
- * <p>1.18.2 renamed {@code Screen#onClose} to {@code close} and {@code isPauseScreen} to
- * {@code shouldPause}, and both are now {@code @Override}s of the vanilla methods.
+ * <p>1.18.2 renamed {@code Screen#onClose} to {@code close}; the pause hook had already been renamed
+ * {@code isPauseScreen} to {@code shouldPause} one generation earlier, in 1.18.1. Both are
+ * {@code @Override}s of the vanilla methods here.
  */
 abstract class UniversalTranslatorScreenBase extends Screen {
     UniversalTranslatorScreenBase(Text title) {

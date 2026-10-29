@@ -9,7 +9,7 @@ import net.minecraft.text.Text;
  * Per-generation gaps of the settings screen for Minecraft 1.18.2.
  *
  * <p>Everything else lives one level up in {@code screens/1.16-1.18}, which the whole 1.16 to 1.18.2
- * range shares. Only what genuinely moved inside that range stays here: {@code onClose} became {@code close} and {@code isPauseScreen} became {@code shouldPause}.
+ * range shares. Only what genuinely moved inside that range stays here: {@code onClose} became {@code close} (the 1.18.2 rename; the pause hook became {@code shouldPause} one generation earlier, in 1.18.1).
  *
  * <p>{@code ButtonWidget} is not imported on purpose: this tree carries a package-local shim that
  * restores the newer builder shape, and an explicit import would shadow it.
@@ -33,6 +33,15 @@ abstract class UniversalTranslatorConfigScreenSeams extends UniversalTranslatorS
     @Override
     public void close() {
         onBack();
+    }
+
+    // UniversalTranslatorSettingsScreen extends Screen directly (it does not inherit
+    // UniversalTranslatorScreenBase), so the settings screen needs its own pause answer. It used to
+    // answer `true` here while every other generation of the same screen answered false; the
+    // refactor moved the answer to the single `pausesGame()` false, so this seam now agrees with it.
+    @Override
+    public boolean shouldPause() {
+        return false;
     }
 
     @Override

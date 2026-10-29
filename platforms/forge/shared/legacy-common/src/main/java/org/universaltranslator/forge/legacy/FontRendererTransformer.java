@@ -111,7 +111,9 @@ public final class FontRendererTransformer implements IClassTransformer {
      * the rest of the session, and a leaked {@code TextKind} classified every later line as the wrong
      * surface. A catch-all handler around the body restores the stack on both paths.
      */
-    private static final class ContextScopeVisitor extends MethodVisitor {
+    // Not final: hoveringTextVisitor extends it anonymously to add the prologue. ASM's own
+    // ContextScopeVisitor is final, so this file carries its own copy.
+    private static class ContextScopeVisitor extends MethodVisitor {
         private final Label start = new Label();
         private final Label end = new Label();
         private final Label handler = new Label();

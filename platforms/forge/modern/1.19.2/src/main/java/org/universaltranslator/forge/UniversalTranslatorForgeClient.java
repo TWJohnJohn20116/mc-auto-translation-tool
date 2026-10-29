@@ -211,10 +211,13 @@ public final class UniversalTranslatorForgeClient {
         ForgeTranslationRuntime.protectOutgoingMessage(outgoing);
         resendingTranslatedMessage = true;
         try {
-            // LocalPlayer.chat() is the 1.19.2 signing entry point: it builds the
-            // ChatMessageContent from the local chat session. chatSigned(message, null) sent an
-            // unsigned line, which a secure-profile server rejects without telling the client.
-            client.player.chat(outgoing);
+            // 1.19.2 has no LocalPlayer#chat(String); that method only exists up to 1.18.2 and was
+            // replaced in 1.19. chatSigned(String message, Component preview) is this generation's
+            // only chat entry point: it signs inside with the session's MessageSigner and degrades
+            // to unsigned only when the client has no profile key at all. The second argument is
+            // the chat-preview hint (a Component), not a signer, and is null whenever the server
+            // asks for no preview -- which is the 1.19.2 default.
+            client.player.chatSigned(outgoing, null);
         } finally {
             resendingTranslatedMessage = false;
         }
