@@ -33,7 +33,14 @@ import org.universaltranslator.core.provider.ProviderProbe;
 import org.universaltranslator.core.UiTextKeys;
 import org.universaltranslator.core.UiLimits;
 
-/** Dependency-free settings UI shared by Forge 1.8.9 and 1.12.2. */
+/**
+ * Dependency-free settings UI for the 1.0-1.12 Fabric builds (this file is mounted by
+ * {@code 1.0-1.8/shared.gradle} and {@code 1.8-1.12/shared.gradle}).
+ *
+ * <p>It used to claim it was shared with Forge 1.8.9 and 1.12.2. It is not: those build from
+ * {@code platforms/forge/shared/legacy-common} and their own {@code Legacy*Screen} classes, so the
+ * comment sent readers to the wrong file (audit S2-095).
+ */
 final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScreenBase {
     private enum Tab {
         GENERAL,
@@ -197,10 +204,19 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
     /** Result of the engine tab's connection test; written by its worker thread. */
     private volatile String testStatus = "";
     private volatile boolean testStatusIsError;
-    private boolean testing;
-    private boolean fetchingModels;
+    private volatile boolean testing;
+    private volatile boolean fetchingModels;
     private volatile List<String> fetchedModels = Collections.emptyList();
     private volatile boolean modelListOpen;
+    /**
+     * A fetched catalog waiting for the client thread to open the picker with it.
+     *
+     * <p>The worker used to write {@code modelPage} and {@code modelListOpen} itself, so the overlay
+     * could be raised while {@code fetchedModels} and the page index disagreed and rendered an empty
+     * list for a frame. Publishing the result and applying it from {@link #tick()} keeps every piece
+     * of screen state on the client thread, which is also why {@code modelPage} needs no synchronising.
+     */
+    private volatile List<String> pendingModelList;
     private int modelPage;
     private long animationStartedNanos = System.nanoTime();
     private SettingsSelectionList.Kind openSelection = SettingsSelectionList.Kind.NONE;
@@ -446,6 +462,24 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
     }
 
     /**
+     * The configuration a write-back starts from: the one the runtime is actually running with.
+     *
+     * <p>Every write-back used to derive from {@link #original}, the snapshot taken when this screen
+     * was constructed, so changing one field rewrote every other field to its value at screen-open
+     * time. Pressing F8 while the settings screen was open — {@code toggleFromKey()} re-reads the file,
+     * flips {@code enabled} and saves — and then pressing Apply silently put the old {@code enabled}
+     * (or {@code debugLog}) back on disk, with nothing on screen saying so.
+     *
+     * <p>{@code diagnosticsConfig()} is the runtime's live config, i.e. the same source the diagnostics
+     * screen uses for its own write-back. It answers with {@link #original} only before the first load,
+     * when nothing else can have changed underneath.
+     */
+    private FabricConfig writeBackBase() {
+        FabricConfig live = FabricTranslationRuntime.diagnosticsConfig();
+        return live == null ? original : live;
+    }
+
+    /**
      * Applies the quality mode and the custom prompt to the running configuration without closing
      * the screen.
      *
@@ -456,10 +490,11 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
     private void applyPromptSettings() {
         refreshQualityLabel();
         try {
+            FabricConfig base = writeBackBase();
             String prompt = customPrompt == null
-                    ? original.customSystemPrompt()
+                    ? base.customSystemPrompt()
                     : TranslationPrompt.fromEditorText(customPrompt.getText());
-            FabricConfig updated = original.withPromptSettings(quality, prompt);
+            FabricConfig updated = base.withPromptSettings(quality, prompt);
             if (updated.enabled) {
                 updated.validateProviderConfiguration();
             }
@@ -1007,8 +1042,11 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
 
     private void saveAndApply() {
         boolean runtimeChanged = false;
+        // The rollback target is what the runtime held before this save, not the snapshot taken when
+        // the screen opened: restoring the snapshot would undo changes made from elsewhere meanwhile.
+        FabricConfig base = writeBackBase();
         try {
-            FabricConfig updated = original.withSettings(
+            FabricConfig updated = base.withSettings(
                     enabled,
                     translateChat,
                     translateOther,
@@ -1053,7 +1091,7 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         } catch (Exception exception) {
             if (runtimeChanged) {
                 try {
-                    FabricTranslationRuntime.initialize(original);
+                    FabricTranslationRuntime.initialize(base);
                 } catch (Exception restoreFailure) {
                     exception.addSuppressed(restoreFailure);
                 }
@@ -1073,6 +1111,25 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         if (activeTab == Tab.SCOPES && blockedKeywords != null) {
             blockedKeywords.tick();
         }
+        applyPendingModelList();
+    }
+
+    /**
+     * Opens the model picker once the worker has published a catalog.
+     *
+     * <p>Runs on the client thread, so {@code modelPage} and {@code modelListOpen} are only ever
+     * written here and in the button handlers; the render path therefore cannot observe a catalog
+     * that does not match the page it is drawing.
+     */
+    private void applyPendingModelList() {
+        List<String> pending = pendingModelList;
+        if (pending == null) {
+            return;
+        }
+        pendingModelList = null;
+        fetchedModels = pending;
+        modelPage = 0;
+        modelListOpen = true;
     }
 
     @Override
@@ -1340,8 +1397,19 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
                 catalog = OpenAiModelCatalog.fetchCatalog(provider, endpointValue, keyValue);
             } catch (Exception error) {
                 failure = describe(error);
+            } finally {
+                // Released in a finally: a LinkageError / NoClassDefFoundError from a provider class
+                // is not an Exception, and releasing the guard at the end of the lambda body left
+                // "fetch models" and "test connection" returning immediately for the rest of the
+                // screen's life, with no message and no way back short of reopening it.
+                fetchingModels = false;
             }
-            fetchingModels = false;
+            if (failure.isEmpty() && catalog == null) {
+                // fetchCatalog answers null when the endpoint produced no parseable body; the old code
+                // read catalog.jsonBody() straight away and threw a NullPointerException into the
+                // thread's default handler, so nothing was reported to the user at all.
+                failure = tr("screen.universal_translator.engine.test_not_json");
+            }
             if (!failure.isEmpty()) {
                 setTestStatus(tr("screen.universal_translator.llm.fetch_failed", failure), true);
                 return;
@@ -1354,9 +1422,8 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
                 setTestStatus(tr("screen.universal_translator.llm.fetch_empty"), true);
                 return;
             }
-            fetchedModels = catalog.models();
-            modelPage = 0;
-            modelListOpen = true;
+            // Handed to the client thread instead of touching modelPage/modelListOpen here.
+            pendingModelList = catalog.models();
             setTestStatus("", false);
         }, "universal-translator-model-list");
         worker.setDaemon(true);
@@ -1414,8 +1481,10 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
             } catch (Exception failure) {
                 message = describe(failure);
                 error = true;
+            } finally {
+                // See fetchModels: an Error escaping the probe must not leave the button latched.
+                testing = false;
             }
-            testing = false;
             setTestStatus(message, error);
         }, "universal-translator-connection-test");
         worker.setDaemon(true);

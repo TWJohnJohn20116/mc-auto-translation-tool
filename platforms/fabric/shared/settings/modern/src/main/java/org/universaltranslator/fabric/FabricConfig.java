@@ -29,13 +29,38 @@ import java.nio.file.Path;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Properties;
 import java.util.Set;
 
+/**
+ * The Fabric configuration file, as an immutable snapshot.
+ *
+ * <p>Keep in sync with {@code shared/settings/legacy/…/FabricConfig.java}: the two classes are a
+ * copy of each other, and the legacy tree is the one that drifted — it grew the two hotkey keys,
+ * and the way it read them cost players their key bindings (C2-067). Every key added here and every
+ * change to {@code load()}, {@code toProperties()} or {@code defaults()} belongs in both until they
+ * collapse into one {@code settings-common} layer with a hotkey seam (audit2 S2-078, which needs the
+ * per-version {@code srcDir} wiring this file cannot change).
+ */
 final class FabricConfig {
     private static final String FILE_NAME = "universal-translator.properties";
+    /** Suffix pattern of the copy a damaged file is preserved as; one write per start at most. */
+    private static final DateTimeFormatter CORRUPT_STAMP =
+            DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
+    /**
+     * Name of the file the last {@link #load(Path)} quarantined, or {@code null} when it read a
+     * healthy file.
+     *
+     * <p>The bootstrap reads this right after loading to say one line about where the damaged file
+     * went. Without it the only trace was a debug-log entry, and the debug log is off by default —
+     * so a player whose settings had just been reset to defaults would find nothing that explained
+     * why, and their old file under a name nothing pointed at.
+     */
+    private static volatile String corruptionBackup;
 
     final boolean enabled;
     final boolean translateChat;
@@ -197,6 +222,7 @@ final class FabricConfig {
     }
 
     static FabricConfig load(Path configDirectory) throws IOException {
+        corruptionBackup = null;
         Files.createDirectories(configDirectory);
         Path file = configDirectory.resolve(FILE_NAME);
         if (!Files.exists(file)) {
@@ -208,8 +234,25 @@ final class FabricConfig {
         }
 
         Properties stored = new Properties();
+        boolean recovered = false;
         try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
             stored.load(reader);
+        } catch (IOException | RuntimeException malformed) {
+            // Before this, a single damaged byte took the whole mod away: the exception escaped
+            // load(), the bootstrap logged one line and shut translation down, and every later
+            // attempt — including the settings screen, the one place a player could have fixed
+            // anything — read the same file and failed the same way. Keep the bytes for a bug
+            // report instead, and continue on the defaults so the session is usable.
+            //
+            // Both exception shapes are real: MalformedInputException for a file that is not valid
+            // UTF-8, and IllegalArgumentException for a truncated \\uXXXX escape (Properties.load
+            // throws it unchecked). A partially parsed file is discarded rather than merged, since
+            // load() fills the map as it reads and a truncated key would otherwise survive.
+            recovered = true;
+            stored = new Properties();
+            corruptionBackup = quarantine(file);
+            DebugLog.global().log("config-corrupt", "cause", malformed.getClass().getSimpleName(),
+                    "backup", corruptionBackup == null ? "" : corruptionBackup);
         }
         Properties properties = defaults();
         properties.putAll(stored);
@@ -224,7 +267,11 @@ final class FabricConfig {
         LocalConfigSecurity.restrictToOwner(file);
         FabricConfig loaded = new FabricConfig(
                 properties, file, configDirectory.resolve("universal-translator-cache.properties"));
-        if (migrated) {
+        // The rewrite is what makes a quarantined file self-healing: without it the defaults would
+        // only live in memory and the next start would find no file at all. When the quarantine
+        // itself failed (a locked or read-only file) the original is still on disk, and overwriting
+        // it would be the one thing that destroys the player's data for good — so leave it alone.
+        if (migrated && (!recovered || corruptionBackup != null)) {
             loaded.save();
         }
         // The statistics file sits next to the configuration. Reading it here is the one place every
@@ -232,6 +279,29 @@ final class FabricConfig {
         TranslationStats.global().attach(file.resolveSibling(TranslationStats.FILE_NAME));
         DebugLog.global().configure(file.resolveSibling(DebugLog.FILE_NAME), loaded.debugLog());
         return loaded;
+    }
+
+    /** Name of the file the last {@link #load(Path)} quarantined, or {@code null} when it was healthy. */
+    static String lastCorruptionBackup() {
+        return corruptionBackup;
+    }
+
+    /**
+     * Moves a damaged configuration out of the way and names the copy it became.
+     *
+     * <p>Moved rather than deleted on purpose: the file may be the only record of a long-lived
+     * setup, and it is what a bug report about the corruption would need. Returns {@code null} when
+     * the move failed, which the caller treats as "do not touch the file".
+     */
+    private static String quarantine(Path file) {
+        Path target = file.resolveSibling(
+                file.getFileName().toString() + ".corrupt-" + LocalDateTime.now().format(CORRUPT_STAMP));
+        try {
+            Files.move(file, target, StandardCopyOption.REPLACE_EXISTING);
+            return target.getFileName().toString();
+        } catch (IOException | RuntimeException moveFailure) {
+            return null;
+        }
     }
 
     FabricConfig withSettings(
@@ -260,6 +330,100 @@ final class FabricConfig {
             HudIndicatorSettings hudIndicator
     ) {
         Properties properties = toProperties();
+        applyFormSettings(properties, enabled, translateChat, translateOther, translateVanilla,
+                translateOutgoing, translatePlayerNames, blockedKeywords, targetLanguage,
+                outgoingTargetLanguage, displayMode, translateEnglishOnly, translatedTextColor,
+                provider, endpoint, llmEndpoint, llmApiKey, llmModel, offlineAutoDownload,
+                offlineModel, apiFallback, diskCache, animatedUi, hudIndicator);
+        // This save does not edit the advanced keys, so it passes the claim along unchanged: whichever
+        // of them an earlier step wrote stays written, and the rest are still re-read from disk.
+        return new FabricConfig(properties, configFile, cacheFile, ownedPromptKeys);
+    }
+
+    /**
+     * The settings screen's whole Save, built from one read of the file instead of four.
+     *
+     * <p>{@link #toProperties()} re-reads the advanced keys from disk so an older snapshot cannot
+     * undo a change the diagnostics panel made meanwhile, and that read is what made one Save cost
+     * four file reads: {@code withSettings}, {@code withPromptSettings} and
+     * {@code withTranslationTuning} each rebuilt from {@code toProperties()}, and {@code save()}
+     * rebuilt a fourth time. All of it ran on the client thread, straight from a button callback, so
+     * the game froze for the duration of four reads and one write.
+     *
+     * <p>Applying all three groups to a single {@code Properties} keeps every guarantee — the
+     * prompt keys are claimed here exactly as {@link #withPromptSettings} claims them, and the
+     * throughput keys keep the inherited claim — and leaves the chain at two reads: this one and
+     * the one {@code save()} performs.
+     */
+    FabricConfig withAllSettings(
+            boolean enabled,
+            boolean translateChat,
+            boolean translateOther,
+            boolean translateVanilla,
+            boolean translateOutgoing,
+            boolean translatePlayerNames,
+            String blockedKeywords,
+            String targetLanguage,
+            String outgoingTargetLanguage,
+            TranslationDisplayMode displayMode,
+            boolean translateEnglishOnly,
+            TranslationTextColor translatedTextColor,
+            String provider,
+            String endpoint,
+            String llmEndpoint,
+            String llmApiKey,
+            String llmModel,
+            boolean offlineAutoDownload,
+            OfflineModel offlineModel,
+            boolean apiFallback,
+            boolean diskCache,
+            boolean animatedUi,
+            HudIndicatorSettings hudIndicator,
+            TranslationQuality quality,
+            String customSystemPrompt,
+            int workers,
+            int batchSize
+    ) {
+        Properties properties = toProperties();
+        applyFormSettings(properties, enabled, translateChat, translateOther, translateVanilla,
+                translateOutgoing, translatePlayerNames, blockedKeywords, targetLanguage,
+                outgoingTargetLanguage, displayMode, translateEnglishOnly, translatedTextColor,
+                provider, endpoint, llmEndpoint, llmApiKey, llmModel, offlineAutoDownload,
+                offlineModel, apiFallback, diskCache, animatedUi, hudIndicator);
+        OnlineProviderConfig.applyPromptSettings(properties, quality, customSystemPrompt);
+        OnlineProviderConfig.applyTranslationTuning(properties, workers, batchSize);
+        // Same claim {@link #withPromptSettings} makes: this call wrote the two prompt keys itself,
+        // so a later toProperties() must not restore the older values from disk.
+        return new FabricConfig(properties, configFile, cacheFile,
+                claimedKeys(OnlineProviderConfig.QUALITY_KEY,
+                        OnlineProviderConfig.CUSTOM_PROMPT_KEY));
+    }
+
+    /** Writes the general form onto {@code properties}; the half every save path shares. */
+    private void applyFormSettings(Properties properties,
+            boolean enabled,
+            boolean translateChat,
+            boolean translateOther,
+            boolean translateVanilla,
+            boolean translateOutgoing,
+            boolean translatePlayerNames,
+            String blockedKeywords,
+            String targetLanguage,
+            String outgoingTargetLanguage,
+            TranslationDisplayMode displayMode,
+            boolean translateEnglishOnly,
+            TranslationTextColor translatedTextColor,
+            String provider,
+            String endpoint,
+            String llmEndpoint,
+            String llmApiKey,
+            String llmModel,
+            boolean offlineAutoDownload,
+            OfflineModel offlineModel,
+            boolean apiFallback,
+            boolean diskCache,
+            boolean animatedUi,
+            HudIndicatorSettings hudIndicator) {
         properties.setProperty("enabled", Boolean.toString(enabled));
         properties.setProperty("translate-chat", Boolean.toString(translateChat));
         properties.setProperty("translate-other", Boolean.toString(translateOther));
@@ -293,9 +457,6 @@ final class FabricConfig {
         properties.setProperty("hud-indicator-visibility", hudIndicator.getVisibility().configName());
         properties.setProperty("hud-indicator-offset-x", Integer.toString(hudIndicator.getOffsetX()));
         properties.setProperty("hud-indicator-offset-y", Integer.toString(hudIndicator.getOffsetY()));
-        // This save does not edit the advanced keys, so it passes the claim along unchanged: whichever
-        // of them an earlier step wrote stays written, and the rest are still re-read from disk.
-        return new FabricConfig(properties, configFile, cacheFile, ownedPromptKeys);
     }
 
     FabricConfig withEnabled(boolean enabled) {

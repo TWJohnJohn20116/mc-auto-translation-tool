@@ -1,17 +1,63 @@
-# Builds all Minecraft platforms (Fabric, Forge, NeoForge, Legacy) with multi-worker parallelism and build cache.
+﻿# Builds all Minecraft platforms (Fabric, Forge, NeoForge, Legacy) with multi-worker parallelism and build cache.
+#
+# 介面說明用；AGENTS.md 禁止在本機編譯／建置／測試，唯一可信的建置途徑是 GitHub Actions。
+#
+# 目標清單的權威來源是 .github/workflows/prepare-release.yml 的 TARGETS_JSON（48 個發布目標）。
+# 下面的分組只是把那 48 個目標依 JDK 分群後的結果：
+#   JDK 25 -> 26.x（fabric-26.x bundle + 4 forge + 4 neoforge）
+#   JDK 21 -> 8 個 fabric bundle／1.13–1.21 與其餘 forge／neoforge
+#   JDK 17 -> forge 1.16.5–1.20.1 與 neoforge-1.20.1
+#   JDK 8  -> platforms/forge/legacy 的 1.8.9、1.12.2（各自獨立 Gradle 建置）
+# 改動任一份清單時，prepare-release.yml、settings.gradle 與這裡必須一起改。
 $ErrorActionPreference = "Continue"
-$env:GRADLE_USER_HOME = "D:\Gradle\cache"
-$logDir = "D:\Code\mc-auto-translation-tool\build\release-logs"
+
+# 專案根目錄與快取目錄由腳本自身位置推導（本來硬編 D:\Code\... 與 D:\Gradle\cache，
+# 換一台機器就失效）。
+$root = Split-Path -Parent $PSScriptRoot
+if (-not (Test-Path (Join-Path $root "gradlew.bat"))) {
+    throw "找不到 $root\gradlew.bat；請確認這支腳本位於 <repo>\scripts\ 之下。"
+}
+if (-not $env:GRADLE_USER_HOME) {
+    $env:GRADLE_USER_HOME = Join-Path $root "build\gradle-user-home"
+}
+$logDir = Join-Path $root "build\release-logs"
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 Remove-Item (Join-Path $logDir "summary.txt") -ErrorAction SilentlyContinue
 $manifest = "-Ploom_version_manifests=https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
-$root = "D:\Code\mc-auto-translation-tool"
 Set-Location $root
 
-$j25 = "C:\Program Files\Eclipse Adoptium\jdk-25.0.4.7-hotspot"
-$j21 = "C:\Program Files\Eclipse Adoptium\jdk-21.0.12.8-hotspot"
-$j17 = "D:\Gradle\cache\caches\minecraftforge\forgegradle\mavenizer\caches\microsoft-jdk-17.0.20.1-windows-x64"
-$j8 = "C:\Program Files\Eclipse Adoptium\jdk-8.0.502.7-hotspot"
+# JDK 也改成「先看 JAVA_HOME_<major>_X64，再從 Adoptium／ForgeGradle 的 Mavenizer 快取找」，
+# 不再寫死帶 build 號的目錄名。
+$jdkSearchRoots = @(
+    (Join-Path $env:ProgramFiles "Eclipse Adoptium"),
+    (Join-Path $env:GRADLE_USER_HOME "caches\minecraftforge\forgegradle\mavenizer\caches")
+)
+$jdk = @{}
+foreach ($major in @(25, 21, 17, 8)) {
+    $candidates = @()
+    $fromEnv = [Environment]::GetEnvironmentVariable("JAVA_HOME_${major}_X64")
+    if ($fromEnv) { $candidates += $fromEnv }
+    foreach ($searchRoot in $jdkSearchRoots) {
+        if ($searchRoot -and (Test-Path $searchRoot)) {
+            $candidates += @(Get-ChildItem -Path $searchRoot -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match "(^|-)jdk-?$major[._]" } |
+                Sort-Object Name -Descending |
+                ForEach-Object { $_.FullName })
+        }
+    }
+    $resolved = $candidates |
+        Where-Object { $_ -and (Test-Path (Join-Path $_ "bin\java.exe")) } |
+        Select-Object -First 1
+    if (-not $resolved) {
+        throw "找不到 JDK $major；請設定 JAVA_HOME_${major}_X64，或把它裝在 $($jdkSearchRoots -join ' / ')。"
+    }
+    $jdk[$major] = $resolved
+}
+
+$j25 = $jdk[25]
+$j21 = $jdk[21]
+$j17 = $jdk[17]
+$j8 = $jdk[8]
 
 function Invoke-TargetBuild {
     param(
@@ -95,7 +141,7 @@ $job89 = Start-Job -ScriptBlock {
     $c = $LASTEXITCODE
     Pop-Location
     return $c
-} -ArgumentList "$root\platforms\forge\legacy\1.8.9", $j8, (Join-Path $logDir "legacy-1.8.9.log")
+} -ArgumentList (Join-Path $root "platforms\forge\legacy\1.8.9"), $j8, (Join-Path $logDir "legacy-1.8.9.log")
 
 $job112 = Start-Job -ScriptBlock {
     param($path, $j8, $logFile)
@@ -105,7 +151,7 @@ $job112 = Start-Job -ScriptBlock {
     $c = $LASTEXITCODE
     Pop-Location
     return $c
-} -ArgumentList "$root\platforms\forge\legacy\1.12.2", $j8, (Join-Path $logDir "legacy-1.12.2.log")
+} -ArgumentList (Join-Path $root "platforms\forge\legacy\1.12.2"), $j8, (Join-Path $logDir "legacy-1.12.2.log")
 
 $null = Wait-Job $job89, $job112
 $code89 = Receive-Job $job89

@@ -80,6 +80,7 @@ public final class CoreSelfTest {
         animatesSettingsUiDeterministically();
         laysOutInPlaceSettingsLists();
         keepsSettingsActionsReachable();
+        roundTripsHotkeyNames();
         exportsSecretFreeDiagnostics();
         reportsOfflineStartupDiagnostics();
         matchesTencentCloudOfficialSignatureVector();
@@ -495,7 +496,8 @@ public final class CoreSelfTest {
             output.write(script);
             output.closeEntry();
         }
-        assertThrows(() -> SafeArchiveExtractor.extract(unsafeZip, directory.resolve("unsafe-output")));
+        assertThrows(java.io.IOException.class,
+                () -> SafeArchiveExtractor.extract(unsafeZip, directory.resolve("unsafe-output")));
 
         Path excessiveEntriesZip = directory.resolve("excessive-entries.zip");
         try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(excessiveEntriesZip))) {
@@ -504,7 +506,7 @@ public final class CoreSelfTest {
                 output.closeEntry();
             }
         }
-        assertThrows(() -> SafeArchiveExtractor.extract(
+        assertThrows(java.io.IOException.class, () -> SafeArchiveExtractor.extract(
                 excessiveEntriesZip, directory.resolve("excessive-entries-output")));
     }
 
@@ -568,9 +570,12 @@ public final class CoreSelfTest {
         assertEquals("http", EndpointPolicy.requireSafeEndpoint("http://192.168.1.100:11434/v1/chat/completions").getScheme());
         assertEquals("http", EndpointPolicy.requireSafeEndpoint("http://10.0.0.2:5000/translate").getScheme());
         assertEquals("https", EndpointPolicy.requireSafeEndpoint("https://translate.example/translate").getScheme());
-        assertThrows(() -> EndpointPolicy.requireSafeEndpoint("http://translate.example/translate"));
-        assertThrows(() -> EndpointPolicy.requireSafeEndpoint("http://8.8.8.8:5000/translate"));
-        assertThrows(() -> EndpointPolicy.requireSafeEndpoint("https://user:secret@translate.example/translate"));
+        assertThrows(IllegalArgumentException.class,
+                () -> EndpointPolicy.requireSafeEndpoint("http://translate.example/translate"));
+        assertThrows(IllegalArgumentException.class,
+                () -> EndpointPolicy.requireSafeEndpoint("http://8.8.8.8:5000/translate"));
+        assertThrows(IllegalArgumentException.class,
+                () -> EndpointPolicy.requireSafeEndpoint("https://user:secret@translate.example/translate"));
     }
 
     private static void handlesMalformedPlaceholderTokensGracefully() {
@@ -863,7 +868,8 @@ public final class CoreSelfTest {
                 android.sha256);
         assertEquals("linux-arm64",
                 OfflineEngineAsset.select("Linux", "aarch64", false).platformId);
-        assertThrows(() -> OfflineEngineAsset.select("Linux", "x86_64", true));
+        assertThrows(IllegalStateException.class,
+                () -> OfflineEngineAsset.select("Linux", "x86_64", true));
 
         assertTrue(OfflineProcessSupport.isAndroidSharedStorage(
                 java.nio.file.Paths.get("/storage/emulated/0/games/PojavLauncher")));
@@ -942,18 +948,19 @@ public final class CoreSelfTest {
                 {160, 240}, {320, 160}, {320, 240}, {854, 480}, {160, 160}, {180, 200}
         };
         for (int[] size : sizes) {
+            String label = size[0] + "x" + size[1];
             SettingsSelectionList.Layout compact =
                     SettingsSelectionList.layout(size[0], size[1], 16);
-            assertTrue(compact.left >= 0);
-            assertTrue(compact.panelLeft() >= 0);
-            assertTrue(compact.panelRight() <= size[0]);
+            assertTrue(compact.left >= 0, label);
+            assertTrue(compact.panelLeft() >= 0, label);
+            assertTrue(compact.panelRight() <= size[0], label);
             for (int index = 0; index < 16; index++) {
-                assertTrue(compact.x(index) >= 0);
-                assertTrue(compact.x(index) + compact.buttonWidth <= size[0]);
+                assertTrue(compact.x(index) >= 0, label + " option " + index);
+                assertTrue(compact.x(index) + compact.buttonWidth <= size[0], label + " option " + index);
             }
             int lastRowBottom = compact.y(7 * 2) + compact.buttonHeight;
-            assertTrue(lastRowBottom <= compact.panelBottom);
-            assertTrue(compact.panelBottom <= size[1]);
+            assertTrue(lastRowBottom <= compact.panelBottom, label);
+            assertTrue(compact.panelBottom <= size[1], label);
         }
     }
 
@@ -962,20 +969,98 @@ public final class CoreSelfTest {
         int[] heights = new int[] {160, 180, 200, 220, 240, 252, 256, 260, 268, 300, 320, 360};
         for (int width : widths) {
             for (int height : heights) {
+                String size = width + "x" + height;
                 SettingsScreenLayout.Geometry layout = SettingsScreenLayout.calculate(width, height);
-                assertTrue(layout.left() >= 0);
-                assertTrue(layout.right() + layout.buttonWidth() <= width);
-                assertTrue(layout.saveY() >= 0);
-                assertTrue(layout.saveY() + SettingsScreenLayout.BUTTON_HEIGHT <= height);
-                assertTrue(layout.endpointY() + SettingsScreenLayout.BUTTON_HEIGHT <= layout.saveY());
-                assertTrue(layout.tabY() >= 0);
-                assertTrue(layout.tabX(3) + layout.tabWidth() <= width);
-                assertTrue(layout.contentTop() >= layout.tabY() + SettingsScreenLayout.BUTTON_HEIGHT);
+                assertTrue(layout.left() >= 0, size);
+                assertTrue(layout.right() + layout.buttonWidth() <= width, size);
+                assertTrue(layout.saveY() >= 0, size);
+                assertTrue(layout.saveY() + SettingsScreenLayout.BUTTON_HEIGHT <= height, size);
+                assertTrue(layout.endpointY() + SettingsScreenLayout.BUTTON_HEIGHT <= layout.saveY(), size);
+                assertTrue(layout.tabY() >= 0, size);
+                assertTrue(layout.tabX(3) + layout.tabWidth() <= width, size);
+                assertTrue(layout.contentTop() >= layout.tabY() + SettingsScreenLayout.BUTTON_HEIGHT, size);
+                // The shift that keeps Save and Cancel on-screen used to be applied without a floor:
+                // at 200x160 it put row(0) at y=-56 and the first three control rows were drawn above
+                // the top edge. Every height in the matrix now has to keep the form on-screen, which is
+                // what the old `height >= 252` guard skipped — the only range that was broken.
+                assertTrue(layout.top() >= 0, size);
+                assertTrue(layout.row(0) >= 0, size);
+                assertTrue(layout.row(7) >= 0, size);
+                assertTrue(layout.row(0) + SettingsScreenLayout.BUTTON_HEIGHT <= layout.saveY(), size);
                 if (height >= 252) {
-                    assertTrue(layout.top() >= SettingsScreenLayout.HEADER_BOTTOM + 2);
+                    assertTrue(layout.top() >= SettingsScreenLayout.HEADER_BOTTOM + 2, size);
                 }
             }
         }
+    }
+
+    /**
+     * {@code nameOf} and {@code codeOf} have to be inverses of each other.
+     *
+     * <p>The legacy settings file stores the text {@code nameOf} returns and reads it back with
+     * {@code codeOf}, so any code {@code codeOf} accepts but {@code nameOf} does not name was written
+     * back as a decimal number that the old parser could not read; the hotkey then silently reverted to
+     * its default on the next start. A value an older build already wrote that way still has to load.
+     */
+    private static void roundTripsHotkeyNames() {
+        String[] names = new String[] {
+                "A", "Z", "0", "9", "F1", "F12", "F24",
+                "SPACE", "ESCAPE", "ENTER", "TAB", "BACKSPACE",
+                "INSERT", "DELETE", "RIGHT", "LEFT", "DOWN", "UP",
+                "PAGE_UP", "PAGE_DOWN", "HOME", "END",
+                "CAPS_LOCK", "SCROLL_LOCK", "NUM_LOCK", "PRINT_SCREEN", "PAUSE",
+                "LEFT_SHIFT", "LEFT_CONTROL", "LEFT_ALT",
+                "RIGHT_SHIFT", "RIGHT_CONTROL", "RIGHT_ALT"
+        };
+        for (String name : names) {
+            int code = HotkeyKeys.codeOf(name, -1);
+            assertTrue(code > 0);
+            assertEquals(name, HotkeyKeys.nameOf(code));
+            assertEquals(code, HotkeyKeys.codeOf(HotkeyKeys.nameOf(code), -1));
+        }
+
+        // The codes that used to fall through to the number form.
+        int[] named = new int[] {
+                260, 261, 262, 263, 264, 265, 266, 267, 268, 269,
+                280, 281, 282, 283, 284, 344, 345, 346
+        };
+        for (int code : named) {
+            String name = HotkeyKeys.nameOf(code);
+            assertFalse(String.valueOf(code).equals(name));
+            assertEquals(code, HotkeyKeys.codeOf(name, -1));
+        }
+
+        // Reading: a name, a lower-case name, a prefixed name and a plain number all resolve.
+        assertEquals(262, HotkeyKeys.codeOf("RIGHT", -1));
+        assertEquals(262, HotkeyKeys.codeOf(" right ", -1));
+        assertEquals(262, HotkeyKeys.codeOf("KEY_RIGHT", -1));
+        assertEquals(262, HotkeyKeys.codeOf("262", -1));
+        assertEquals(85, HotkeyKeys.codeOf("u", -1));
+        // Anything that is not a key still falls back instead of installing a bogus code.
+        assertEquals(123, HotkeyKeys.codeOf("9999", 123));
+        assertEquals(123, HotkeyKeys.codeOf("", 123));
+        assertEquals(123, HotkeyKeys.codeOf(null, 123));
+
+        // The save path writes settingsName() back into the file, so what was configured has to come
+        // out unchanged — including the numeric form an older build produced.
+        HotkeyKeys.install("RIGHT", "F8");
+        assertEquals(262, HotkeyKeys.settingsCode());
+        assertEquals("RIGHT", HotkeyKeys.settingsName());
+        assertEquals(297, HotkeyKeys.toggleCode());
+        HotkeyKeys.install("262", "page_down");
+        assertEquals(262, HotkeyKeys.settingsCode());
+        // A number an older build saved is read back, and the next save heals it to the name.
+        assertEquals("RIGHT", HotkeyKeys.settingsName());
+        assertEquals(267, HotkeyKeys.toggleCode());
+        assertEquals("page_down", HotkeyKeys.toggleName());
+        HotkeyKeys.install("not-a-key", null);
+        assertEquals(HotkeyKeys.DEFAULT_SETTINGS, HotkeyKeys.settingsCode());
+        assertEquals("U", HotkeyKeys.settingsName());
+        assertEquals(HotkeyKeys.DEFAULT_TOGGLE, HotkeyKeys.toggleCode());
+        assertEquals("F8", HotkeyKeys.toggleName());
+        // Leave the class on its defaults for the rest of the run.
+        HotkeyKeys.install(null, null);
+        assertEquals(HotkeyKeys.DEFAULT_SETTINGS, HotkeyKeys.settingsCode());
     }
 
     private static void exportsSecretFreeDiagnostics() throws Exception {
@@ -1216,18 +1301,18 @@ public final class CoreSelfTest {
     private static void validatesSmallModelOutputs() {
         assertEquals("欢迎 __UT_0__", TranslationOutputValidator.requireValid(
                 "Welcome __UT_0__", "\"欢迎 __UT_0__\""));
-        assertThrows(() -> TranslationOutputValidator.requireValid(
+        assertThrows(IllegalArgumentException.class, () -> TranslationOutputValidator.requireValid(
                 "Start", repeat("开始", 100)));
-        assertThrows(() -> TranslationOutputValidator.requireValid(
+        assertThrows(IllegalArgumentException.class, () -> TranslationOutputValidator.requireValid(
                 "Welcome __UT_0__", "欢迎"));
-        assertThrows(() -> TranslationOutputValidator.requireValid(
+        assertThrows(IllegalArgumentException.class, () -> TranslationOutputValidator.requireValid(
                 "Welcome __UT_0__ and __UT_1__", "欢迎 __UT_1__ 和 __UT_0__"));
-        assertThrows(() -> TranslationOutputValidator.requireValid(
+        assertThrows(IllegalArgumentException.class, () -> TranslationOutputValidator.requireValid(
                 "Welcome", "Return only the translation. Welcome"));
-        assertThrows(() -> TranslationOutputValidator.requireValid(
+        assertThrows(IllegalArgumentException.class, () -> TranslationOutputValidator.requireValid(
                 "Welcome __UT_0__",
                 "Minecraft server interface text from auto to zh-CN. Return only the translation. __UT_0__"));
-        assertThrows(() -> TranslationOutputValidator.requireValid(
+        assertThrows(IllegalArgumentException.class, () -> TranslationOutputValidator.requireValid(
                 "Welcome", "游戏服务器界面文本从自动翻译为中文，不要解释"));
         // A restored protected value may itself look like an internal token: a player is allowed to
         // be named __UT_0__, and the segment path never sends tokens to a provider, so the
@@ -1243,11 +1328,12 @@ public final class CoreSelfTest {
         } catch (IllegalArgumentException expected) {
             assertTrue(expected.getMessage().contains("internal placeholder"));
         }
-        assertThrows(() -> TranslationOutputValidator.requireDisplaySafe(
-                "Welcome", "欢迎\n不要解释"));
+        assertThrows(IllegalArgumentException.class,
+                () -> TranslationOutputValidator.requireDisplaySafe("Welcome", "欢迎\n不要解释"));
         // The only length floor is absolute: an answer made of ideographic spaces carries no
         // content, while a short translation of a short line is legitimate and must survive.
-        assertThrows(() -> TranslationOutputValidator.requireValid("OK", "\u3000\u3000"));
+        assertThrows(IllegalArgumentException.class,
+                () -> TranslationOutputValidator.requireValid("OK", "\u3000\u3000"));
         assertEquals("你好", TranslationOutputValidator.requireValid("Welcome back", "你好"));
         assertFalse(LanguageHeuristics.shouldTranslate(
                 "Minecraft server interface text from auto to zh-CN", "zh-CN"));
@@ -1348,8 +1434,10 @@ public final class CoreSelfTest {
                 coordinator.translate("Second queued translation", "auto", "zh-CN", TextKind.OTHER);
         Thread.sleep(30L);
         coordinator.close();
-        assertThrows(() -> running.get(1, TimeUnit.SECONDS));
-        assertThrows(() -> queued.get(1, TimeUnit.SECONDS));
+        assertThrows(java.util.concurrent.ExecutionException.class,
+                () -> running.get(1, TimeUnit.SECONDS));
+        assertThrows(java.util.concurrent.ExecutionException.class,
+                () -> queued.get(1, TimeUnit.SECONDS));
         provider.release.countDown();
     }
 
@@ -1392,6 +1480,27 @@ public final class CoreSelfTest {
             assertEquals("say HELLO", result.getTranslatedText());
             Thread.sleep(50L);
             assertEquals(0, provider.calls.get());
+        }
+
+        // A value longer than MAX_CONFIG_LENGTH used to be cut at a fixed offset and the tail dropped
+        // without a word: lossy() stayed false, so the screen reported a clean save, and an entry cut
+        // in half became a shorter pattern that blocked more text than the player had allowed.
+        StringBuilder longValue = new StringBuilder();
+        for (int index = 0; index < 300; index++) {
+            if (index > 0) {
+                longValue.append(',');
+            }
+            longValue.append("keyword-").append(index).append("-padding");
+        }
+        assertTrue(longValue.length() > TranslationBlocklist.MAX_CONFIG_LENGTH);
+        TranslationBlocklist.Parsed parsed =
+                TranslationBlocklist.parseWithReport(longValue.toString());
+        assertTrue(parsed.lossy());
+        assertTrue(parsed.droppedForLength() > 0);
+        assertEquals(TranslationBlocklist.MAX_KEYWORDS, parsed.blocklist().keywords().size());
+        for (String keyword : parsed.blocklist().keywords()) {
+            // The cut lands on a separator, so no kept entry is a truncated prefix of a longer one.
+            assertTrue(keyword.endsWith("-padding"), keyword);
         }
     }
 
@@ -1708,6 +1817,7 @@ public final class CoreSelfTest {
         Path directory = Files.createTempDirectory("universal-translator-debug");
         Path log = directory.resolve(DebugLog.FILE_NAME);
         Path rotated = directory.resolve(DebugLog.ROTATED_FILE_NAME);
+        Path preludeLog = directory.resolve("startup-prelude.log");
         try {
             DebugLog off = DebugLog.isolated();
             off.configure(log, false);
@@ -1726,7 +1836,12 @@ public final class CoreSelfTest {
                     new org.universaltranslator.core.net.HttpStatusException(429, "slow down"));
             on.logRetry("deepl", 1, 200L,
                     new org.universaltranslator.core.net.HttpStatusException(503, "unavailable"));
+            // A streamed answer calls this once per token, so consecutive deltas of one provider are
+            // folded into a single line: the file must not grow by one open/write/close per token.
             on.logStreamEvent("gemini:model", "delta", 7);
+            on.logStreamEvent("gemini:model", "delta", 3);
+            on.logStreamEvent("gemini:model", "delta", 4);
+            on.flush();
             String content = new String(Files.readAllBytes(log), StandardCharsets.UTF_8);
             assertTrue(content.contains("request"));
             assertTrue(content.contains("provider=deepl"));
@@ -1739,14 +1854,30 @@ public final class CoreSelfTest {
             assertTrue(content.contains("reason=server"));
             assertTrue(content.contains("delay-ms=200"));
             assertTrue(content.contains("event=delta"));
-            assertTrue(content.contains("characters=7"));
+            assertTrue(content.contains("characters=14"));
+            assertTrue(content.contains("count=3"));
+            assertEquals(content.indexOf("event=delta"), content.lastIndexOf("event=delta"));
             // The endpoint's path never reaches the log.
             assertTrue(!content.contains("/v2/translate"));
+
+            // A value read before the log can be switched on is still reported: every platform reads
+            // its configuration first and calls configure(...) afterwards, and that startup is exactly
+            // the one that needs the record of a hand-edited value falling back to its default.
+            DebugLog startup = DebugLog.isolated();
+            startup.log("config-fallback", "setting", "display-mode",
+                    "value", "bilingual_x", "used", "bilingual");
+            assertTrue(!Files.exists(preludeLog));
+            startup.configure(preludeLog, true);
+            String preludeContent = new String(Files.readAllBytes(preludeLog), StandardCharsets.UTF_8);
+            assertTrue(preludeContent.contains("config-fallback"));
+            assertTrue(preludeContent.contains("value=bilingual_x"));
+            assertTrue(preludeContent.contains("used=bilingual"));
 
             // Once the file passes the limit it is moved aside and a fresh one is started, so a long
             // session keeps exactly one rotated file.
             Files.write(log, new byte[(int) DebugLog.MAXIMUM_BYTES + 1]);
             on.log("after-rotation");
+            on.flush();
             assertTrue(Files.exists(rotated));
             String after = new String(Files.readAllBytes(log), StandardCharsets.UTF_8);
             assertTrue(after.contains("after-rotation"));
@@ -1755,6 +1886,7 @@ public final class CoreSelfTest {
         } finally {
             Files.deleteIfExists(log);
             Files.deleteIfExists(rotated);
+            Files.deleteIfExists(preludeLog);
             Files.deleteIfExists(directory);
         }
     }
@@ -1838,30 +1970,57 @@ public final class CoreSelfTest {
     }
 
     private static void assertTrue(boolean value) {
+        assertTrue(value, null);
+    }
+
+    private static void assertTrue(boolean value, String detail) {
         if (!value) {
-            throw new AssertionError("Expected true");
+            throw new AssertionError(detail == null ? "Expected true" : "Expected true: " + detail);
         }
     }
 
     private static void assertFalse(boolean value) {
+        assertFalse(value, null);
+    }
+
+    private static void assertFalse(boolean value, String detail) {
         if (value) {
-            throw new AssertionError("Expected false");
+            throw new AssertionError(detail == null ? "Expected false" : "Expected false: " + detail);
         }
     }
 
     private static void assertEquals(Object expected, Object actual) {
+        assertEquals(expected, actual, null);
+    }
+
+    private static void assertEquals(Object expected, Object actual, String detail) {
         if (expected == null ? actual != null : !expected.equals(actual)) {
-            throw new AssertionError("Expected <" + expected + "> but was <" + actual + ">");
+            String message = "Expected <" + expected + "> but was <" + actual + ">";
+            throw new AssertionError(detail == null ? message : message + ": " + detail);
         }
     }
 
-    private static void assertThrows(ThrowingRunnable runnable) {
+    /**
+     * Asserts that {@code runnable} fails with {@code expected}.
+     *
+     * <p>The single-argument form this replaces only checked that <em>something</em> was thrown, so a
+     * regression that turned an {@link IllegalArgumentException} into a
+     * {@link NullPointerException} or a {@link ClassCastException} left the check green. Those tests
+     * exist to prove that a specific input is refused, which only the type can show.
+     *
+     * @param expected type the failure must have
+     * @param runnable code that has to fail
+     */
+    private static void assertThrows(Class<? extends Throwable> expected, ThrowingRunnable runnable) {
         try {
             runnable.run();
-        } catch (Exception expected) {
-            return;
+        } catch (Throwable thrown) {
+            if (expected.isInstance(thrown)) {
+                return;
+            }
+            throw new AssertionError("Expected <" + expected.getName() + "> but was <" + thrown + ">");
         }
-        throw new AssertionError("Expected an exception");
+        throw new AssertionError("Expected <" + expected.getName() + "> but nothing was thrown");
     }
 
     private interface ThrowingRunnable {

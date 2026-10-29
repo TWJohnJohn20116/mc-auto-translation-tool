@@ -41,14 +41,27 @@ public final class TranslationBlocklist {
      * after the hundredth was ignored and a long keyword was cut into something that matched nothing.
      * For a feature whose whole purpose is "this text must not leave my machine", a silent drop is the
      * wrong direction: the caller can now warn.
+     *
+     * <p>The same applies to the configured value itself: once it passes {@link #MAX_CONFIG_LENGTH} the
+     * rest of it has no effect, and that loss is reported through {@link Parsed#droppedForLength()}
+     * instead of disappearing. The cut is made on a separator, because a value cut mid-entry leaves a
+     * shorter keyword behind that matches <em>more</em> text than the player allowed.
      */
     public static Parsed parseWithReport(String configuredKeywords) {
         if (configuredKeywords == null || configuredKeywords.trim().isEmpty()) {
-            return new Parsed(EMPTY, 0, 0);
+            return new Parsed(EMPTY, 0, 0, 0);
         }
-        String bounded = configuredKeywords.length() > MAX_CONFIG_LENGTH
-                ? configuredKeywords.substring(0, MAX_CONFIG_LENGTH)
-                : configuredKeywords;
+        String bounded = configuredKeywords;
+        int droppedForLength = 0;
+        if (bounded.length() > MAX_CONFIG_LENGTH) {
+            // Cut at a separator so the entry that straddles the limit is never turned into a shorter
+            // keyword. Cutting mid-word used to make the pattern *broader* (a truncated "creditcard"
+            // became "credit") and started blocking text the player had allowed through.
+            int boundary = bounded.lastIndexOf(',', MAX_CONFIG_LENGTH);
+            int cut = boundary > 0 ? boundary : MAX_CONFIG_LENGTH;
+            droppedForLength = countKeywords(bounded, cut);
+            bounded = bounded.substring(0, cut);
+        }
         String[] candidates = bounded.split("[,;\\r\\n\uff0c\uff1b]+");
         Set<String> unique = new LinkedHashSet<String>();
         int truncated = 0;
@@ -73,10 +86,42 @@ public final class TranslationBlocklist {
             unique.add(folded);
         }
         if (unique.isEmpty()) {
-            return new Parsed(EMPTY, dropped, truncated);
+            return new Parsed(EMPTY, dropped, truncated, droppedForLength);
         }
         return new Parsed(new TranslationBlocklist(Collections.unmodifiableList(
-                new ArrayList<String>(unique))), dropped, truncated);
+                new ArrayList<String>(unique))), dropped, truncated, droppedForLength);
+    }
+
+    /**
+     * Counts the entries the length limit removed from {@code text} at or after {@code from}.
+     *
+     * <p>Scans characters rather than splitting, because the tail of a hand-edited value can be far
+     * longer than the limit and there is no reason to allocate it.
+     *
+     * @param text configured value, whole
+     * @param from index the kept part ends at
+     * @return number of non-empty entries after {@code from}
+     */
+    private static int countKeywords(String text, int from) {
+        int lost = 0;
+        int index = from;
+        while (index < text.length()) {
+            char character = text.charAt(index);
+            if (isSeparator(character)) {
+                index++;
+                continue;
+            }
+            lost++;
+            while (index < text.length() && !isSeparator(text.charAt(index))) {
+                index++;
+            }
+        }
+        return lost;
+    }
+
+    private static boolean isSeparator(char character) {
+        return character == ',' || character == ';' || character == '\r' || character == '\n'
+                || character == '\uff0c' || character == '\uff1b';
     }
 
     /** One parse outcome plus the losses that the screen has to report. */
@@ -84,11 +129,13 @@ public final class TranslationBlocklist {
         private final TranslationBlocklist blocklist;
         private final int dropped;
         private final int truncated;
+        private final int droppedForLength;
 
-        private Parsed(TranslationBlocklist blocklist, int dropped, int truncated) {
+        private Parsed(TranslationBlocklist blocklist, int dropped, int truncated, int droppedForLength) {
             this.blocklist = blocklist;
             this.dropped = dropped;
             this.truncated = truncated;
+            this.droppedForLength = droppedForLength;
         }
 
         public TranslationBlocklist blocklist() {
@@ -105,9 +152,14 @@ public final class TranslationBlocklist {
             return truncated;
         }
 
+        /** Keywords removed because the configured value exceeded {@link #MAX_CONFIG_LENGTH}. */
+        public int droppedForLength() {
+            return droppedForLength;
+        }
+
         /** Whether part of the configured list has no effect. */
         public boolean lossy() {
-            return dropped > 0 || truncated > 0;
+            return dropped > 0 || truncated > 0 || droppedForLength > 0;
         }
     }
 

@@ -11,7 +11,16 @@ import java.lang.reflect.Field;
 /** Identifies text currently being edited by the local player in the chat box. */
 final class FabricLocalTextGuard {
     private static volatile Field chatField;
-    private static volatile boolean searched;
+    /**
+     * The screen class {@link #chatField} was resolved for, or {@code null} before the first attempt.
+     *
+     * <p>Kept identical to {@code platforms/fabric/shared/guard-legacy}. The previous version latched
+     * only a *successful* lookup, so a chat screen whose text field could not be found re-walked the
+     * whole class hierarchy on every frame — from the render thread. Recording the class instead makes
+     * a failed lookup cost one scan per screen type, and a different screen class (a version's own chat
+     * screen, a modded one) re-runs it.
+     */
+    private static volatile Class<?> resolvedFor;
 
     private FabricLocalTextGuard() {
     }
@@ -30,18 +39,16 @@ final class FabricLocalTextGuard {
     }
 
     private static TextFieldWidget findChatField(Screen screen) {
+        Class<?> type = screen.getClass();
         Field known = chatField;
-        if (!searched) {
+        if (resolvedFor != type) {
             synchronized (FabricLocalTextGuard.class) {
-                if (!searched) {
-                    Field found = findTextField(screen.getClass());
-                    // Only latch the cache once the lookup actually succeeded, otherwise a
-                    // transient failure would disable the local-chat guard for the session.
-                    if (found != null) {
-                        chatField = found;
-                        searched = true;
-                    }
-                    known = found;
+                if (resolvedFor != type) {
+                    // Latch the screen class on failure as well: one scan per screen type, not one
+                    // scan per rendered string per frame.
+                    known = findTextField(type);
+                    chatField = known;
+                    resolvedFor = type;
                 } else {
                     known = chatField;
                 }
@@ -74,14 +81,21 @@ final class FabricLocalTextGuard {
         return null;
     }
 
+    /**
+     * True when {@code rendered} is the chat box's own text, cursor included.
+     *
+     * <p>Only equality counts, as in {@code guard-legacy}. The old version also accepted "typed
+     * contains rendered", which made every other line that happened to be a substring of what the
+     * player was typing untranslatable while the chat screen was open: typing {@code hello world}
+     * silently skipped the server message {@code world}.
+     */
     private static boolean matches(String typed, String rendered) {
         if (typed == null || typed.isEmpty()) {
             return false;
         }
         String visible = TranslationTextStyling.stripLegacyFormatting(rendered);
-        if (visible.equals(typed) || visible.equals(typed + "_")) {
-            return true;
-        }
-        return visible.length() >= 2 && typed.contains(visible);
+        return visible.equals(typed)
+                || visible.equals(typed + "_")
+                || visible.equals(typed + "|");
     }
 }

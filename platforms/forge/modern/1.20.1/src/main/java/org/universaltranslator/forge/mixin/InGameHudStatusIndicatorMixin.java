@@ -15,6 +15,7 @@ import org.universaltranslator.core.HudIndicatorSettings;
 import org.universaltranslator.core.HudIndicatorVisibility;
 import org.universaltranslator.core.OutgoingTranslationPreview;
 import org.universaltranslator.core.TranslationActivity;
+import org.universaltranslator.forge.ForgeMixinDiagnostics;
 import org.universaltranslator.forge.ForgeTranslationRuntime;
 import org.universaltranslator.forge.TranslationRenderContext;
 
@@ -31,9 +32,13 @@ import org.universaltranslator.forge.TranslationRenderContext;
  */
 @Mixin(Gui.class)
 abstract class InGameHudStatusIndicatorMixin {
-    @Inject(method = "render(Lnet/minecraft/client/gui/GuiGraphics;F)V", at = @At("RETURN"))
+    // Optional: pure HUD decoration, so a missing target must not block the launch. The first run
+    // is reported to the debug log so a skipped hook is not mistaken for "translation is off".
+    @Inject(method = "render(Lnet/minecraft/client/gui/GuiGraphics;F)V", at = @At("RETURN"),
+            require = 0)
     private void universalTranslator$renderStatusIndicator(
             GuiGraphics graphics, float delta, CallbackInfo callback) {
+        ForgeMixinDiagnostics.optionalHookActive(ForgeMixinDiagnostics.HUD_INDICATOR, "hud-indicator");
         // Read the settings first: a disabled indicator draws nothing at all.
         // One read per frame: the runtime publishes a finished snapshot, and this method needs
         // four different fields off the same one.

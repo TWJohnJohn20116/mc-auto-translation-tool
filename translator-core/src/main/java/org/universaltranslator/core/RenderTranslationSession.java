@@ -92,6 +92,24 @@ public final class RenderTranslationSession implements AutoCloseable {
     // changed can never serve a stale join.
     private volatile List<String> joinedLinesSource;
     private volatile String joinedLinesText;
+    /**
+     * Bumped whenever a translation is published or the tables are cleared. A line-path memo is only
+     * valid for the generation it was built in: between two generations the {@code translated} map
+     * can only have grown, so a remembered output is still the answer, while a changed generation
+     * means a line that used to fall back to its original may now be translated.
+     */
+    private volatile long publishGeneration;
+    /** Finished output of {@link #lookupLines} in translated-only mode, if the last call had one. */
+    private volatile LinesMemo translatedLinesMemo;
+    /** Finished output of {@link #lookupLines} in bilingual mode, when every line was translated. */
+    private volatile LinesMemo bilingualLinesMemo;
+    /**
+     * Single-slot identity memo for the formatting-stripped form used by the re-entry guard. Only
+     * consulted for text that carries a formatting code, which is exactly the text whose strip would
+     * otherwise allocate a copy of the whole line on the render thread every frame.
+     */
+    private volatile String strippedSource;
+    private volatile String strippedResult;
     private volatile String lastFailureStatus = "";
     private volatile String lastReportedFailureStatus = "";
     private volatile TranslationBlocklist blockedKeywords = TranslationBlocklist.empty();
@@ -195,6 +213,13 @@ public final class RenderTranslationSession implements AutoCloseable {
         // cache hit stops paying for the full-text scan on every frame.
         String ready = translated.get(key);
         if (ready != null) {
+            // Re-arm the re-entry guard while serving. The guard has its own bound and is evicted
+            // independently of this map, and an output whose guard entry is gone is handed back to
+            // the translation path as if it were a source line: it is requested from the provider a
+            // second time and, in bilingual mode, comes back with a second prefix. Remembering it
+            // again is one hash lookup, and only when the entry is really missing.
+            rememberRenderedOutput(ready);
+            rememberStrippedVariant(ready);
             return ready;
         }
         if (rejected.containsKey(key)) {
@@ -336,9 +361,12 @@ public final class RenderTranslationSession implements AutoCloseable {
             return false;
         }
         if (error != null || result == null || result.isFailure()) {
-            // Bound the insertion order queue rather than the map: keys can leave the map on a
-            // later success, so only the queue length reflects the true retained history.
-            if (retryOrder.size() >= MAX_FAILED_TRANSLATIONS) {
+            // Bound on the map, not on the insertion-order queue: ConcurrentLinkedQueue.size() walks
+            // every node, and this check runs inside the session monitor on every failure callback --
+            // exactly when a failing provider produces a burst of them. ConcurrentHashMap.size() is
+            // an amortised counter sum, and the map is what the eviction actually empties, so it is
+            // also the honest number.
+            if (retryAfter.size() >= MAX_FAILED_TRANSLATIONS) {
                 // Evict the oldest entries instead of clearing every key: a full clear makes
                 // all failed strings retryable at the same moment and produces a retry burst.
                 evictOldestFailedTranslations(MAX_FAILED_TRANSLATIONS / 8);
@@ -371,7 +399,9 @@ public final class RenderTranslationSession implements AutoCloseable {
                 renderedTranslationOrder.add(key);
             }
             rememberRenderedOutput(output);
-            rememberRenderedOutput(TranslationTextStyling.stripLegacyFormatting(output));
+            rememberStrippedVariant(output);
+            // A new translation invalidates every remembered line-path result.
+            publishGeneration++;
             return true;
         }
         return false;
@@ -434,23 +464,50 @@ public final class RenderTranslationSession implements AutoCloseable {
         if (originals == null || originals.isEmpty()) {
             return originals;
         }
+        TextKind effectiveKind = kind == null ? TextKind.OTHER : kind;
+        // Read once: a publish between the memo test and the rebuild would otherwise be folded into
+        // a memo that claims to be older than it is.
+        long generation = publishGeneration;
         // Bilingual formatting inserts the original and translated text together.
         // Preserve the established one-output-line-per-input-line behavior in that mode.
         if (displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED) {
+            LinesMemo memo = bilingualLinesMemo;
+            if (memo != null && memo.matches(originals, effectiveKind, generation)) {
+                return memo.output();
+            }
             List<String> replacement = new ArrayList<String>(originals.size());
             boolean changed = false;
+            boolean complete = true;
             for (String original : originals) {
-                String translated = lookup(original, kind);
-                replacement.add(translated);
-                changed |= original == null ? translated != null : !original.equals(translated);
+                String line = lookup(original, effectiveKind);
+                replacement.add(line);
+                boolean lineChanged = original == null ? line != null : !original.equals(line);
+                changed |= lineChanged;
+                complete &= lineChanged;
             }
-            return changed ? replacement : originals;
+            if (!changed) {
+                return originals;
+            }
+            // Only a fully translated list is remembered: while one line is still pending the next
+            // frame has to keep asking for it, because that lookup is what re-submits the retry and
+            // eventually publishes the line.
+            if (complete) {
+                bilingualLinesMemo = new LinesMemo(originals, effectiveKind, generation, replacement);
+            }
+            return replacement;
+        }
+        // The whole result is remembered, not just the join: a hit means the joined line is already
+        // translated, so splitting it again only rebuilt n substrings for a list that cannot have
+        // changed since the last frame.
+        LinesMemo memo = translatedLinesMemo;
+        if (memo != null && memo.matches(originals, effectiveKind, generation)) {
+            return memo.output();
         }
         String originalText = joinedLines(originals);
         if (originalText == null) {
             return originals;
         }
-        String translatedText = lookup(originalText, kind);
+        String translatedText = lookup(originalText, effectiveKind);
         if (originalText.equals(translatedText)) {
             return originals;
         }
@@ -458,7 +515,39 @@ public final class RenderTranslationSession implements AutoCloseable {
         if (translatedLines.size() != originals.size()) {
             return originals;
         }
+        translatedLinesMemo = new LinesMemo(originals, effectiveKind, generation, translatedLines);
         return translatedLines;
+    }
+
+    /**
+     * One remembered {@link #lookupLines} result: the input lines, the kind they were looked up with,
+     * the publish generation they were built in, and the list to hand back.
+     *
+     * <p>Immutable and replaced as a whole, so a reader can never observe a source from one frame next
+     * to an output from another. The output is kept unmodifiable because it is now handed to several
+     * frames instead of one.
+     */
+    private static final class LinesMemo {
+        private final List<String> source;
+        private final TextKind kind;
+        private final long generation;
+        private final List<String> output;
+
+        private LinesMemo(List<String> source, TextKind kind, long generation, List<String> output) {
+            this.source = source;
+            this.kind = kind;
+            this.generation = generation;
+            this.output = Collections.unmodifiableList(new ArrayList<String>(output));
+        }
+
+        private boolean matches(List<String> current, TextKind currentKind, long currentGeneration) {
+            return kind == currentKind && generation == currentGeneration
+                    && sameLines(source, current);
+        }
+
+        private List<String> output() {
+            return output;
+        }
     }
 
     /**
@@ -583,8 +672,40 @@ public final class RenderTranslationSession implements AutoCloseable {
         if (translatedOutputs.containsKey(text)) {
             return true;
         }
-        String unformatted = TranslationTextStyling.stripLegacyFormatting(text);
+        if (text.indexOf('\u00a7') < 0) {
+            // No formatting code, so the stripped form is this very string and the lookup above was
+            // the whole answer. Text without a code is the common case on the modern render paths,
+            // which is why the strip is not attempted unconditionally.
+            return false;
+        }
+        String unformatted = strippedVariant(text);
         return unformatted != text && translatedOutputs.containsKey(unformatted);
+    }
+
+    /** Remembers the formatting-stripped form of {@code output} as a completed output too. */
+    private void rememberStrippedVariant(String output) {
+        if (output.indexOf('\u00a7') < 0) {
+            return;
+        }
+        rememberRenderedOutput(strippedVariant(output));
+    }
+
+    /**
+     * The formatting-stripped form of {@code text}, remembered by identity.
+     *
+     * <p>{@code TranslationTextStyling.stripLegacyFormatting} builds a StringBuilder and copies the
+     * line character by character whenever a formatting code is present, and the re-entry guard asked
+     * for that copy on every frame for a text that is not yet known to be one of our outputs. Identity
+     * is enough to reuse the answer because a {@link String} never changes its contents.
+     */
+    private String strippedVariant(String text) {
+        if (strippedSource == text) {
+            return strippedResult;
+        }
+        String stripped = TranslationTextStyling.stripLegacyFormatting(text);
+        strippedResult = stripped;
+        strippedSource = text;
+        return stripped;
     }
 
     private String formatOutput(String original, String translatedText) {
@@ -742,6 +863,12 @@ public final class RenderTranslationSession implements AutoCloseable {
         retryOrder.clear();
         rejected.clear();
         rejectedOrder.clear();
+        // The line-path memos answer from the tables that were just emptied.
+        publishGeneration++;
+        translatedLinesMemo = null;
+        bilingualLinesMemo = null;
+        joinedLinesSource = null;
+        joinedLinesText = null;
         lastFailureStatus = "";
         lastReportedFailureStatus = "";
         backgroundSubmissions.reset();
@@ -814,11 +941,18 @@ public final class RenderTranslationSession implements AutoCloseable {
     }
 
     @Override
-    public synchronized void close() {
-        if (closed) {
-            return;
+    public void close() {
+        synchronized (this) {
+            if (closed) {
+                return;
+            }
+            closed = true;
         }
-        closed = true;
+        // Deliberately outside the monitor. coordinator.close() interrupts the workers and then waits
+        // for them, and an interrupted worker settles its future synchronously -- CompletableFuture
+        // runs whenComplete on the completing thread -- which lands in completeLookup and needs this
+        // monitor. Holding it across the wait made every settings change wait the full five-second
+        // timeout, which in turn delayed the cache flush that follows it.
         coordinator.close();
         clearRenderedTranslations();
     }

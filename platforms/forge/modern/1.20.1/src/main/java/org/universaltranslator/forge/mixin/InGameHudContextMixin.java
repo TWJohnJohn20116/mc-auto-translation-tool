@@ -8,21 +8,25 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.universaltranslator.core.TextKind;
+import org.universaltranslator.forge.ForgeMixinDiagnostics;
 import org.universaltranslator.forge.TranslationRenderContext;
 
 @Mixin(Gui.class)
 abstract class InGameHudContextMixin {
+    // Optional: the sidebar keeps translating with the neutral kind when the hook is missing.
     @Inject(
             method = "displayScoreboardSidebar(Lnet/minecraft/client/gui/GuiGraphics;Lnet/minecraft/world/scores/Objective;)V",
-            at = @At("HEAD"))
+            at = @At("HEAD"), require = 0)
     private void universalTranslator$enterScoreboard(
             GuiGraphics context, Objective objective, CallbackInfo callback) {
+        ForgeMixinDiagnostics.optionalHookActive(
+                ForgeMixinDiagnostics.SCOREBOARD_CONTEXT, "scoreboard");
         TranslationRenderContext.push(TextKind.SCOREBOARD_LINE);
     }
 
     @Inject(
             method = "displayScoreboardSidebar(Lnet/minecraft/client/gui/GuiGraphics;Lnet/minecraft/world/scores/Objective;)V",
-            at = @At("RETURN"))
+            at = @At("RETURN"), require = 0)
     private void universalTranslator$leaveScoreboard(
             GuiGraphics context, Objective objective, CallbackInfo callback) {
         TranslationRenderContext.pop();

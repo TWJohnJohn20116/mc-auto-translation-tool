@@ -27,10 +27,14 @@ abstract class UniversalTranslatorScreenBase extends Screen {
 
     protected abstract void onBack();
 
+    // @Override so a rename in this generation breaks the build instead of silently reverting to
+    // Screen's own answer; 1.18.2 renames this method to shouldPause and has its own base.
+    @Override
     public boolean isPauseScreen() {
         return pausesGame();
     }
 
+    /** Whether the singleplayer game keeps running behind this screen; see the 1.18.2 base. */
     protected boolean pausesGame() {
         return false;
     }

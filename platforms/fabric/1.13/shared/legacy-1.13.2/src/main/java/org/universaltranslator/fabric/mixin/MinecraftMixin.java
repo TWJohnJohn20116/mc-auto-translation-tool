@@ -8,7 +8,6 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.universaltranslator.core.HotkeyKeys;
-import org.universaltranslator.fabric.TranslationRenderContext;
 import org.universaltranslator.fabric.UniversalTranslatorFabricClient;
 
 @Mixin(MinecraftClient.class)
@@ -20,11 +19,22 @@ abstract class MinecraftMixin {
 
     @Inject(method = "tick()V", at = @At("RETURN"), require = 0)
     private void universalTranslator$pollKeys(CallbackInfo callback) {
-        // Restore first, so a render method that threw between its HEAD and RETURN injection cannot
-        // leave a text-input depth above zero and silently disable translation for the session.
-        TranslationRenderContext.reset();
-        MinecraftClient client = (MinecraftClient) (Object) this;
-        long window = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
+        // Runs FabricClientBootstrapBase.onClientTick(), which starts by restoring the render context
+        // (so a render method that threw between its HEAD and RETURN injection cannot leave a
+        // text-input depth above zero and silently disable translation for the session) and then
+        // drives the join hint and the runtime status line. The tick hook used to be an empty method,
+        // so none of that ran in 1.13.2. The status line is not called a second time here for the same
+        // reason; it is part of that tick body now.
+        UniversalTranslatorFabricClient.tickFromMixin();
+        long window = GLFW.glfwGetCurrentContext();
+        if (window == 0L) {
+            // glfwGetKey on handle 0 reports every key as released and raises a GLFW error on each
+            // call whenever an error callback is installed — 20 log lines a second while the hotkeys
+            // are dead anyway. Skipping the poll is what the old code should have done; the handle
+            // source itself cannot be replaced with MinecraftClient#getWindow() here because this
+            // mapping set has no Window class (see InGameHudStatusIndicatorMixin's class javadoc).
+            return;
+        }
         boolean u = GLFW.glfwGetKey(window, HotkeyKeys.settingsCode()) == GLFW.GLFW_PRESS;
         boolean f8 = GLFW.glfwGetKey(window, HotkeyKeys.toggleCode()) == GLFW.GLFW_PRESS;
         if (u && !universalTranslator$uHeld) {
@@ -35,6 +45,5 @@ abstract class MinecraftMixin {
         }
         universalTranslator$uHeld = u;
         universalTranslator$f8Held = f8;
-        UniversalTranslatorFabricClient.notifyRuntimeStatus(client.getNetworkHandler() != null);
     }
 }

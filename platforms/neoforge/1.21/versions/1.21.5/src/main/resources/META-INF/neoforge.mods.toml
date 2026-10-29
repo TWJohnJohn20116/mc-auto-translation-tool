@@ -1,6 +1,10 @@
 modLoader="javafml"
 loaderVersion="[7,)"
 license="MIT"
+# The mod has no server-side code at all, so it must not be advertised as a server mod: without
+# this the handshake asks the server for the same modId and the client is kicked from every server
+# that does not have it installed.
+clientSideOnly=true
 
 [[mods]]
 modId="universal_translator"

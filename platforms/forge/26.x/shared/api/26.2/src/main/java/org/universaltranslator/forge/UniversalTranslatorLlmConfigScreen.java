@@ -1,5 +1,6 @@
 package org.universaltranslator.forge;
 
+import org.universaltranslator.core.ModelListPaging;
 import org.universaltranslator.core.UiLimits;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
@@ -14,12 +15,12 @@ import java.util.List;
 
 /** Local-only editor for an OpenAI-compatible hosted or loopback LLM endpoint. */
 final class UniversalTranslatorLlmConfigScreen extends Screen {
+    // The picker geometry and the paging arithmetic are shared with the engine tab's picker; see
+    // ModelListPaging. Copying the numbers here is what let the two pickers drift apart.
     /** Height of a single catalog row in the model picker overlay. */
-    private static final int LIST_ROW_HEIGHT = 12;
+    private static final int LIST_ROW_HEIGHT = ModelListPaging.ROW_HEIGHT;
     /** Y of the first catalog row; the picker title sits above it. */
-    private static final int LIST_TOP = 46;
-    /** Room kept under the rows for the paging, back, and hint lines. */
-    private static final int LIST_FOOTER_HEIGHT = 62;
+    private static final int LIST_TOP = ModelListPaging.LIST_TOP;
 
     private final UniversalTranslatorConfigScreen parent;
     private String initialEndpoint;
@@ -33,8 +34,9 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
     private volatile boolean statusIsError;
     private volatile List<String> fetchedModels = Collections.emptyList();
     private volatile boolean fetching;
-    private boolean modelListOpen;
-    private int modelPage;
+    /** Written by the catalog worker, read and written by the render thread. */
+    private volatile boolean modelListOpen;
+    private volatile int modelPage;
 
     UniversalTranslatorLlmConfigScreen(
             UniversalTranslatorConfigScreen parent,
@@ -137,10 +139,10 @@ int formWidth = Math.max(180, Math.min(360, this.width - 20));
         fetching = true;
         setStatus(tr("screen.universal_translator.llm.fetching"), false);
         Thread worker = new Thread(() -> {
-            List<String> models = Collections.emptyList();
+            OpenAiModelCatalog.Catalog catalog = null;
             String failure = "";
             try {
-                models = OpenAiModelCatalog.fetch(endpointValue, keyValue);
+                catalog = OpenAiModelCatalog.fetchCatalog(endpointValue, keyValue);
             } catch (Exception error) {
                 failure = describe(error);
             }
@@ -149,6 +151,13 @@ int formWidth = Math.max(180, Math.min(360, this.width - 20));
                 setStatus(tr("screen.universal_translator.llm.fetch_failed", failure), true);
                 return;
             }
+            // A login page or a proxy error page also parses as "no models". The engine tab's
+            // picker already says the answer was not JSON; this picker has to say the same thing.
+            if (!catalog.jsonBody()) {
+                setStatus(tr("screen.universal_translator.engine.test_not_json"), true);
+                return;
+            }
+            List<String> models = catalog.models();
             if (models.isEmpty()) {
                 setStatus(tr("screen.universal_translator.llm.fetch_empty"), true);
                 return;
@@ -179,6 +188,9 @@ int formWidth = Math.max(180, Math.min(360, this.width - 20));
                 Component.translatable("screen.universal_translator.llm.select_model", fetchedModels.size()),
                 this.width / 2, 20, 0xFFFFFF);
         int rows = rowsPerPage();
+        // A resize lowers the row count while the picker stays open, so the page index can point
+        // past the last page; clamping here is what keeps the overlay and its page counter honest.
+        modelPage = ModelListPaging.clampPage(modelPage, fetchedModels.size(), rows);
         int first = modelPage * rows;
         for (int row = 0; row < rows && first + row < fetchedModels.size(); row++) {
             int rowY = LIST_TOP + row * LIST_ROW_HEIGHT;
@@ -223,8 +235,9 @@ int formWidth = Math.max(180, Math.min(360, this.width - 20));
             return;
         }
         int rows = rowsPerPage();
-        int row = (int) ((mouseY - LIST_TOP) / LIST_ROW_HEIGHT);
-        int index = modelPage * rows + row;
+        modelPage = ModelListPaging.clampPage(modelPage, fetchedModels.size(), rows);
+        int row = ModelListPaging.rowAt(mouseY);
+        int index = ModelListPaging.index(modelPage, rows, row);
         if (row >= rows || index >= fetchedModels.size()) {
             return;
         }
@@ -234,11 +247,11 @@ int formWidth = Math.max(180, Math.min(360, this.width - 20));
     }
 
     private int rowsPerPage() {
-        return Math.max(3, (this.height - LIST_TOP - LIST_FOOTER_HEIGHT) / LIST_ROW_HEIGHT);
+        return ModelListPaging.rows(this.height);
     }
 
     private int pageCount(int rows) {
-        return Math.max(1, (fetchedModels.size() + rows - 1) / rows);
+        return ModelListPaging.pageCount(fetchedModels.size(), rows);
     }
 
     @Override

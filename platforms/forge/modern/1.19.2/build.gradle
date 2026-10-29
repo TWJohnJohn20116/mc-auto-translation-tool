@@ -9,7 +9,11 @@ ext.legacyForgeVersion = "43.5.2"
 ext.legacyForgeLoaderMajor = "43"
 ext.legacyMinecraftNextVersion = "1.19.3"
 ext.legacyJavaRelease = 17
-ext.legacyPackFormat = 15
-ext.legacyAuthors = "??撘?272635"
+// 1.19.2 resource-pack format is 9 (1.18.2 is 8, 1.20.1 is 15). This value is expanded into
+// pack.mcmeta by platforms/forge/modern/shared.gradle, so 15 shipped a pack the client cannot read.
+ext.legacyPackFormat = 9
+// Same author string as 1.18.2 / 1.20.1 and the 20 NeoForge toml files; the previous value had been
+// mangled into replacement characters and lost the name.
+ext.legacyAuthors = "我小张7272635"
 
 apply from: rootProject.file("platforms/forge/modern/shared.gradle")

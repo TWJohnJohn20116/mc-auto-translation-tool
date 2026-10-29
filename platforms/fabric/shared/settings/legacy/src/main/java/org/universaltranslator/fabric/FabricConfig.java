@@ -30,6 +30,8 @@ import java.nio.file.Path;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Properties;
@@ -37,6 +39,17 @@ import java.util.Set;
 
 final class FabricConfig {
     private static final String FILE_NAME = "universal-translator.properties";
+    /** Hotkey used when the configured name is missing or blank; matches {@code HotkeyKeys}. */
+    private static final String DEFAULT_SETTINGS_KEY = "U";
+    private static final String DEFAULT_TOGGLE_KEY = "F8";
+    /** Suffix pattern of the copy a damaged file is preserved as; one write per start at most. */
+    private static final DateTimeFormatter CORRUPT_STAMP =
+            DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
+    /**
+     * Name of the file the last {@link #load(Path)} quarantined, or {@code null} when it read a
+     * healthy file; see the modern copy of this class for why the bootstrap is told about it.
+     */
+    private static volatile String corruptionBackup;
 
     final boolean enabled;
     final boolean translateChat;
@@ -77,6 +90,18 @@ final class FabricConfig {
     final HudIndicatorVisibility hudIndicatorVisibility;
     final int hudIndicatorOffsetX;
     final int hudIndicatorOffsetY;
+    /**
+     * Configured hotkey names, kept as the raw property values.
+     *
+     * <p>They live in the snapshot rather than only in the static {@link HotkeyKeys} because every
+     * {@code withXxx} method rebuilds from {@link #toProperties()}, and that rebuild used to reach
+     * the global holder for these two values. The keys were not part of {@code toProperties()} at
+     * all, so the rebuilt object's constructor installed the defaults U/F8 over the player's
+     * choice, and the next {@code save()} wrote that default snapshot back — deleting the two
+     * lines from the file. Owning the values here keeps a rebuild a pure function of the file.
+     */
+    final String settingsKey;
+    final String toggleKey;
     private final OnlineProviderConfig onlineProviderConfig;
     private final Path configFile;
     /**
@@ -117,8 +142,12 @@ final class FabricConfig {
         this.blockedKeywords = boundedKeywords(properties.getProperty("blocked-keywords", ""));
         // Fabric 1.0-1.13.2 has no key-binding API (the 1.13 tree does not even depend on Fabric
         // API), so the hotkeys are read from this file instead of the vanilla controls screen.
-        HotkeyKeys.install(properties.getProperty("settings-key", "U"),
-                properties.getProperty("toggle-key", "F8"));
+        // Read into the snapshot only: publishing them to the global HotkeyKeys is load()'s job, so
+        // a rebuild cannot republish (or overwrite) them as a side effect of being constructed.
+        this.settingsKey = hotkey(properties.getProperty("settings-key", DEFAULT_SETTINGS_KEY),
+                DEFAULT_SETTINGS_KEY);
+        this.toggleKey = hotkey(properties.getProperty("toggle-key", DEFAULT_TOGGLE_KEY),
+                DEFAULT_TOGGLE_KEY);
         this.targetLanguage = properties.getProperty("target-language", TargetLanguage.SIMPLIFIED_CHINESE).trim();
         this.outgoingTargetLanguage = properties.getProperty(
                 "outgoing-target-language", "en").trim();
@@ -202,6 +231,7 @@ final class FabricConfig {
     }
 
     static FabricConfig load(Path configDirectory) throws IOException {
+        corruptionBackup = null;
         Files.createDirectories(configDirectory);
         Path file = configDirectory.resolve(FILE_NAME);
         if (!Files.exists(file)) {
@@ -213,8 +243,18 @@ final class FabricConfig {
         }
 
         Properties stored = new Properties();
+        boolean recovered = false;
         try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
             stored.load(reader);
+        } catch (IOException | RuntimeException malformed) {
+            // See the modern copy of this class: one damaged byte used to shut translation down
+            // for good, because every later read — the settings screen included — failed the same
+            // way and nothing ever rewrote the file. Quarantine, then continue on the defaults.
+            recovered = true;
+            stored = new Properties();
+            corruptionBackup = quarantine(file);
+            DebugLog.global().log("config-corrupt", "cause", malformed.getClass().getSimpleName(),
+                    "backup", corruptionBackup == null ? "" : corruptionBackup);
         }
         Properties properties = defaults();
         properties.putAll(stored);
@@ -229,7 +269,13 @@ final class FabricConfig {
         LocalConfigSecurity.restrictToOwner(file);
         FabricConfig loaded = new FabricConfig(
                 properties, file, configDirectory.resolve("universal-translator-cache.properties"));
-        if (migrated) {
+        // The one place the hotkeys reach their global holder, and only once per load: the codes
+        // the 1.0-1.13 keyboard mixins read must match the file, not whatever the last rebuild
+        // happened to carry.
+        HotkeyKeys.install(loaded.settingsKey, loaded.toggleKey);
+        // See the modern copy: rewriting the file is what makes a quarantined configuration
+        // self-healing, but only when the damaged bytes really were preserved somewhere else.
+        if (migrated && (!recovered || corruptionBackup != null)) {
             loaded.save();
         }
         // The statistics file sits next to the configuration. Reading it here is the one place every
@@ -237,6 +283,32 @@ final class FabricConfig {
         TranslationStats.global().attach(file.resolveSibling(TranslationStats.FILE_NAME));
         DebugLog.global().configure(file.resolveSibling(DebugLog.FILE_NAME), loaded.debugLog());
         return loaded;
+    }
+
+    /** Name of the file the last {@link #load(Path)} quarantined, or {@code null} when it was healthy. */
+    static String lastCorruptionBackup() {
+        return corruptionBackup;
+    }
+
+    /** Moves a damaged configuration aside and names the copy it became, or {@code null} on failure. */
+    private static String quarantine(Path file) {
+        Path target = file.resolveSibling(
+                file.getFileName().toString() + ".corrupt-" + LocalDateTime.now().format(CORRUPT_STAMP));
+        try {
+            Files.move(file, target, StandardCopyOption.REPLACE_EXISTING);
+            return target.getFileName().toString();
+        } catch (IOException | RuntimeException moveFailure) {
+            return null;
+        }
+    }
+
+    /** A hotkey name with surrounding whitespace removed, falling back when it is blank. */
+    private static String hotkey(String raw, String fallback) {
+        if (raw == null) {
+            return fallback;
+        }
+        String trimmed = raw.trim();
+        return trimmed.isEmpty() ? fallback : trimmed;
     }
 
     FabricConfig withSettings(
@@ -265,6 +337,92 @@ final class FabricConfig {
             HudIndicatorSettings hudIndicator
     ) {
         Properties properties = toProperties();
+        applyFormSettings(properties, enabled, translateChat, translateOther, translateVanilla,
+                translateOutgoing, translatePlayerNames, blockedKeywords, targetLanguage,
+                outgoingTargetLanguage, displayMode, translateEnglishOnly, translatedTextColor,
+                provider, endpoint, llmEndpoint, llmApiKey, llmModel, offlineAutoDownload,
+                offlineModel, apiFallback, diskCache, animatedUi, hudIndicator);
+        // This save does not edit the advanced keys, so it passes the claim along unchanged: whichever
+        // of them an earlier step wrote stays written, and the rest are still re-read from disk.
+        return new FabricConfig(properties, configFile, cacheFile, ownedPromptKeys);
+    }
+
+    /**
+     * The settings screen's whole Save, built from one read of the file instead of four.
+     *
+     * <p>Same reason as the modern copy of this class: each of {@code withSettings},
+     * {@code withPromptSettings} and {@code withTranslationTuning} rebuilt from
+     * {@code toProperties()}, and {@code save()} rebuilt a fourth time — four file reads for one
+     * button press, all of them on the client thread.
+     */
+    FabricConfig withAllSettings(
+            boolean enabled,
+            boolean translateChat,
+            boolean translateOther,
+            boolean translateVanilla,
+            boolean translateOutgoing,
+            boolean translatePlayerNames,
+            String blockedKeywords,
+            String targetLanguage,
+            String outgoingTargetLanguage,
+            TranslationDisplayMode displayMode,
+            boolean translateEnglishOnly,
+            TranslationTextColor translatedTextColor,
+            String provider,
+            String endpoint,
+            String llmEndpoint,
+            String llmApiKey,
+            String llmModel,
+            boolean offlineAutoDownload,
+            OfflineModel offlineModel,
+            boolean apiFallback,
+            boolean diskCache,
+            boolean animatedUi,
+            HudIndicatorSettings hudIndicator,
+            TranslationQuality quality,
+            String customSystemPrompt,
+            int workers,
+            int batchSize
+    ) {
+        Properties properties = toProperties();
+        applyFormSettings(properties, enabled, translateChat, translateOther, translateVanilla,
+                translateOutgoing, translatePlayerNames, blockedKeywords, targetLanguage,
+                outgoingTargetLanguage, displayMode, translateEnglishOnly, translatedTextColor,
+                provider, endpoint, llmEndpoint, llmApiKey, llmModel, offlineAutoDownload,
+                offlineModel, apiFallback, diskCache, animatedUi, hudIndicator);
+        OnlineProviderConfig.applyPromptSettings(properties, quality, customSystemPrompt);
+        OnlineProviderConfig.applyTranslationTuning(properties, workers, batchSize);
+        // Same claim {@link #withPromptSettings} makes: this call wrote the two prompt keys itself.
+        return new FabricConfig(properties, configFile, cacheFile,
+                claimedKeys(OnlineProviderConfig.QUALITY_KEY,
+                        OnlineProviderConfig.CUSTOM_PROMPT_KEY));
+    }
+
+    /** Writes the general form onto {@code properties}; the half every save path shares. */
+    private void applyFormSettings(Properties properties,
+            boolean enabled,
+            boolean translateChat,
+            boolean translateOther,
+            boolean translateVanilla,
+            boolean translateOutgoing,
+            boolean translatePlayerNames,
+            String blockedKeywords,
+            String targetLanguage,
+            String outgoingTargetLanguage,
+            TranslationDisplayMode displayMode,
+            boolean translateEnglishOnly,
+            TranslationTextColor translatedTextColor,
+            String provider,
+            String endpoint,
+            String llmEndpoint,
+            String llmApiKey,
+            String llmModel,
+            boolean offlineAutoDownload,
+            OfflineModel offlineModel,
+            boolean apiFallback,
+            boolean diskCache,
+            boolean animatedUi,
+            HudIndicatorSettings hudIndicator) {
         properties.setProperty("enabled", Boolean.toString(enabled));
         properties.setProperty("translate-chat", Boolean.toString(translateChat));
         properties.setProperty("translate-other", Boolean.toString(translateOther));
@@ -273,8 +431,8 @@ final class FabricConfig {
         properties.setProperty("stream-outgoing", Boolean.toString(streamOutgoing));
         properties.setProperty("translate-player-names", Boolean.toString(translatePlayerNames));
         properties.setProperty("blocked-keywords", boundedKeywords(blockedKeywords));
-        properties.setProperty("settings-key", HotkeyKeys.settingsName());
-        properties.setProperty("toggle-key", HotkeyKeys.toggleName());
+        // The hotkey names are not written here: the snapshot already carries them from
+        // toProperties(), which writes the raw property values this object was built from.
         properties.setProperty("target-language", targetLanguage.trim());
         properties.setProperty("outgoing-target-language", outgoingTargetLanguage.trim());
         properties.setProperty("display-mode", displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED
@@ -300,9 +458,6 @@ final class FabricConfig {
         properties.setProperty("hud-indicator-visibility", hudIndicator.getVisibility().configName());
         properties.setProperty("hud-indicator-offset-x", Integer.toString(hudIndicator.getOffsetX()));
         properties.setProperty("hud-indicator-offset-y", Integer.toString(hudIndicator.getOffsetY()));
-        // This save does not edit the advanced keys, so it passes the claim along unchanged: whichever
-        // of them an earlier step wrote stays written, and the rest are still re-read from disk.
-        return new FabricConfig(properties, configFile, cacheFile, ownedPromptKeys);
     }
 
     FabricConfig withEnabled(boolean enabled) {
@@ -518,6 +673,8 @@ final class FabricConfig {
         properties.setProperty("translate-player-names", "false");
         properties.setProperty("animated-ui", "true");
         properties.setProperty("blocked-keywords", "");
+        properties.setProperty("settings-key", DEFAULT_SETTINGS_KEY);
+        properties.setProperty("toggle-key", DEFAULT_TOGGLE_KEY);
         properties.setProperty("target-language", TargetLanguage.SIMPLIFIED_CHINESE);
         properties.setProperty("outgoing-target-language", "en");
         properties.setProperty("display-mode", "translated-only");
@@ -566,6 +723,12 @@ final class FabricConfig {
         properties.setProperty("translate-player-names", Boolean.toString(translatePlayerNames));
         properties.setProperty("animated-ui", Boolean.toString(animatedUi));
         properties.setProperty("blocked-keywords", blockedKeywords);
+        // Written from the snapshot, never from the global HotkeyKeys: a rebuild that reached the
+        // global holder would round-trip through nameOf(), which only eight of the named codes
+        // survive, and would write the default over the player's value whenever this object was
+        // built from properties that did not carry the key.
+        properties.setProperty("settings-key", settingsKey);
+        properties.setProperty("toggle-key", toggleKey);
         properties.setProperty("target-language", targetLanguage);
         properties.setProperty("outgoing-target-language", outgoingTargetLanguage);
         properties.setProperty("display-mode", displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED

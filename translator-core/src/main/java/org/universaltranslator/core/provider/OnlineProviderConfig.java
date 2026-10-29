@@ -299,7 +299,15 @@ public final class OnlineProviderConfig {
                 TranslationTuning.MAXIMUM_BATCH_WINDOW_MILLIS);
     }
 
-    /** The throughput settings every provider built from here receives. */
+    /**
+     * The throughput settings every provider built from here receives.
+     *
+     * <p>The worker count is carried for the round trip only; no provider reads
+     * {@link TranslationTuning#workers()}, because concurrency is decided by the platform's thread
+     * pool. Batching is the only thing a provider takes from here, through
+     * {@link TranslationTuning#batching()}, {@link TranslationTuning#batchSize()} and
+     * {@link TranslationTuning#batchWindowMillis()}.
+     */
     public TranslationTuning tuning() {
         return new TranslationTuning(translationWorkers(), batchSize(), batchWindowMillis());
     }
@@ -349,7 +357,11 @@ public final class OnlineProviderConfig {
         }
         OnlineProviderConfig config = from(stored);
         List<String> lines = new ArrayList<String>(3);
-        lines.add(settingLine("Translation workers", "translation-workers",
+        // The label used to read "Translation workers", which presented a platform setting as if it
+        // were the provider's concurrency. Nothing inside a provider reads it — the platform runtime
+        // decides how many threads call in — so the line now says where the value is actually used.
+        lines.add(settingLine("Translation workers (platform thread pool; providers ignore it)",
+                "translation-workers",
                 stored.getProperty("translation-workers"),
                 config.translationWorkers(), TranslationTuning.DEFAULT_WORKERS,
                 TranslationTuning.MINIMUM_WORKERS, TranslationTuning.MAXIMUM_WORKERS));

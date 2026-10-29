@@ -128,6 +128,10 @@ public final class LegacyClientEvents {
         if (event.phase != TickEvent.Phase.END) {
             return;
         }
+        // Reset before anything else this tick can render: the hooks in FontRendererTransformer wrap
+        // their bodies in try/finally, but a stack left behind by a path that never returned would
+        // otherwise persist for the whole session and silently stop translation.
+        LegacyRenderContext.beginFrame();
         Minecraft minecraft = Minecraft.getMinecraft();
         boolean connected = LegacyVersionAccess.connection(minecraft) != null;
         if (connected && !connectedLastTick) {

@@ -48,23 +48,68 @@ test("server-renders the public-benefit project home page", async () => {
   assert.match(html, /自行配置的 API/);
   assert.match(html, /从 GitHub 下载/);
   const version = escapeRe(releaseVersion);
-  const releaseDownloads = html.match(
-    new RegExp(
-      `https://github\\.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v${version}/[A-Za-z0-9.-]+`,
-      "g",
+  const releaseDownloads = [
+    ...new Set(
+      html.match(
+        new RegExp(
+          `https://github\\.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v${version}/[A-Za-z0-9.-]+`,
+          "g",
+        ),
+      ) ?? [],
     ),
-  ) ?? [];
-  assert.equal(new Set(releaseDownloads).size, 32);
+  ];
+  const downloadNames = releaseDownloads.map((href) => href.split("/").pop());
+  // 這裡只守「結構」：每個下載連結的檔名都必須帶本版前綴，而且除了校驗檔之外全是 .jar。
+  // 不寫死 31／32——那兩個數字由 downloads/<releaseVersion> 與 publish-release.yml 決定，
+  // 寫死在測試裡只會變成每次發布都要多同步一處的第二份真相。
+  for (const name of downloadNames) {
+    assert.match(
+      name,
+      /^MCAutoTranslationTool-[\d.]+-[A-Za-z0-9.-]+\.jar$/,
+      `下載連結的檔名不符合 MCAutoTranslationTool-<版本>-<目標>.jar：${name}`,
+    );
+    assert.ok(
+      name.startsWith(`MCAutoTranslationTool-${releaseVersion}-`),
+      `下載連結的版本前綴不是 ${releaseVersion}：${name}`,
+    );
+  }
+  assert.deepEqual(
+    downloadNames.filter((name) => !name.endsWith(".jar")),
+    ["SHA256SUMS.txt"],
+    "除了 SHA256SUMS.txt 之外不應該出現非 .jar 的下載連結",
+  );
+  // 三個載入器分組都必須渲染出來：漏掉一組等於整族版本沒有入口。
+  for (const group of ["Fabric", "Forge", "NeoForge"]) {
+    assert.match(html, new RegExp(`id="download-${group}"`), `下載分組 ${group} 沒有渲染出來`);
+  }
+  // C2-181 的契約：Fabric 單一 JAR 必須把 Loader 下限寫在文案裡（下限本身可以隨發布調整）。
+  assert.match(
+    html,
+    /Fabric Loader\s*(?:≥|&ge;|&#8805;|>=)\s*\d+\.\d+\.\d+/,
+    "Fabric 卡片必須寫明 Fabric Loader 的最低版本",
+  );
+  // metadata.description 會跟著 releaseVersion 走，漏改就是發布時的文案漂移。
+  const pageDescription = source.match(/description:\s*\n?\s*"([^"]+)"/)?.[1];
+  assert.ok(pageDescription, "app/page.tsx 找不到 metadata description");
+  assert.ok(
+    pageDescription.includes(releaseVersion),
+    `metadata description 沒有提到目前版本 ${releaseVersion}`,
+  );
   // 文案宣稱的 JAR 數量必須等於實際渲染出的 .jar 連結數，而不是把當下的數字寫死在測試裡：
   // 原本這裡是 assert.match(html, /31 个经过校验的 JAR/)，每次發布都要多改一處，而且它守的
   // 不是真契約——文案與下載卡可以各自漂移而測試全綠。
   const claimedJars = source.match(/(\d+) 个经过校验的 JAR/)?.[1];
   assert.ok(claimedJars, "app/page.tsx 找不到「N 个经过校验的 JAR」");
-  const jarLinks = new Set(releaseDownloads.filter((href) => href.endsWith(".jar"))).size;
+  const jarLinks = downloadNames.filter((name) => name.endsWith(".jar")).length;
   assert.equal(
     Number(claimedJars),
     jarLinks,
     `文案宣稱 ${claimedJars} 顆 JAR，但頁面只渲染出 ${jarLinks} 個 .jar 連結`,
+  );
+  assert.equal(
+    downloadNames.length,
+    jarLinks + 1,
+    "下載連結除了 JAR 之外應該只有 SHA256SUMS.txt",
   );
   assert.match(html, new RegExp(`MCAutoTranslationTool-${version}-mc1\\.8\\.9-forge\\.jar`));
   assert.match(html, new RegExp(`MCAutoTranslationTool-${version}-fabric-all\\.jar`));

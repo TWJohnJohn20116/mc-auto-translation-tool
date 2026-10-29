@@ -122,7 +122,13 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
 
         @Override
         protected void registerStopHook(Runnable onStop) {
-            // This generation has no client-stopping callback; the runtime is never shut down from here.
+            // The Fabric API this generation is pinned to (0.13.1 on 1.16, 0.18.0 on 1.16.1) has no
+            // ClientLifecycleEvents yet, so the shared bootstrap's CLIENT_STOPPING registration is
+            // not available here. A JVM shutdown hook is the equivalent seam that needs no API: the
+            // runtime is closed on exit like it is for 1.16.2-1.16.4, instead of never being closed
+            // (which left the provider threads and the statistics file open for the whole session).
+            Runtime.getRuntime().addShutdownHook(
+                    new Thread(onStop, "universal-translator-stop"));
         }
 
         @Override

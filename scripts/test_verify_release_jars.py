@@ -428,5 +428,56 @@ versionRange="[1.20.1,1.20.2)"
         self.assertIsNone(_expected_class_major("MCAutoTranslationTool-1.4-fabric-all.jar"))
 
 
+    def test_forge_union_version_range_is_accepted(self) -> None:
+        # prepare_release_assets 只宣告真正有實作的版本，於是 `versionRange` 是多個精確
+        # restriction 的聯集（1.21.2 沒有實作，不得被放行）。每一段仍有上下界，強度不變。
+        metadata = '''
+modLoader="javafml"
+loaderVersion="[47,)"
+[[mods]]
+modId="universal_translator"
+version="1.0"
+[[dependencies.universal_translator]]
+modId="minecraft"
+versionRange="[1.21,1.21],[1.21.1,1.21.1],[1.21.3,1.21.5]"
+'''
+        result = verify_jar_bytes(
+            make_jar({"META-INF/mods.toml": metadata}), "union.jar"
+        )
+        self.assertEqual("forge", result.loader)
+
+    def test_every_version_range_restriction_needs_both_bounds(self) -> None:
+        metadata = '''
+modLoader="javafml"
+loaderVersion="[47,)"
+[[mods]]
+modId="universal_translator"
+version="1.0"
+[[dependencies.universal_translator]]
+modId="minecraft"
+versionRange="[1.21,1.21],[1.21.3,)"
+'''
+        with self.assertRaisesRegex(VerificationError, "bounded range"):
+            verify_jar_bytes(
+                make_jar({"META-INF/mods.toml": metadata}), "unbounded.jar"
+            )
+
+    def test_version_range_with_trailing_comma_is_rejected(self) -> None:
+        metadata = '''
+modLoader="javafml"
+loaderVersion="[47,)"
+[[mods]]
+modId="universal_translator"
+version="1.0"
+[[dependencies.universal_translator]]
+modId="minecraft"
+versionRange="[1.21,1.21],"
+'''
+        with self.assertRaisesRegex(VerificationError, "bounded range"):
+            verify_jar_bytes(
+                make_jar({"META-INF/mods.toml": metadata}), "trailing.jar"
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

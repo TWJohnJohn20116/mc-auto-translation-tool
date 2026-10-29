@@ -13,7 +13,13 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Collections;
 
-/** Secret-free runtime diagnostics shared by Forge 1.8.9 and 1.12.2. */
+/**
+ * Secret-free runtime diagnostics for the 1.13 Fabric builds.
+ *
+ * <p>It used to claim it was shared with Forge 1.8.9 and 1.12.2. It is not: those build from
+ * {@code platforms/forge/shared/legacy-common} and their own {@code Legacy*Screen} classes, so the
+ * comment sent readers to the wrong file (audit S2-095).
+ */
 final class UniversalTranslatorDiagnosticsScreen extends UniversalTranslatorScreenBase {
     /** Vertical distance between two text lines. */
     private static final int LINE_STEP = 17;
@@ -36,6 +42,20 @@ final class UniversalTranslatorDiagnosticsScreen extends UniversalTranslatorScre
     private boolean debugEnabled;
     private String exportStatus = "";
     private boolean exportFailed;
+    /**
+     * The rendered page contents, or {@code null} when they must be rebuilt.
+     *
+     * <p>{@link #render} runs at the frame rate and {@code displayLines()} used to rebuild every line
+     * on each call: two {@code Files.size} calls on the render thread plus 8–10 {@code I18n.translate}
+     * formattings per frame, at 60 fps. Caching makes that cost per invalidation instead of per frame;
+     * the counters page still refreshes on its own because a stale entry is rebuilt once
+     * {@link #LINE_REFRESH_MILLIS} has passed.
+     */
+    private List<String> cachedLines;
+    /** {@link System#currentTimeMillis()} when {@link #cachedLines} was built. */
+    private long cachedLinesAt;
+    /** Upper bound on how long a cached page may stay stale while the screen stays open. */
+    private static final long LINE_REFRESH_MILLIS = 500L;
 
     UniversalTranslatorDiagnosticsScreen(Screen parent) {
         this.parent = parent;
@@ -51,6 +71,8 @@ final class UniversalTranslatorDiagnosticsScreen extends UniversalTranslatorScre
             // made by another screen, is reflected instead of showing a stale value.
             debugEnabled = config.debugLog();
         }
+        // Entering the screen (or rebuilding it after a resize) is the natural point to recompute.
+        invalidateLines();
         int totalWidth = Math.max(180, Math.min(320, width - 24));
         int gap = 8;
         int buttonWidth = (totalWidth - gap) / 2;
@@ -103,13 +125,16 @@ final class UniversalTranslatorDiagnosticsScreen extends UniversalTranslatorScre
         } else if (button.id == DEBUG) {
             debugEnabled = !debugEnabled;
             applyDebugMode();
+            invalidateLines();
         } else if (button.id == BUNDLE) {
             exportBundle();
         } else if (button.id == PAGE) {
             statisticsPage = !statisticsPage;
             refreshPageLabels();
+            invalidateLines();
         } else if (button.id == RESET) {
             resetStatistics();
+            invalidateLines();
         }
     }
 
@@ -194,8 +219,29 @@ final class UniversalTranslatorDiagnosticsScreen extends UniversalTranslatorScre
         super.render(mouseX, mouseY, partialTicks);
     }
 
-    /** The lines the current page shows. */
+    /** The lines the current page shows, served from {@link #cachedLines} when it is still fresh. */
     private List<String> displayLines() {
+        long now = System.currentTimeMillis();
+        List<String> cached = cachedLines;
+        if (cached == null || now - cachedLinesAt >= LINE_REFRESH_MILLIS) {
+            cached = computeLines();
+            cachedLines = cached;
+            cachedLinesAt = now;
+        }
+        return cached;
+    }
+
+    /** Drops the cache so the next {@link #render} rebuilds the page once. */
+    private void invalidateLines() {
+        cachedLines = null;
+        cachedLinesAt = 0L;
+    }
+
+    /**
+     * Rebuilds the page contents, which is the expensive part: it localizes 4–10 lines and, on the
+     * diagnostics page, goes through {@code FabricTranslationRuntime.diagnostics()} (file sizes).
+     */
+    private List<String> computeLines() {
         try {
             return statisticsPage
                     ? TranslationStats.global().localizedLines(

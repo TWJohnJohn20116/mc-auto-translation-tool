@@ -11,9 +11,11 @@ import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -41,19 +43,30 @@ public final class PersistentTranslationCache implements TranslationStore {
     private static final long FLUSH_INTERVAL_MILLIS = 5_000L;
 
     /**
-     * One lock per cache file path rather than one per instance. {@code initialize()} on a settings
-     * change builds a new cache while the previous session is still alive, so two instances routinely
-     * point at the same file; a per-instance lock let both of them write the same temporary file and
-     * then move that file onto the target. Entries are never removed from this map, which is what
-     * makes the lock object stable for the life of the process.
+     * One state object per cache file path rather than one lock per instance. {@code initialize()} on
+     * a settings change builds a new cache while the previous session is still alive, so two
+     * instances routinely point at the same file; a per-instance lock let both of them write the same
+     * temporary file and then move that file onto the target. Entries are never removed from this
+     * map, which is what makes the monitor stable for the life of the process, and the generation
+     * counter it carries is what lets a late writer notice that the file moved on without it.
      */
-    private static final ConcurrentHashMap<String, Object> PATH_LOCKS =
-            new ConcurrentHashMap<String, Object>();
+    private static final ConcurrentHashMap<String, PathState> PATH_LOCKS =
+            new ConcurrentHashMap<String, PathState>();
 
     private final Path file;
     /** Key of {@link #file} in {@link #PATH_LOCKS}, identical for every instance on that path. */
     private final String pathKey;
     private final Map<String, String> entries;
+    /** How many entries this instance keeps; also the cap on {@link #revokedKeys}. */
+    private final int maximumEntries;
+    /**
+     * Hashed keys this instance removed on purpose -- a rollback of a value that failed the display
+     * check, or a user pressing "clear". A merge with the file must not bring them back, so they are
+     * remembered here. Concurrent because the merge runs under the path monitor while the removal
+     * happens under the instance monitor.
+     */
+    private final Set<String> revokedKeys =
+            Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
 
     /**
      * Guarded by {@code this}. True once the file has been consulted, whether the read succeeded,
@@ -79,11 +92,18 @@ public final class PersistentTranslationCache implements TranslationStore {
     /** Guarded by {@code this}. When the file was last rewritten, in wall-clock milliseconds. */
     private long lastFlushMillis;
     /**
-     * Guarded by the {@link #PATH_LOCKS} entry of {@link #pathKey}, and per instance: each cache
-     * keeps its own revision sequence, the shared lock only orders the writes. Revision of the newest
-     * state already written to the file.
+     * Guarded by the {@link #PATH_LOCKS} entry of {@link #pathKey}: revision of the newest state this
+     * instance wrote. It only orders this instance's own writes; across instances the file's
+     * {@link PathState#generation} is what decides whether a snapshot may replace the file or has to
+     * be merged into it.
      */
     private long persistedRevision;
+    /**
+     * Guarded by the path monitor. The file generation this instance last read or wrote. When the
+     * shared generation has moved past it, another instance wrote the file in the meantime and this
+     * instance's snapshot is no longer a complete view of it.
+     */
+    private long observedGeneration;
 
     /**
      * The signature keeps {@code IOException} for every existing platform caller, but this
@@ -98,6 +118,7 @@ public final class PersistentTranslationCache implements TranslationStore {
         // Normalized so that "config/cache.properties" and "config\..\config\cache.properties" from
         // two different callers resolve to the same PATH_LOCKS entry and therefore the same monitor.
         this.pathKey = file.toAbsolutePath().normalize().toString();
+        this.maximumEntries = maximumEntries;
         // Insertion order, not access order: every worker thread reads through get(), and an
         // access-ordered map re-links the entry it reads, which turns a hit into a structural
         // modification under the instance monitor and serializes all workers behind it.
@@ -128,6 +149,9 @@ public final class PersistentTranslationCache implements TranslationStore {
                 return;
             }
             entries.put(hashed, value);
+            // Storing a value again withdraws an earlier revocation of the same key, so a merge
+            // must not drop it.
+            revokedKeys.remove(hashed);
             snapshotRevision = ++revision;
             unsaved++;
             if (flushing) {
@@ -163,9 +187,16 @@ public final class PersistentTranslationCache implements TranslationStore {
         long snapshotRevision;
         synchronized (this) {
             ensureLoadedLocked();
-            if (entries.remove(hash(key)) == null) {
+            String hashed = hash(key);
+            if (entries.remove(hashed) == null) {
                 // Nothing stored under this key, so memory and file already agree.
                 return;
+            }
+            // Remembered so that the merge in persistBestEffort cannot read the value back from a
+            // file another instance has written since; the cap keeps a long session bounded, and a
+            // snapshot that carries more revocations than entries is replaced wholesale anyway.
+            if (revokedKeys.size() < maximumEntries) {
+                revokedKeys.add(hashed);
             }
             snapshotRevision = ++revision;
             unsaved++;
@@ -212,7 +243,9 @@ public final class PersistentTranslationCache implements TranslationStore {
             snapshotRevision = ++revision;
             snapshot = snapshot();
         }
-        persistBestEffort(snapshot, snapshotRevision);
+        // Deliberately not merged with the file: the user asked for the entries to be gone, so the
+        // empty snapshot must replace whatever is there instead of adopting it back.
+        persistBestEffort(snapshot, snapshotRevision, false);
     }
 
     /**
@@ -254,7 +287,7 @@ public final class PersistentTranslationCache implements TranslationStore {
     private void flushLoop(Map<String, String> snapshot, long snapshotRevision) {
         try {
             while (true) {
-                persistBestEffort(snapshot, snapshotRevision);
+                persistBestEffort(snapshot, snapshotRevision, true);
                 synchronized (this) {
                     if (!dirty) {
                         // Clearing the flag and releasing ownership in one critical section means a
@@ -319,32 +352,75 @@ public final class PersistentTranslationCache implements TranslationStore {
     }
 
     private void load() throws IOException {
-        if (!Files.exists(file)) {
-            return;
-        }
-        Properties properties = new Properties();
-        try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-            properties.load(reader);
-        }
-        for (String key : properties.stringPropertyNames()) {
-            entries.put(key, properties.getProperty(key));
+        PathState state = stateForPath();
+        synchronized (state.monitor) {
+            if (!Files.exists(file)) {
+                // An absent file still has a generation: another instance may create it later, and
+                // that creation has to be visible as "the file moved on without me".
+                observedGeneration = state.generation;
+                return;
+            }
+            Properties properties = new Properties();
+            try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+                properties.load(reader);
+            }
+            for (String key : properties.stringPropertyNames()) {
+                entries.put(key, properties.getProperty(key));
+            }
+            // Recorded after the read: a write that lands while this instance is loading bumps the
+            // generation past this value, so the next flush merges instead of overwriting it.
+            observedGeneration = state.generation;
         }
     }
 
     /**
-     * Best-effort write of one snapshot. A snapshot older than what already reached the file is
-     * skipped, so a flush that was in flight while {@link #clear()} ran cannot undo the clear.
+     * Best-effort write of one snapshot.
+     *
+     * <p>A snapshot older than what this instance already wrote is skipped, so a flush that was in
+     * flight while {@link #clear()} ran cannot undo the clear.
+     *
+     * <p>Two instances on one file are the normal state right after a settings change: the
+     * replacement cache starts translating immediately while the retired session only reaches its
+     * final {@code flush()} once its workers have drained. Writing the retired snapshot verbatim
+     * replaced the file the live session had already grown, so everything translated between the
+     * switch and that late flush vanished from disk with no log line anywhere. The revision numbers
+     * of the two instances are unrelated sequences, so they cannot be compared; what can be compared
+     * is the file's own {@link PathState#generation}. A snapshot is written as a whole only when no
+     * other instance has written the file since this one last read or wrote it. Otherwise the file's
+     * current entries are folded in first, so a late writer can add entries but never subtract them.
      *
      * <p>Writes nothing once the file could not be read, which is checked before the path lock is
      * taken so the flag keeps the same monitor as the rest of the state without nesting two locks.
+     *
+     * @param mergeWithFile {@code false} when the caller deliberately emptied the cache and the file
+     *     must be replaced rather than adopted
      */
-    private void persistBestEffort(Map<String, String> snapshot, long snapshotRevision) {
+    private void persistBestEffort(
+            Map<String, String> snapshot,
+            long snapshotRevision,
+            boolean mergeWithFile
+    ) {
         if (persistenceUnavailable()) {
             return;
         }
-        synchronized (lockForPath()) {
+        PathState state = stateForPath();
+        synchronized (state.monitor) {
             if (snapshotRevision < persistedRevision) {
                 return;
+            }
+            Map<String, String> contents = snapshot;
+            if (mergeWithFile && state.generation != observedGeneration) {
+                Map<String, String> onDisk = readExistingEntries();
+                if (onDisk == null) {
+                    // Another instance wrote a file this one cannot parse. Leaving it untouched is
+                    // the only outcome that cannot lose the entries it holds.
+                    return;
+                }
+                contents = onDisk;
+                contents.putAll(snapshot);
+                for (String revokedKey : revokedKeys) {
+                    contents.remove(revokedKey);
+                }
             }
             Path temporary = null;
             try {
@@ -358,12 +434,13 @@ public final class PersistentTranslationCache implements TranslationStore {
                 temporary = file.resolveSibling(
                         file.getFileName().toString() + "." + UUID.randomUUID() + ".tmp");
                 Properties properties = new Properties();
-                properties.putAll(snapshot);
+                properties.putAll(contents);
                 try (Writer writer = Files.newBufferedWriter(temporary, StandardCharsets.UTF_8)) {
                     properties.store(writer, "MC Auto Translation Tool cache; source keys are SHA-256 hashes");
                 }
                 if (moveIntoPlace(temporary)) {
                     persistedRevision = snapshotRevision;
+                    observedGeneration = ++state.generation;
                 }
             } catch (IOException ignored) {
                 // Translation must remain available even when the cache directory is read-only.
@@ -382,6 +459,33 @@ public final class PersistentTranslationCache implements TranslationStore {
     }
 
     /**
+     * The entries the file currently holds.
+     *
+     * <p>Only used on the rare merge path, where another instance has written the file since this one
+     * last looked at it. Reading it back is the price of not overwriting what that instance added.
+     *
+     * @return the file's entries, or {@code null} when it exists but cannot be parsed
+     */
+    private Map<String, String> readExistingEntries() {
+        if (!Files.exists(file)) {
+            return new LinkedHashMap<String, String>();
+        }
+        Properties properties = new Properties();
+        try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            properties.load(reader);
+        } catch (IOException unreadable) {
+            return null;
+        } catch (RuntimeException malformed) {
+            return null;
+        }
+        Map<String, String> existing = new LinkedHashMap<String, String>(properties.size());
+        for (String key : properties.stringPropertyNames()) {
+            existing.put(key, properties.getProperty(key));
+        }
+        return existing;
+    }
+
+    /**
      * Whether this session must not write. Synchronized because {@link #loadFailed} is guarded by the
      * same monitor as the rest of the state.
      */
@@ -390,13 +494,14 @@ public final class PersistentTranslationCache implements TranslationStore {
     }
 
     /**
-     * The lock shared by every instance pointing at this cache file.
+     * The shared state for this cache file's path: its monitor and the generation of what the file
+     * holds.
      *
      * <p>{@code computeIfAbsent} stores the object for the life of the process, so two threads asking
-     * for the same path always end up on the same monitor.
+     * for the same path always end up on the same monitor and the same counter.
      */
-    private Object lockForPath() {
-        return PATH_LOCKS.computeIfAbsent(pathKey, key -> new Object());
+    private PathState stateForPath() {
+        return PATH_LOCKS.computeIfAbsent(pathKey, key -> new PathState());
     }
 
     /**
@@ -427,6 +532,19 @@ public final class PersistentTranslationCache implements TranslationStore {
             throw race;
         }
         return true;
+    }
+
+    /**
+     * Process-wide state of one cache file: the monitor its writers serialize on, plus a generation
+     * counter bumped by every write that reached the file, whichever instance performed it.
+     *
+     * <p>The generation is what makes "the file is newer than my snapshot" observable across
+     * instances, whose own revision sequences each start at zero and therefore cannot be compared.
+     */
+    private static final class PathState {
+        private final Object monitor = new Object();
+        /** Guarded by {@link #monitor}. Bumped by every write that reached the file. */
+        private long generation;
     }
 
     /** Caller must hold the monitor of {@code this}. */

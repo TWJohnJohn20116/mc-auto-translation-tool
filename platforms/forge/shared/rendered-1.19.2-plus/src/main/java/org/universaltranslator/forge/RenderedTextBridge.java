@@ -35,12 +35,24 @@ public final class RenderedTextBridge {
     }
 
     public static String translate(String text) {
+        // GuiGraphics.drawCenteredString measures through Font.width and then draws through
+        // GuiGraphics.drawString, and both are hooked, so the second and third call receive the line
+        // this method just returned. Answering from the frame's own output set keeps those repeats off
+        // the guard chain and out of the provider.
+        if (TranslationRenderContext.isTranslatedResult(text)) {
+            return text;
+        }
         String translated = translateRaw(text);
         if (text == null || text.equals(translated)) {
             return text;
         }
-        return TranslationTextStyling.applyTranslatedStyle(
+        String styled = TranslationTextStyling.applyTranslatedStyle(
                 text, translated, ForgeTranslationRuntime.translatedTextColor());
+        // Both forms: the measuring hook is handed what the drawing hook then receives, and the two
+        // only match when no translated colour is applied.
+        TranslationRenderContext.rememberTranslation(translated);
+        TranslationRenderContext.rememberTranslation(styled);
+        return styled;
     }
 
     public static Component translate(Component text) {
@@ -89,8 +101,11 @@ public final class RenderedTextBridge {
                 return rebuilt;
             }
         }
-        String translated = translateRaw(original.toString());
-        if (original.toString().equals(translated)) {
+        // One copy of the whole line, not two: StringBuilder.toString() allocates, and the previous
+        // version called it for the lookup and again for the comparison.
+        String flat = original.toString();
+        String translated = translateRaw(flat);
+        if (flat.equals(translated)) {
             return text;
         }
         MutableComponent replacement = Component.literal(translated)
@@ -282,11 +297,33 @@ public final class RenderedTextBridge {
             List<Object> styleKeys,
             List<Style> styles
     ) {
+        collectStyledLeaves(node, node.getString(), texts, styleKeys, styles);
+    }
+
+    /**
+     * Collects the leaves of {@code node}, reusing the string the caller already built for it.
+     *
+     * <p>Every node used to call {@code getString()} for itself and then {@code getString()} again
+     * for each child just to measure it, so each level of a server-built chat line rebuilt the whole
+     * subtree twice. The caller's string is passed in and each child's is computed once, which halves
+     * the copies without changing the order or the styles the leaves are recorded with.
+     */
+    private static void collectStyledLeaves(
+            Component node,
+            String full,
+            List<String> texts,
+            List<Object> styleKeys,
+            List<Style> styles
+    ) {
         List<Component> children = node.getSiblings();
-        String full = node.getString();
         int childLength = 0;
-        for (Component child : children) {
-            childLength += child.getString().length();
+        String[] childTexts = null;
+        if (!children.isEmpty()) {
+            childTexts = new String[children.size()];
+            for (int index = 0; index < children.size(); index++) {
+                childTexts[index] = children.get(index).getString();
+                childLength += childTexts[index].length();
+            }
         }
         // Text a node renders before its children keeps that node's own style.
         if (full.length() > childLength) {
@@ -297,8 +334,11 @@ public final class RenderedTextBridge {
                 styles.add(node.getStyle());
             }
         }
-        for (Component child : children) {
-            collectStyledLeaves(child, texts, styleKeys, styles);
+        if (childTexts == null) {
+            return;
+        }
+        for (int index = 0; index < children.size(); index++) {
+            collectStyledLeaves(children.get(index), childTexts[index], texts, styleKeys, styles);
         }
     }
 

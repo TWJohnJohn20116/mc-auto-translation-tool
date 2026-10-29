@@ -32,7 +32,15 @@ abstract class UniversalTranslatorScreenBase extends Screen {
         return pausesGame();
     }
 
+    /**
+     * Whether the singleplayer game keeps running behind this screen.
+     *
+     * <p>Answered in one place for every generation that shares the screens: 1.16.5, 1.17, 1.17.1,
+     * 1.18, 1.18.1 and now 1.18.2 all return {@code false}. 1.18.2 used to answer {@code true} from
+     * a seam of its own, so opening the settings there froze the world while the same screen on
+     * 1.18.1 did not.
+     */
     protected boolean pausesGame() {
-        return true;
+        return false;
     }
 }

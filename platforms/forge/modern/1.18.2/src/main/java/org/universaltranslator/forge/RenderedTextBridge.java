@@ -11,17 +11,22 @@ import net.minecraft.util.FormattedCharSequence;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TranslationTextStyling;
 import org.universaltranslator.core.TranslationStyleRuns;
-import org.universaltranslator.core.DebugLog;
 import org.universaltranslator.core.TextKind;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class RenderedTextBridge {
-    private static final AtomicBoolean ITEM_TOOLTIP_REACHED = new AtomicBoolean();
-    private static final AtomicBoolean ITEM_TOOLTIP_APPLIED = new AtomicBoolean();
+    // Same-line memo in front of the ordered-line rebuild (P2-076). The chat overlay and the HUD
+    // redraw identical FormattedCharSequence instances every frame, and the rebuild below costs a
+    // full accept() walk plus one StringBuilder, one AtomicReference and three ArrayLists per line.
+    // The memo is valid for exactly one client tick, which keeps a freshly finished translation
+    // from being deferred by more than 50 ms.
+    private static volatile FormattedCharSequence orderMemoInput;
+    private static volatile FormattedCharSequence orderMemoOutput;
+    private static volatile int orderMemoEpoch;
 
     private RenderedTextBridge() {
     }
@@ -58,6 +63,19 @@ public final class RenderedTextBridge {
         if (text == null) {
             return null;
         }
+        int epoch = ForgeTranslationRuntime.currentRenderEpoch();
+        FormattedCharSequence memoised = orderMemoOutput;
+        if (memoised != null && orderMemoInput == text && orderMemoEpoch == epoch) {
+            return memoised;
+        }
+        FormattedCharSequence result = translateOrdered(text);
+        orderMemoInput = text;
+        orderMemoOutput = result;
+        orderMemoEpoch = epoch;
+        return result;
+    }
+
+    private static FormattedCharSequence translateOrdered(FormattedCharSequence text) {
         StringBuilder original = new StringBuilder();
         AtomicReference<Style> firstStyle = new AtomicReference<Style>(Style.EMPTY);
         final boolean[] multiStyle = new boolean[]{false};
@@ -149,23 +167,41 @@ public final class RenderedTextBridge {
         if (original.equals(translated)) {
             return text;
         }
-        return new TextComponent(translated).setStyle(translatedStyle(Style.EMPTY));
+        // FormattedText is not necessarily a Component, but every implementation reports the styles
+        // its visible text renders with. Keeping the first one stops a translated hover or tooltip
+        // line from turning plain white, which is what passing Style.EMPTY used to do.
+        return new TextComponent(translated).setStyle(translatedStyle(firstStyleOf(text)));
+    }
+
+    /** First non-empty style {@code text} renders with, or {@link Style#EMPTY} when it has none. */
+    private static Style firstStyleOf(FormattedText text) {
+        final Style[] found = new Style[]{Style.EMPTY};
+        final boolean[] taken = new boolean[]{false};
+        Optional<Object> ignored = text.visit((style, contents) -> {
+            if (!taken[0] && !contents.isEmpty()) {
+                found[0] = style;
+                taken[0] = true;
+            }
+            return Optional.empty();
+        }, Style.EMPTY);
+        return found[0];
     }
 
     /** Translates item names and lore before DrawContext creates tooltip components. */
     public static List<Component> translateTooltip(List<Component> lines) {
-        return translateTooltip(lines, false);
+        return translateLines(lines);
     }
 
     /** Canonical Screen.getTooltipFromItem hook for inventories and containers. */
     public static List<Component> translateItemTooltip(List<Component> lines) {
-        if (ITEM_TOOLTIP_REACHED.compareAndSet(false, true)) {
-            DebugLog.global().log("item-tooltip", "producer", "reached");
-        }
-        return translateTooltip(lines, true);
+        // The two one-shot AtomicBoolean "we reached / we applied the tooltip hook" flags that used
+        // to sit here only fed a first-occurrence debug line; ScreenMixin now reports the optional
+        // hook through ForgeMixinDiagnostics, which costs one volatile read instead of a CAS on
+        // every hovered item.
+        return translateLines(lines);
     }
 
-    private static List<Component> translateTooltip(List<Component> lines, boolean itemTooltip) {
+    private static List<Component> translateLines(List<Component> lines) {
         if (lines == null || lines.isEmpty()) {
             return lines;
         }
@@ -190,10 +226,6 @@ public final class RenderedTextBridge {
                 replacement.set(index,
                         new TextComponent(translated).setStyle(translatedStyle(line.getStyle())));
             }
-        }
-        if (itemTooltip && replacement != null
-                && ITEM_TOOLTIP_APPLIED.compareAndSet(false, true)) {
-            DebugLog.global().log("item-tooltip", "result", "translated");
         }
         return replacement == null ? lines : replacement;
     }

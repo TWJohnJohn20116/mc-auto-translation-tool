@@ -20,22 +20,29 @@ final class ProviderJson {
      * before the result is validated, because a single logical translation is routinely split
      * across several fragments.
      *
+     * <p>The body is parsed once here. Reading each fragment through
+     * {@link JsonStrings#readStringPath} rebuilt the whole document per fragment, so an answer made
+     * of seven pieces cost eight parses of the same bytes on the worker that was assembling it.
+     *
      * @param json response body
      * @param arrayPath path of the array, without an index
      * @param field field of each element to join
      * @return the concatenated text, or {@code null} when the array carried none
      */
     static String joinField(String json, String arrayPath, String field) {
-        StringBuilder joined = new StringBuilder();
-        for (int index = 0; index < MAXIMUM_FRAGMENTS; index++) {
-            String fragment = JsonStrings.readStringPath(
-                    json, arrayPath + "[" + index + "]." + field);
-            if (fragment == null) {
-                break;
-            }
-            joined.append(fragment);
-        }
-        return joined.length() == 0 ? null : joined.toString();
+        return joinField(JsonTree.parseOrNull(json), arrayPath, field);
+    }
+
+    /**
+     * The same join over an already parsed body, for callers that need other fields of it too.
+     *
+     * @param root parsed body, or {@code null} when it was not JSON
+     * @param arrayPath path of the array, without an index
+     * @param field field of each element to join
+     * @return the concatenated text, or {@code null} when the array carried none
+     */
+    static String joinField(Object root, String arrayPath, String field) {
+        return JsonTree.joinField(root, arrayPath, field, MAXIMUM_FRAGMENTS);
     }
 
     /**

@@ -15,7 +15,6 @@ import org.universaltranslator.core.net.ServerSentEvents;
 
 import java.net.URI;
 import java.util.Collections;
-import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -39,6 +38,12 @@ public final class GeminiTranslationProvider implements TranslationProvider {
     private static final int MAXIMUM_TOKENS_LIMIT = 2048;
     private static final int MINIMUM_COMPLETION_TOKENS = 512;
     /**
+     * Largest {@code maxOutputTokens} a truncated answer is retried with. Gemini 2.5 models spend
+     * {@code maxOutputTokens} on thinking before they write anything, so the historical 2048 ceiling
+     * is not enough for a long line at all.
+     */
+    private static final int ESCALATED_TOKENS_LIMIT = 8192;
+    /**
      * Field that reports why the model stopped. It is the only signal that tells a finished
      * translation apart from the first half of one, so it is read from a plain reply and from the
      * last event of a stream alike.
@@ -56,6 +61,16 @@ public final class GeminiTranslationProvider implements TranslationProvider {
     private final String model;
     private final TranslationPrompt.Settings prompt;
     private final HttpJsonClient http;
+    /** The value {@link #id()} reports; see {@link ProviderCacheKey}. */
+    private final String id;
+    /** Remembers an endpoint whose event stream never declares its own end. */
+    private final StreamCompletionMemory streamMemory = new StreamCompletionMemory();
+    /**
+     * Largest {@code maxOutputTokens} this model has been observed to accept. A thinking answer that
+     * was cut off at {@link #MAXIMUM_TOKENS_LIMIT} is retried once above it, and the value that
+     * worked is remembered so the next line does not have to discover it again.
+     */
+    private volatile int acceptedOutputTokens = MAXIMUM_TOKENS_LIMIT;
     /** Set once this endpoint proved it cannot answer with an event stream. */
     private volatile boolean streamingUnsupported;
 
@@ -89,17 +104,22 @@ public final class GeminiTranslationProvider implements TranslationProvider {
         this.model = requireModel(model);
         this.http = http;
         this.prompt = prompt == null ? TranslationPrompt.Settings.standard() : prompt;
+        this.id = ProviderCacheKey.of("gemini", this.model, URI.create(this.base),
+                "x-goog-api-key", this.prompt.signature());
     }
 
     /**
-     * The provider id, extended with the prompt signature when the prompt is not the historical
-     * one, exactly as the OpenAI-compatible provider does, so a quality mode or a custom prompt
-     * gets its own cache entries.
+     * The provider id: {@code gemini:model@endpointDigest[#promptSignature]}.
+     *
+     * <p>{@code gemini-endpoint} is configurable, and pointing it at a self-hosted proxy used to keep
+     * the same id as the public endpoint, so the previous server's translation was replayed from the
+     * disk cache without a single request being sent. The endpoint digest is what separates them; the
+     * model and the prompt signature stay in the readable part so diagnostics remain legible. See
+     * {@link ProviderCacheKey} — no key material is hashed, so rotating a credential keeps the cache.
      */
     @Override
     public String id() {
-        String signature = prompt.signature();
-        return signature.isEmpty() ? "gemini:" + model : "gemini:" + model + "#" + signature;
+        return id;
     }
 
     @Override
@@ -108,8 +128,27 @@ public final class GeminiTranslationProvider implements TranslationProvider {
         DebugLog.global().logRequest("gemini:" + model, model, base,
                 request.getKind().name(), text);
         int budget = completionBudget(text);
-        String response = post(text, TranslationPrompt.single(prompt, request), budget, false);
+        String system = TranslationPrompt.single(prompt, request);
+        String response = post(text, system, budget, false);
         String translated = extractContent(response);
+        String finishReason = JsonStrings.readStringField(response, FINISH_REASON_FIELD);
+        if (FINISH_REASON_MAX_TOKENS.equals(finishReason)) {
+            // The budget ran out mid-answer. Reporting "raise the budget" was useless: nothing in the
+            // provider or in the settings screen could raise it, so a long line failed the same way
+            // for the whole session. Ask once more with a larger budget and remember the value that
+            // was enough — the same two-stage shape the OpenAI-compatible provider uses.
+            int escalated = escalatedBudget();
+            if (escalated > budget) {
+                response = post(text, system, escalated, false);
+                translated = extractContent(response);
+                finishReason = JsonStrings.readStringField(response, FINISH_REASON_FIELD);
+                if (translated != null && !translated.trim().isEmpty()
+                        && !FINISH_REASON_MAX_TOKENS.equals(finishReason)) {
+                    acceptedOutputTokens = escalated;
+                    budget = escalated;
+                }
+            }
+        }
         if (translated == null || translated.trim().isEmpty()) {
             throw new IllegalStateException(
                     ProviderJson.describeMissingContent("Gemini", response));
@@ -117,7 +156,7 @@ public final class GeminiTranslationProvider implements TranslationProvider {
         // Completeness is only worth asking about once there is content to judge: an empty answer is
         // explained far better by the provider's own message and the body excerpt than by a finish
         // reason, while a cut-off answer is distinguishable from a short one only here.
-        requireCompleteAnswer(JsonStrings.readStringField(response, FINISH_REASON_FIELD), budget);
+        requireCompleteAnswer(finishReason, budget);
         if (response.indexOf("\"usageMetadata\"") >= 0) {
             TranslationStats.global().recordUsage("gemini:" + model, response);
         }
@@ -146,17 +185,26 @@ public final class GeminiTranslationProvider implements TranslationProvider {
         try (HttpJsonClient.StreamedResponse response = http.postStreaming(
                 URI.create(streamUrl()), requestBody(
                         text, TranslationPrompt.single(prompt, request), budget), headers())) {
-            if (!isEventStream(response.getContentType())) {
+            if (!EventStream.isEventStream(response.getContentType())) {
                 streamingUnsupported = true;
                 return TranslationProvider.super.translateStreaming(request, listener);
             }
-            ServerSentEvents.read(response.getBody(), payload -> {
-                String fragment = extractContent(payload);
+            // Bounded by wall clock, cancellation and raw bytes: a relay that only sends keep-alive
+            // comments would otherwise hold this worker for the rest of the session, because the
+            // parser's payload bound never sees a comment.
+            ServerSentEvents.read(StreamWatchdog.arm(response.getBody()), payload -> {
+                // One parse per event: the fragments and the finish reason are fields of the same
+                // document, and looking them up separately rebuilt the tree once per field.
+                Object event = JsonTree.parseOrNull(payload);
+                String fragment = ProviderJson.joinField(event,
+                        "candidates[0].content.parts", "text");
                 if (fragment != null && !fragment.isEmpty()) {
                     sawEvent[0] = true;
                     accumulated.append(fragment);
                     listener.onPartialText(accumulated.toString());
                 }
+                // finishReason sits inside the candidate object, so it is found with the field scan
+                // rather than a fixed path; the scan does not parse, so it costs nothing here.
                 String reported = JsonStrings.readStringField(payload, FINISH_REASON_FIELD);
                 if (reported != null) {
                     // A reported reason proves the model reached the end of its answer, whatever
@@ -196,8 +244,13 @@ public final class GeminiTranslationProvider implements TranslationProvider {
                     "reason", "stream ended without an end marker",
                     "action", "fell back to a plain request",
                     "characters", Integer.toString(accumulated.length()));
+            if (streamMemory.rememberIncomplete()) {
+                // Recording the doubling without remembering it made every later line pay it again.
+                streamingUnsupported = true;
+            }
             return TranslationProvider.super.translateStreaming(request, listener);
         }
+        streamMemory.rememberComplete();
         requireCompleteAnswer(finishReason[0], budget);
         return TranslationOutputValidator.requireValid(text, accumulated.toString());
     }
@@ -205,20 +258,29 @@ public final class GeminiTranslationProvider implements TranslationProvider {
     /**
      * Sends a one-token generation through the configured model.
      *
+     * <p>Existing with a {@code candidates} array is not enough: a thinking model spends that token
+     * on its chain of thought and answers with no text at all, which looked healthy here while every
+     * translation failed. The content itself has to be non-empty.
+     *
      * @return the raw response body
      * @throws Exception when the key, the model or the response is unusable
      */
     public String probe() throws Exception {
         String response = post(PROBE_TEXT, "", 1, false);
-        Object root = JsonStrings.parse(response);
+        Object root = JsonTree.parseOrNull(response);
         if (!(root instanceof Map) || !(((Map<?, ?>) root).get("candidates") instanceof java.util.List)) {
+            throw new IllegalStateException(
+                    ProviderJson.describeMissingContent("Gemini", response));
+        }
+        String answer = ProviderJson.joinField(root, "candidates[0].content.parts", "text");
+        if (answer == null || answer.trim().isEmpty()) {
             throw new IllegalStateException(
                     ProviderJson.describeMissingContent("Gemini", response));
         }
         return response;
     }
 
-    /** Joins every text fragment of the first candidate. */
+    /** Joins every text fragment of the first candidate; the body is parsed once. */
     static String extractContent(String response) {
         if (response == null || response.trim().isEmpty()) {
             return null;
@@ -294,10 +356,19 @@ public final class GeminiTranslationProvider implements TranslationProvider {
     /**
      * Completion budget for one text. The same scaling the OpenAI-compatible provider uses, so a
      * long line is not truncated mid-sentence and then accepted as complete.
+     *
+     * <p>Once a larger value proved to be needed it becomes the ceiling, so the second line of the
+     * same kind starts where the first one finished instead of paying for the same truncation again.
      */
-    static int completionBudget(String text) {
-        int requested = Math.min(text.length() * 2 + 32, MAXIMUM_TOKENS_LIMIT);
-        return Math.max(MINIMUM_COMPLETION_TOKENS, requested);
+    private int completionBudget(String text) {
+        int ceiling = Math.max(MAXIMUM_TOKENS_LIMIT, acceptedOutputTokens);
+        return ChatBudget.completionBudget(text, ceiling, MINIMUM_COMPLETION_TOKENS);
+    }
+
+    /** The larger budget one truncated answer is retried with. */
+    private int escalatedBudget() {
+        int next = Math.max(MAXIMUM_TOKENS_LIMIT * 2, acceptedOutputTokens);
+        return Math.min(ESCALATED_TOKENS_LIMIT, next);
     }
 
     private String post(String text, String system, int maximumTokens, boolean streaming)
@@ -353,12 +424,6 @@ public final class GeminiTranslationProvider implements TranslationProvider {
      */
     public static JsonOutputMode jsonOutputMode() {
         return JsonOutputMode.RESPONSE_MIME_TYPE;
-    }
-
-    /** A missing content type counts as "not streaming", as everywhere else in this package. */
-    private static boolean isEventStream(String contentType) {
-        return contentType != null
-                && contentType.toLowerCase(Locale.ROOT).contains("text/event-stream");
     }
 
     /** Drops a method suffix from a pasted URL so the model and the method can be appended. */

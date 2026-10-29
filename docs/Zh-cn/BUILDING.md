@@ -39,8 +39,8 @@ JDK 21／25 完成全量构建，不能用此参数替代运行时验证。
 ```
 
 输出位于 `platforms/fabric/26.x/bundle/build/libs/`。这个单一 JAR 支持当前已有适配的
-Minecraft 26.x 版本：26.1、26.1.1、26.1.2 与 26.2。它内嵌四个精确版本实现，再由 Fabric Loader
-选择匹配实现；构建会检查每个内嵌 JAR，并为全部四个版本执行真实 Loader 解析测试。
+Minecraft 26.x 版本：26.1、26.1.1、26.1.2、26.2 与 26.3。它内嵌五个精确版本实现，再由 Fabric Loader
+选择匹配实现；构建会检查每个内嵌 JAR，并为全部五个版本执行真实 Loader 解析测试。
 
 ## 单一 Fabric 1.17/1.18 JAR
 
@@ -250,6 +250,32 @@ $env:GRADLE_USER_HOME = "D:\Gradle\cache"
 输出位于 `platforms/fabric/1.13/versions/1.13.0/build/libs/` 和
 `platforms/fabric/1.13/versions/1.13.1/build/libs/`。
 
+## Fabric 1.3.1–1.8.8（Ornithe bundle）
+
+Ornithe 目前为这个区间里的 26 个正式版本提供 Fabric Loader Gen2 配置。bundle 按游戏版本
+选择精确的内嵌实现，把这批旧版本收成一个可安装 JAR：
+
+```powershell
+$env:GRADLE_USER_HOME = "D:\Gradle\cache"
+.\gradlew.bat :platform-fabric-1.0-1.8.x:build --max-workers=1
+```
+
+验证过的 bundle 输出到
+`platforms/fabric/1.0-1.8/bundle/build/libs/mc-auto-translation-tool-fabric-1.3.1-1.8.8-<mod_version>.jar`。
+
+## Fabric 1.8.9–1.12.2（Ornithe bundle）
+
+Ornithe 为这个区间的全部 15 个版本提供 Fabric Loader 配置与 Calamus intermediary 映射。
+bundle 用一份 `META-INF/jars/` 嵌套实现按当前游戏版本选择，把可安装产物收成一个 JAR：
+
+```powershell
+$env:GRADLE_USER_HOME = "D:\Gradle\cache"
+.\gradlew.bat :platform-fabric-1.8-1.12.x:build --max-workers=1
+```
+
+验证过的 bundle 输出到
+`platforms/fabric/1.8-1.12/bundle/build/libs/mc-auto-translation-tool-fabric-1.8.9-1.12.2-<mod_version>.jar`。
+
 ## 1.16.5 Fabric
 
 需要 JDK 17 或更高版本运行当前 Gradle/Loom，但产物按 Java 8 编译：
@@ -301,7 +327,7 @@ python3 scripts/verify_release_jars.py path/to/mod.jar
 Forge 旧版运行时映射、版本一致性、checksum 内容与覆盖范围。Fabric/Forge 1.16.5、
 1.19.2 与 1.20.1 的 `build` 任务也会验证它们生成的 JAR。
 
-发布流程会将 33 个发布构建产物缩减为 16 个可直接安装的 JAR：45 个 Fabric 实现会
+发布流程会将 48 个发布构建产物缩减为 31 个可直接安装的 JAR：51 个 Fabric 实现会
 放进一个由 Loader 自动选版的 JAR；四组 Forge 版本在 payload 兼容时扩宽范围；
 Forge／NeoForge 1.20.1 保留为分别验证的加载器专用 JAR。不同 API 仍保持独立：
 

@@ -35,9 +35,6 @@ abstract class UniversalTranslatorConfigScreenSeams extends UniversalTranslatorS
         onBack();
     }
 
-    public boolean isPauseScreen() {
-        return false;
-    }
     @Override
     protected void showScreen(Screen screen) {
         if (minecraftClient() != null) {

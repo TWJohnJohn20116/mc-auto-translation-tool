@@ -4,24 +4,49 @@
 
 ## Choose the correct file
 
-Each Minecraft version requires its matching JAR. Do not mix them:
+Each Minecraft version requires its matching JAR. Do not mix them. The table below is the complete
+set of 31 directly installable 1.4 JARs: one row per file.
 
 | Minecraft | Mod loader | Java | Also required |
 | --- | --- | --- | --- |
-| 26.1, 26.1.1, 26.1.2, 26.2 (single JAR) | Fabric | 25 | Matching Fabric API |
-| 1.21–1.21.11 (single JAR) | Fabric | 21 | Matching Fabric API |
-| 1.21.11 | Forge 61.2.0+ | 21 | No additional mod |
-| 1.21.11 | Fabric | 21 | Fabric API |
-| 1.20.1 | Forge 47.4.10+ | 17 | No additional mod |
-| 1.20.1 | Fabric | 17 | Fabric API |
-| 1.19.2 (no released JAR yet) | Fabric | 17 | Fabric API |
-| 1.16.5 (no released JAR yet) | Fabric | 8 | Fabric API |
-| 1.12.2 | Forge 14.23.5.x | 8 | No additional mod |
+| 1.13–1.13.2, 1.14–1.15.2, 1.16–1.16.5, 1.17–1.18.2, 1.19–1.19.4, 1.20–1.20.6, 1.21–1.21.11, 26.1–26.3 (single JAR, 51 exact implementations) | Fabric **Loader ≥ 0.19.3** | 8 / 17 / 21 / 25 depending on the game | Matching Fabric API |
 | 1.8.9 | Forge 11.15.1.x | 8 | No additional mod |
+| 1.12.2 | Forge 14.23.5.x | 8 | No additional mod |
+| 1.16.5 | Forge 36.2.42 | 8 | No additional mod |
+| 1.18.2 | Forge 40.2.21 | 17 | No additional mod |
+| 1.19.2 | Forge 43.5.2 | 17 | No additional mod |
+| 1.20.1 | Forge 47.4.10 | 17 | No additional mod |
+| 1.21, 1.21.1, 1.21.3–1.21.5 | Forge family JAR (51.0.33–61.2.0) | 21 | No additional mod; 1.21.2 has no implementation |
+| 1.21.6–1.21.8 | Forge family JAR | 21 | No additional mod |
+| 1.21.9–1.21.11 | Forge family JAR | 21 | No additional mod |
+| 26.1–26.1.2 | Forge family JAR (62.0.9–65.1.1) | 25 | No additional mod |
+| 26.2 | Forge 65.1.1 | 25 | No additional mod |
+| 1.20.1 | NeoForge 47.1.106 | 17 | No additional mod |
+| 1.20.4 | NeoForge 20.4.251 | 17 | No additional mod |
+| 1.20.6 | NeoForge 20.6.139 | 21 | No additional mod |
+| 1.21 | NeoForge 21.0.167 | 21 | No additional mod |
+| 1.21.1 | NeoForge 21.1.248 | 21 | No additional mod |
+| 1.21.2 | NeoForge 21.2.1-beta | 21 | No additional mod |
+| 1.21.3 | NeoForge 21.3.97 | 21 | No additional mod |
+| 1.21.4 | NeoForge 21.4.157 | 21 | No additional mod |
+| 1.21.5 | NeoForge 21.5.98 | 21 | No additional mod |
+| 1.21.6 | NeoForge 21.6.20-beta | 21 | No additional mod |
+| 1.21.7 | NeoForge 21.7.25-beta | 21 | No additional mod |
+| 1.21.8 | NeoForge 21.8.54 | 21 | No additional mod |
+| 1.21.9 | NeoForge 21.9.16-beta | 21 | No additional mod |
+| 1.21.10 | NeoForge 21.10.64 | 21 | No additional mod |
+| 1.21.11 | NeoForge 21.11.45 | 21 | No additional mod |
+| 26.1 | NeoForge 26.1.0.19-beta | 25 | No additional mod |
+| 26.1.1 | NeoForge 26.1.1.15-beta | 25 | No additional mod |
+| 26.1.2 | NeoForge 26.1.2.95 | 25 | No additional mod |
+| 26.2 | NeoForge 26.2.0.59 | 25 | No additional mod |
 
 Place the correct JAR in the game instance's `mods` folder. The server does not need this mod.
-The 1.20.1 and 1.21.11 JARs accept only the exact game version in the table. Do not use them on
-adjacent versions or interchange Fabric and Forge files.
+The single Fabric JAR accepts only the versions listed one by one above and requires Fabric Loader
+≥ 0.19.3 on that instance (the floor the bundle's `fabric.mod.json` declares); on an older Loader it
+fails during load with a dependency error. Forge family JARs declare a continuous range that is wider
+than their adapters, and the gaps in that range (1.21.2) have no implementation. Each NeoForge JAR
+covers exactly one game version, and there is no 1.20.2 or 1.20.3 download.
 
 ## First-time setup
 

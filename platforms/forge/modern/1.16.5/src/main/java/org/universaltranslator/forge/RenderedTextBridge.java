@@ -17,6 +17,15 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 public final class RenderedTextBridge {
+    // Same-line memo in front of the ordered-line rebuild (P2-076). The chat overlay and the HUD
+    // redraw identical IReorderingProcessor instances every frame, and the rebuild below costs a
+    // full accept() walk plus one StringBuilder, one AtomicReference and three ArrayLists per line.
+    // The memo is valid for exactly one client tick, which keeps a freshly finished translation
+    // from being deferred by more than 50 ms.
+    private static volatile IReorderingProcessor orderMemoInput;
+    private static volatile IReorderingProcessor orderMemoOutput;
+    private static volatile int orderMemoEpoch;
+
     private RenderedTextBridge() {
     }
 
@@ -52,6 +61,19 @@ public final class RenderedTextBridge {
         if (text == null) {
             return null;
         }
+        int epoch = ForgeTranslationRuntime.currentRenderEpoch();
+        IReorderingProcessor memoised = orderMemoOutput;
+        if (memoised != null && orderMemoInput == text && orderMemoEpoch == epoch) {
+            return memoised;
+        }
+        IReorderingProcessor result = translateOrdered(text);
+        orderMemoInput = text;
+        orderMemoOutput = result;
+        orderMemoEpoch = epoch;
+        return result;
+    }
+
+    private static IReorderingProcessor translateOrdered(IReorderingProcessor text) {
         StringBuilder original = new StringBuilder();
         AtomicReference<Style> firstStyle = new AtomicReference<Style>(Style.EMPTY);
         final boolean[] multiStyle = new boolean[]{false};

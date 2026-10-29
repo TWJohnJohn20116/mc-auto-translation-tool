@@ -17,6 +17,7 @@ import org.universaltranslator.core.TranslationDiagnosticsSnapshot;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.RecentUserText;
 import org.universaltranslator.core.TranslationResult;
+import org.universaltranslator.core.TranslationStatusLocalizer;
 import org.universaltranslator.core.DiagnosticsLogExporter;
 
 import java.io.IOException;
@@ -102,14 +103,19 @@ public final class LegacyTranslationRuntime {
         TranslationProvider createdProvider = null;
         RenderTranslationSession created = null;
         if (config.enabled) {
-            TranslationStore store = config.diskCache
-                    ? new PersistentTranslationCache(config.cacheFile.toPath(), 10_000)
-                    : new TranslationCache(10_000);
+            // Built in the modern runtime's order: the provider first, then recorded, then the store
+            // and the session. Building the cache first meant a provider construction failure (a
+            // rejected llama.cpp path, an incomplete API fallback) left a 10 000-entry store behind
+            // with no owner to close it, and every retry added another one.
             TranslationProvider provider = config.createProvider();
+            TranslationStore store = null;
             try {
-                // Record the provider before the session is built around it: a failure here must
-                // not orphan a provider that may already hold resources.
+                // Record the provider before the store and the session are built around it: a
+                // failure in either must not orphan a provider that may already hold resources.
                 createdProvider = provider;
+                store = config.diskCache
+                        ? new PersistentTranslationCache(config.cacheFile.toPath(), 10_000)
+                        : new TranslationCache(10_000);
                 // The offline llama.cpp server is single threaded, so it always gets one worker no
                 // matter what the configuration asks for.
                 int workers = provider.id().contains("offline-llama:") ? 1 : config.translationWorkers();
@@ -122,16 +128,10 @@ public final class LegacyTranslationRuntime {
                 // The session was never handed to anyone and its own close() needs a live provider,
                 // so the provider is what has to be released here. TranslationProvider does not
                 // declare close(); the providers that own resources expose it via AutoCloseable.
-                if (createdProvider instanceof AutoCloseable) {
-                    try {
-                        ((AutoCloseable) createdProvider).close();
-                    } catch (Throwable closeFailure) {
-                        // Keep the build failure as the one the caller sees (F8 and
-                        // applyHomeSettings recover from it) and record the teardown failure as
-                        // suppressed information instead of letting it replace the original.
-                        buildFailure.addSuppressed(closeFailure);
-                    }
-                }
+                releaseQuietly(createdProvider, buildFailure);
+                // Same for a store built before the session failed: the persistent cache owns a file
+                // handle once it is loaded, and nothing else refers to this one.
+                releaseQuietly(store, buildFailure);
                 throw buildFailure;
             }
         }
@@ -147,6 +147,25 @@ public final class LegacyTranslationRuntime {
         RECENT_USER_TEXT.clear();
         outgoingTail = CompletableFuture.completedFuture(null);
         closeInBackground(replaced);
+    }
+
+    /**
+     * Closes {@code resource} if it owns anything, keeping the caller's failure as the reported one.
+     *
+     * <p>{@code TranslationProvider} and {@code TranslationStore} do not declare {@code close()};
+     * the implementations that hold a socket or a file handle expose it through {@link AutoCloseable}.
+     * A teardown failure is recorded as suppressed information instead of replacing the build failure,
+     * which is the one F8 and {@code applyHomeSettings} know how to recover from.
+     */
+    private static void releaseQuietly(Object resource, Throwable buildFailure) {
+        if (!(resource instanceof AutoCloseable)) {
+            return;
+        }
+        try {
+            ((AutoCloseable) resource).close();
+        } catch (Throwable closeFailure) {
+            buildFailure.addSuppressed(closeFailure);
+        }
     }
 
     /**
@@ -275,8 +294,10 @@ public final class LegacyTranslationRuntime {
         String providerStatus = provider instanceof TranslationProviderStatus
                 ? ((TranslationProviderStatus) provider).status() : "";
         // Preserve the offline provider's concrete process error instead of alternating it with
-        // the session's generic "translation failed" wrapper on successive client ticks.
-        if (providerStatus.startsWith("离线翻译失败")) {
+        // the session's generic "translation failed" wrapper on successive client ticks. Decided
+        // through the shared classifier instead of a copy of the provider's Chinese message prefix,
+        // which stopped matching as soon as that wording changed.
+        if (TranslationStatusLocalizer.isFailure(providerStatus)) {
             return providerStatus;
         }
         if (active != null && !active.lastFailureStatus().isEmpty()) {
@@ -297,8 +318,12 @@ public final class LegacyTranslationRuntime {
         TranslationProvider provider = activeProvider;
         TranslationDiagnosticsSnapshot snapshot;
         if (config == null) {
+            // Empty rather than a Chinese placeholder: the status is handed to
+            // TranslationStatusLocalizer, whose table has no entry for a made-up literal, so the
+            // literal reached English and Japanese players untranslated. The screens render their
+            // own localized "settings are not loaded" line for this case.
             snapshot = new TranslationDiagnosticsSnapshot(
-                    false, "", "", "", null, false, false, -1L, -1L, "尚未载入设置");
+                    false, "", "", "", null, false, false, -1L, -1L, "");
         } else {
             Path modelFile = config.offlineDirectory.toPath().resolve(config.offlineModel.modelFile());
             snapshot = new TranslationDiagnosticsSnapshot(

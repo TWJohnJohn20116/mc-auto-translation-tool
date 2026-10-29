@@ -30,13 +30,12 @@ def supportedVersions = ["1.20", "1.20.1", "1.20.2", "1.20.3", "1.20.4", "1.20.5
 supportedVersions.each { gameVersion ->
     evaluationDependsOn(":platform-fabric-${gameVersion}")
 }
-for (int i = 1; i < supportedVersions.size(); i++) {
-    def prevVersion = supportedVersions[i - 1]
-    def currVersion = supportedVersions[i]
-    project(":platform-fabric-${currVersion}").tasks.matching { it.name.startsWith("compile") }.configureEach {
-        mustRunAfter(project(":platform-fabric-${prevVersion}").tasks.matching { it.name.startsWith("compile") })
-    }
-}
+// This bundle used to serialise every member's compile* task with a mustRunAfter chain, which
+// cancelled --parallel for seven projects and had no counterpart in the three larger bundles
+// (1.21.x, 1.0-1.8.x, 1.8-1.12.x), so whatever race it papered over was still open there. Nothing
+// depends on that ordering: mustRunAfter adds no task-graph edge, and `jar` reaches every member
+// through implementationJars below, so removing it leaves the graph complete and lets the members
+// compile in parallel again.
 def implementationJars = supportedVersions.collectEntries { gameVersion ->
     [(gameVersion): project(":platform-fabric-${gameVersion}").tasks.named("remapJar")]
 }
@@ -83,19 +82,9 @@ tasks.register("verifyLoaderSelection", JavaExec) {
     args([jar.archiveFile.get().asFile.absolutePath] + supportedVersions)
 }
 
-tasks.register("verifyPreparedReleaseBundle", JavaExec) {
-    dependsOn rootProject.tasks.named("verifyPreparedReleaseAssets"), testClasses
-    classpath = sourceSets.test.runtimeClasspath
-    mainClass = "org.universaltranslator.bundle.BundleResolutionVerifier"
-    javaLauncher = javaToolchains.launcherFor {
-        languageVersion = JavaLanguageVersion.of(25)
-    }
-    def allVersions = supportedVersions +
-            ["26.1", "26.1.1", "26.1.2", "26.2"]
-    args([rootProject.layout.buildDirectory.file(
-            "release-assets/MCAutoTranslationTool-${project.mod_version}-fabric-all.jar"
-    ).get().asFile.absolutePath] + allVersions)
-}
+// Aggregate-bundle resolution check; the expected version list is settings.gradle's
+// platformDependencies, so adding a Minecraft version never means editing this file again.
+apply from: rootProject.file("gradle/fabric-bundle-aggregate-verify.gradle")
 
 test {
     enabled = false

@@ -2,15 +2,21 @@ package org.universaltranslator.core.offline;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.DirectoryStream;
+import java.nio.file.FileStore;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -22,9 +28,36 @@ public final class OfflineProcessSupport {
     public static final int WINDOWS_ILLEGAL_INSTRUCTION_EXIT = 0xC000001D;
     private static final int MAX_LOG_BYTES = 16 * 1024;
     private static final int MAX_DETAIL_CHARACTERS = 240;
+    /** Copy chunk for the compatibility alias: large enough to be fast, small enough to cancel. */
+    private static final int COPY_CHUNK_BYTES = 64 * 1024;
+    private static final long MINIMUM_FREE_SPACE_BYTES = 64L * 1024L * 1024L;
+    /** Windows and macOS compare path entries without case; the other targets do not. */
+    private static final boolean CASE_INSENSITIVE_PATHS =
+            System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")
+                    || System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("mac");
 
     private OfflineProcessSupport() {
     }
+
+    /**
+     * Cooperative cancellation for the model copy.
+     *
+     * <p>Copying a 1.12 GB model must stop when the caller's startup attempt was superseded —
+     * closing the world, pressing the translation toggle or switching provider — instead of
+     * finishing into a directory nobody will read. The offline package cannot depend on the
+     * provider's startup token, so the caller passes a predicate.
+     */
+    public interface CancellationCheck {
+        /** @return {@code true} when the work should stop as soon as possible */
+        boolean isCancelled();
+    }
+
+    private static final CancellationCheck NEVER_CANCELLED = new CancellationCheck() {
+        @Override
+        public boolean isCancelled() {
+            return false;
+        }
+    };
 
     /**
      * The official Windows llama.cpp build uses the MSVC runtime. Minecraft launchers normally
@@ -157,10 +190,25 @@ public final class OfflineProcessSupport {
      * Mirror a verified model through a stable ASCII-only path before starting llama.cpp.
      */
     public static Path prepareModelPathForNativeProcess(Path model, String stableId)
-            throws IOException {
+            throws IOException, InterruptedException {
+        return prepareModelPathForNativeProcess(model, stableId, NEVER_CANCELLED);
+    }
+
+    /**
+     * Same as {@link #prepareModelPathForNativeProcess(Path, String)}, with a hook that stops the
+     * copy; whether the alias is required is still derived from the platform and the model path.
+     *
+     * @param cancellation polled between copy chunks, for example {@code () -> !isCurrent(token)}
+     * @throws InterruptedException when the copy was cancelled; any partial copy is deleted first
+     */
+    public static Path prepareModelPathForNativeProcess(
+            Path model,
+            String stableId,
+            CancellationCheck cancellation
+    ) throws IOException, InterruptedException {
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         return prepareModelPathForNativeProcess(
-                model, stableId, os.contains("win") && !isAsciiPath(model));
+                model, stableId, os.contains("win") && !isAsciiPath(model), cancellation);
     }
 
     /** Visible for dependency-free Windows path regression tests. */
@@ -168,7 +216,24 @@ public final class OfflineProcessSupport {
             Path model,
             String stableId,
             boolean requireAsciiAlias
-    ) throws IOException {
+    ) throws IOException, InterruptedException {
+        return prepareModelPathForNativeProcess(model, stableId, requireAsciiAlias, NEVER_CANCELLED);
+    }
+
+    /**
+     * Same as {@link #prepareModelPathForNativeProcess(Path, String, boolean)}, with a hook that
+     * stops the copy.
+     *
+     * @param cancellation polled between copy chunks; {@code null} means "never cancelled"
+     * @throws InterruptedException when the copy was cancelled; any partial copy is deleted first
+     */
+    public static Path prepareModelPathForNativeProcess(
+            Path model,
+            String stableId,
+            boolean requireAsciiAlias,
+            CancellationCheck cancellation
+    ) throws IOException, InterruptedException {
+        CancellationCheck cancelled = cancellation == null ? NEVER_CANCELLED : cancellation;
         if (model == null || !Files.isRegularFile(model)) {
             throw new IOException("Offline model file is missing");
         }
@@ -189,26 +254,40 @@ public final class OfflineProcessSupport {
             }
             Path directory = base.resolve(".universal-translator-native");
             Path alias = directory.resolve(aliasName);
-            Path temporary = directory.resolve(aliasName + ".tmp-"
-                    + Long.toHexString(System.nanoTime()));
+            // A stable name, not a name minted per attempt. Every attempt reuses the same file, so
+            // a copy that was killed halfway (window closed, task manager, JVM crash) leaves at
+            // most one partial file that the next attempt overwrites instead of a fresh
+            // multi-hundred-megabyte orphan per interruption.
+            Path temporary = directory.resolve(aliasName + ".part");
             try {
                 Files.createDirectories(directory);
                 if (!isAsciiPath(alias)) {
                     continue;
                 }
+                requireNotCancelled(cancelled);
                 if (isReusableModelAlias(alias, normalizedModel, stableId)) {
                     return alias;
                 }
                 Files.deleteIfExists(alias);
+                ModelVerificationCache.forget(alias);
+                deleteAbandonedTemporaries(directory, aliasName);
+                Files.deleteIfExists(temporary);
+                long sourceSize = Files.size(normalizedModel);
+                requireSpaceForCopy(directory, sourceSize);
+                boolean linked = false;
+                String copyDigest = null;
                 try {
                     Files.createLink(temporary, normalizedModel);
+                    linked = true;
                 } catch (IOException | UnsupportedOperationException linkFailure) {
-                    Files.copy(normalizedModel, temporary, StandardCopyOption.REPLACE_EXISTING);
+                    // Cross-volume, non-NTFS and network shares cannot be hard-linked; the copy
+                    // computes the digest while writing so verification costs no second read.
+                    copyDigest = copyModel(normalizedModel, temporary, sourceSize, cancelled);
                 }
-                if (Files.size(temporary) != Files.size(normalizedModel)) {
+                if (Files.size(temporary) != sourceSize) {
                     throw new IOException("Offline model compatibility copy is incomplete");
                 }
-                if (!matchesVerifiedModel(temporary, normalizedModel, stableId)) {
+                if (!verifiesCopy(temporary, normalizedModel, stableId, linked, copyDigest)) {
                     throw new IOException("Offline model compatibility copy failed verification");
                 }
                 try {
@@ -217,26 +296,145 @@ public final class OfflineProcessSupport {
                 } catch (AtomicMoveNotSupportedException ignored) {
                     Files.move(temporary, alias, StandardCopyOption.REPLACE_EXISTING);
                 }
+                // The conclusion was established by the copy itself, so the next start only has to
+                // stat the alias instead of hashing another gigabyte.
+                ModelVerificationCache.remember(alias, stableId);
                 return alias;
+            } catch (InterruptedException cancelledMidway) {
+                deleteQuietly(temporary);
+                throw cancelledMidway;
             } catch (IOException failure) {
                 lastFailure = failure;
-                try {
-                    Files.deleteIfExists(temporary);
-                } catch (IOException ignored) {
-                    // Preserve the useful creation/copy failure.
-                }
+                deleteQuietly(temporary);
             } catch (SecurityException failure) {
                 lastFailure = new IOException("Windows denied creation of an ASCII model alias",
                         failure);
-                try {
-                    Files.deleteIfExists(temporary);
-                } catch (IOException ignored) {
-                    // Preserve the useful access failure.
-                }
+                deleteQuietly(temporary);
             }
         }
         throw new IOException("Could not create an ASCII-only path for the offline model",
                 lastFailure);
+    }
+
+    /**
+     * Copies the model in bounded chunks while hashing it.
+     *
+     * @return hex SHA-256 of the bytes written
+     * @throws InterruptedException when the copy was cancelled
+     */
+    private static String copyModel(
+            Path source,
+            Path target,
+            long expectedSize,
+            CancellationCheck cancellation
+    ) throws IOException, InterruptedException {
+        MessageDigest digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is unavailable", impossible);
+        }
+        try (InputStream input = Files.newInputStream(source);
+             OutputStream output = Files.newOutputStream(target, StandardOpenOption.CREATE,
+                     StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)) {
+            byte[] buffer = new byte[COPY_CHUNK_BYTES];
+            long copied = 0L;
+            int count;
+            while ((count = input.read(buffer)) >= 0) {
+                if (count == 0) {
+                    continue;
+                }
+                requireNotCancelled(cancellation);
+                copied += count;
+                if (copied > expectedSize) {
+                    throw new IOException("Offline model changed while it was being copied");
+                }
+                digest.update(buffer, 0, count);
+                output.write(buffer, 0, count);
+            }
+        }
+        StringBuilder hex = new StringBuilder(64);
+        for (byte value : digest.digest()) {
+            hex.append(String.format("%02x", value & 0xff));
+        }
+        return hex.toString();
+    }
+
+    private static void requireNotCancelled(CancellationCheck cancellation)
+            throws InterruptedException {
+        if (cancellation.isCancelled()) {
+            throw new InterruptedException("Offline model compatibility copy was cancelled");
+        }
+    }
+
+    /** True when the copy that produced {@code temporary} is the model's verified content. */
+    private static boolean verifiesCopy(
+            Path temporary,
+            Path model,
+            String stableId,
+            boolean linked,
+            String copyDigest
+    ) throws IOException {
+        if (linked) {
+            // A hard link is the model itself: the identity check is conclusive and free.
+            return matchesVerifiedModel(temporary, model, stableId);
+        }
+        if (copyDigest != null) {
+            // The digest came out of the copy itself, so verifying it costs no second read. A
+            // stable id that is not a digest cannot be compared against, exactly as before.
+            return isSha256(stableId) && stableId.equalsIgnoreCase(copyDigest);
+        }
+        return matchesVerifiedModel(temporary, model, stableId);
+    }
+
+    /**
+     * Removes temporaries left behind by an interrupted copy.
+     *
+     * <p>Older builds named the temporary after {@code System.nanoTime()}, so a copy that was cut
+     * short left a file nobody could ever match to a retry. The name is stable now, but sweeping the
+     * old pattern keeps those orphans from sitting in the directory forever.
+     */
+    private static void deleteAbandonedTemporaries(Path directory, String aliasName) {
+        try (DirectoryStream<Path> entries =
+                     Files.newDirectoryStream(directory, aliasName + ".tmp-*")) {
+            for (Path entry : entries) {
+                deleteQuietly(entry);
+            }
+        } catch (IOException | RuntimeException unsupported) {
+            // The sweep is hygiene only; failing to list a directory must not fail the start.
+        }
+    }
+
+    private static void deleteQuietly(Path file) {
+        try {
+            Files.deleteIfExists(file);
+        } catch (IOException | RuntimeException ignored) {
+            // Preserve the useful creation/copy failure.
+        }
+    }
+
+    /**
+     * Refuses a copy that cannot finish instead of filling the volume.
+     *
+     * <p>A copy that runs out of space fails only after writing everything it could, and on the
+     * Android install directory that is the shared cache partition every other app also uses. The
+     * cheap check happens before the first byte is written.
+     */
+    private static void requireSpaceForCopy(Path directory, long requiredBytes) throws IOException {
+        long usable = usableSpace(directory);
+        if (usable >= 0L && usable < requiredBytes + MINIMUM_FREE_SPACE_BYTES) {
+            throw new IOException("Not enough free space for the offline model copy: "
+                    + requiredBytes + " bytes needed, " + usable + " available");
+        }
+    }
+
+    private static long usableSpace(Path directory) {
+        try {
+            FileStore store = Files.getFileStore(directory);
+            return store.getUsableSpace();
+        } catch (IOException | RuntimeException unavailable) {
+            return -1L;
+        }
     }
 
     public static boolean isAsciiPath(Path path) {
@@ -281,7 +479,7 @@ public final class OfflineProcessSupport {
         }
         String normalized = directory.toAbsolutePath().normalize().toString();
         for (String existing : entries) {
-            if (normalized.equalsIgnoreCase(existing)) {
+            if (samePath(normalized, existing)) {
                 return;
             }
         }
@@ -291,11 +489,27 @@ public final class OfflineProcessSupport {
     private static boolean containsPath(String pathList, String expected) {
         for (String entry : pathList.split(java.util.regex.Pattern.quote(
                 String.valueOf(File.pathSeparatorChar)))) {
-            if (expected.equals(entry)) {
+            if (samePath(expected, entry)) {
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * Compares two PATH entries the way the host filesystem does.
+     *
+     * <p>These two neighbours used to disagree: one compared case-insensitively and the other
+     * exactly, so a directory already listed as {@code C:\Tools} was added again as
+     * {@code c:\tools} on every launch. The duplicate is not cosmetic — PATH has a real length
+     * limit on Windows, and the existing value is appended behind the new entries, so the tail is
+     * what gets truncated.
+     */
+    private static boolean samePath(String left, String right) {
+        if (left == null || right == null) {
+            return false;
+        }
+        return CASE_INSENSITIVE_PATHS ? left.equalsIgnoreCase(right) : left.equals(right);
     }
 
     private static void addCandidate(List<Path> values, String path) {
@@ -333,6 +547,14 @@ public final class OfflineProcessSupport {
         }
     }
 
+    /**
+     * True when {@code candidate} is the model, or is content that hashed to the pinned digest.
+     *
+     * <p>The sidecar is consulted first: a copied alias is a gigabyte of bytes that do not change
+     * between starts, and re-reading all of them on every engine start is exactly the cost the
+     * provider already avoids for the model itself. On a miss the file is hashed once and the
+     * conclusion is recorded for the next start.
+     */
     private static boolean matchesVerifiedModel(Path candidate, Path model, String stableId)
             throws IOException {
         try {
@@ -342,8 +564,17 @@ public final class OfflineProcessSupport {
         } catch (SecurityException ignored) {
             // A copied alias can still be verified by its pinned digest below.
         }
-        return isSha256(stableId)
-                && stableId.equalsIgnoreCase(VerifiedDownloader.sha256(candidate));
+        if (!isSha256(stableId)) {
+            return false;
+        }
+        if (ModelVerificationCache.isVerified(candidate, stableId)) {
+            return true;
+        }
+        if (!stableId.equalsIgnoreCase(VerifiedDownloader.sha256(candidate))) {
+            return false;
+        }
+        ModelVerificationCache.remember(candidate, stableId);
+        return true;
     }
 
     private static boolean isSha256(String value) {

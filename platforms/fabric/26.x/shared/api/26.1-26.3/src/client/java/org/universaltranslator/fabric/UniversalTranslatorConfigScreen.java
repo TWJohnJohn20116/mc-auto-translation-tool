@@ -331,6 +331,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
                 fetchModels();
             } else {
                 modelListOpen = true;
+                releaseFieldFocusForModelList();
             }
         }).bounds(left, engineRow(1), layout.buttonWidth, 20).build());
 
@@ -1203,10 +1204,34 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
             fetchedModels = catalog.models();
             modelPage = 0;
             modelListOpen = true;
+            releaseFieldFocusForModelList();
             setTestStatus("", false);
         }, "universal-translator-model-list");
         worker.setDaemon(true);
         worker.start();
+    }
+
+    /**
+     * Drops keyboard focus from the engine tab's fields before the model picker covers them.
+     *
+     * <p>The picker is a painted rectangle, not a screen, so nothing intercepts typing while it is
+     * open: whatever still holds focus collects the characters typed over the overlay, and the
+     * next Save writes them into the config. The 1.21 screen has guarded this since it was written;
+     * the 26.x copy was taken before that guard and lost it (C2-092).
+     *
+     * <p>Focus is not restored afterwards on purpose, matching 1.21: the player clicks the field
+     * they want, which is also the only way to be sure of which field they end up in.
+     */
+    private void releaseFieldFocusForModelList() {
+        if (endpoint != null) {
+            endpoint.setFocused(false);
+        }
+        if (customPrompt != null) {
+            customPrompt.setFocused(false);
+        }
+        if (blockedKeywords != null) {
+            blockedKeywords.setFocused(false);
+        }
     }
 
     /**

@@ -190,6 +190,35 @@ def platformDependencies = [
         // 這是 neoforge-1.20.1 曾經是 PR 裡最慢 job 的主因。
 ]
 
+// 這兩份清單是唯一權威來源，供各 bundle 專案讀取（gradle.ext 對所有專案腳本可見）。
+// 之前「fabric-all 應該包含哪些版本」被手抄到 4 個 bundle 的 verifyPreparedReleaseBundle，
+// 已經漂移成 3 份漏 26.3、1 份漏 1.16–1.16.4；加一個版本不必再改 5 處。
+gradle.ext.platformDependencies = platformDependencies
+
+// MCAutoTranslationTool-<mod_version>-fabric-all.jar 內嵌的版本：也就是會出現在 downloads/
+// 的 Fabric bundle 成員。1.0-1.8.x 與 1.8-1.12.x 刻意不在其中——它們只由 legacy-targets.yml
+// 建置，從來不是發布資產，也不會進到那個合併 jar。清單由上面的 platformDependencies 推導，
+// 不另外手寫。
+def fabricReleaseBundles = [
+        "platform-fabric-1.13.x",
+        "platform-fabric-1.14-1.15.x",
+        "platform-fabric-1.16.x",
+        "platform-fabric-1.17-1.18.x",
+        "platform-fabric-1.19.x",
+        "platform-fabric-1.20.x",
+        "platform-fabric-1.21.x",
+        "platform-fabric-26.x"
+]
+gradle.ext.fabricReleaseVersions = fabricReleaseBundles
+        .collectMany { platformDependencies.getOrDefault(it, []) }
+        .collect {
+            def projectVersion = it - "platform-fabric-"
+            // Launchers call Minecraft 1.13.0 simply "1.13", so that bundle names its nested JAR
+            // universal-translator-1.13.jar; the project name cannot be used verbatim.
+            projectVersion == "1.13.0" ? "1.13" : projectVersion
+        }
+        .unique()
+
 def normalizePlatform = { String value ->
     def target = value.trim()
     if (target == "all" || target == "core" || target == "translator-core") {

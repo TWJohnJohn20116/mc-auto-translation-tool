@@ -95,13 +95,47 @@ public final class ProtectedText {
      * worker between two snapshots while keeping the cache bounded.
      */
     private static final int PATTERN_CACHE_CAPACITY = 4;
+    /**
+     * How many published literal snapshots keep their prepared form. Two sessions can coexist while
+     * a settings change retires the old one, so a single slot would be overwritten by the other
+     * session on every request.
+     */
+    private static final int PREPARED_CAPACITY = 4;
     private static final long FNV_OFFSET_BASIS = 0xcbf29ce484222325L;
     private static final long FNV_PRIME = 0x100000001b3L;
-    /** Guards {@link #PATTERN_CACHE} and {@link #patternCacheCursor}. */
+    /** Longest literal first, so the alternation tries the longest form before any of its prefixes. */
+    private static final Comparator<String> LITERAL_LENGTH_ORDER = new Comparator<String>() {
+        @Override
+        public int compare(String first, String second) {
+            return Integer.compare(second.length(), first.length());
+        }
+    };
+    /**
+     * Guards {@link #patternCache} and {@link #patternCacheCursor}. Only insertion takes it: readers
+     * never block, because the array is replaced as a whole instead of being written in place.
+     */
     private static final Object PATTERN_CACHE_LOCK = new Object();
-    private static final PatternCacheEntry[] PATTERN_CACHE =
+    /**
+     * The compiled patterns, published as an immutable snapshot. Every insertion clones the array and
+     * publishes the clone, so a reader either sees the old contents or the new contents and never a
+     * half-written slot. The previous lock-everything version serialized every request of every
+     * session on this one monitor, which is the wrong shape for a lookup that almost always hits.
+     */
+    private static volatile PatternCacheEntry[] patternCache =
             new PatternCacheEntry[PATTERN_CACHE_CAPACITY];
+    /** Guarded by {@link #PATTERN_CACHE_LOCK}. */
     private static int patternCacheCursor;
+    /** Guards {@link #preparedLiterals} and {@link #preparedCursor}. Insertion only. */
+    private static final Object PREPARED_LOCK = new Object();
+    /**
+     * The recently prepared literal snapshots, replaced as a whole like {@link #patternCache} so that
+     * the deduplication, the sort and the content signature run once per published snapshot instead
+     * of once per request.
+     */
+    private static volatile PreparedLiterals[] preparedLiterals =
+            new PreparedLiterals[PREPARED_CAPACITY];
+    /** Guarded by {@link #PREPARED_LOCK}. */
+    private static int preparedCursor;
 
     private final String original;
     private final String template;
@@ -137,6 +171,51 @@ public final class ProtectedText {
         if (text == null) {
             throw new IllegalArgumentException("text cannot be null");
         }
+        PreparedLiterals prepared = prepared(protectedLiterals, preserveHanText);
+        if (prepared.literals.isEmpty()) {
+            return parseWithPattern(text, preserveHanText ? PROTECTED_WITH_HAN : PROTECTED);
+        }
+        return parseWithPattern(text, cachedPattern(prepared));
+    }
+
+    /**
+     * The deduplicated, length-sorted, content-signed form of one published literal snapshot.
+     *
+     * <p>Every provider request used to rebuild it from scratch: a fresh {@code ArrayList}, a fresh
+     * {@code HashSet} for the duplicate check, a sort with a freshly allocated comparator, and a full
+     * FNV pass over every character — for a list the platform had not changed since the previous
+     * request. The snapshot is republished as a new immutable list only every few seconds, so it is
+     * remembered by identity and the work happens once per publication instead of once per request.
+     * Identity is safe in the same way it is for the coordinator's request key: the platform hands out
+     * a snapshot that keeps its contents until it is replaced.
+     *
+     * @param protectedLiterals published snapshot, possibly {@code null}
+     * @param preserveHanText whether Han text is protected as well
+     * @return the prepared form; {@code literals} is empty when nothing is protected
+     */
+    private static PreparedLiterals prepared(Iterable<String> protectedLiterals, boolean preserveHanText) {
+        PreparedLiterals[] current = preparedLiterals;
+        for (int index = 0; index < current.length; index++) {
+            PreparedLiterals entry = current[index];
+            if (entry != null && entry.source == protectedLiterals
+                    && entry.preserveHanText == preserveHanText) {
+                return entry;
+            }
+        }
+        PreparedLiterals built = new PreparedLiterals(
+                protectedLiterals, preserveHanText, adaptLiterals(protectedLiterals));
+        synchronized (PREPARED_LOCK) {
+            current = preparedLiterals;
+            PreparedLiterals[] next = current.clone();
+            next[preparedCursor] = built;
+            preparedCursor = (preparedCursor + 1) % next.length;
+            preparedLiterals = next;
+        }
+        return built;
+    }
+
+    /** Filters, deduplicates and orders the raw literals; bounded so one snapshot cannot blow up. */
+    private static List<String> adaptLiterals(Iterable<String> protectedLiterals) {
         List<String> literals = new ArrayList<String>();
         Set<String> seenLiterals = new HashSet<String>();
         if (protectedLiterals != null) {
@@ -147,16 +226,10 @@ public final class ProtectedText {
                 }
             }
         }
-        if (literals.isEmpty()) {
-            return parseWithPattern(text, preserveHanText ? PROTECTED_WITH_HAN : PROTECTED);
+        if (!literals.isEmpty()) {
+            Collections.sort(literals, LITERAL_LENGTH_ORDER);
         }
-        Collections.sort(literals, new Comparator<String>() {
-            @Override
-            public int compare(String first, String second) {
-                return Integer.compare(second.length(), first.length());
-            }
-        });
-        return parseWithPattern(text, cachedPattern(literals, preserveHanText));
+        return literals;
     }
 
     /**
@@ -196,21 +269,33 @@ public final class ProtectedText {
      * solely when {@link List#equals(Object)} confirms that every literal matches, so a signature
      * collision can never hand back a pattern built from different literals.
      */
-    private static Pattern cachedPattern(List<String> literals, boolean preserveHanText) {
-        long signature = signature(literals, preserveHanText);
+    private static Pattern cachedPattern(PreparedLiterals prepared) {
+        PatternCacheEntry[] current = patternCache;
+        for (int index = 0; index < current.length; index++) {
+            PatternCacheEntry entry = current[index];
+            if (entry != null && entry.matches(
+                    prepared.signature, prepared.preserveHanText, prepared.literals)) {
+                return entry.pattern;
+            }
+        }
         synchronized (PATTERN_CACHE_LOCK) {
-            for (int index = 0; index < PATTERN_CACHE.length; index++) {
-                PatternCacheEntry entry = PATTERN_CACHE[index];
-                if (entry != null && entry.matches(signature, preserveHanText, literals)) {
+            // Re-scan under the lock: a worker that missed outside may have been beaten to the
+            // compilation by another thread, and compiling twice for one snapshot is the cost this
+            // section exists to avoid.
+            current = patternCache;
+            for (int index = 0; index < current.length; index++) {
+                PatternCacheEntry entry = current[index];
+                if (entry != null && entry.matches(
+                        prepared.signature, prepared.preserveHanText, prepared.literals)) {
                     return entry.pattern;
                 }
             }
-            // Compiling under the lock keeps a burst of workers that all miss on a freshly
-            // published snapshot down to a single compilation instead of one per thread.
-            Pattern compiled = compilePattern(literals, preserveHanText);
-            PATTERN_CACHE[patternCacheCursor] =
-                    new PatternCacheEntry(signature, preserveHanText, literals, compiled);
-            patternCacheCursor = (patternCacheCursor + 1) % PATTERN_CACHE.length;
+            Pattern compiled = compilePattern(prepared.literals, prepared.preserveHanText);
+            PatternCacheEntry[] next = current.clone();
+            next[patternCacheCursor] = new PatternCacheEntry(
+                    prepared.signature, prepared.preserveHanText, prepared.literals, compiled);
+            patternCacheCursor = (patternCacheCursor + 1) % next.length;
+            patternCache = next;
             return compiled;
         }
     }
@@ -261,6 +346,30 @@ public final class ProtectedText {
             return signature == candidateSignature
                     && preserveHanText == candidateHan
                     && literals.equals(candidate);
+        }
+    }
+
+    /**
+     * One literal snapshot in its usable form: deduplicated, longest first, and signed by content.
+     *
+     * <p>Immutable, so it can be shared by every worker of every session between two publications of
+     * the snapshot. {@link #signature} is computed once here instead of once per request.
+     */
+    private static final class PreparedLiterals {
+        private final Iterable<String> source;
+        private final boolean preserveHanText;
+        private final List<String> literals;
+        private final long signature;
+
+        private PreparedLiterals(
+                Iterable<String> source,
+                boolean preserveHanText,
+                List<String> literals
+        ) {
+            this.source = source;
+            this.preserveHanText = preserveHanText;
+            this.literals = Collections.unmodifiableList(literals);
+            this.signature = signature(this.literals, preserveHanText);
         }
     }
 

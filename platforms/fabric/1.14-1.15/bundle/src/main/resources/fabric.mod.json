@@ -3,7 +3,7 @@
   "id": "universal_translator_1_14_1_15_x_bundle",
   "version": "${version}",
   "name": "MC Auto Translation Tool - Fabric 1.14/1.15 Bundle",
-  "description": "Selects the exact compatible Universal Translator implementation for every Minecraft 1.14 and 1.15 release.",
+  "description": "Selects the exact compatible Universal Translator implementation for every Minecraft 1.14 and 1.15 release. Full translation, the HUD indicator and the settings screens ship from 1.14.3 onward: the 1.14, 1.14.1 and 1.14.2 entries load a bootstrap-only jar that logs a notice instead of translating.",
   "authors": ["272635"],
   "contact": {
     "homepage": "https://space.bilibili.com/3546631091783712",

@@ -27,6 +27,16 @@ def sourceLayers = [
 
 def sourceVersion = project.ext.has("fabricSourceVersion") ?
         project.ext.fabricSourceVersion.toString() : project.name - "platform-fabric-"
+// Layer names that are mount flags only: the code they pull in lives in
+// platforms/fabric/shared/*, so this tree has no directory of that name. Kept as an explicit list
+// so the srcDir loop below can tell "flag" from "typo" — previously every name was also treated as
+// a path, which silently added two or three non-existent source directories to eight projects and
+// would have produced a duplicate class the day someone created one of those directories.
+def sharedFlagLayers = [
+        "runtime/pre-1.21.9",
+        "draw/1.21-1.21.5",
+        "text-renderer/1.21-1.21.1"
+] as Set
 def layers = sourceLayers[sourceVersion]
 if (layers == null) {
     throw new GradleException("No Fabric 1.21 source layers are registered for ${sourceVersion}")
@@ -127,15 +137,37 @@ sourceSets {
         // The settings screen body is also shared with the 1.19 tree.
         java.srcDir rootProject.file("platforms/fabric/shared/screens-shared/src/client/java")
         layers.each { layer ->
-            java.srcDir new File(sharedRoot, "${layer}/src/client/java")
+            def layerDir = new File(sharedRoot, "${layer}/src/client/java")
+            if (layerDir.directory) {
+                java.srcDir layerDir
+            } else if (!sharedFlagLayers.contains(layer)) {
+                // A layer that is neither a directory nor a known mount flag is a typo or a layer
+                // whose sources were never added; Gradle ignores a missing srcDir in silence, so
+                // the project would build without the code the table promised.
+                throw new GradleException(
+                        "Source layer '${layer}' of ${sourceVersion} has no directory under ${sharedRoot}"
+                                + " and is not one of the shared flag layers ${sharedFlagLayers}")
+            }
         }
     }
 }
 
 processResources {
     inputs.property "version", project.version
+    // The declared loader floor is derived from the loader this target is actually compiled
+    // against, instead of being hand-written into twelve fabric.mod.json files. Those twelve were
+    // written by hand and drifted: 1.21.11 declared ">=0.18.1" (its real build loader) while the
+    // other eleven declared ">=0.19.3", so the same tree advertised two different minimums and
+    // nothing compared the number with the property. Rewriting the line here keeps the value honest
+    // for every version, including any future one that reuses the global loader_version key.
+    inputs.property "loaderFloor", project.ext.fabricLoaderVersion
     filesMatching("fabric.mod.json") {
         expand "version": project.version
+        filter { line ->
+            line.replaceAll(
+                    /"fabricloader": ">=[^"]*"/,
+                    "\"fabricloader\": \">=${project.ext.fabricLoaderVersion}\"")
+        }
     }
 }
 

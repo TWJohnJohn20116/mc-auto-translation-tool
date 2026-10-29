@@ -24,7 +24,10 @@ public final class TencentHunyuanProvider implements TranslationProvider {
     private final String secretKey;
     private final String model;
     private final HttpJsonClient http;
-    private long nextRequestAtMillis;
+    /** The value {@link #id()} reports; see {@link ProviderCacheKey}. */
+    private final String id;
+    /** One request per interval, shared with {@link ResilientTranslationProvider}'s gate. */
+    private final RequestGate gate = new RequestGate(MIN_REQUEST_INTERVAL_MILLIS);
 
     public TencentHunyuanProvider(String secretId, String secretKey, String model) {
         this(secretId, secretKey, model, new HttpJsonClient(5000, 30000));
@@ -35,11 +38,18 @@ public final class TencentHunyuanProvider implements TranslationProvider {
         this.secretKey = requireCredential("Tencent SecretKey", secretKey);
         this.model = normalizeModel(model);
         this.http = http;
+        // This provider talks to one fixed vendor endpoint, so its identity is the endpoint plus the
+        // signed action and version. They are constants today, but building the key the same way as
+        // every other provider means a future configurable host cannot silently reuse cache entries.
+        // The per-request signature headers are deliberately not part of it: they change on every
+        // call, and a cache key that changes per request caches nothing.
+        this.id = ProviderCacheKey.of("tencent-hunyuan", this.model, ENDPOINT,
+                "service=" + SERVICE + ";action=" + ACTION + ";version=" + VERSION, "");
     }
 
     @Override
     public String id() {
-        return "tencent-hunyuan:" + model;
+        return id;
     }
 
     @Override
@@ -76,23 +86,7 @@ public final class TencentHunyuanProvider implements TranslationProvider {
     }
 
     private void awaitRateLimit() throws InterruptedException {
-        while (true) {
-            long wait;
-            synchronized (this) {
-                long now = System.currentTimeMillis();
-                if (nextRequestAtMillis <= now) {
-                    // Claim this instant and move the next slot one interval ahead. Claiming is
-                    // atomic, so two callers can never pass the gate for the same slot.
-                    nextRequestAtMillis = now + MIN_REQUEST_INTERVAL_MILLIS;
-                    return;
-                }
-                wait = nextRequestAtMillis - now;
-            }
-            // Sleep outside the lock: a caller that has to wait must not block the other callers
-            // from reserving their own (later) slots. Re-check on wake-up so a late wake still
-            // pushes the following slot, exactly like the previous lock-held implementation.
-            Thread.sleep(wait);
-        }
+        gate.await();
     }
 
     private static String normalizeSource(String language) {

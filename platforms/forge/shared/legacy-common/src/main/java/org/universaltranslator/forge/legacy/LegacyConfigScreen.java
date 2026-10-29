@@ -96,8 +96,6 @@ final class LegacyConfigScreen extends GuiScreen {
     private static final int MODEL_ROW_HEIGHT = ModelListPaging.ROW_HEIGHT;
     /** Y of the first model row; the picker title sits above it. */
     private static final int MODEL_LIST_TOP = ModelListPaging.LIST_TOP;
-    /** Room kept under the model rows for the paging, back, and hint lines. */
-    private static final int MODEL_LIST_FOOTER_HEIGHT = ModelListPaging.FOOTER_HEIGHT;
     private static final String LIBRETRANSLATE_PROVIDER = "libretranslate";
     private static final String TRANSLATE_PATH = "/translate";
     private static final String LANGUAGES_PATH = "/languages";
@@ -1058,14 +1056,20 @@ final class LegacyConfigScreen extends GuiScreen {
 
     @Override
     protected void keyTyped(char typedChar, int keyCode) throws IOException {
+        // The catalog overlay is modal for the mouse, so it has to be modal for the keyboard too:
+        // with it open, keystrokes used to reach customPrompt/endpoint/blockedKeywords, which the
+        // player cannot see under the overlay, and the next Save wrote them into the configuration
+        // file. ESC closes it, as it did before.
+        if (activeTab == Tab.ENGINE && modelListOpen) {
+            if (keyCode == 1) {
+                modelListOpen = false;
+            }
+            return;
+        }
         // ESC (1 on this generation's LWJGL2 keyboard) closes the overlay first. GuiScreen would
         // otherwise close the whole screen and drop every unsaved change, even though the overlay
         // draws its own Back area.
         if (keyCode == 1) {
-            if (activeTab == Tab.ENGINE && modelListOpen) {
-                modelListOpen = false;
-                return;
-            }
             if (openSelection != SettingsSelectionList.Kind.NONE) {
                 openSelection = SettingsSelectionList.Kind.NONE;
                 return;
@@ -1268,7 +1272,11 @@ final class LegacyConfigScreen extends GuiScreen {
                 modelListOpen = false;
                 setTestStatus("", false);
                 openSelection = SettingsSelectionList.Kind.NONE;
-                initGui();
+                // Only the provider-dependent visibility changed. Rebuilding every widget (initGui)
+                // also reset the cursor and focus of each field, so the next keystrokes went
+                // nowhere; the modern screens update visibility in place for the same reason.
+                updateTabVisibility();
+                refreshLabels();
                 return true;
             } else if (openSelection == SettingsSelectionList.Kind.TARGET_LANGUAGE) {
                 targetLanguage = values[selected];
@@ -1324,10 +1332,10 @@ final class LegacyConfigScreen extends GuiScreen {
         int blockHeight = layout.contentRowStep() * 5 + 20 + 46;
         int available = layout.saveY() - 6 - layout.contentTop();
         // Centring used to clamp at contentTop, so on a short window the whole block - the privacy
-// hint included - ran below the Save row and Save painted over it. Let the block start above
-// the content area instead, but never over the tab bar.
-int centred = layout.contentTop() + (available - blockHeight) / 2;
-return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
+        // hint included - ran below the Save row and Save painted over it. Let the block start above
+        // the content area instead, but never over the tab bar.
+        int centred = layout.contentTop() + (available - blockHeight) / 2;
+        return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
     }
 
     private int engineRow(int index) {
@@ -1492,19 +1500,23 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
 
     /** Draws the fetched catalog over the settings so a served model can be picked. */
     private void renderModelList(int mouseX, int mouseY) {
+        // One read of the volatile list for the whole frame: the fetch worker replaces it wholesale,
+        // and a second read inside the loop or for the page counter could see the next list, which
+        // threw IndexOutOfBoundsException out of the render loop and closed the game.
+        List<String> models = fetchedModels;
         drawRect(0, 0, width, height, 0xFF101010);
-        drawCenteredString(renderer, tr("screen.universal_translator.llm.select_model", fetchedModels.size()),
+        drawCenteredString(renderer, tr("screen.universal_translator.llm.select_model", models.size()),
                 width / 2, 20, 0xFFFFFFFF);
-        int rows = modelRowsPerPage();
-        modelPage = ModelListPaging.clampPage(modelPage, fetchedModels.size(), rows);
+        int rows = ModelListPaging.rows(height);
+        modelPage = ModelListPaging.clampPage(modelPage, models.size(), rows);
         int first = modelPage * rows;
-        for (int row = 0; row < rows && first + row < fetchedModels.size(); row++) {
+        for (int row = 0; row < rows && first + row < models.size(); row++) {
             int rowY = MODEL_LIST_TOP + row * MODEL_ROW_HEIGHT;
             boolean hovered = mouseY >= rowY && mouseY < rowY + MODEL_ROW_HEIGHT;
-            drawString(renderer, (hovered ? "> " : "  ") + fetchedModels.get(first + row),
+            drawString(renderer, (hovered ? "> " : "  ") + models.get(first + row),
                     24, rowY, hovered ? 0xFFFFD060 : 0xFFE0E0E0);
         }
-        int pages = modelPageCount(rows);
+        int pages = ModelListPaging.pageCount(models.size(), rows);
         drawCenteredString(renderer, "< " + (modelPage + 1) + "/" + pages + " >",
                 width / 2, height - 46, 0xFFFFFFFF);
         drawCenteredString(renderer, tr("screen.universal_translator.llm.select_back"),
@@ -1514,8 +1526,11 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
     }
 
     private void handleModelListClick(double mouseX, double mouseY) {
+        // Same snapshot rule as renderModelList: paging and the selected entry must come from one list.
+        List<String> models = fetchedModels;
+        int rows = ModelListPaging.rows(height);
         if (mouseY >= height - 54 && mouseY < height - 38) {
-            int pages = modelPageCount(modelRowsPerPage());
+            int pages = ModelListPaging.pageCount(models.size(), rows);
             if (pages > 1) {
                 modelPage = mouseX < width / 2.0
                         ? (modelPage + pages - 1) % pages : (modelPage + 1) % pages;
@@ -1529,24 +1544,15 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         if (mouseY < MODEL_LIST_TOP) {
             return;
         }
-        int rows = modelRowsPerPage();
-        modelPage = ModelListPaging.clampPage(modelPage, fetchedModels.size(), rows);
-        int row = (int) ((mouseY - MODEL_LIST_TOP) / MODEL_ROW_HEIGHT);
-        int index = modelPage * rows + row;
-        if (row >= rows || index >= fetchedModels.size()) {
+        modelPage = ModelListPaging.clampPage(modelPage, models.size(), rows);
+        int row = ModelListPaging.rowAt(mouseY);
+        int index = ModelListPaging.index(modelPage, rows, row);
+        if (row >= rows || index >= models.size()) {
             return;
         }
-        llmModel = fetchedModels.get(index);
+        llmModel = models.get(index);
         modelListOpen = false;
         refreshLabels();
-    }
-
-    private int modelRowsPerPage() {
-        return Math.max(3, (height - MODEL_LIST_TOP - MODEL_LIST_FOOTER_HEIGHT) / MODEL_ROW_HEIGHT);
-    }
-
-    private int modelPageCount(int rows) {
-        return Math.max(1, (fetchedModels.size() + rows - 1) / rows);
     }
 
     private void loadLlmSettings(String selectedProvider) {

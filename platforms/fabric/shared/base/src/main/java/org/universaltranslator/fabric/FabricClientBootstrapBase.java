@@ -125,6 +125,14 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
     public final void onInitializeClient() {
         try {
             FabricConfig config = FabricConfig.load(FabricLoader.getInstance().getConfigDir());
+            String corruptBackup = FabricConfig.lastCorruptionBackup();
+            if (corruptBackup != null) {
+                // The settings themselves were replaced by the defaults, so this has to be said out
+                // loud: the player's own values are in the file named here, and without this line
+                // nothing would ever mention that they had been moved.
+                info("MC Auto Translation Tool configuration was damaged; the defaults are in use and"
+                        + " the previous file was kept as " + corruptBackup);
+            }
             FabricTranslationRuntime.initialize(config);
             info("MC Auto Translation Tool initialized; enabled=" + config.enabled);
         } catch (Exception exception) {

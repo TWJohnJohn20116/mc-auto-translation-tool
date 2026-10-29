@@ -36,12 +36,6 @@ abstract class UniversalTranslatorConfigScreenSeams extends UniversalTranslatorS
     }
 
     @Override
-    public boolean shouldPause() {
-        // 1.18.2 is the one generation whose base answered true here; kept as it was so this
-        // refactor does not change whether the game keeps running behind the screen.
-        return true;
-    }
-    @Override
     protected void showScreen(Screen screen) {
         if (minecraftClient() != null) {
             minecraftClient().setScreen(screen);

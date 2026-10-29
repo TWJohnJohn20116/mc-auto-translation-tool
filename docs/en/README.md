@@ -54,10 +54,19 @@ The source tree also contains Ornithe / early Fabric targets (26 releases in 1.3
 
 ### Fabric: one JAR
 
-Covers **1.13–1.21.11** and **26.1–26.3**. The JAR embeds an exact implementation per game version,
-and Fabric Loader selects the matching one. Java is 8, 17, 21, or 25 depending on the game.
-1.14–1.14.2 only ship a bootstrap implementation because Yarn cannot remap those snapshots; the
-full settings UI starts at 1.14.3.
+This JAR embeds **51 exact-version implementations**: 1.13, 1.13.1, 1.13.2; 1.14–1.14.4,
+1.15–1.15.2; 1.16–1.16.5; 1.17, 1.17.1, 1.18, 1.18.1, 1.18.2; 1.19–1.19.4; 1.20–1.20.6;
+1.21–1.21.11; 26.1, 26.1.1, 26.1.2, 26.2, 26.3. A game version outside that list has no
+implementation to select.
+
+**Requirement: Fabric Loader ≥ 0.19.3.** That is the floor the bundle's `fabric.mod.json` declares
+for `fabricloader`. An instance on an older Loader (for example Legacy Fabric 0.16.10 as commonly
+used on 1.13.2, or a launcher still pinned to 0.18.1 on 1.20.1 / 1.21.11) fails during load with
+`requires fabric loader 0.19.3 or later`, and the mod does not load at all. Raise the instance's
+Loader to 0.19.3 or newer first.
+
+Java is 8, 17, 21, or 25 depending on the game. 1.14–1.14.2 only ship a bootstrap implementation
+because Yarn cannot remap those snapshots; the full settings UI starts at 1.14.3.
 
 [Download the Fabric JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4/MCAutoTranslationTool-1.4-fabric-all.jar)
 
@@ -67,7 +76,10 @@ that is not listed as included.
 ### Forge: choose by Minecraft version
 
 Forge shares a JAR only between adjacent versions with verified compatibility. It has no Fabric-style
-nested implementation selection.
+nested implementation selection. A family JAR declares a continuous version range in `mods.toml`
+(such as `[1.21,1.21.6)`), which is wider than the adapters it actually contains: **the gaps inside
+that range have no implementation** (1.21.2 has no target). Only the versions listed row by row below
+are actually supported.
 
 | Minecraft | Java | Download |
 | --- | ---: | --- |
@@ -89,7 +101,8 @@ NeoForge / FML **cannot** nest several implementations that share the same `modI
 only the one matching the current game, the way Fabric Loader does. Duplicate mod IDs fail to load,
 and Jar-in-Jar is for embedding libraries. 1.20.1 (Java 17, NeoForge 47) is also incompatible with
 1.21.1 / 1.21.3 / 1.21.11 (Java 21, NeoForge 21.1 / 21.3 / 21.11), so the stable release ships one separate
-JAR per game version, nineteen in total.
+JAR per game version, nineteen in total. NeoForge ships only the nineteen versions in the table
+below: 1.20.2 cannot resolve its coordinates and 1.20.3 has no target, so neither is downloadable.
 
 | Minecraft | NeoForge | Java | Download |
 | --- | --- | ---: | --- |
@@ -147,7 +160,7 @@ See [online API configuration](ONLINE_APIS.md) for built-in services and custom 
 
 Every target in the current stable release passes a clean build, shared-core self-tests, Mixin/refmap checks,
 runtime mapping checks, release-structure validation, and SHA-256 verification. The all-version Fabric JAR
-contains 46 exact implementations and passes real Loader selection tests for every target. NeoForge 1.20.1
+contains 51 exact implementations and passes real Loader selection tests for every target. NeoForge 1.20.1
 has also completed a real client launch and mod initialization.
 
 “Builds successfully” does not mean “completed an in-server manual regression.” Build, launch, and manual

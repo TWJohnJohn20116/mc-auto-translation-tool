@@ -123,6 +123,11 @@ final class HudIndicatorOverlay {
             return;
         }
         TextRenderer font = client.textRenderer;
+        if (font == null) {
+            // The renderer is null while a resource reload swaps it; the 1.14-1.15 body checks this
+            // and this copy did not, so a reload could draw the label through a null font.
+            return;
+        }
         // This version hooks TextRenderer.getWidth and TextRenderer.draw in order to translate what
         // it renders, so measuring or drawing the label unguarded would feed the indicator's own
         // text back into the translation path.

@@ -54,16 +54,17 @@ public final class LlamaCppOfflineProvider
             "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e";
 
     /**
-     * Chat-template and system-prompt tokens the loopback server charges on top of the text. It
-     * mirrors the same allowance in {@link OpenAiChatTranslationProvider}, which turns the leftover
-     * of the shared window into the completion budget this class refuses to send underneath.
+     * Model alias this provider passes as {@code --alias}. It is the identity a server has to prove
+     * before the port it listens on is trusted: {@link #waitUntilHealthy} compares it against
+     * {@code /v1/models}, so a foreign service that happens to answer {@code /health} on the reserved
+     * port is not adopted as this session's engine.
      */
-    private static final int PROMPT_OVERHEAD_TOKENS = 128;
+    private static final String LOCAL_MODEL_ALIAS = "universal-translator-local";
     /**
-     * Smallest completion budget worth sending. Below this the server still answers, but it answers
-     * a fragment: a non-empty fragment passes validation and is cached as a finished translation.
+     * How many times a startup may pick a new port before the failure becomes a real one. Two keeps
+     * a single unlucky race from costing five minutes, without turning a broken engine into a loop.
      */
-    private static final int MINIMUM_ANSWER_TOKENS = 64;
+    private static final int MAXIMUM_PORT_ATTEMPTS = 2;
 
     /**
      * Header line of the sidecar that records the last completed full-file verification
@@ -327,69 +328,83 @@ public final class LlamaCppOfflineProvider
             throws Exception {
         // A close() or a replaced startup may have landed between two attempts.
         requireCurrentStartup(token);
-        int port = reserveLoopbackPort();
-        Path log = root.resolve("llama-server.log");
-        long logStart = Files.isRegularFile(log) ? Files.size(log) : 0L;
-        Path nativeModel = OfflineProcessSupport.prepareModelPathForNativeProcess(
-                model, modelSha256);
-        int processors = Runtime.getRuntime().availableProcessors();
-        // The model shares the machine with Minecraft's render thread. Two inference
-        // threads are enough for this small model and avoid sustained frame drops on
-        // legacy clients when a busy lobby exposes many labels at once.
-        int threads = Math.max(1, Math.min(2, processors / 2));
-        status = "正在启动离线模型";
-        List<String> command = new ArrayList<String>(Arrays.asList(
-                server.toString(),
-                "-m", nativeModel.toString(),
-                "--host", "127.0.0.1",
-                "--port", Integer.toString(port),
-                "--alias", "universal-translator-local",
-                "--ctx-size", Integer.toString(LoopbackContext.TOKENS),
-                "--parallel", "1",
-                "--threads", Integer.toString(threads),
-                "--threads-batch", Integer.toString(threads)));
-        OfflineProcessSupport.appendStableModelLoadingArguments(command, conservativeFileAccess);
-        ProcessBuilder builder = new ProcessBuilder(command);
-        builder.directory(server.getParent().toFile());
-        OfflineProcessSupport.configureLibraryPath(builder, server.getParent());
-        builder.redirectErrorStream(true);
-        builder.redirectOutput(ProcessBuilder.Redirect.appendTo(log.toFile()));
-        Process child;
-        synchronized (lifecycleLock) {
-            // Closing the window between the check above and the assignment means a
-            // close() that already handed the old process off must win the race: the
-            // freshly started child is handed straight back to the reaper instead.
-            requireCurrentStartup(token);
+        for (int attempt = 1; ; attempt++) {
+            int port = reserveLoopbackPort();
+            Path log = root.resolve("llama-server.log");
+            long logStart = Files.isRegularFile(log) ? Files.size(log) : 0L;
+            Path nativeModel = OfflineProcessSupport.prepareModelPathForNativeProcess(
+                    model, modelSha256);
+            int processors = Runtime.getRuntime().availableProcessors();
+            // The model shares the machine with Minecraft's render thread. Two inference
+            // threads are enough for this small model and avoid sustained frame drops on
+            // legacy clients when a busy lobby exposes many labels at once.
+            int threads = Math.max(1, Math.min(2, processors / 2));
+            status = "正在启动离线模型";
+            List<String> command = new ArrayList<String>(Arrays.asList(
+                    server.toString(),
+                    "-m", nativeModel.toString(),
+                    "--host", "127.0.0.1",
+                    "--port", Integer.toString(port),
+                    "--alias", LOCAL_MODEL_ALIAS,
+                    "--ctx-size", Integer.toString(LoopbackContext.TOKENS),
+                    "--parallel", "1",
+                    "--threads", Integer.toString(threads),
+                    "--threads-batch", Integer.toString(threads)));
+            OfflineProcessSupport.appendStableModelLoadingArguments(command, conservativeFileAccess);
+            ProcessBuilder builder = new ProcessBuilder(command);
+            builder.directory(server.getParent().toFile());
+            OfflineProcessSupport.configureLibraryPath(builder, server.getParent());
+            builder.redirectErrorStream(true);
+            builder.redirectOutput(ProcessBuilder.Redirect.appendTo(log.toFile()));
+            Process child;
+            synchronized (lifecycleLock) {
+                // Closing the window between the check above and the assignment means a
+                // close() that already handed the old process off must win the race: the
+                // freshly started child is handed straight back to the reaper instead.
+                requireCurrentStartup(token);
+                try {
+                    child = builder.start();
+                } catch (IOException startFailure) {
+                    throw new IOException(
+                            OfflineProcessSupport.describeProcessStartFailure(startFailure),
+                            startFailure);
+                }
+                process = child;
+                registerShutdownHook();
+            }
             try {
-                child = builder.start();
-            } catch (IOException startFailure) {
-                throw new IOException(
-                        OfflineProcessSupport.describeProcessStartFailure(startFailure), startFailure);
+                waitUntilHealthy(port, child, token, 90_000L, log, logStart);
+            } catch (LoopbackPortNotOursException occupied) {
+                // The reserved port was taken between reserving it and the child binding it, or the
+                // service on it is not the server this class started. Retrying on a fresh port is
+                // what the situation calls for; the five-minute startup backoff is for real faults.
+                stopProcessInBackgroundIfAny();
+                if (attempt >= MAXIMUM_PORT_ATTEMPTS) {
+                    throw delayStartupRetries(occupied);
+                }
+                status = "离线引擎端口被占用，正在换端口重试";
+                continue;
+            } catch (Exception startupFailure) {
+                stopProcessInBackgroundIfAny();
+                throw startupFailure;
             }
-            process = child;
-            registerShutdownHook();
-        }
-        try {
-            waitUntilHealthy(port, child, 90_000L, log, logStart);
-        } catch (Exception startupFailure) {
-            stopProcessInBackgroundIfAny();
-            throw startupFailure;
-        }
-        OpenAiChatTranslationProvider api = new OpenAiChatTranslationProvider(
-                "http://127.0.0.1:" + port + "/v1/chat/completions",
-                "", "universal-translator-local", "offline-loopback",
-                new org.universaltranslator.core.net.HttpJsonClient(1_000, 15_000),
-                JsonOutputMode.NONE);
-        synchronized (lifecycleLock) {
-            // Same race for the ready hand-off. A close() may have happened while the
-            // model was loading, in which case the child is reaped instead of adopted.
-            if (!isCurrentStartup(token) || process != child || !child.isAlive()) {
-                throw new IOException("离线模型启动已被取消");
+            OpenAiChatTranslationProvider api = new OpenAiChatTranslationProvider(
+                    "http://127.0.0.1:" + port + "/v1/chat/completions",
+                    "", LOCAL_MODEL_ALIAS, "offline-loopback",
+                    new org.universaltranslator.core.net.HttpJsonClient(1_000, 15_000),
+                    JsonOutputMode.NONE);
+            synchronized (lifecycleLock) {
+                // Same race for the ready hand-off. A close() may have happened while the
+                // model was loading, in which case the child is reaped instead of adopted.
+                if (!isCurrentStartup(token) || process != child || !child.isAlive()) {
+                    throw new IOException("离线模型启动已被取消");
+                }
+                localApi = api;
+                nextStartupAttemptAt = 0L;
+                startupFailureMessage = "";
+                status = "离线模型已就绪";
             }
-            localApi = api;
-            nextStartupAttemptAt = 0L;
-            startupFailureMessage = "";
-            status = "离线模型已就绪";
+            return;
         }
     }
 
@@ -660,9 +675,24 @@ public final class LlamaCppOfflineProvider
         };
     }
 
-    private static void waitUntilHealthy(
+    /**
+     * Waits until the child answers its health endpoint, and then proves the healthy service really
+     * is this child.
+     *
+     * <p>{@code /health} answering 2xx used to be the whole test, which made the provider adopt
+     * whatever listened on the reserved port: the port is reserved by binding a socket and closing it
+     * again, so anything on the machine can take it in the window before {@code llama-server} binds.
+     * That is not only a broken engine — every translated line, including player chat, would be sent
+     * to that foreign service and its answer cached as the translation. The model list is therefore
+     * required to name {@link #LOCAL_MODEL_ALIAS}, which is the alias this class passes on the child's
+     * own command line.
+     *
+     * @throws LoopbackPortNotOursException when the port carries a service this provider did not start
+     */
+    private void waitUntilHealthy(
             int port,
             Process child,
+            long token,
             long timeoutMillis,
             Path log,
             long logStart
@@ -672,7 +702,7 @@ public final class LlamaCppOfflineProvider
         while (System.currentTimeMillis() < deadline) {
             // A close() or a replaced startup interrupts this poll so the wait can
             // never hold a closing render thread hostage for the full timeout.
-            if (Thread.interrupted()) {
+            if (Thread.interrupted() || !isCurrentStartup(token)) {
                 throw new InterruptedException("Offline model startup was cancelled");
             }
             if (!child.isAlive()) {
@@ -682,15 +712,11 @@ public final class LlamaCppOfflineProvider
                         OfflineProcessSupport.describeStartupExit(exitCode, detail));
             }
             HttpURLConnection connection = null;
+            boolean healthy = false;
             try {
-                connection = (HttpURLConnection) URI.create(
-                        "http://127.0.0.1:" + port + "/health").toURL().openConnection();
-                connection.setConnectTimeout(500);
-                connection.setReadTimeout(1000);
+                connection = openLoopback(port, "/health", 500, 1000);
                 int response = connection.getResponseCode();
-                if (response >= 200 && response < 300) {
-                    return;
-                }
+                healthy = response >= 200 && response < 300;
             } catch (IOException exception) {
                 lastFailure = exception;
             } finally {
@@ -698,12 +724,94 @@ public final class LlamaCppOfflineProvider
                     connection.disconnect();
                 }
             }
+            if (healthy) {
+                // Deliberately outside the catch above: "the port belongs to someone else" has to
+                // reach startServer as its own outcome, not be mistaken for another failed probe.
+                waitForOwnModel(port, token, deadline);
+                return;
+            }
             Thread.sleep(250L);
         }
         String detail = OfflineProcessSupport.readNewLogTail(log, logStart);
         throw new IOException(OfflineProcessSupport.describeStartupTimeout(detail), lastFailure);
     }
 
+    /**
+     * Waits until the healthy port reports this provider's model alias.
+     *
+     * @throws LoopbackPortNotOursException when the alias never appears before the deadline
+     */
+    private void waitForOwnModel(int port, long token, long deadline) throws Exception {
+        while (System.currentTimeMillis() <= deadline) {
+            if (Thread.interrupted() || !isCurrentStartup(token)) {
+                throw new InterruptedException("Offline model startup was cancelled");
+            }
+            if (servesOwnModel(port)) {
+                return;
+            }
+            Thread.sleep(100L);
+        }
+        throw new LoopbackPortNotOursException("127.0.0.1:" + port
+                + " answers /health but does not report the model "
+                + LOCAL_MODEL_ALIAS + "; another program owns that port");
+    }
+
+    /** Whether the service on {@code port} lists this provider's model alias. */
+    private static boolean servesOwnModel(int port) {
+        HttpURLConnection connection = null;
+        try {
+            connection = openLoopback(port, "/v1/models", 500, 1500);
+            int status = connection.getResponseCode();
+            if (status < 200 || status >= 300) {
+                return false;
+            }
+            String body = readBounded(connection.getInputStream(), 64 * 1024);
+            // The alias appears as the model id; matching the quoted id keeps a substring of a
+            // longer, foreign model name from passing.
+            return body.contains('"' + LOCAL_MODEL_ALIAS + '"');
+        } catch (IOException notOurs) {
+            return false;
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
+    private static HttpURLConnection openLoopback(
+            int port, String path, int connectTimeoutMillis, int readTimeoutMillis) throws IOException {
+        HttpURLConnection connection = (HttpURLConnection) URI.create(
+                "http://127.0.0.1:" + port + path).toURL().openConnection();
+        connection.setConnectTimeout(connectTimeoutMillis);
+        connection.setReadTimeout(readTimeoutMillis);
+        return connection;
+    }
+
+    /** Reads at most {@code limit} bytes of a small metadata document. */
+    private static String readBounded(java.io.InputStream input, int limit) throws IOException {
+        if (input == null) {
+            return "";
+        }
+        java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream(1024);
+        byte[] buffer = new byte[2048];
+        int total = 0;
+        int count;
+        while (total < limit && (count = input.read(buffer)) >= 0) {
+            int kept = Math.min(count, limit - total);
+            body.write(buffer, 0, kept);
+            total += kept;
+        }
+        return new String(body.toByteArray(), StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Reserves one loopback port for the child.
+     *
+     * <p>The socket is closed before it returns, so the port can be taken in between; that window is
+     * why {@link #waitUntilHealthy} verifies the identity of whatever ends up listening and why
+     * {@link #startServer} retries once on a new port instead of backing off for five minutes. Holding
+     * the socket open would be worse: {@code llama-server} could not bind it at all.
+     */
     private static int reserveLoopbackPort() throws IOException {
         try (ServerSocket socket = new ServerSocket(0, 1,
                 java.net.InetAddress.getByName("127.0.0.1"))) {
@@ -746,13 +854,13 @@ public final class LlamaCppOfflineProvider
         if (text == null) {
             return;
         }
-        int promptTokens = OpenAiChatTranslationProvider.estimatePromptTokens(text);
-        int remaining = LoopbackContext.TOKENS - PROMPT_OVERHEAD_TOKENS - promptTokens;
-        if (remaining < MINIMUM_ANSWER_TOKENS) {
+        int promptTokens = ChatBudget.estimatePromptTokens(text);
+        int remaining = ChatBudget.remainingContext(LoopbackContext.TOKENS, text);
+        if (remaining < ChatBudget.MINIMUM_ANSWER_TOKENS) {
             throw new IllegalArgumentException("Text is too long for the offline context: about "
                     + promptTokens + " prompt tokens leave " + Math.max(0, remaining) + " of the "
                     + LoopbackContext.TOKENS + " tokens for the answer, but at least "
-                    + MINIMUM_ANSWER_TOKENS + " are needed; shorten the text");
+                    + ChatBudget.MINIMUM_ANSWER_TOKENS + " are needed; shorten the text");
         }
     }
 
@@ -906,6 +1014,18 @@ public final class LlamaCppOfflineProvider
 
     private static final class OfflineProcessExitedException extends IOException {
         private OfflineProcessExitedException(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * The reserved loopback port turned out to be owned by something else.
+     *
+     * <p>It is a startup outcome, not a fault: the caller picks a new port and tries again instead of
+     * arming the five-minute backoff that a genuine failure deserves.
+     */
+    private static final class LoopbackPortNotOursException extends IOException {
+        private LoopbackPortNotOursException(String message) {
             super(message);
         }
     }

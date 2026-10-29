@@ -149,31 +149,36 @@ public final class RenderedTextBridge {
      * reading only the direct children left the caller with the root style alone and dropped the
      * colour the line is actually drawn with. Every leaf keeps its own style here; the caller
      * re-attaches the root style and Minecraft merges the two when it renders the component.</p>
+     *
+     * <p>Children are walked first and each returns the length of its own visible text, so a node
+     * never has to flatten a child a second time to work out where its own literal ends. Its own run
+     * is then inserted at the offset the subtree started at, which keeps the visible order (a node's
+     * text renders before its children). This is the same shape as the 1.16.5 render bridge.</p>
+     *
+     * @return the visible length of the whole subtree
      */
-    private static void collectStyledLeaves(
+    private static int collectStyledLeaves(
             Text node,
             List<String> texts,
             List<Object> styleKeys,
             List<Style> styles
     ) {
-        List<Text> children = node.getSiblings();
-        String full = node.getString();
+        int start = texts.size();
         int childLength = 0;
-        for (Text child : children) {
-            childLength += child.getString().length();
+        for (Text child : node.getSiblings()) {
+            childLength += collectStyledLeaves(child, texts, styleKeys, styles);
         }
+        String full = node.getString();
         // Text a node renders before its children keeps that node's own style.
         if (full.length() > childLength) {
             String own = full.substring(0, full.length() - childLength);
             if (!own.isEmpty()) {
-                texts.add(own);
-                styleKeys.add(node.getStyle());
-                styles.add(node.getStyle());
+                texts.add(start, own);
+                styleKeys.add(start, node.getStyle());
+                styles.add(start, node.getStyle());
             }
         }
-        for (Text child : children) {
-            collectStyledLeaves(child, texts, styleKeys, styles);
-        }
+        return full.length();
     }
 
     private static Style applyColor(Style original, TranslationTextColor color) {

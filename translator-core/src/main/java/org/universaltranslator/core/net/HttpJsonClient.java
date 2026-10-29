@@ -19,15 +19,44 @@ import org.universaltranslator.core.UserAgent;
 /** Bounded Java 8 HTTP client used to avoid shipping a large networking dependency. */
 public final class HttpJsonClient {
     private static final int MAX_RESPONSE_BYTES = 1024 * 1024;
+    /**
+     * Lowest total budget the client will work with.
+     *
+     * <p>A {@code readTimeout} is re-armed on every {@code read()}, so it never bounds a request as
+     * a whole: a peer that sends one byte just inside the timeout keeps a worker thread for as long
+     * as it likes. The total budget is the bound that actually terminates the request.
+     */
+    private static final long MINIMUM_TIME_BUDGET_MILLIS = 60 * 1000L;
+    private static final long MAXIMUM_TIME_BUDGET_MILLIS = 30 * 60 * 1000L;
+    /** How many read timeouts one request may consume before the total budget applies. */
+    private static final int READ_TIMEOUT_MULTIPLIER = 4;
+    /** Headers the transport owns; letting a caller set them desynchronises request framing. */
+    private static final java.util.Set<String> RESERVED_HEADERS = new java.util.HashSet<String>(
+            java.util.Arrays.asList("host", "content-length", "transfer-encoding", "connection"));
+
     private final int connectTimeoutMillis;
     private final int readTimeoutMillis;
+    private final long timeBudgetMillis;
 
     public HttpJsonClient(int connectTimeoutMillis, int readTimeoutMillis) {
+        this(connectTimeoutMillis, readTimeoutMillis, 0);
+    }
+
+    /**
+     * @param timeBudgetMillis total wall-clock budget for one request, or {@code 0} to derive it
+     *         from {@code readTimeoutMillis}
+     */
+    public HttpJsonClient(int connectTimeoutMillis, int readTimeoutMillis, int timeBudgetMillis) {
         if (connectTimeoutMillis < 1 || readTimeoutMillis < 1) {
             throw new IllegalArgumentException("HTTP timeouts must be positive");
         }
         this.connectTimeoutMillis = connectTimeoutMillis;
         this.readTimeoutMillis = readTimeoutMillis;
+        long derived = timeBudgetMillis > 0
+                ? timeBudgetMillis
+                : (long) readTimeoutMillis * READ_TIMEOUT_MULTIPLIER;
+        this.timeBudgetMillis = Math.min(MAXIMUM_TIME_BUDGET_MILLIS,
+                Math.max(MINIMUM_TIME_BUDGET_MILLIS, derived));
     }
 
     public String post(URI endpoint, String jsonBody, String authorizationHeader) throws IOException {
@@ -68,6 +97,7 @@ public final class HttpJsonClient {
         // Set only when the response body was read to the end and closed, so the socket can go
         // back to the keep-alive pool instead of being torn down by disconnect().
         boolean connectionReusable = false;
+        long deadlineNanos = System.nanoTime() + timeBudgetNanos();
         try {
             connection.setRequestMethod(requestMethod);
             connection.setConnectTimeout(connectTimeoutMillis);
@@ -83,13 +113,7 @@ public final class HttpJsonClient {
             // A translation reply is a few kilobytes of JSON that compresses to roughly a third, and
             // this is a per-request cost on every provider call.
             connection.setRequestProperty("Accept-Encoding", "gzip");
-            if (headers != null) {
-                for (Map.Entry<String, String> header : headers.entrySet()) {
-                    if (header.getKey() != null && header.getValue() != null) {
-                        connection.setRequestProperty(header.getKey(), header.getValue());
-                    }
-                }
-            }
+            applyHeaders(connection, headers);
 
             if (bodyAllowed) {
                 byte[] body = bodyValue.getBytes(StandardCharsets.UTF_8);
@@ -103,7 +127,7 @@ public final class HttpJsonClient {
             InputStream stream = status >= 200 && status < 300
                     ? connection.getInputStream()
                     : connection.getErrorStream();
-            String response = stream == null ? "" : readBounded(decoded(stream));
+            String response = stream == null ? "" : readBounded(decoded(stream), deadlineNanos);
             if (status < 200 || status >= 300) {
                 String providerError = providerErrorText(response);
                 throw new HttpStatusException(status, "Translation service returned HTTP " + status
@@ -228,6 +252,7 @@ public final class HttpJsonClient {
             throws IOException {
         HttpURLConnection connection = (HttpURLConnection) endpoint.toURL().openConnection();
         boolean handedOver = false;
+        long deadlineNanos = System.nanoTime() + timeBudgetNanos();
         try {
             connection.setRequestMethod("POST");
             connection.setConnectTimeout(connectTimeoutMillis);
@@ -239,13 +264,7 @@ public final class HttpJsonClient {
             connection.setRequestProperty("Accept", "text/event-stream");
             connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
             connection.setRequestProperty("User-Agent", UserAgent.VALUE);
-            if (headers != null) {
-                for (Map.Entry<String, String> header : headers.entrySet()) {
-                    if (header.getKey() != null && header.getValue() != null) {
-                        connection.setRequestProperty(header.getKey(), header.getValue());
-                    }
-                }
-            }
+            applyHeaders(connection, headers);
             byte[] body = (jsonBody == null ? "" : jsonBody).getBytes(StandardCharsets.UTF_8);
             connection.setFixedLengthStreamingMode(body.length);
             try (OutputStream output = connection.getOutputStream()) {
@@ -255,7 +274,7 @@ public final class HttpJsonClient {
             int status = connection.getResponseCode();
             if (status < 200 || status >= 300) {
                 InputStream error = connection.getErrorStream();
-                String response = error == null ? "" : readBounded(error);
+                String response = error == null ? "" : readBounded(error, deadlineNanos);
                 String providerError = providerErrorText(response);
                 throw new HttpStatusException(status, "Translation service returned HTTP " + status
                         + (providerError == null ? "" : ": " + providerError),
@@ -264,7 +283,9 @@ public final class HttpJsonClient {
             InputStream stream = connection.getInputStream();
             StreamedResponse response = new StreamedResponse(
                     connection, status, connection.getContentType(),
-                    stream == null ? new ByteArrayInputStream(new byte[0]) : stream);
+                    stream == null ? new ByteArrayInputStream(new byte[0])
+                            : new DeadlineInputStream(stream, connection, deadlineNanos),
+                    deadlineNanos);
             handedOver = true;
             return response;
         } catch (ConnectException refused) {
@@ -277,24 +298,84 @@ public final class HttpJsonClient {
         }
     }
 
+    private long timeBudgetNanos() {
+        return timeBudgetMillis * 1000L * 1000L;
+    }
+
+    /**
+     * Applies caller supplied headers.
+     *
+     * <p>Header injection was stopped only inside one provider's constructor, so every other
+     * caller — and every provider added later — still handed arbitrary text to
+     * {@code setRequestProperty}. On the JDK the legacy targets are built with, a value containing
+     * CRLF was written to the request verbatim (request splitting); on a modern JDK the same value
+     * escaped as an unchecked {@link IllegalArgumentException} from a method that only declares
+     * {@link IOException}. The transport owns framing, so the check belongs here.
+     *
+     * @throws IllegalArgumentException on a malformed name, a reserved name, or a value that could
+     *         terminate the header block
+     */
+    private static void applyHeaders(HttpURLConnection connection, Map<String, String> headers) {
+        if (headers == null) {
+            return;
+        }
+        for (Map.Entry<String, String> header : headers.entrySet()) {
+            String name = header.getKey();
+            String value = header.getValue();
+            if (name == null || value == null) {
+                continue;
+            }
+            requireSafeHeader(name, value);
+            connection.setRequestProperty(name, value);
+        }
+    }
+
+    private static void requireSafeHeader(String name, String value) {
+        if (name.isEmpty()) {
+            throw new IllegalArgumentException("HTTP header name is required");
+        }
+        for (int index = 0; index < name.length(); index++) {
+            char character = name.charAt(index);
+            boolean token = (character >= 'a' && character <= 'z')
+                    || (character >= 'A' && character <= 'Z')
+                    || (character >= '0' && character <= '9') || character == '-';
+            if (!token) {
+                throw new IllegalArgumentException("HTTP header name contains an unsupported character");
+            }
+        }
+        if (RESERVED_HEADERS.contains(name.toLowerCase(java.util.Locale.ROOT))) {
+            throw new IllegalArgumentException("HTTP header is reserved by the transport: " + name);
+        }
+        for (int index = 0; index < value.length(); index++) {
+            char character = value.charAt(index);
+            if (character == '\r' || character == '\n' || character == '\0') {
+                // The value itself is never echoed: it is a credential for most providers.
+                throw new IllegalArgumentException("HTTP header value contains a line break: " + name);
+            }
+        }
+    }
+
     /** A response whose body is still open, so a server-sent event stream can be read as it arrives. */
     public static final class StreamedResponse implements Closeable {
         private final HttpURLConnection connection;
         private final int statusCode;
         private final String contentType;
         private final InputStream body;
+        private final long deadlineNanos;
         private boolean closed;
 
         private StreamedResponse(
                 HttpURLConnection connection,
                 int statusCode,
                 String contentType,
-                InputStream body
+                InputStream body,
+                long deadlineNanos
         ) {
             this.connection = connection;
             this.statusCode = statusCode;
             this.contentType = contentType;
             this.body = body;
+            this.deadlineNanos = deadlineNanos;
         }
 
         public int getStatusCode() {
@@ -310,6 +391,29 @@ public final class HttpJsonClient {
             return body;
         }
 
+        /** Absolute {@link System#nanoTime()} value this response stops reading at. */
+        public long getDeadlineNanos() {
+            return deadlineNanos;
+        }
+
+        /**
+         * Releases the socket and unblocks a reader stuck inside it.
+         *
+         * <p>A blocked socket read does not answer {@link Thread#interrupt()}, so closing the
+         * stream is not enough to cancel a stream that stopped arriving: only
+         * {@link HttpURLConnection#disconnect()} tears the socket down. Callers use this from a
+         * watchdog when they decide the stream has outlived its useful life.
+         */
+        public void abort() {
+            closed = true;
+            try {
+                body.close();
+            } catch (IOException ignored) {
+                // The socket is torn down below regardless.
+            }
+            connection.disconnect();
+        }
+
         @Override
         public void close() throws IOException {
             if (closed) {
@@ -323,6 +427,45 @@ public final class HttpJsonClient {
                 // reads the rest — so the socket cannot go back to the keep-alive pool. Tearing the
                 // connection down also releases it if the endpoint keeps the stream open.
                 connection.disconnect();
+            }
+        }
+    }
+
+    /**
+     * Enforces a total time budget on a response body.
+     *
+     * <p>The read timeout is per {@code read()}, so it cannot stop a stream that keeps trickling
+     * bytes. This wrapper asks the deadline before every read and, once it passes, disconnects the
+     * connection — the only action that unblocks the currently blocked read — and reports the
+     * overrun as an {@link IOException} to the caller.
+     */
+    private static final class DeadlineInputStream extends java.io.FilterInputStream {
+        private final HttpURLConnection connection;
+        private final long deadlineNanos;
+
+        private DeadlineInputStream(InputStream body, HttpURLConnection connection, long deadlineNanos) {
+            super(body);
+            this.connection = connection;
+            this.deadlineNanos = deadlineNanos;
+        }
+
+        @Override
+        public int read() throws IOException {
+            requireTimeBudget();
+            return super.read();
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) throws IOException {
+            requireTimeBudget();
+            return super.read(buffer, offset, length);
+        }
+
+        private void requireTimeBudget() throws IOException {
+            if (System.nanoTime() - deadlineNanos > 0L) {
+                connection.disconnect();
+                throw new java.net.SocketTimeoutException(
+                        "Response exceeded its total time budget");
             }
         }
     }
@@ -350,7 +493,16 @@ public final class HttpJsonClient {
         }
     }
 
-    private static String readBounded(InputStream input) throws IOException {
+    /**
+     * Reads a body up to {@link #MAX_RESPONSE_BYTES} and no further than {@code deadlineNanos}.
+     *
+     * <p>The byte bound alone never terminates a body that arrives slowly: a peer sending one byte
+     * just before every read timeout keeps the request alive forever while staying under the size
+     * limit. The deadline turns that into an ordinary read failure.
+     *
+     * @param deadlineNanos absolute {@link System#nanoTime()} value to stop at
+     */
+    private static String readBounded(InputStream input, long deadlineNanos) throws IOException {
         try (InputStream source = input; ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[8192];
             int total = 0;
@@ -359,6 +511,10 @@ public final class HttpJsonClient {
                 total += count;
                 if (total > MAX_RESPONSE_BYTES) {
                     throw new IOException("Translation response exceeded 1 MiB");
+                }
+                if (System.nanoTime() - deadlineNanos > 0L) {
+                    throw new java.net.SocketTimeoutException(
+                            "Translation response exceeded its total time budget");
                 }
                 output.write(buffer, 0, count);
             }

@@ -21,8 +21,16 @@ import java.util.regex.Pattern;
  * long session keeps one rotated file rather than growing without bound.
  *
  * <p>When the setting is off every method returns before doing any work, which is why the debug
- * mode cannot change behaviour while it is disabled. When it is on the writes are synchronous and
- * best effort: an unwritable file is ignored rather than failing a translation.
+ * mode cannot change behaviour while it is disabled. When it is on, lines are queued and written in
+ * batches — consecutive stream deltas are folded into one line and the queue is drained by a daemon
+ * thread every {@link #FLUSH_INTERVAL_MILLIS} — so tracing a streamed answer costs a handful of file
+ * system calls instead of one per token. The queue is bounded and drops rather than applies back
+ * pressure: an unwritable file, or a batch the flusher cannot keep up with, is ignored rather than
+ * failing or delaying a translation. {@link #flush()} writes the tail on demand.
+ *
+ * <p>Lines recorded before the platform calls {@link #configure} are kept in a separate bounded
+ * buffer, because the configuration is read before the log can be switched on: without it the debug
+ * log could never show the fallback records of the startup that was reading the configuration.
  */
 public final class DebugLog {
     /** Sits next to {@code universal-translator.properties} in the game instance's config folder. */
@@ -33,6 +41,23 @@ public final class DebugLog {
     public static final long MAXIMUM_BYTES = 2L * 1024L * 1024L;
     /** Longest text preview written for one request, in characters. */
     public static final int MAXIMUM_PREVIEW_CHARS = 120;
+
+    /**
+     * How often the queue is drained when nothing else forces a write.
+     *
+     * <p>This used to be per line: a local llama.cpp or relay stream sends 30-100 deltas per second,
+     * and every line cost four file system calls ({@code createDirectories}, {@code exists},
+     * {@code size}, append) while holding the monitor the render thread shares, so a single
+     * 500-token answer meant roughly 2000 calls on the hot path. Buffering moves that to one
+     * {@code size} plus one append per batch.
+     */
+    private static final long FLUSH_INTERVAL_MILLIS = 200L;
+    /** Queued lines that trigger a write without waiting for {@link #FLUSH_INTERVAL_MILLIS}. */
+    private static final int FLUSH_BATCH_LINES = 64;
+    /** Upper bound on queued text; a support log drops rather than applies back pressure. */
+    private static final int MAXIMUM_PENDING_CHARS = 64 * 1024;
+    /** Upper bound on the lines kept before {@link #configure} has been called. */
+    private static final int MAXIMUM_PRELUDE_CHARS = 8 * 1024;
 
     /**
      * A base64-ish run long enough to be a key rather than prose. It is deliberately broad: the
@@ -70,6 +95,18 @@ public final class DebugLog {
     private final Object lock = new Object();
     private volatile Path file;
     private volatile boolean enabled;
+    /** Whether {@link #configure} has run; until then events are kept for {@link #prelude}. */
+    private volatile boolean configured;
+    private final StringBuilder pending = new StringBuilder(1024);
+    private int pendingLines;
+    private int droppedLines;
+    private boolean directoryReady;
+    private Thread flusher;
+    private final StringBuilder prelude = new StringBuilder(512);
+    private String streamProvider;
+    private String streamEvent;
+    private int streamCount;
+    private int streamCharacters;
 
     private DebugLog() {
     }
@@ -92,7 +129,9 @@ public final class DebugLog {
      * Points the log at its file and switches it on or off.
      *
      * <p>Called by every platform while it loads its configuration. Turning the log on writes a
-     * header line, which makes it obvious in the file when tracing started.
+     * header line, which makes it obvious in the file when tracing started, and also writes out the
+     * lines that were recorded while the log was still off — a hand-edited value that fell back to a
+     * default is reported exactly there.
      *
      * @param logFile file to append to; {@code null} leaves the log disabled
      * @param debugEnabled whether the setting is on
@@ -100,12 +139,36 @@ public final class DebugLog {
     public void configure(Path logFile, boolean debugEnabled) {
         synchronized (lock) {
             boolean wasEnabled = enabled && file != null;
+            if (wasEnabled) {
+                // Whatever is still queued belongs to the file that is being replaced.
+                sealStreamLocked();
+                flushLocked();
+            }
+            pending.setLength(0);
+            pendingLines = 0;
+            droppedLines = 0;
+            directoryReady = false;
+            streamProvider = null;
+            streamEvent = null;
+            streamCount = 0;
+            streamCharacters = 0;
             file = logFile;
             enabled = debugEnabled && logFile != null;
-            if (enabled && !wasEnabled) {
-                appendLocked(TIMESTAMP.format(LocalDateTime.now())
+            configured = true;
+            if (!enabled) {
+                prelude.setLength(0);
+                return;
+            }
+            if (!wasEnabled) {
+                if (prelude.length() > 0) {
+                    appendPendingLocked(prelude);
+                    prelude.setLength(0);
+                }
+                appendLineLocked(TIMESTAMP.format(LocalDateTime.now())
                         + " session debug logging enabled");
             }
+            flushLocked();
+            startFlusherLocked();
         }
     }
 
@@ -116,7 +179,8 @@ public final class DebugLog {
 
     /** Records one event. {@code fields} is a sequence of {@code name, value} pairs. */
     public void log(String event, String... fields) {
-        if (!enabled || file == null) {
+        boolean writable = enabled && file != null;
+        if (!writable && configured) {
             return;
         }
         StringBuilder line = new StringBuilder(192);
@@ -128,7 +192,24 @@ public final class DebugLog {
             }
         }
         synchronized (lock) {
-            appendLocked(line.toString());
+            if (writable) {
+                appendLineLocked(line.toString());
+                if (pendingLines >= FLUSH_BATCH_LINES) {
+                    flushLocked();
+                }
+            } else {
+                // The configuration is read before configure(...) can run, so a record made now is
+                // the only evidence of a value that fell back to its default. Keep it briefly.
+                capturePreludeLocked(line);
+            }
+        }
+    }
+
+    /** Writes everything queued so far; the tail of a session is otherwise held for one interval. */
+    public void flush() {
+        synchronized (lock) {
+            sealStreamLocked();
+            flushLocked();
         }
     }
 
@@ -188,13 +269,48 @@ public final class DebugLog {
                 "message", failure == null ? "" : failure.getMessage());
     }
 
-    /** One event arrived from a streamed response. */
+    /**
+     * One event arrived from a streamed response.
+     *
+     * <p>Consecutive deltas of the same provider and event are folded into one line carrying
+     * {@code count} and the summed {@code characters}, because a stream calls this once per token.
+     * The line is written by the next flush, or immediately when a different event arrives.
+     */
     public void logStreamEvent(String provider, String event, int characters) {
-        if (!enabled) {
+        if (!enabled || file == null) {
             return;
         }
-        log("stream", "provider", provider, "event", event,
-                "characters", Integer.toString(characters));
+        synchronized (lock) {
+            if (streamCount > 0
+                    && (!sameText(streamProvider, provider) || !sameText(streamEvent, event))) {
+                sealStreamLocked();
+            }
+            streamProvider = provider;
+            streamEvent = event;
+            streamCount++;
+            streamCharacters += Math.max(0, characters);
+        }
+    }
+
+    private static boolean sameText(String first, String second) {
+        return first == null ? second == null : first.equals(second);
+    }
+
+    /** Turns the pending stream aggregate into one queued line. Caller holds {@link #lock}. */
+    private void sealStreamLocked() {
+        if (streamCount <= 0) {
+            return;
+        }
+        String line = TIMESTAMP.format(LocalDateTime.now()) + " stream"
+                + " provider=" + redact(streamProvider)
+                + " event=" + redact(streamEvent)
+                + " count=" + streamCount
+                + " characters=" + streamCharacters;
+        streamProvider = null;
+        streamEvent = null;
+        streamCount = 0;
+        streamCharacters = 0;
+        appendLineLocked(line);
     }
 
     /**
@@ -266,24 +382,131 @@ public final class DebugLog {
                 : single.substring(0, MAXIMUM_PREVIEW_CHARS) + "...";
     }
 
-    private void appendLocked(String line) {
-        Path target = file;
-        if (target == null) {
+    /** Queues one already formatted line. Caller holds {@link #lock}. */
+    private void appendLineLocked(String line) {
+        if (pending.length() + line.length() + 2 > MAXIMUM_PENDING_CHARS) {
+            // Support logging must never delay a translation, so a full queue drops and reports the
+            // loss on the next batch instead of waiting for the flusher.
+            droppedLines++;
             return;
         }
-        try {
-            Path directory = target.getParent();
-            if (directory != null) {
-                Files.createDirectories(directory);
+        pending.append(line).append(System.lineSeparator());
+        pendingLines++;
+    }
+
+    /** Queues text that already carries its own line separators. Caller holds {@link #lock}. */
+    private void appendPendingLocked(CharSequence text) {
+        if (pending.length() + text.length() > MAXIMUM_PENDING_CHARS) {
+            droppedLines++;
+            return;
+        }
+        pending.append(text);
+    }
+
+    /** Keeps one startup line for the moment the log is switched on. Caller holds {@link #lock}. */
+    private void capturePreludeLocked(CharSequence line) {
+        if (prelude.length() + line.length() + 2 > MAXIMUM_PRELUDE_CHARS) {
+            return;
+        }
+        prelude.append(line).append(System.lineSeparator());
+    }
+
+    /** Starts the single daemon thread that drains the queue. Caller holds {@link #lock}. */
+    private void startFlusherLocked() {
+        if (flusher != null) {
+            return;
+        }
+        Thread thread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                drainLoop();
             }
-            if (Files.exists(target) && Files.size(target) >= MAXIMUM_BYTES) {
+        }, "universal-translator-debug-log");
+        thread.setDaemon(true);
+        flusher = thread;
+        thread.start();
+    }
+
+    private void drainLoop() {
+        while (true) {
+            synchronized (lock) {
+                if (!enabled || file == null) {
+                    flusher = null;
+                    return;
+                }
+                sealStreamLocked();
+                flushLocked();
+            }
+            try {
+                // Outside the monitor: the point of the queue is that no caller ever waits here.
+                Thread.sleep(FLUSH_INTERVAL_MILLIS);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                synchronized (lock) {
+                    flusher = null;
+                }
+                return;
+            }
+        }
+    }
+
+    /** Writes the queue as one batch. Caller holds {@link #lock}. */
+    private void flushLocked() {
+        if (pending.length() == 0 && droppedLines == 0) {
+            return;
+        }
+        if (file == null || !enabled) {
+            pending.setLength(0);
+            pendingLines = 0;
+            droppedLines = 0;
+            return;
+        }
+        if (droppedLines > 0) {
+            pending.append(TIMESTAMP.format(LocalDateTime.now()))
+                    .append(" log-buffer dropped-lines=").append(droppedLines)
+                    .append(System.lineSeparator());
+            droppedLines = 0;
+        }
+        String batch = pending.toString();
+        pending.setLength(0);
+        pendingLines = 0;
+        appendBatchLocked(batch);
+    }
+
+    private void appendBatchLocked(String batch) {
+        Path target = file;
+        if (target == null || batch.isEmpty()) {
+            return;
+        }
+        byte[] bytes = batch.getBytes(StandardCharsets.UTF_8);
+        try {
+            if (!directoryReady) {
+                Path directory = target.getParent();
+                if (directory != null) {
+                    Files.createDirectories(directory);
+                }
+                directoryReady = true;
+            }
+            // One stat for the whole batch: the rotation decision used to cost exists+size per line.
+            if (sizeOf(target) + bytes.length > MAXIMUM_BYTES) {
                 Files.move(target, target.resolveSibling(ROTATED_FILE_NAME),
                         StandardCopyOption.REPLACE_EXISTING);
             }
-            Files.write(target, (line + System.lineSeparator()).getBytes(StandardCharsets.UTF_8),
-                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            Files.write(target, bytes, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch (IOException | RuntimeException ignored) {
             // A read-only or full configuration directory is not a translation failure.
+        }
+    }
+
+    /**
+     * @param path file that may not exist yet
+     * @return the size, or {@code 0} when it cannot be measured
+     */
+    private static long sizeOf(Path path) {
+        try {
+            return Files.size(path);
+        } catch (IOException | RuntimeException missing) {
+            return 0L;
         }
     }
 }

@@ -9,7 +9,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 /** 1.3.1-1.5.2 render entry point. */
 @Mixin(GameGui.class)
 abstract class InGameHudStatusIndicatorMixin {
-    @Inject(method = "render(FZII)V", at = @At("RETURN"), require = 0)
+    // require = 1: this is the only entry point for the indicator on this range, so a mapping change
+    // must fail at class load instead of silently drawing nothing.
+    @Inject(method = "render(FZII)V", at = @At("RETURN"), require = 1)
     private void universalTranslator$renderStatusIndicator(float delta, boolean flag, int width, int height, CallbackInfo callback) {
         HudIndicatorOverlay.render(width, height);
     }

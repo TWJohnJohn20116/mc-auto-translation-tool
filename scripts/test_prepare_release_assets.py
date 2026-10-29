@@ -14,6 +14,8 @@ from prepare_release_assets import (
     prepare_release,
     unmerged_forge_groups,
 )
+from release_layout import PART_SIZE
+from verify_release_jars import VerificationError, verify_checksums
 
 
 def jar(entries: dict[str, bytes | str]) -> bytes:
@@ -134,7 +136,16 @@ class PrepareReleaseAssetsTest(unittest.TestCase):
                 self.assertIn("THIRD_PARTY_OFFLINE.md", archive.namelist())
             with zipfile.ZipFile(root / "assets/MCAutoTranslationTool-1.2.3-mc1.21-1.21.5-forge.jar") as archive:
                 metadata = archive.read("META-INF/mods.toml").decode()
-                self.assertIn('versionRange="[1.21,1.21.6)"', metadata)
+                # 依賴範圍只列真正有實作的版本（1.21.2 沒有實作、也沒有 JAR），
+                # 不是連續區間 [1.21,1.21.6)。
+                self.assertIn(
+                    'versionRange="'
+                    "[1.21,1.21],[1.21.1,1.21.1],[1.21.3,1.21.3],"
+                    '[1.21.4,1.21.4],[1.21.5,1.21.5]"',
+                    metadata,
+                )
+                self.assertNotIn("1.21.2", metadata)
+                self.assertNotIn("1.21.6", metadata)
             with zipfile.ZipFile(root / "assets/MCAutoTranslationTool-1.2.3-mc1.20.1-forge.jar") as archive:
                 self.assertIn("universal-translator.forge.mixins.json", archive.namelist())
                 self.assertNotIn("universal-translator.neoforge.mixins.json", archive.namelist())
@@ -230,6 +241,41 @@ class PrepareReleaseAssetsTest(unittest.TestCase):
                 self.assertEqual(b"loader-specific", archive.read("example/Class.class"))
 
 
+    def test_generated_entries_have_platform_independent_zip_metadata(self) -> None:
+        # create_system 預設值依 sys.platform 而異（Windows 0、其餘 3），所以「同一進程跑兩次
+        # 相同」抓不到跨平台差異（上面那條 deterministic 測試就是這樣漏掉的）。這裡直接斷言
+        # 寫進 ZIP 的欄位本身：create_system 固定為 3，external_attr 只由檔名決定。
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            release = root / "release"
+            release.mkdir()
+            self._fixture(release)
+            prepare_release(release, root / "assets", "1.2.3")
+            with zipfile.ZipFile(
+                root / "assets/MCAutoTranslationTool-1.2.3-fabric-all.jar"
+            ) as archive:
+                infos = archive.infolist()
+            self.assertTrue(infos)
+            self.assertEqual({3}, {info.create_system for info in infos})
+            self.assertEqual(
+                {0o100644 << 16},
+                {
+                    info.external_attr
+                    for info in infos
+                    if not info.filename.endswith("/")
+                },
+            )
+
+    def test_forge_family_ranges_list_only_implemented_versions(self) -> None:
+        # 每個成員都對應一顆真的存在的 JAR（prepare_release 少一個就失敗），所以「成員」就是
+        # 「有實作的版本」；宣告用的 versionRange 由它推導，不得放行中間缺的版本（1.21.2）。
+        for family in FORGE_FAMILIES:
+            declared = family.minecraft_version_range
+            self.assertEqual(len(family.members), declared.count("["), declared)
+            for member in family.members:
+                self.assertIn(f"[{member},{member}]", declared)
+            self.assertNotIn("1.21.2", declared)
+
     def test_reports_identical_forge_payloads_outside_declared_families(self) -> None:
         jars = {
             "MCAutoTranslationTool-1.2.3-mc1.19.2-forge.jar": (
@@ -259,6 +305,46 @@ class PrepareReleaseAssetsTest(unittest.TestCase):
             for member in family.members
         }
         self.assertEqual([], unmerged_forge_groups(jars, "1.2.3"))
+
+class SplitPartSizeContractTest(unittest.TestCase):
+    """600 KiB 分片規則的「尺寸」那一半。
+
+    test_verify_release_jars.py 既有的 split fixture 只切 ~200 bytes 的 JAR，於是
+    verify_release_jars._split_parts 的 `total_size > PART_SIZE` 分支永遠不執行——門檻寫錯
+    （例如誤成 61440）時 48 顆 JAR 會碎成上百片，而名稱連續、SHA-256 正確，所有檢查照樣通過。
+    這裡用合成資料讓那個分支真的被走到，正向與負向各一條。
+    """
+
+    def test_part_size_matches_the_600_kib_contract(self) -> None:
+        # AGENTS.md 寫的是 600 KiB；程式碼與文件互相綁定，改一邊就會紅。
+        self.assertEqual(600 * 1024, PART_SIZE)
+
+    def _checksum(self, root: Path, data: bytes) -> Path:
+        checksum = root / "SHA256SUMS.txt"
+        checksum.write_text(
+            f"{hashlib.sha256(data).hexdigest()}  big.jar\n", encoding="utf-8"
+        )
+        return checksum
+
+    def test_oversized_split_jar_accepts_full_size_leading_parts(self) -> None:
+        data = b"x" * (PART_SIZE + 10)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "big.jar.part-aa").write_bytes(data[:PART_SIZE])
+            (root / "big.jar.part-ab").write_bytes(data[PART_SIZE:])
+            self.assertEqual(1, verify_checksums(self._checksum(root, data), True))
+
+    def test_oversized_split_jar_rejects_short_leading_part(self) -> None:
+        data = b"y" * (PART_SIZE + 10)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            # 少 1 byte：名稱仍然連續、串接起來的 SHA-256 也仍然正確，只有「每個前置分片都
+            # 必須剛好 PART_SIZE」這條會抓到。
+            (root / "big.jar.part-aa").write_bytes(data[: PART_SIZE - 1])
+            (root / "big.jar.part-ab").write_bytes(data[PART_SIZE - 1 :])
+            with self.assertRaisesRegex(VerificationError, "unexpected size"):
+                verify_checksums(self._checksum(root, data), True)
+
 
 if __name__ == "__main__":
     unittest.main()

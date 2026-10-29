@@ -16,7 +16,6 @@ import org.universaltranslator.core.net.ServerSentEvents;
 import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -39,6 +38,11 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
     private static final int MAXIMUM_TOKENS_LIMIT = 4096;
     private static final int MINIMUM_COMPLETION_TOKENS = 512;
     /**
+     * Largest {@code max_tokens} a truncated answer is retried with. {@code max_tokens} is mandatory
+     * on this API, so a long line that hits the ceiling had no way of ever finishing before.
+     */
+    private static final int ESCALATED_TOKENS_LIMIT = 8192;
+    /**
      * Field that reports why the model stopped, on a plain reply and inside a
      * {@code message_delta} stream event alike. Without it a reply cut off at {@code max_tokens}
      * looks exactly like a short translation.
@@ -55,6 +59,16 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
     private final String model;
     private final TranslationPrompt.Settings prompt;
     private final HttpJsonClient http;
+    /** The value {@link #id()} reports; see {@link ProviderCacheKey}. */
+    private final String id;
+    /** Remembers an endpoint whose event stream never declares its own end. */
+    private final StreamCompletionMemory streamMemory = new StreamCompletionMemory();
+    /**
+     * Largest {@code max_tokens} this model has been observed to accept. An answer cut off at
+     * {@link #MAXIMUM_TOKENS_LIMIT} is retried once above it, and the value that worked is
+     * remembered so the next line starts there.
+     */
+    private volatile int acceptedOutputTokens = MAXIMUM_TOKENS_LIMIT;
     /** Set once this endpoint proved it cannot answer with an event stream. */
     private volatile boolean streamingUnsupported;
 
@@ -85,13 +99,22 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
         this.model = requireModel(model);
         this.http = http;
         this.prompt = prompt == null ? TranslationPrompt.Settings.standard() : prompt;
+        this.id = ProviderCacheKey.of("claude", this.model, this.endpoint,
+                "anthropic-version=" + API_VERSION, this.prompt.signature());
     }
 
-    /** The provider id, extended with the prompt signature when the prompt is not the default. */
+    /**
+     * The provider id: {@code claude:model@endpointDigest[#promptSignature]}.
+     *
+     * <p>{@code claude-endpoint} is configurable, and pointing it at a self-hosted proxy kept the
+     * same id as the public endpoint, so the previous server's translation was replayed from the
+     * disk cache without a request being sent. The pinned {@code anthropic-version} header is part of
+     * the digest as well, because Anthropic may answer a different version differently. See
+     * {@link ProviderCacheKey}: no key material is hashed.
+     */
     @Override
     public String id() {
-        String signature = prompt.signature();
-        return signature.isEmpty() ? "claude:" + model : "claude:" + model + "#" + signature;
+        return id;
     }
 
     @Override
@@ -100,8 +123,27 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
         DebugLog.global().logRequest("claude:" + model, model, endpoint.toString(),
                 request.getKind().name(), text);
         int budget = completionBudget(text);
-        String response = post(text, TranslationPrompt.single(prompt, request), budget, false);
+        String system = TranslationPrompt.single(prompt, request);
+        String response = post(text, system, budget, false);
         String translated = extractContent(response);
+        String stopReason = JsonStrings.readStringField(response, STOP_REASON_FIELD);
+        if (STOP_REASON_MAX_TOKENS.equals(stopReason)) {
+            // The answer hit max_tokens. Reporting "raise the budget" was useless — nothing in the
+            // provider or the settings screen could raise it — so a long line failed the same way for
+            // the whole session. Ask once more with a larger budget and remember the value that was
+            // enough, the same two-stage shape the OpenAI-compatible provider uses.
+            int escalated = escalatedBudget();
+            if (escalated > budget) {
+                response = post(text, system, escalated, false);
+                translated = extractContent(response);
+                stopReason = JsonStrings.readStringField(response, STOP_REASON_FIELD);
+                if (translated != null && !translated.trim().isEmpty()
+                        && !STOP_REASON_MAX_TOKENS.equals(stopReason)) {
+                    acceptedOutputTokens = escalated;
+                    budget = escalated;
+                }
+            }
+        }
         if (translated == null || translated.trim().isEmpty()) {
             throw new IllegalStateException(
                     ProviderJson.describeMissingContent("Claude", response));
@@ -109,7 +151,7 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
         // Completeness is only worth asking about once there is content to judge: an empty answer is
         // explained far better by the provider's own message and the body excerpt than by a stop
         // reason, while a cut-off answer is distinguishable from a short one only here.
-        requireCompleteAnswer(JsonStrings.readStringField(response, STOP_REASON_FIELD), budget);
+        requireCompleteAnswer(stopReason, budget);
         if (response.indexOf("\"usage\"") >= 0) {
             TranslationStats.global().recordUsage("claude:" + model, response);
         }
@@ -139,23 +181,31 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
         try (HttpJsonClient.StreamedResponse response = http.postStreaming(endpoint, requestBody(
                 text, TranslationPrompt.single(prompt, request), budget, true),
                 headers())) {
-            if (!isEventStream(response.getContentType())) {
+            if (!EventStream.isEventStream(response.getContentType())) {
                 streamingUnsupported = true;
                 return TranslationProvider.super.translateStreaming(request, listener);
             }
-            ServerSentEvents.read(response.getBody(), payload -> {
-                if ("message_stop".equals(JsonStrings.readStringField(payload, "type"))) {
+            // Bounded by wall clock, cancellation and raw bytes, so a relay that only sends
+            // keep-alive comments cannot hold this worker for the rest of the session.
+            ServerSentEvents.read(StreamWatchdog.arm(response.getBody()), payload -> {
+                // One parse per event: the type, the stop reason, the text and the error test are
+                // fields of the same document, and looking each up separately rebuilt the whole tree
+                // five times for every fragment of the answer.
+                Object event = JsonTree.parseOrNull(payload);
+                if ("message_stop".equals(JsonTree.stringAt(event, "type"))) {
                     sawEnd[0] = true;
                     DebugLog.global().logStreamEvent("claude:" + model, "end", 0);
                     return false;
                 }
+                // The stop reason sits inside "delta", so it is found with the field scan rather than a
+                // fixed path; the scan does not parse, so it costs nothing here.
                 String reported = JsonStrings.readStringField(payload, STOP_REASON_FIELD);
                 if (reported != null && !STOP_REASON_END_TURN.equals(reported)) {
                     stopReason[0] = reported;
                 }
-                String fragment = JsonStrings.readStringPath(payload, "delta.text");
+                String fragment = JsonTree.stringAt(event, "delta.text");
                 if (fragment == null) {
-                    fragment = JsonStrings.readStringPath(payload, "content_block.text");
+                    fragment = JsonTree.stringAt(event, "content_block.text");
                 }
                 if (fragment != null && !fragment.isEmpty()) {
                     sawEvent[0] = true;
@@ -189,8 +239,13 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
                     "reason", "stream ended without an end marker",
                     "action", "fell back to a plain request",
                     "characters", Integer.toString(accumulated.length()));
+            if (streamMemory.rememberIncomplete()) {
+                // Recording the doubling without remembering it made every later line pay it again.
+                streamingUnsupported = true;
+            }
             return TranslationProvider.super.translateStreaming(request, listener);
         }
+        streamMemory.rememberComplete();
         requireCompleteAnswer(stopReason[0], budget);
         return TranslationOutputValidator.requireValid(text, accumulated.toString());
     }
@@ -198,13 +253,22 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
     /**
      * Sends a one-token message through the configured model.
      *
+     * <p>Existing with a {@code content} array is not enough: a thinking model spends that token on
+     * its chain of thought and answers with no text at all, which looked healthy here while every
+     * translation failed. The text itself has to be non-empty.
+     *
      * @return the raw response body
      * @throws Exception when the key, the model or the response is unusable
      */
     public String probe() throws Exception {
         String response = post(PROBE_TEXT, "", 1, false);
-        Object root = JsonStrings.parse(response);
+        Object root = JsonTree.parseOrNull(response);
         if (!(root instanceof Map) || !(((Map<?, ?>) root).get("content") instanceof List)) {
+            throw new IllegalStateException(
+                    ProviderJson.describeMissingContent("Claude", response));
+        }
+        String answer = ProviderJson.joinField(root, "content", "text");
+        if (answer == null || answer.trim().isEmpty()) {
             throw new IllegalStateException(
                     ProviderJson.describeMissingContent("Claude", response));
         }
@@ -268,10 +332,21 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
                 + "); shorten the text or try another model");
     }
 
-    /** Completion budget for one text; {@code max_tokens} is required by this API. */
-    static int completionBudget(String text) {
-        int requested = Math.min(text.length() * 2 + 32, MAXIMUM_TOKENS_LIMIT);
-        return Math.max(MINIMUM_COMPLETION_TOKENS, requested);
+    /**
+     * Completion budget for one text; {@code max_tokens} is required by this API.
+     *
+     * <p>Once a larger value proved to be needed it becomes the ceiling, so the second long line
+     * starts where the first one finished instead of paying for the same truncation again.
+     */
+    private int completionBudget(String text) {
+        int ceiling = Math.max(MAXIMUM_TOKENS_LIMIT, acceptedOutputTokens);
+        return ChatBudget.completionBudget(text, ceiling, MINIMUM_COMPLETION_TOKENS);
+    }
+
+    /** The larger budget one truncated answer is retried with. */
+    private int escalatedBudget() {
+        int next = Math.max(MAXIMUM_TOKENS_LIMIT * 2, acceptedOutputTokens);
+        return Math.min(ESCALATED_TOKENS_LIMIT, next);
     }
 
     private String post(String text, String system, int maximumTokens, boolean streaming)
@@ -327,11 +402,6 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
      */
     public static JsonOutputMode jsonOutputMode() {
         return JsonOutputMode.PREFILL;
-    }
-
-    private static boolean isEventStream(String contentType) {
-        return contentType != null
-                && contentType.toLowerCase(Locale.ROOT).contains("text/event-stream");
     }
 
     private static String requireModel(String model) {

@@ -5,9 +5,10 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.universaltranslator.forge.ForgeLocalTextGuard;
 import org.universaltranslator.forge.TranslationRenderContext;
 @Mixin(TextFieldWidget.class)
 abstract class TextFieldWidgetMixin {
- @Inject(method="renderButton(Lcom/mojang/blaze3d/matrix/MatrixStack;IIF)V",at=@At("HEAD")) private void enter(MatrixStack m,int x,int y,float d,CallbackInfo c){TranslationRenderContext.pushTextInput();}
- @Inject(method="renderButton(Lcom/mojang/blaze3d/matrix/MatrixStack;IIF)V",at=@At("RETURN")) private void leave(MatrixStack m,int x,int y,float d,CallbackInfo c){TranslationRenderContext.popTextInput();}
+ @Inject(method="renderButton(Lcom/mojang/blaze3d/matrix/MatrixStack;IIF)V",at=@At("HEAD"),require=1) private void enter(MatrixStack m,int x,int y,float d,CallbackInfo c){ForgeLocalTextGuard.trackRenderedInput((TextFieldWidget)(Object)this);TranslationRenderContext.pushTextInput();}
+ @Inject(method="renderButton(Lcom/mojang/blaze3d/matrix/MatrixStack;IIF)V",at=@At("RETURN"),require=1) private void leave(MatrixStack m,int x,int y,float d,CallbackInfo c){TranslationRenderContext.popTextInput();}
 }

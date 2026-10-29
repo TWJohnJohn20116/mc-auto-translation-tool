@@ -23,13 +23,6 @@ tasks.withType(JavaCompile) {
     options.encoding = "UTF-8"
 }
 
-if (project.hasProperty("legacyJavac")) {
-    tasks.withType(JavaCompile) {
-        options.fork = true
-        options.forkOptions.executable = project.property("legacyJavac")
-    }
-}
-
 minecraft {
     version = "1.8.9-11.15.1.2318-1.8.9"
     runDir = "run"
@@ -51,8 +44,16 @@ processResources {
 }
 
 jar {
-    from("../../../../LICENSE")
-    from("../../../../docs/en/THIRD_PARTY_OFFLINE.md")
+    // These two builds are standalone Gradle builds whose rootProject is this directory, so
+    // gradle/jar-contents.gradle (which resolves rootProject.file("LICENSE")) cannot be applied
+    // here. The attachment names are repeated instead, matching the other 46 release JARs; the
+    // verifier only requires a name starting with "LICENSE", so a bare LICENSE went unnoticed.
+    from("../../../../LICENSE") {
+        rename { "LICENSE_universal_translator" }
+    }
+    from("../../../../docs/en/THIRD_PARTY_OFFLINE.md") {
+        rename { "THIRD_PARTY_OFFLINE.md" }
+    }
     manifest {
         attributes(
                 "FMLCorePlugin": "org.universaltranslator.forge.v189.LegacyCorePlugin",

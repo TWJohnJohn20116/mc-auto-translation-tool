@@ -17,6 +17,9 @@ import org.universaltranslator.core.UserAgent;
 /** HTTPS downloader with resume support, a pinned size and a mandatory SHA-256 check. */
 public final class VerifiedDownloader {
     private static final int MAX_REDIRECTS = 8;
+    /** Smallest progress step reported to the caller; the final byte is always reported. */
+    private static final long PROGRESS_STEP_BYTES = 1024L * 1024L;
+    private static final long MINIMUM_FREE_SPACE_BYTES = 64L * 1024L * 1024L;
 
     /** Receives verified byte progress without owning any UI or platform code. */
     public interface ProgressListener {
@@ -72,7 +75,7 @@ public final class VerifiedDownloader {
         Files.createDirectories(destination.toAbsolutePath().getParent());
         if (Files.isRegularFile(destination)
                 && Files.size(destination) == expectedSize
-                && expectedSha256.equalsIgnoreCase(sha256(destination))) {
+                && isVerifiedContent(destination, expectedSha256)) {
             progress.onProgress(expectedSize, expectedSize);
             return destination;
         }
@@ -108,14 +111,20 @@ public final class VerifiedDownloader {
             Files.delete(partial);
             offset = 0L;
         } else if (offset == expectedSize) {
-            if (expectedSha256.equalsIgnoreCase(sha256(partial))) {
+            if (isVerifiedContent(partial, expectedSha256)) {
                 progress.onProgress(expectedSize, expectedSize);
                 moveVerifiedPartial(partial, destination);
+                ModelVerificationCache.forget(partial);
+                ModelVerificationCache.remember(destination, expectedSha256);
                 return destination;
             }
             Files.delete(partial);
             offset = 0L;
         }
+        // Refuse before the first byte instead of filling the volume and failing at 100%. Peak
+        // usage is the partial file plus whatever has to be replaced at the end of the move, so
+        // only the missing remainder plus a margin has to fit.
+        requireSpaceForDownload(destination, expectedSize - offset);
 
         HttpURLConnection connection = open(source, offset, 0);
         int status;
@@ -138,6 +147,9 @@ public final class VerifiedDownloader {
             connection.disconnect();
             throw failure;
         }
+        // The length the file had when this attempt started writing. A server that answered a
+        // resume with a full body already truncated the file, so nothing of it is kept.
+        long attemptOffset = offset;
         progress.onProgress(offset, expectedSize);
 
         StandardOpenOption[] options = append
@@ -147,6 +159,7 @@ public final class VerifiedDownloader {
              OutputStream output = Files.newOutputStream(partial, options)) {
             byte[] buffer = new byte[64 * 1024];
             long total = offset;
+            long reported = offset;
             int count;
             while ((count = input.read(buffer)) >= 0) {
                 if (count == 0) {
@@ -157,7 +170,12 @@ public final class VerifiedDownloader {
                     throw new IOException("Download exceeded its pinned size");
                 }
                 output.write(buffer, 0, count);
-                progress.onProgress(total, expectedSize);
+                // The interface used to hand the throttle to the caller, so a 1.12 GB model
+                // produced 17 090 callbacks and every consumer had to re-implement the same gate.
+                if (total - reported >= PROGRESS_STEP_BYTES || total == expectedSize) {
+                    reported = total;
+                    progress.onProgress(total, expectedSize);
+                }
             }
         } finally {
             connection.disconnect();
@@ -170,12 +188,77 @@ public final class VerifiedDownloader {
         }
         String actualSha256 = sha256(partial);
         if (!expectedSha256.equalsIgnoreCase(actualSha256)) {
-            Files.deleteIfExists(partial);
+            // Only the bytes this attempt wrote are suspect. Throwing away the whole partial made
+            // the next mirror restart a gigabyte from zero, so the failure of one mirror also
+            // destroyed the progress of the ones before it.
+            discardUnverifiedTail(partial, attemptOffset);
             throw new IOException("Downloaded file failed SHA-256 verification");
         }
         progress.onProgress(expectedSize, expectedSize);
         moveVerifiedPartial(partial, destination);
+        ModelVerificationCache.remember(destination, expectedSha256);
         return destination;
+    }
+
+    /**
+     * Truncates a failed download back to the length it had before the attempt.
+     *
+     * <p>With no earlier progress there is nothing to keep, so the file is removed; with earlier
+     * progress the next mirror only has to fetch the segment this one wrote.
+     */
+    private static void discardUnverifiedTail(Path partial, long keepBytes) {
+        try {
+            long size = Files.size(partial);
+            if (keepBytes <= 0L || size <= keepBytes) {
+                Files.deleteIfExists(partial);
+                return;
+            }
+            try (java.nio.channels.SeekableByteChannel channel = Files.newByteChannel(
+                    partial, StandardOpenOption.WRITE)) {
+                channel.truncate(keepBytes);
+            }
+        } catch (IOException | RuntimeException unusable) {
+            try {
+                Files.deleteIfExists(partial);
+            } catch (IOException | RuntimeException ignored) {
+                // A leftover partial is retried from its recorded length next time.
+            }
+        }
+    }
+
+    /**
+     * Fails before the transfer when the destination volume cannot hold it.
+     *
+     * @param neededBytes bytes the transfer still has to add
+     */
+    private static void requireSpaceForDownload(Path destination, long neededBytes) throws IOException {
+        long usable;
+        try {
+            usable = Files.getFileStore(destination.toAbsolutePath().getParent()).getUsableSpace();
+        } catch (IOException | RuntimeException unknown) {
+            return;
+        }
+        if (usable < neededBytes + MINIMUM_FREE_SPACE_BYTES) {
+            throw new IOException("Not enough free space for the download: " + neededBytes
+                    + " bytes needed, " + usable + " available");
+        }
+    }
+
+    /**
+     * True when the file already holds the pinned content.
+     *
+     * <p>The sidecar records a finished verification, so a restart of an already installed
+     * component costs a {@code stat} instead of reading a gigabyte back off the disk.
+     */
+    private static boolean isVerifiedContent(Path file, String expectedSha256) throws IOException {
+        if (ModelVerificationCache.isVerified(file, expectedSha256)) {
+            return true;
+        }
+        if (!expectedSha256.equalsIgnoreCase(sha256(file))) {
+            return false;
+        }
+        ModelVerificationCache.remember(file, expectedSha256);
+        return true;
     }
 
     private static void moveVerifiedPartial(Path partial, Path destination) throws IOException {

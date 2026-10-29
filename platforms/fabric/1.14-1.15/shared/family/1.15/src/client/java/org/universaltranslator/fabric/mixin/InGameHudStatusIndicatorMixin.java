@@ -143,17 +143,19 @@ abstract class InGameHudStatusIndicatorMixin {
         if (font == null) {
             return;
         }
-        int labelWidth = font.getStringWidth(label);
-        // Beside the square, never over it: a 6px square cannot hold "zh-TW", and a label
-        // centred on a right-corner square would run off the screen edge.
-        int labelLeft = corner.isRight() ? left - 2 - labelWidth : right + 2;
-        // y is the top of the text line, so centre it against the square by hand.
-        int labelY = top + (size - 8) / 2;
-        // These versions hook TextRenderer.draw* to translate world text, and the indicator's own
-        // label must not be fed back into that path: reuse the "this text is not translated" guard
-        // the text-field widgets already rely on.
+        // These versions hook TextRenderer.draw* and TextRenderer.getStringWidth to translate world
+        // text, so both the measurement and the draw have to happen inside the "this text is not
+        // translated" guard the text-field widgets already rely on: measuring outside it fed the
+        // indicator's own label into the translation pipeline every frame and took the width from
+        // the translated string while the label that was drawn stayed the original.
         TranslationRenderContext.pushTextInput();
         try {
+            int labelWidth = font.getStringWidth(label);
+            // Beside the square, never over it: a 6px square cannot hold "zh-TW", and a label
+            // centred on a right-corner square would run off the screen edge.
+            int labelLeft = corner.isRight() ? left - 2 - labelWidth : right + 2;
+            // y is the top of the text line, so centre it against the square by hand.
+            int labelY = top + (size - 8) / 2;
             font.drawWithShadow(label, (float) labelLeft, (float) labelY, 0xFFFFFFFF);
         } finally {
             TranslationRenderContext.popTextInput();

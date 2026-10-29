@@ -1,0 +1,55 @@
+// The aggregate-bundle verification every Fabric bundle shares.
+//
+// Each bundle ships its own implementation JARs, but the release asset
+// MCAutoTranslationTool-<mod_version>-fabric-all.jar carries all of them in one file, and only
+// prepareReleaseAssets builds it. This task hands that file to the project's own
+// BundleResolutionVerifier so Fabric Loader really selects an implementation per Minecraft version.
+//
+// Apply it after the project has declared `java`, its test dependencies and its verifier:
+//
+//     apply from: rootProject.file("gradle/fabric-bundle-aggregate-verify.gradle")
+//
+// The expected versions come from settings.gradle (gradle.ext.fabricReleaseVersions). They used to be
+// hand-copied into four bundles and had already drifted — three missed 26.3 and one missed
+// 1.16-1.16.4 — so the list is read from one place now, and any version the aggregate JAR does not
+// carry is reported instead of silently narrowing the check.
+
+tasks.register("verifyPreparedReleaseBundle", JavaExec) {
+    dependsOn rootProject.tasks.named("verifyPreparedReleaseAssets"), testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "org.universaltranslator.bundle.BundleResolutionVerifier"
+    // The bundle test harness runs against a Loader generation that needs a Java 25 launcher.
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+    def aggregateJar = rootProject.layout.buildDirectory.file(
+            "release-assets/MCAutoTranslationTool-${project.mod_version}-fabric-all.jar"
+    ).get().asFile
+    def authoritativeVersions = gradle.ext.fabricReleaseVersions as List
+
+    doFirst {
+        if (!aggregateJar.isFile()) {
+            throw new GradleException(
+                    "Missing release aggregate ${aggregateJar}; run :prepareReleaseAssets first.")
+        }
+        // One walk of the archive: the names of the nested implementation JARs it really carries.
+        def carried = project.zipTree(aggregateJar)
+                .matching { include "META-INF/jars/universal-translator-*.jar" }
+                .files.collect { it.name }
+        def present = authoritativeVersions.findAll {
+            carried.contains("universal-translator-${it}.jar")
+        }
+        def absent = authoritativeVersions.findAll {
+            !carried.contains("universal-translator-${it}.jar")
+        }
+        if (!absent.isEmpty()) {
+            logger.warn(
+                    "${aggregateJar.name} carries ${present.size()} of ${authoritativeVersions.size()} " +
+                            "authoritative Fabric versions; not present: ${absent.join(', ')}. " +
+                            "The aggregate is built by prepareReleaseAssets from downloads/, so a version " +
+                            "listed in settings.gradle but missing there means downloads/ is stale.")
+        }
+        println "Verifying Fabric Loader resolution for ${present.size()} versions: ${present.join(', ')}"
+        args([aggregateJar.absolutePath] + present)
+    }
+}

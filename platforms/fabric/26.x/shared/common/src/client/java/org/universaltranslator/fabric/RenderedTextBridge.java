@@ -5,7 +5,9 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.FormattedText;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.Style;
+import net.minecraft.network.chat.contents.PlainTextContents;
 import net.minecraft.util.FormattedCharSequence;
+import org.universaltranslator.core.DebugLog;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TranslationTextStyling;
 import org.universaltranslator.core.TranslationStyleRuns;
@@ -14,9 +16,16 @@ import org.universaltranslator.core.WeakIdentitySet;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 public final class RenderedTextBridge {
+    // One-shot diagnostics carried over from the 1.19–1.21 copy (shared/rendered-common): when a
+    // player reports "the item tooltip is not translated", the debug log has to answer whether the
+    // producer hook ran at all and whether the list actually changed. Logged once per session and
+    // only while debug logging is on, so an ordinary hover costs one boolean read.
+    private static final AtomicBoolean ITEM_TOOLTIP_REACHED = new AtomicBoolean();
+    private static final AtomicBoolean ITEM_TOOLTIP_APPLIED = new AtomicBoolean();
     /**
      * Tooltip lists this class already produced.
      *
@@ -25,6 +34,10 @@ public final class RenderedTextBridge {
      * a mark the consumer receives the already translated list and translates it again — a second
      * provider request per hover, and with the English-only filter off the Chinese result is
      * translated a second time and can change between frames.
+     *
+     * <p>The mark is written where the list is produced ({@link #translateItemTooltip}), not where
+     * it is consumed: the consumer cannot tell a list it has already seen from a fresh one, so a
+     * consumer-side mark left every produced list translating a second time.
      */
     private static final WeakIdentitySet HANDLED_TOOLTIPS = new WeakIdentitySet();
 
@@ -62,6 +75,13 @@ public final class RenderedTextBridge {
     public static FormattedCharSequence translate(FormattedCharSequence text) {
         if (text == null) {
             return null;
+        }
+        // This is the measurement path: Font.width(...) reaches it hundreds to thousands of times
+        // per frame, so the "is there anything to translate" answer has to be free. Walking the
+        // sequence to build the original string before asking costs a StringBuilder, an
+        // AtomicReference, a boolean[] and two Strings per call even when translation is off.
+        if (!FabricTranslationRuntime.renderTranslationActive()) {
+            return text;
         }
         StringBuilder original = new StringBuilder();
         AtomicReference<Style> firstStyle = new AtomicReference<Style>(Style.EMPTY);
@@ -149,6 +169,9 @@ public final class RenderedTextBridge {
         if (text instanceof Component) {
             return translate((Component) text);
         }
+        if (!FabricTranslationRuntime.renderTranslationActive()) {
+            return text;
+        }
         String original = text.getString();
         String translated = translateRaw(original);
         if (original.equals(translated)) {
@@ -163,16 +186,25 @@ public final class RenderedTextBridge {
             // Produced by translateItemTooltip a moment ago; the answer is already in this list.
             return lines;
         }
-        List<Component> result = translateTooltip(lines, false);
-        if (result != lines) {
-            HANDLED_TOOLTIPS.add(result);
-        }
-        return result;
+        // Deliberately no mark here: this is the consumer, and a list it translates itself is the
+        // list it is about to draw, so a mark would only record one entry per frame without ever
+        // preventing a repeat. The producer owns the mark.
+        return translateTooltip(lines, false);
     }
 
     /** Canonical Screen.getTooltipFromItem hook for inventories and containers. */
     public static List<Component> translateItemTooltip(List<Component> lines) {
-        return translateTooltip(lines, true);
+        if (ITEM_TOOLTIP_REACHED.compareAndSet(false, true)) {
+            DebugLog.global().log("item-tooltip", "producer", "reached");
+        }
+        List<Component> result = translateTooltip(lines, true);
+        if (result != lines) {
+            // Write the mark here, at the producing end: the consumer (setTooltipForNextFrame)
+            // receives this exact list next and must recognise it instead of translating the
+            // already translated lines a second time.
+            HANDLED_TOOLTIPS.add(result);
+        }
+        return result;
     }
 
     private static List<Component> translateTooltip(List<Component> lines, boolean itemTooltip) {
@@ -200,6 +232,11 @@ public final class RenderedTextBridge {
                 replacement.set(index,
                         Component.literal(translated).setStyle(translatedStyle(line.getStyle())));
             }
+        }
+        if (itemTooltip && replacement != null
+                && ITEM_TOOLTIP_APPLIED.compareAndSet(false, true)) {
+            // Logged once per session, and only when debug logging is on.
+            DebugLog.global().log("item-tooltip", "result", "translated");
         }
         return replacement == null ? lines : replacement;
     }
@@ -253,31 +290,33 @@ public final class RenderedTextBridge {
      * reading only the direct children left the caller with the root style alone and dropped the
      * colour the line is actually drawn with. Every leaf keeps its own style here; the caller
      * re-attaches the root style and Minecraft merges the two when it renders the component.</p>
+     *
+     * <p>Each node contributes only its own contents. Reading {@code getString()} instead copies
+     * the whole subtree at every level, which costs O(nodes × subtree size) — quadratic on a tree
+     * and about 90 fresh strings for a 30-node, three-level chat line, on every frame it renders.
+     * The return value is the number of characters appended for this subtree, which keeps the walk
+     * linear for a caller that needs the length.</p>
      */
-    private static void collectStyledLeaves(
+    private static int collectStyledLeaves(
             Component node,
             List<String> texts,
             List<Object> styleKeys,
             List<Style> styles
     ) {
-        List<Component> children = node.getSiblings();
-        String full = node.getString();
-        int childLength = 0;
-        for (Component child : children) {
-            childLength += child.getString().length();
-        }
-        // Text a node renders before its children keeps that node's own style.
-        if (full.length() > childLength) {
-            String own = full.substring(0, full.length() - childLength);
-            if (!own.isEmpty()) {
-                texts.add(own);
+        int own = 0;
+        if (node.getContents() instanceof PlainTextContents) {
+            String content = ((PlainTextContents) node.getContents()).text();
+            if (!content.isEmpty()) {
+                texts.add(content);
                 styleKeys.add(node.getStyle());
                 styles.add(node.getStyle());
+                own = content.length();
             }
         }
-        for (Component child : children) {
-            collectStyledLeaves(child, texts, styleKeys, styles);
+        for (Component child : node.getSiblings()) {
+            own += collectStyledLeaves(child, texts, styleKeys, styles);
         }
+        return own;
     }
 
     private static Style applyColor(Style original, TranslationTextColor color) {

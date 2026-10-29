@@ -2,6 +2,9 @@
 
 本文件完整說明 `mc-auto-translation-tool`（MC 自動翻譯工具）的架構設計理念、分層結構、多模組目錄規劃、跨版本代碼共用機制與打包體系。
 
+> 概念層的短版說明（為什麼不需要伺服器、資料流程、多版本邊界、捕獲策略、安全邊界）見
+> [简体中文](../Zh-cn/ARCHITECTURE.md)／[English](../en/ARCHITECTURE.md)；本文件是它們的完整補充。
+
 ---
 
 ## 1. 核心設計理念與架構分層
@@ -112,7 +115,7 @@ Fabric Loader 原生支援 `META-INF/jars/` 巢狀 JAR 解壓機制：
        ...
    ]
    ```
-3. 最終透過 `scripts/prepare_release_assets.py`，將所有 Fabric 家族（1.13 至 26.3 共 51 個版本的子模組）聚合為單一 `MCAutoTranslationTool-fabric-all.jar`。玩家只要下載這一個 JAR，不論玩 1.14、1.16、1.20 或 1.21，Fabric Loader 就會自動精確加載對應的位元碼。
+3. 最終透過 `scripts/prepare_release_assets.py`，將所有 Fabric 家族（1.13 至 26.3 共 51 個版本的子模組）聚合為單一 `MCAutoTranslationTool-fabric-all.jar`。玩家只要下載這一個 JAR，不論玩 1.14、1.16、1.20 或 1.21，Fabric Loader 就會自動精確加載對應的位元碼。前提是該實例的 **Fabric Loader ≥ 0.19.3**——bundle 的 `fabric.mod.json` 就是這樣宣告 `fabricloader` 下限，低於此版本的 Loader 會在載入階段擋下整個模組。
 
 ---
 

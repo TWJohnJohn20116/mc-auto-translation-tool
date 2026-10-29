@@ -68,7 +68,15 @@ public final class AzureOpenAiTranslationProvider implements TranslationProvider
                 requestUrl, apiKey, this.deployment, "azure-openai", http, prompt, "api-key", "");
     }
 
-    /** The delegate's id already carries the provider name, the deployment and the prompt. */
+    /**
+     * The delegate's id: {@code azure-openai:deployment@endpointDigest[#promptSignature]}.
+     *
+     * <p>The deployment and the prompt come from the delegate, and the digest already covers what
+     * makes two Azure resources different: the resource host, the deployment path and the
+     * {@code api-version} query, which the delegate hashes as part of its endpoint. Repointing
+     * {@code azure-openai-endpoint} at another resource therefore gets its own cache entries instead
+     * of replaying the previous resource's translation. See {@link ProviderCacheKey}.
+     */
     @Override
     public String id() {
         return delegate.id();

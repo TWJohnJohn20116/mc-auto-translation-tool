@@ -10,9 +10,15 @@ import org.universaltranslator.fabric.RenderedTextBridge;
 @Mixin(TextRenderer.class)
 abstract class TextRendererMixin {
     @ModifyVariable(
+            // drawWithShadow(String,float,float,int) is deliberately not listed (P2-051): it is a
+            // one-line delegate to the five-argument draw(String,float,float,int,boolean) below, so
+            // listing both sent every shadowed string — most of the HUD, chat and tooltip text —
+            // through RenderedTextBridge twice per drawn line, doubling the cost of the 1.13 text
+            // pipeline against the 1.0–1.12 one (platforms/fabric/shared/text-renderer-legacy lists
+            // only the terminal methods). The four-argument draw is a sibling implementation rather
+            // than a delegate, which is why it stays.
             method = {
                     "draw(Ljava/lang/String;FFI)I",
-                    "drawWithShadow(Ljava/lang/String;FFI)I",
                     "draw(Ljava/lang/String;FFIZ)I",
                     "drawLayer(Ljava/lang/String;FFIZ)I"
             },

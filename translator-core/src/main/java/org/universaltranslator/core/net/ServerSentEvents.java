@@ -16,7 +16,9 @@ import java.nio.charset.StandardCharsets;
  *
  * <p>Both the accumulated payload size and the length of a single line are bounded, so a
  * misbehaving endpoint cannot make the client buffer without limit: the non-streaming path is
- * bounded the same way.
+ * bounded the same way. Non-payload lines are counted separately and the whole read also runs
+ * against a wall-clock budget, because bytes alone never terminate a stream that only sends
+ * keep-alives.
  *
  * <p>Comment lines ({@code :} keep-alives), empty event separators and every field other than
  * {@code data} are ignored. Multiple {@code data} lines inside one event are deliberately not
@@ -28,7 +30,18 @@ public final class ServerSentEvents {
     public static final int MAXIMUM_TOTAL_CHARS = 1024 * 1024;
     /** Largest single line accepted, so one hostile line cannot exhaust memory on its own. */
     public static final int MAXIMUM_LINE_BYTES = 256 * 1024;
+    /**
+     * Largest total volume of lines that are not payloads.
+     *
+     * <p>They used to be free: the payload bound only ever counted {@code data:} content, so an
+     * endpoint that answers with nothing but {@code :} keep-alives stayed inside every limit while
+     * the read loop never returned.
+     */
+    public static final int MAXIMUM_IGNORED_BYTES = 256 * 1024;
+    /** Wall-clock budget a stream may consume when the caller does not supply a deadline. */
+    public static final long DEFAULT_TIME_BUDGET_MILLIS = 5 * 60 * 1000L;
 
+    private static final long DEFAULT_TIME_BUDGET_NANOS = DEFAULT_TIME_BUDGET_MILLIS * 1000L * 1000L;
     private static final int READ_BUFFER_BYTES = 4096;
 
     /** Receives every {@code data:} payload until it asks to stop. */
@@ -44,17 +57,43 @@ public final class ServerSentEvents {
     }
 
     /**
-     * Reads the stream to its end, or to the first payload whose handler returned {@code false}.
+     * Reads the stream to its end, or to the first payload whose handler returned {@code false},
+     * under {@link #DEFAULT_TIME_BUDGET_MILLIS}.
      *
      * @return number of payload characters handed to the handler
      * @throws IOException when the stream fails or exceeds a bound
      */
     public static int read(InputStream input, PayloadHandler handler) throws IOException {
+        return read(input, handler, System.nanoTime() + DEFAULT_TIME_BUDGET_NANOS);
+    }
+
+    /**
+     * Reads the stream to its end, to the first payload whose handler returned {@code false}, or
+     * until {@code deadlineNanos} passes.
+     *
+     * <p>The deadline is what makes a stalled stream terminating at all. A socket read timeout is
+     * re-armed on every single {@code read()}, so an endpoint that sends a {@code :} keep-alive
+     * comment every so often — what a proxy in front of a stuck upstream does — keeps one worker
+     * thread inside this loop forever without ever tripping it. The reader is the only place that
+     * can see the stream is making no progress, so the budget lives here.
+     *
+     * @param deadlineNanos absolute {@link System#nanoTime()} value to stop at
+     * @return number of payload characters handed to the handler
+     * @throws IOException when the stream fails, exceeds a bound, or outlives its budget
+     */
+    public static int read(InputStream input, PayloadHandler handler, long deadlineNanos)
+            throws IOException {
         byte[] buffer = new byte[READ_BUFFER_BYTES];
         ByteArrayOutputStream line = new ByteArrayOutputStream(READ_BUFFER_BYTES);
         int total = 0;
+        long ignored = 0L;
         int count;
-        while ((count = input.read(buffer)) >= 0) {
+        while (true) {
+            requireTimeBudget(deadlineNanos);
+            count = input.read(buffer);
+            if (count < 0) {
+                break;
+            }
             for (int index = 0; index < count; index++) {
                 int value = buffer[index] & 0xFF;
                 if (value != '\n' && value != '\r') {
@@ -69,9 +108,15 @@ public final class ServerSentEvents {
                     // Empty line: the event separator between payloads, and the second half of CRLF.
                     continue;
                 }
+                int lineBytes = line.size();
                 String payload = dataPayload(line.toByteArray());
                 line.reset();
                 if (payload == null) {
+                    ignored += lineBytes;
+                    if (ignored > MAXIMUM_IGNORED_BYTES) {
+                        throw new IOException("Server-sent event stream exceeded "
+                                + MAXIMUM_IGNORED_BYTES + " bytes of non-payload lines");
+                    }
                     continue;
                 }
                 total += payload.length();
@@ -89,10 +134,22 @@ public final class ServerSentEvents {
             String payload = dataPayload(line.toByteArray());
             if (payload != null) {
                 total += payload.length();
-                handler.onData(payload);
+                if (total > MAXIMUM_TOTAL_CHARS) {
+                    throw new IOException("Server-sent event stream exceeded "
+                            + MAXIMUM_TOTAL_CHARS + " characters");
+                }
+                if (!handler.onData(payload)) {
+                    return total;
+                }
             }
         }
         return total;
+    }
+
+    private static void requireTimeBudget(long deadlineNanos) throws IOException {
+        if (System.nanoTime() - deadlineNanos > 0L) {
+            throw new IOException("Server-sent event stream exceeded its time budget");
+        }
     }
 
     /**

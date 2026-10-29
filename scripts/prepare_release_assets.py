@@ -19,6 +19,22 @@ from release_layout import PART_PATTERN, part_suffix
 
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 
+#: ``ZipInfo.create_system`` 固定寫成 3（Unix）。``zipfile.ZipInfo.__init__`` 會依
+#: ``sys.platform`` 給值：Windows 給 0、其餘平台給 3，而這個值會進每個 local header 與
+#: central directory，所以同一批輸入在本機（Windows）與 CI（ubuntu-24.04）會產生不同位元組、
+#: 不同 SHA-256，讓「發布資產可重現」無法驗證。選 3 而不是 0 是因為驗證與發布都在 Linux 上
+#: 進行（既有 downloads/<version> 的產物就是 create_system=3 的結果），這條設定只是把
+#: 「跑在哪台機器」從輸出裡拿掉，不會改變 CI 產生的位元組。
+ZIP_CREATE_SYSTEM = 3
+
+#: 檔案與目錄的 Unix 權限位，寫進 ``external_attr`` 的高 16 位。
+ZIP_FILE_ATTR = 0o100644 << 16
+ZIP_DIR_ATTR = 0o40755 << 16
+
+
+def _entry_attr(name: str) -> int:
+    return ZIP_DIR_ATTR if name.endswith("/") else ZIP_FILE_ATTR
+
 
 class PreparationError(RuntimeError):
     pass
@@ -26,32 +42,41 @@ class PreparationError(RuntimeError):
 
 @dataclass(frozen=True)
 class ForgeFamily:
+    """一個合併後的 Forge 家族：成員各一顆 JAR，共用同一份 payload。
+
+    `members` 同時是「這個家族真的有實作的 Minecraft 版本」——`prepare_release` 要求每個成員
+    都提供一顆 JAR，缺一個就失敗。因此宣告給 Forge 的依賴範圍直接由它推導（見
+    `minecraft_version_range`），不再另存一份手寫的 `versionRange` 字串：那第二份真相就是
+    「宣告放行、實際沒有實作」的來源。
+    """
+
     members: tuple[str, ...]
     output_range: str
-    minecraft_range: str
+
+    @property
+    def minecraft_version_range(self) -> str:
+        """只宣告真正有實作的版本：每個版本一個精確 restriction 的聯集。
+
+        為什麼不用連續區間（原本的 `[1.21,1.21.6)`）：`platforms/forge/1.21/versions/` 沒有
+        1.21.2 的目錄，那個版本也沒有 JAR。連續區間會讓 1.21.2 通過 Forge 的依賴檢查，
+        玩家裝上去之後才在載入 mixin／位元組碼時失敗——錯誤被延後到最難診斷的地方。
+        聯集語法（逗號分隔多個 restriction）是 Maven `VersionRange` 的標準寫法，
+        驗證端 `verify_release_jars.py` 會逐段要求「上下界都在」，所以不會退化成無界宣告。
+        """
+        return _minecraft_dependency_range(self.members)
+
+
+def _minecraft_dependency_range(versions: tuple[str, ...]) -> str:
+    ordered = sorted(versions, key=_version_key)
+    return ",".join(f"[{version},{version}]" for version in ordered)
 
 
 FORGE_FAMILIES = (
-    ForgeFamily(
-        ("1.21", "1.21.1", "1.21.3", "1.21.4", "1.21.5"),
-        "1.21-1.21.5",
-        "[1.21,1.21.6)",
-    ),
-    ForgeFamily(
-        ("1.21.6", "1.21.7", "1.21.8"),
-        "1.21.6-1.21.8",
-        "[1.21.6,1.21.9)",
-    ),
-    ForgeFamily(
-        ("1.21.9", "1.21.10", "1.21.11"),
-        "1.21.9-1.21.11",
-        "[1.21.9,1.21.12)",
-    ),
-    ForgeFamily(
-        ("26.1", "26.1.1", "26.1.2"),
-        "26.1-26.1.2",
-        "[26.1,26.2)",
-    ),
+    # 檔名（output_range）沿用歷史標籤，因為它已經是已發布資產的名稱；依賴範圍則逐版本列出。
+    ForgeFamily(("1.21", "1.21.1", "1.21.3", "1.21.4", "1.21.5"), "1.21-1.21.5"),
+    ForgeFamily(("1.21.6", "1.21.7", "1.21.8"), "1.21.6-1.21.8"),
+    ForgeFamily(("1.21.9", "1.21.10", "1.21.11"), "1.21.9-1.21.11"),
+    ForgeFamily(("26.1", "26.1.1", "26.1.2"), "26.1-26.1.2"),
 )
 
 
@@ -98,8 +123,9 @@ def discover_jars(release_dir: Path) -> dict[str, tuple[Path, bytes]]:
 
 def _zip_entry(archive: zipfile.ZipFile, name: str, data: bytes) -> None:
     info = zipfile.ZipInfo(name, ZIP_TIMESTAMP)
+    info.create_system = ZIP_CREATE_SYSTEM
     info.compress_type = zipfile.ZIP_DEFLATED
-    info.external_attr = (0o40755 if name.endswith("/") else 0o100644) << 16
+    info.external_attr = _entry_attr(name)
     archive.writestr(info, data, compresslevel=9)
 
 
@@ -169,8 +195,12 @@ def _stored_jar(data: bytes) -> bytes:
         with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as dst:
             for item in src.infolist():
                 info = zipfile.ZipInfo(item.filename, ZIP_TIMESTAMP)
+                # 這裡刻意不複製 item.external_attr：來源 JAR 若是在 Windows 上建置的，
+                # 那 16 位就是 0，同一份 payload 會因此得到不同的位元組。改成依檔名推導固定
+                # 的 Unix 權限位，嵌套 JAR 的 entry 屬性就只取決於它的名字。
+                info.create_system = ZIP_CREATE_SYSTEM
                 info.compress_type = zipfile.ZIP_STORED
-                info.external_attr = item.external_attr
+                info.external_attr = _entry_attr(item.filename)
                 dst.writestr(info, src.read(item.filename))
         return output.getvalue()
 
@@ -272,7 +302,7 @@ def _build_forge_family(
             re.DOTALL,
         )
         metadata, count = dependency.subn(
-            lambda match: match.group(1) + family.minecraft_range + match.group(3),
+            lambda match: match.group(1) + family.minecraft_version_range + match.group(3),
             metadata,
             count=1,
         )

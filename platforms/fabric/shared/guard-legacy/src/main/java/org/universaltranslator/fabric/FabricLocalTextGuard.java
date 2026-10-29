@@ -8,7 +8,14 @@ import org.universaltranslator.core.TranslationTextStyling;
 
 import java.lang.reflect.Field;
 
-/** Identifies text currently being edited by the local player in the chat box. */
+/**
+ * Identifies text currently being edited by the local player in the chat box.
+ *
+ * <p>Keep in sync with {@code shared/legacy-common/…/FabricLocalTextGuard.java}: the bodies are the
+ * same and differ only in the client accessors ({@code Minecraft.screen} here,
+ * {@code MinecraftClient.currentScreen} there). Collapsing the pair needs a seam for those two
+ * calls plus the per-version {@code srcDir} wiring, which is audit2 S2-078 and outside this layer.
+ */
 final class FabricLocalTextGuard {
     private static volatile Field chatField;
     /**
@@ -20,6 +27,13 @@ final class FabricLocalTextGuard {
      * different screen class (a version's own chat screen, a modded one) re-runs it.
      */
     private static volatile Class<?> resolvedFor;
+    /** Last text the chat box held, with the two cursor forms the renderer appends to it. */
+    private static volatile String cachedTyped;
+    private static volatile String cachedTypedUnderscore;
+    private static volatile String cachedTypedPipe;
+    /** Last stripped line, kept so the same drawn line is not re-walked for every hook. */
+    private static volatile String strippedSource;
+    private static volatile String strippedValue;
 
     private FabricLocalTextGuard() {
     }
@@ -90,9 +104,36 @@ final class FabricLocalTextGuard {
         if (typed == null || typed.isEmpty()) {
             return false;
         }
-        String visible = TranslationTextStyling.stripLegacyFormatting(rendered);
+        // See the copy in shared/legacy-common: the cursor candidates are derived once per distinct
+        // typed value instead of three concatenations per drawn line, and the stripped comparison
+        // is memoized for the line currently being drawn.
+        String underscore = cachedTypedUnderscore;
+        String pipe = cachedTypedPipe;
+        if (!typed.equals(cachedTyped)) {
+            underscore = typed + "_";
+            pipe = typed + "|";
+            cachedTypedUnderscore = underscore;
+            cachedTypedPipe = pipe;
+            cachedTyped = typed;
+        }
+        String visible = stripped(rendered);
         return visible.equals(typed)
-                || visible.equals(typed + "_")
-                || visible.equals(typed + "|");
+                || visible.equals(underscore)
+                || visible.equals(pipe);
+    }
+
+    /**
+     * {@code rendered} without its legacy colour codes, memoized for the last line seen; the value
+     * is published before its source, so a racing reader sees the pair or recomputes.
+     */
+    private static String stripped(String rendered) {
+        String source = strippedSource;
+        if (source != null && source.equals(rendered)) {
+            return strippedValue;
+        }
+        String value = TranslationTextStyling.stripLegacyFormatting(rendered);
+        strippedValue = value;
+        strippedSource = rendered;
+        return value;
     }
 }

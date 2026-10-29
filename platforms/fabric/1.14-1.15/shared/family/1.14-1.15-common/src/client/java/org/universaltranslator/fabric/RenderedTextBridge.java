@@ -25,6 +25,14 @@ public final class RenderedTextBridge {
         if (text == null) {
             return null;
         }
+        // Early exit for everything drawn under the "this text is not translated" guard (text
+        // fields, the HUD indicator's own label, the outgoing preview): translateRaw returns its
+        // input unchanged there, so the flatten below could only copy the string. The 1.8.9-1.12.2
+        // bridge takes the same shortcut, and this method is reached by every draw and every width
+        // measurement of a component.
+        if (TranslationRenderContext.isTextInput()) {
+            return text;
+        }
         String original = text.getString();
         String translated = translateRaw(original);
         if (original.equals(translated)) {

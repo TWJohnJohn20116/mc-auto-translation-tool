@@ -151,6 +151,13 @@ sourceSets {
         forgeSharedLayers.each { layer ->
             java.srcDir new File(forgeSharedRoot, "${layer}/src/main/java")
         }
+        // Lang assets live outside every Forge tree (platforms/shared/lang/json), and the Forge
+        // shared scripts add them with this exact line. NeoForge keeps its resources in
+        // sourceSets.main.resources and only copies the Forge ones through processResources, so
+        // without this line all 20 NeoForge jars shipped with no
+        // assets/universal_translator/lang/*.json at all. resources.srcDir is a processResources
+        // input, so no extra from(...) is needed.
+        resources.srcDir rootProject.file("platforms/shared/lang/json")
         // The Forge loader entrypoints are replaced by the NeoForge variants above.
         java.exclude "**/UniversalTranslatorForgeMod.java"
         java.exclude "**/UniversalTranslatorForgeClient.java"
