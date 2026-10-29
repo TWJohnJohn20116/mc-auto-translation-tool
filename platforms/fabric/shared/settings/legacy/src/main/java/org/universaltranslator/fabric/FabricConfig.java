@@ -50,6 +50,13 @@ final class FabricConfig {
      * healthy file; see the modern copy of this class for why the bootstrap is told about it.
      */
     private static volatile String corruptionBackup;
+    /**
+     * Configuration files whose damaged contents could not be moved aside; see the modern copy of
+     * this class. Until a load can read the file again, no save may replace the only copy of the
+     * player's settings with the defaults that load fell back to.
+     */
+    private static final Set<Path> UNQUARANTINED =
+            Collections.synchronizedSet(new java.util.HashSet<Path>());
 
     final boolean enabled;
     final boolean translateChat;
@@ -144,9 +151,11 @@ final class FabricConfig {
         // API), so the hotkeys are read from this file instead of the vanilla controls screen.
         // Read into the snapshot only: publishing them to the global HotkeyKeys is load()'s job, so
         // a rebuild cannot republish (or overwrite) them as a side effect of being constructed.
-        this.settingsKey = hotkey(properties.getProperty("settings-key", DEFAULT_SETTINGS_KEY),
+        this.settingsKey = hotkey("settings-key",
+                properties.getProperty("settings-key", DEFAULT_SETTINGS_KEY),
                 DEFAULT_SETTINGS_KEY);
-        this.toggleKey = hotkey(properties.getProperty("toggle-key", DEFAULT_TOGGLE_KEY),
+        this.toggleKey = hotkey("toggle-key",
+                properties.getProperty("toggle-key", DEFAULT_TOGGLE_KEY),
                 DEFAULT_TOGGLE_KEY);
         this.targetLanguage = properties.getProperty("target-language", TargetLanguage.SIMPLIFIED_CHINESE).trim();
         this.outgoingTargetLanguage = properties.getProperty(
@@ -246,6 +255,8 @@ final class FabricConfig {
         boolean recovered = false;
         try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
             stored.load(reader);
+            // Readable again: whatever blocked the earlier quarantine is gone, so saves are allowed.
+            UNQUARANTINED.remove(file);
         } catch (IOException | RuntimeException malformed) {
             // See the modern copy of this class: one damaged byte used to shut translation down
             // for good, because every later read — the settings screen included — failed the same
@@ -253,6 +264,11 @@ final class FabricConfig {
             recovered = true;
             stored = new Properties();
             corruptionBackup = quarantine(file);
+            if (corruptionBackup == null) {
+                // The damaged bytes are still in place and are the only copy of the player's
+                // settings: refuse to write over them until a load can read the file again.
+                UNQUARANTINED.add(file);
+            }
             DebugLog.global().log("config-corrupt", "cause", malformed.getClass().getSimpleName(),
                     "backup", corruptionBackup == null ? "" : corruptionBackup);
         }
@@ -261,9 +277,16 @@ final class FabricConfig {
         boolean legacyMigration = !stored.containsKey("config-version");
         boolean migrated = configVersion(stored) < 6;
         if (legacyMigration) {
-            properties.setProperty("display-mode", "translated-only");
-            properties.setProperty("translate-english-only", "true");
-            properties.setProperty("translated-text-color", "original");
+            // Per key, as in the modern copy: only a key the file does not have is defaulted.
+            if (!stored.containsKey("display-mode")) {
+                properties.setProperty("display-mode", "translated-only");
+            }
+            if (!stored.containsKey("translate-english-only")) {
+                properties.setProperty("translate-english-only", "true");
+            }
+            if (!stored.containsKey("translated-text-color")) {
+                properties.setProperty("translated-text-color", "original");
+            }
         }
         properties.setProperty("config-version", "6");
         LocalConfigSecurity.restrictToOwner(file);
@@ -302,13 +325,26 @@ final class FabricConfig {
         }
     }
 
-    /** A hotkey name with surrounding whitespace removed, falling back when it is blank. */
-    private static String hotkey(String raw, String fallback) {
+    /** A hotkey name, validated and normalized to the spelling {@link HotkeyKeys} reports back. */
+    private static String hotkey(String key, String raw, String fallback) {
         if (raw == null) {
             return fallback;
         }
         String trimmed = raw.trim();
-        return trimmed.isEmpty() ? fallback : trimmed;
+        if (trimmed.isEmpty()) {
+            return fallback;
+        }
+        int code = HotkeyKeys.codeOf(trimmed, -1);
+        if (code < 0) {
+            // A name this build does not know used to be written back verbatim while the game
+            // silently listened for the default, so the file said "Ctrl" and the hotkey was U.
+            DebugLog.global().log("config-fallback", "setting", key, "value", trimmed,
+                    "used", fallback);
+            return fallback;
+        }
+        // One representation: the snapshot holds the same spelling HotkeyKeys.settingsName() will
+        // report, so the file, the diagnostics page and the key that actually fires cannot disagree.
+        return HotkeyKeys.nameOf(code);
     }
 
     FabricConfig withSettings(
@@ -573,7 +609,14 @@ final class FabricConfig {
     }
 
     void save() throws IOException {
-        Path temporary = configFile.resolveSibling(configFile.getFileName().toString() + ".tmp");
+        if (UNQUARANTINED.contains(configFile)) {
+            throw new IOException("The damaged configuration could not be moved aside; it is kept"
+                    + " untouched at " + configFile.getFileName());
+        }
+        // Unique per attempt; see the modern copy of this class. A shared "<file>.tmp" let a second
+        // writer delete the file the first one was writing into.
+        Path temporary = configFile.resolveSibling(
+                configFile.getFileName().toString() + "." + java.util.UUID.randomUUID() + ".tmp");
         try {
             Files.deleteIfExists(temporary);
             Files.createFile(temporary);
@@ -650,9 +693,20 @@ final class FabricConfig {
         if ("offline".equalsIgnoreCase(provider)) {
             TranslationProvider local = LlamaCppOfflineProvider.forModel(
                     offlineDirectory, offlineAutoDownload, offlineModel);
-            return apiFallback
-                    ? new FallbackTranslationProvider(local, createApiProvider(apiFallbackProvider))
-                    : local;
+            if (!apiFallback) {
+                return local;
+            }
+            // Same rule as the modern copy: an optional fallback that cannot be built — usually a
+            // provider whose credential the player has not filled in — must not take the offline
+            // engine down with it.
+            try {
+                return new FallbackTranslationProvider(local, createApiProvider(apiFallbackProvider));
+            } catch (RuntimeException fallbackFailure) {
+                DebugLog.global().log("config-provider", "fallback", "unavailable",
+                        "provider", apiFallbackProvider,
+                        "cause", fallbackFailure.getClass().getSimpleName());
+                return local;
+            }
         }
         return createApiProvider(provider);
     }
@@ -775,7 +829,8 @@ final class FabricConfig {
                 return fallback;
             }
             int parsed = Integer.parseInt(raw.trim());
-            return parsed < min || parsed > max ? fallback : parsed;
+            // Clamped rather than discarded; see the modern copy of this class.
+            return Math.max(min, Math.min(max, parsed));
         } catch (RuntimeException invalid) {
             return fallback;
         }

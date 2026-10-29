@@ -60,6 +60,41 @@ public final class ForgeTranslationRuntime {
     private static final AtomicBoolean playerNameRefresh = new AtomicBoolean();
     private static final RecentUserText RECENT_USER_TEXT = new RecentUserText();
     private static CompletableFuture<Void> outgoingTail = CompletableFuture.completedFuture(null);
+    /**
+     * Serializes the outgoing pipeline without holding the class monitor.
+     *
+     * <p>{@code initialize} is {@code synchronized} and holds that monitor for the whole provider
+     * build, so an outgoing chat line that arrived during a configuration switch used to wait
+     * behind a llama.cpp start or a 500 MB model download before it was even queued.
+     */
+    private static final Object OUTGOING_LOCK = new Object();
+
+    // ---------------------------------------------------------------------------------------------
+    // Frame window in front of the render lookup
+    // ---------------------------------------------------------------------------------------------
+    // A drawn line is looked up at least twice (once to measure it, once to draw it), and a HUD
+    // repeats the same handful of strings every frame. The session lookup builds a RenderKey and
+    // probes three maps per call, so the immediate repeat is answered here instead. The window is
+    // one client tick — the epoch that ends it is advanced by TranslationRenderContext.beginFrame —
+    // so a worker-thread translation lags by at most one tick, which is below perception, and a
+    // stale configuration can never leak because initialize() and shutdown() bump the epoch too.
+    private static final int RENDER_MEMO_SLOTS = 64;
+    private static final String[] RENDER_MEMO_KEYS = new String[RENDER_MEMO_SLOTS];
+    private static final String[] RENDER_MEMO_VALUES = new String[RENDER_MEMO_SLOTS];
+    private static final TextKind[] RENDER_MEMO_KINDS = new TextKind[RENDER_MEMO_SLOTS];
+    private static final int[] RENDER_MEMO_FRAMES = new int[RENDER_MEMO_SLOTS];
+    private static final int[] RENDER_MEMO_EPOCHS = new int[RENDER_MEMO_SLOTS];
+    private static volatile int renderMemoEpoch = 1;
+
+    /**
+     * The snapshot the HUD draws when no configuration is loaded.
+     *
+     * <p>A shared instance, not a fresh object: shutdown() and a failed initialize() both leave
+     * {@code cachedHome} null, and the HUD then reads this several times per frame for as long as
+     * the state lasts.
+     */
+    private static final HomeQuickSettingsState DISABLED_SETTINGS =
+            new HomeQuickSettingsState(false, true, TargetLanguage.SIMPLIFIED_CHINESE);
     // A single daemon thread serializes the teardown of replaced sessions: at most one reaper
     // thread exists no matter how often the configuration is switched, and two replaced sessions
     // can never tear down concurrently. Threads are created lazily, so a client that never switches
@@ -158,6 +193,7 @@ public final class ForgeTranslationRuntime {
         protectedPlayerNamesExpireAt = 0L;
         RECENT_USER_TEXT.clear();
         outgoingTail = CompletableFuture.completedFuture(null);
+        invalidateRenderMemo();
         closeInBackground(replaced);
     }
 
@@ -202,7 +238,37 @@ public final class ForgeTranslationRuntime {
                 || RECENT_USER_TEXT.shouldPreserve(original)) {
             return original;
         }
-        return active.lookup(original, kind);
+        return lookupWithMemo(active, original, kind);
+    }
+
+    /** Drops every memoised lookup without waiting for the next tick. */
+    private static void invalidateRenderMemo() {
+        renderMemoEpoch++;
+    }
+
+    private static String lookupWithMemo(
+            RenderTranslationSession active, String original, TextKind kind) {
+        if (original == null) {
+            // Null reaches here from the render hooks; it is not worth a memo slot.
+            return active.lookup(original, kind);
+        }
+        int slot = (original.hashCode() * 31 + (kind == null ? 0 : kind.ordinal()))
+                & (RENDER_MEMO_SLOTS - 1);
+        int epoch = renderMemoEpoch;
+        int frame = TranslationRenderContext.frameEpoch();
+        if (RENDER_MEMO_EPOCHS[slot] == epoch && RENDER_MEMO_FRAMES[slot] == frame
+                && RENDER_MEMO_KINDS[slot] == kind
+                && original.equals(RENDER_MEMO_KEYS[slot])) {
+            return RENDER_MEMO_VALUES[slot];
+        }
+        String translated = active.lookup(original, kind);
+        RENDER_MEMO_KEYS[slot] = original;
+        RENDER_MEMO_VALUES[slot] = translated;
+        RENDER_MEMO_KINDS[slot] = kind;
+        RENDER_MEMO_FRAMES[slot] = frame;
+        // Published last: a reader that matches both windows must find the matching entry.
+        RENDER_MEMO_EPOCHS[slot] = epoch;
+        return translated;
     }
 
     private static boolean isSettingsScreen(Object screen) {
@@ -214,11 +280,21 @@ public final class ForgeTranslationRuntime {
     static synchronized void shutdown() {
         RenderTranslationSession active = session;
         session = null;
+        // Clear the published settings too, not just the session. Leaving them behind made a failed
+        // initialize() permanent: session == null meant "nothing translates", while the HUD read
+        // cachedHome.enabled == true and kept painting the "translation is on" indicator,
+        // diagnostics() reported a provider that no longer exists, and requireActiveConfig() handed
+        // the broken configuration back to the Home toggles, which then saved it over the file.
+        activeConfig = null;
         activeProvider = null;
+        cachedHome = null;
+        diagnosticsSnapshot = null;
+        diagnosticsSnapshotAt = 0L;
         protectedPlayerNames = Collections.emptyList();
         protectedPlayerNamesExpireAt = 0L;
         RECENT_USER_TEXT.clear();
         outgoingTail = CompletableFuture.completedFuture(null);
+        invalidateRenderMemo();
         if (active != null) {
             active.close();
         }
@@ -260,13 +336,11 @@ public final class ForgeTranslationRuntime {
                 addProtectedLiteral(names, client.getCurrentServer().ip);
             }
             if (protectPlayerNames) {
-                client.getConnection().getOnlinePlayers().forEach(entry -> {
-                    if (names.size() >= MAX_PROTECTED_PLAYER_NAMES) {
-                        return;
-                    }
-                    String name = entry.getProfile().name();
-                    addProtectedLiteral(names, name);
-                });
+                // Bounded before the walk, not inside it: the previous lambda returned early once
+                // the limit was reached but the callback still ran for every remaining player.
+                client.getConnection().getOnlinePlayers().stream()
+                        .limit(MAX_PROTECTED_PLAYER_NAMES)
+                        .forEach(entry -> addProtectedLiteral(names, entry.getProfile().name()));
             }
             protectedPlayerNames = Collections.unmodifiableList(new ArrayList<String>(names));
         }
@@ -280,7 +354,7 @@ public final class ForgeTranslationRuntime {
         }
         String normalized = value.trim();
         if (!normalized.isEmpty() && normalized.length() <= 255
-                && values.size() < MAX_PROTECTED_PLAYER_NAMES && !values.contains(normalized)) {
+                && !values.contains(normalized)) {
             values.add(normalized);
         }
     }
@@ -378,7 +452,9 @@ public final class ForgeTranslationRuntime {
     }
 
     /** Serializes outgoing requests so rapidly sent chat lines keep their original order. */
-    static synchronized CompletableFuture<TranslationResult> translateOutgoing(String message) {
+    static CompletableFuture<TranslationResult> translateOutgoing(String message) {
+        // Both fields are volatile, so the fast path needs no monitor: holding the class monitor
+        // here made "press Enter" wait behind a whole provider build whenever the two overlapped.
         final RenderTranslationSession active = session;
         final ForgeConfig config = activeConfig;
         if (active == null || config == null || !shouldTranslateOutgoing(message)) {
@@ -390,11 +466,13 @@ public final class ForgeTranslationRuntime {
         CompletableFuture<TranslationResult> translated = active.translateInteractive(
                 message, TextKind.CHAT, config.outgoingTargetLanguage, false,
                 config.streamOutgoing);
-        CompletableFuture<TranslationResult> next = outgoingTail
-                .handle((ignored, failure) -> null)
-                .thenCompose(ignored -> translated);
-        outgoingTail = next.handle((ignored, failure) -> null);
-        return next;
+        synchronized (OUTGOING_LOCK) {
+            CompletableFuture<TranslationResult> next = outgoingTail
+                    .handle((ignored, failure) -> null)
+                    .thenCompose(ignored -> translated);
+            outgoingTail = next.handle((ignored, failure) -> null);
+            return next;
+        }
     }
 
     /**
@@ -475,7 +553,7 @@ public final class ForgeTranslationRuntime {
 
     private static HomeQuickSettingsState homeSettingsState(ForgeConfig config) {
         return config == null
-                ? new HomeQuickSettingsState(false, true, TargetLanguage.SIMPLIFIED_CHINESE)
+                ? DISABLED_SETTINGS
                 : new HomeQuickSettingsState(
                         config.enabled, config.translateVanilla, config.targetLanguage,
                         config.hudIndicatorSettings(), config.provider);

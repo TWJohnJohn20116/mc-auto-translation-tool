@@ -10,11 +10,54 @@ import org.universaltranslator.core.TextKind;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TranslationTextStyling;
 import org.universaltranslator.core.TranslationStyleRuns;
+import org.universaltranslator.core.WeakIdentitySet;
 
 import java.util.ArrayList;
 import java.util.List;
 
 public final class RenderedTextBridge {
+    /**
+     * Tooltip lists this bridge already produced.
+     *
+     * <p>Two hooks are mounted on the same line of work: {@code Screen.getTooltipFromItem}
+     * produces the list and the renderer consumes it. Both are injected, so without a mark the
+     * consumer receives the already translated list and translates it again — a second provider
+     * request per hover, and with the English-only filter off the Chinese result is translated a
+     * second time and can change between frames.
+     */
+    private static final WeakIdentitySet HANDLED_TOOLTIPS = new WeakIdentitySet();
+    /**
+     * Recently styled lines, cycling through a fixed ring.
+     *
+     * <p>{@code TranslationTextStyling.applyTranslatedStyle} scans the whole original line for a
+     * legacy colour code and, once the player picks a translated colour, rebuilds the translated
+     * line character by character into a fresh {@code String}. The same line is drawn once and
+     * measured two to four times per frame, so that work used to be repeated for every call even
+     * though nothing about the input had changed.
+     *
+     * <p>The key is everything the styling reads — original text, translated text and the
+     * configured colour — so a hit is by construction the value a fresh call would return.
+     */
+    private static final int STYLE_MEMO_SIZE = 8;
+    private static final StyledText[] STYLE_MEMO = new StyledText[STYLE_MEMO_SIZE];
+    private static int styleMemoCursor;
+
+    /** One memo entry: the inputs of a styling call and the string it produced. */
+    private static final class StyledText {
+        private final String original;
+        private final String translated;
+        private final TranslationTextColor color;
+        private final String styled;
+
+        private StyledText(String original, String translated, TranslationTextColor color,
+                String styled) {
+            this.original = original;
+            this.translated = translated;
+            this.color = color;
+            this.styled = styled;
+        }
+    }
+
     private RenderedTextBridge() {
     }
 
@@ -23,13 +66,36 @@ public final class RenderedTextBridge {
         if (text == null || text.equals(translated)) {
             return text;
         }
-        return TranslationTextStyling.applyTranslatedStyle(
-                text, translated, FabricTranslationRuntime.translatedTextColor());
+        return styledText(text, translated);
+    }
+
+    /** Styles one already translated line, reusing the answer when the same line is redrawn. */
+    private static String styledText(String original, String translated) {
+        TranslationTextColor color = FabricTranslationRuntime.translatedTextColor();
+        for (int index = 0; index < STYLE_MEMO_SIZE; index++) {
+            StyledText entry = STYLE_MEMO[index];
+            if (entry != null && entry.color == color
+                    && (entry.translated == translated || entry.translated.equals(translated))
+                    && (entry.original == original || entry.original.equals(original))) {
+                return entry.styled;
+            }
+        }
+        String styled = TranslationTextStyling.applyTranslatedStyle(original, translated, color);
+        STYLE_MEMO[styleMemoCursor++ & (STYLE_MEMO_SIZE - 1)] =
+                new StyledText(original, translated, color, styled);
+        return styled;
     }
 
     public static Text translate(Text text) {
         if (text == null) {
             return null;
+        }
+        // Both hooks run for every line of every frame, so answer the cheap question first: while
+        // the player is typing, or with the master switch off, the input is the answer and the
+        // style walk below is pure cost.
+        if (TranslationRenderContext.isTextInput()
+                || !FabricTranslationRuntimeBase.renderTranslationEnabled()) {
+            return text;
         }
         // A component with no children renders exactly its own literal under its own style, so the
         // run walk below would collect a single run and decline to rebuild it every time. Skipping
@@ -53,6 +119,10 @@ public final class RenderedTextBridge {
         if (text instanceof Text) {
             return translate((Text) text);
         }
+        if (TranslationRenderContext.isTextInput()
+                || !FabricTranslationRuntimeBase.renderTranslationEnabled()) {
+            return text;
+        }
         String original = text.getString();
         String translated = translateRaw(original);
         if (original.equals(translated)) {
@@ -63,16 +133,31 @@ public final class RenderedTextBridge {
 
     /** Translates item names and lore before DrawContext creates tooltip components. */
     public static List<Text> translateTooltip(List<Text> lines) {
+        if (HANDLED_TOOLTIPS.contains(lines)) {
+            // Produced by translateItemTooltip a moment ago; the answer is already in this list.
+            return lines;
+        }
         return translateTooltip(lines, false);
     }
 
     /** Canonical Screen.getTooltipFromItem hook for inventories and containers. */
     public static List<Text> translateItemTooltip(List<Text> lines) {
-        return translateTooltip(lines, true);
+        List<Text> result = translateTooltip(lines, true);
+        if (result != lines) {
+            // Written at the producing end: the consumer receives this exact list next and must
+            // recognise it instead of translating the already translated lines again.
+            HANDLED_TOOLTIPS.add(result);
+        }
+        return result;
     }
 
     private static List<Text> translateTooltip(List<Text> lines, boolean itemTooltip) {
         if (lines == null || lines.isEmpty()) {
+            return lines;
+        }
+        // A hovered item reaches this once per frame, and with the master switch off every line
+        // comes back unchanged.
+        if (!FabricTranslationRuntimeBase.renderTranslationEnabled()) {
             return lines;
         }
         List<String> originals = new ArrayList<String>(lines.size());
@@ -135,6 +220,11 @@ public final class RenderedTextBridge {
         MutableText rebuilt = new LiteralText("");
         rebuilt.setStyle(text.getStyle());
         for (TranslationStyleRuns.Run run : runs) {
+            // runs indexes into texts, never into styles; keep a misalignment from throwing out of
+            // the middle of a draw and losing the frame.
+            if (run.sourceIndex() < 0 || run.sourceIndex() >= styles.size()) {
+                continue;
+            }
             rebuilt.append(new LiteralText(translateRaw(run.text()))
                     .setStyle(applyColor(styles.get(run.sourceIndex()), color)));
         }

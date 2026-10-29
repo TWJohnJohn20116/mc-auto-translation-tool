@@ -48,14 +48,20 @@ public final class ForgeLocalTextGuard {
         return matches(input.getValue(), rendered);
     }
 
+    /**
+     * True when {@code rendered} is the chat box's own text, cursor included.
+     *
+     * <p>Only equality counts. Accepting "typed contains rendered" made every other line that
+     * happened to be a substring of the draft untranslatable while the chat screen was open: typing
+     * {@code hello world} silently skipped the server message {@code world}.
+     */
     private static boolean matches(String typed, String rendered) {
         if (typed == null || typed.isEmpty()) {
             return false;
         }
         String visible = TranslationTextStyling.stripLegacyFormatting(rendered);
-        if (visible.equals(typed) || visible.equals(typed + "_")) {
-            return true;
-        }
-        return visible.length() >= 2 && typed.contains(visible);
+        return visible.equals(typed)
+                || visible.equals(typed + "_")
+                || visible.equals(typed + "|");
     }
 }

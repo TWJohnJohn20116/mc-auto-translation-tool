@@ -146,6 +146,8 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     private volatile boolean testing;
     private volatile boolean fetchingModels;
     private volatile List<String> fetchedModels = Collections.emptyList();
+    /** Catalog handed over by the fetch worker; applied on the render thread by the accessor below. */
+    private volatile List<String> pendingModelList;
     private volatile boolean modelListOpen;
     private volatile int modelPage;
     private long animationStartedNanos = System.nanoTime();
@@ -354,6 +356,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                 fetchModels();
             } else {
                 modelListOpen = true;
+                releaseFieldFocusForModelList();
             }
         }).bounds(left, engineRow(1), layout.buttonWidth, 20).build());
 
@@ -364,11 +367,11 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         llmConfigButton = addRenderableWidget(Button.builder(
                 Component.translatable("screen.universal_translator.option.llm_settings"), button -> {
             if (this.minecraft != null) {
-                // The model list editor hands this screen back to itself, so it takes the concrete
-                // type; the only instance of this class is the shared shell, which extends it.
+                // The model list editor only reads and writes state this class already owns, so it
+                // takes the base type; casting to the concrete shell here tied the body to one
+                // version's entry point and left no way to use it from another one.
                 showScreen(new UniversalTranslatorLlmConfigScreen(
-                        (UniversalTranslatorConfigScreen) this, llmEndpoint, llmModel,
-                        !llmApiKey.isEmpty()));
+                        this, llmEndpoint, llmModel, !llmApiKey.isEmpty()));
             }
         }).bounds(left, engineRow(2), layout.buttonWidth, 20).build());
 
@@ -814,6 +817,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
+        applyPendingModelList();
         Layout layout = layout();
         long now = System.nanoTime();
         float opening = 1.0F;
@@ -1267,10 +1271,19 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                 catalog = OpenAiModelCatalog.fetchCatalog(provider, endpointValue, keyValue);
             } catch (Exception error) {
                 failure = describe(error);
+            } finally {
+                // Released in a finally: an Error (a missing provider class under some mappings, an
+                // OutOfMemoryError) is not an Exception, and the flag left set disabled both the
+                // fetch and the test buttons for the rest of the screen without a message.
+                fetchingModels = false;
             }
-            fetchingModels = false;
             if (!failure.isEmpty()) {
                 setTestStatus(tr("screen.universal_translator.llm.fetch_failed", failure), true);
+                return;
+            }
+            if (catalog == null) {
+                // fetchCatalog answers null for a body it cannot parse instead of throwing.
+                setTestStatus(tr("screen.universal_translator.engine.test_not_json"), true);
                 return;
             }
             if (!catalog.jsonBody()) {
@@ -1281,13 +1294,55 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                 setTestStatus(tr("screen.universal_translator.llm.fetch_empty"), true);
                 return;
             }
-            fetchedModels = catalog.models();
-            modelPage = 0;
-            modelListOpen = true;
+            // Published for the render thread to apply in one step; see applyPendingModelList().
+            pendingModelList = catalog.models();
             setTestStatus("", false);
         }, "universal-translator-model-list");
         worker.setDaemon(true);
         worker.start();
+    }
+
+    /**
+     * Applies a catalog the fetch worker just published.
+     *
+     * <p>The worker used to write {@code fetchedModels}, {@code modelPage} and {@code modelListOpen}
+     * itself. Those are three separate writes to one piece of state the render thread reads as a
+     * whole, so a frame could pair the new list with the previous page number and draw an empty
+     * page. Publishing a single reference and applying it here also lets the keyboard focus be
+     * released on the thread that owns the widgets.
+     */
+    private void applyPendingModelList() {
+        List<String> pending = pendingModelList;
+        if (pending == null) {
+            return;
+        }
+        pendingModelList = null;
+        fetchedModels = pending;
+        modelPage = 0;
+        modelListOpen = true;
+        releaseFieldFocusForModelList();
+    }
+
+    /**
+     * Drops keyboard focus from the engine tab's fields before the model picker covers them.
+     *
+     * <p>The picker is a painted rectangle, not a screen, so nothing intercepts typing while it is
+     * open: whatever still holds focus collects the characters typed over the overlay, and the next
+     * Save writes them into the configuration — including the custom system prompt and the endpoint.
+     *
+     * <p>Focus is not restored afterwards on purpose: the player clicks the field they want, which
+     * is also the only way to be sure of which field they end up in.
+     */
+    private void releaseFieldFocusForModelList() {
+        if (endpoint != null) {
+            endpoint.setFocused(false);
+        }
+        if (customPrompt != null) {
+            customPrompt.setFocused(false);
+        }
+        if (blockedKeywords != null) {
+            blockedKeywords.setFocused(false);
+        }
     }
 
     /**
@@ -1379,21 +1434,25 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
 
     /** Draws the fetched catalog over the settings so a served model can be picked. */
     private void renderModelList(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
+        // One read of the volatile list for the whole frame, page count included: the worker can
+        // replace it between the loop bound and the get(), and the mismatch threw
+        // IndexOutOfBoundsException straight out of the render loop.
+        List<String> models = fetchedModels;
         graphics.fill(0, 0, this.width, this.height, 0xFF101010);
         graphics.centeredText(this.font,
-                Component.translatable("screen.universal_translator.llm.select_model", fetchedModels.size()),
+                Component.translatable("screen.universal_translator.llm.select_model", models.size()),
                 this.width / 2, 20, 0xFFFFFFFF);
         int rows = modelRowsPerPage();
-        modelPage = ModelListPaging.clampPage(modelPage, fetchedModels.size(), rows);
+        modelPage = ModelListPaging.clampPage(modelPage, models.size(), rows);
         int first = modelPage * rows;
-        for (int row = 0; row < rows && first + row < fetchedModels.size(); row++) {
+        for (int row = 0; row < rows && first + row < models.size(); row++) {
             int rowY = MODEL_LIST_TOP + row * MODEL_ROW_HEIGHT;
             boolean hovered = mouseY >= rowY && mouseY < rowY + MODEL_ROW_HEIGHT;
             graphics.text(this.font,
-                    Component.literal((hovered ? "> " : "  ") + fetchedModels.get(first + row)),
+                    Component.literal((hovered ? "> " : "  ") + models.get(first + row)),
                     24, rowY, hovered ? 0xFFFFD060 : 0xFFE0E0E0);
         }
-        int pages = modelPageCount(rows);
+        int pages = modelPageCount(models, rows);
         graphics.centeredText(this.font, Component.literal("< " + (modelPage + 1) + "/" + pages + " >"),
                 this.width / 2, this.height - 46, 0xFFFFFFFF);
         graphics.centeredText(this.font, Component.translatable("screen.universal_translator.llm.select_back"),
@@ -1403,8 +1462,9 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     }
 
     private void handleModelListClick(double mouseX, double mouseY) {
+        List<String> models = fetchedModels;
         if (mouseY >= this.height - 54 && mouseY < this.height - 38) {
-            int pages = modelPageCount(modelRowsPerPage());
+            int pages = modelPageCount(models, modelRowsPerPage());
             if (pages > 1) {
                 modelPage = mouseX < this.width / 2.0
                         ? (modelPage + pages - 1) % pages : (modelPage + 1) % pages;
@@ -1419,13 +1479,13 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
             return;
         }
         int rows = modelRowsPerPage();
-        modelPage = ModelListPaging.clampPage(modelPage, fetchedModels.size(), rows);
+        modelPage = ModelListPaging.clampPage(modelPage, models.size(), rows);
         int row = (int) ((mouseY - MODEL_LIST_TOP) / MODEL_ROW_HEIGHT);
         int index = modelPage * rows + row;
-        if (row >= rows || index >= fetchedModels.size()) {
+        if (row < 0 || row >= rows || index >= models.size()) {
             return;
         }
-        llmModel = fetchedModels.get(index);
+        llmModel = models.get(index);
         modelListOpen = false;
         refreshLabels();
     }
@@ -1434,8 +1494,8 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         return Math.max(3, (this.height - MODEL_LIST_TOP - MODEL_LIST_FOOTER_HEIGHT) / MODEL_ROW_HEIGHT);
     }
 
-    private int modelPageCount(int rows) {
-        return Math.max(1, (fetchedModels.size() + rows - 1) / rows);
+    private int modelPageCount(List<String> models, int rows) {
+        return Math.max(1, (models.size() + rows - 1) / rows);
     }
 
     @Override

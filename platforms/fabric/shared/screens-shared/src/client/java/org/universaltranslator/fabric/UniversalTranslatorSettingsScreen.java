@@ -49,6 +49,28 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     private static final String LIBRETRANSLATE_PROVIDER = "libretranslate";
     private static final String TRANSLATE_PATH = "/translate";
     private static final String LANGUAGES_PATH = "/languages";
+    /** How long the runtime status line is reused; it only changes when a translation fails. */
+    private static final long STATUS_LINE_CACHE_NANOS = 200L * 1_000_000L;
+    /**
+     * Worker for the engine tab's two requests.
+     *
+     * <p>Each button press used to build a fresh {@code Thread} — a thread object, a
+     * {@code ThreadLocalMap} and a megabyte of reserved stack — with a fixed name, so several
+     * same-named threads existed at once and tracing them in a thread dump was guesswork. Two
+     * daemon threads are enough: the two in-flight flags already serialize each kind of request.
+     */
+    private static final java.util.concurrent.ExecutorService SCREEN_WORKERS =
+            java.util.concurrent.Executors.newFixedThreadPool(2,
+                    new java.util.concurrent.ThreadFactory() {
+                        @Override
+                        public Thread newThread(Runnable runnable) {
+                            Thread thread = new Thread(runnable, "universal-translator-screen");
+                            thread.setDaemon(true);
+                            return thread;
+                        }
+                    });
+    /** Shared request client for the reachability check; {@code HttpJsonClient} is a timeout holder. */
+    private final HttpJsonClient httpClient = new HttpJsonClient(5000, 15000);
 
     /** Builds one settings button with the factory this Minecraft version exposes. */
     /** Creates a text field; the placeholder argument is a component from 1.16 onwards. */
@@ -151,6 +173,8 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         HUD
     }
     private Tab activeTab = Tab.GENERAL;
+    /** The tab whose button labels are currently installed; see {@link #refreshTabButtons()}. */
+    private Tab renderedTab;
     private ButtonWidget tabGeneralButton;
     private ButtonWidget tabScopesButton;
     private ButtonWidget tabEngineButton;
@@ -201,8 +225,19 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     private ButtonWidget targetLanguageButton;
     private ButtonWidget outgoingTargetLanguageButton;
     private String status = "";
-    /** Result of the engine tab's connection test; written by its worker thread. */
-    private volatile String testStatus = "";
+    /**
+     * Result of the engine tab's connection test.
+     *
+     * <p>Published by a worker thread as a <em>key</em> plus its one argument, not as a localized
+     * string: {@code tr(...)} resolves through the client's language manager, and calling it from a
+     * {@code universal-translator-connection-test} thread reads an object owned by the client thread
+     * (which may be loading a language file at that moment) and can answer the raw key. The client
+     * thread localizes when it draws the line.
+     */
+    private volatile String testStatusKey;
+    private volatile String testStatusArgument = "";
+    /** Already plain text: an exception message, or a line produced on the client thread. */
+    private volatile String testStatusText = "";
     private volatile boolean testStatusIsError;
     /**
      * In-flight flags for the two engine-tab requests.
@@ -216,9 +251,34 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     private volatile boolean fetchingModels;
     private volatile List<String> fetchedModels = Collections.emptyList();
     private volatile boolean modelListOpen;
-    private int modelPage;
+    /**
+     * Current page of the model picker.
+     *
+     * <p>Published by the worker thread together with the list, so it has to be volatile like them:
+     * a plain {@code int} let the render thread read the new list with the previous page number and
+     * open on a blank page.
+     */
+    private volatile int modelPage;
     private long animationStartedNanos = System.nanoTime();
     private SettingsSelectionList.Kind openSelection = SettingsSelectionList.Kind.NONE;
+    /** Values, labels and geometry of the open selection list; see {@link #selectionGeometry()}. */
+    private String[] selectionValues;
+    private String[] selectionLabels;
+    private SettingsSelectionList.Layout selectionLayout;
+    private SettingsSelectionList.Kind selectionCacheKind = SettingsSelectionList.Kind.NONE;
+    private int selectionCacheWidth = -1;
+    private int selectionCacheHeight = -1;
+    /** Page footer of the model picker, rebuilt only when the page count changes. */
+    private String modelPageLabel = "";
+    private int modelPageLabelPage = -1;
+    private int modelPageLabelPages = -1;
+    /** Localized runtime status line, refreshed at most every {@link #STATUS_LINE_CACHE_NANOS}. */
+    private String runtimeStatusLine = "";
+    private boolean runtimeStatusFailure;
+    private long runtimeStatusAtNanos;
+    /** Static hint lines; they depend on the language only, so one lookup per {@code init()}. */
+    private String outgoingHint = "";
+    private String keybindHint = "";
     /** Layout snapshot for the current window size; see {@link #layout()}. */
     private Layout cachedLayout;
     private int cachedWindowWidth = -1;
@@ -271,6 +331,11 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         if (outgoingTargetLanguage == null) {
             outgoingTargetLanguage = TargetLanguage.canonicalize(original.outgoingTargetLanguage);
         }
+        // Both are fixed for the lifetime of the screen and were looked up again on every frame.
+        this.outgoingHint = trStr("screen.universal_translator.info.outgoing_hint");
+        this.keybindHint = trStr("screen.universal_translator.info.keybind");
+        // Fresh widgets need fresh labels, including the tab row.
+        this.renderedTab = null;
         Layout layout = layout();
         int left = layout.left;
 
@@ -308,6 +373,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
 
         this.targetLanguageButton = addSettingButton(of(emptyStr(), button -> {
             openSelection = SettingsSelectionList.Kind.TARGET_LANGUAGE;
+            releaseFieldFocus();
         }).dimensions(layout.right, layout.contentRow(0), layout.buttonWidth, 20).build());
 
         this.displayButton = addSettingButton(of(emptyStr(), button -> {
@@ -378,6 +444,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         // shared Save/Cancel row that the other tabs and the HUD preview depend on.
         this.providerButton = addSettingButton(of(emptyStr(), button -> {
             openSelection = SettingsSelectionList.Kind.PROVIDER;
+            releaseFieldFocus();
         }).dimensions(left, engineRow(0), layout.totalWidth, 20).build());
 
         this.modelButton = addSettingButton(of(emptyStr(), button -> {
@@ -395,6 +462,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
                 fetchModels();
             } else {
                 modelListOpen = true;
+                releaseFieldFocus();
             }
         }).dimensions(left, engineRow(1), layout.buttonWidth, 20).build());
 
@@ -468,6 +536,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
 
         this.outgoingTargetLanguageButton = addSettingButton(of(emptyStr(), button -> {
             openSelection = SettingsSelectionList.Kind.OUTGOING_LANGUAGE;
+            releaseFieldFocus();
         }).dimensions(left, layout.contentRow(1), layout.totalWidth, 20).build());
 
         // --- Tab 5：抬頭顯示 ---
@@ -628,6 +697,62 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     }
 
     /**
+     * Drops field focus while an overlay owns the keyboard.
+     *
+     * <p>{@code Screen.charTyped} only reaches the widget that holds focus, so with the model picker
+     * or a selection list open — both drawn over the whole form — the player's keystrokes were still
+     * delivered to the endpoint box, the prompt or the keyword field behind the dimmed overlay, and
+     * the save then wrote what had been typed into a field nobody could see.
+     */
+    private void releaseFieldFocus() {
+        if (endpoint != null) {
+            endpoint.setFocused(false);
+        }
+        if (customPrompt != null) {
+            customPrompt.setFocused(false);
+        }
+        if (blockedKeywords != null) {
+            blockedKeywords.setFocused(false);
+        }
+    }
+
+    /**
+     * Values, labels and geometry of the open selection list.
+     *
+     * <p>Rebuilt only when the open list or the window size changes. While a list was open the
+     * screen copied a fresh {@code String[]}, built a {@code Layout} and looked up every row's
+     * localized name on every frame — twenty rows at sixty frames is twelve hundred language lookups
+     * per second for text that cannot change while it is displayed.
+     */
+    private void refreshSelectionCache() {
+        if (selectionValues != null && selectionCacheKind == openSelection
+                && selectionCacheWidth == width && selectionCacheHeight == height) {
+            return;
+        }
+        String[] values = SettingsSelectionList.values(openSelection);
+        String[] labels = new String[values.length];
+        for (int index = 0; index < values.length; index++) {
+            labels[index] = SettingsSelectionList.displayName(openSelection, values[index], key -> tr(key));
+        }
+        selectionValues = values;
+        selectionLabels = labels;
+        selectionLayout = SettingsSelectionList.layout(width, height, values.length);
+        selectionCacheKind = openSelection;
+        selectionCacheWidth = width;
+        selectionCacheHeight = height;
+    }
+
+    /** The engine tab's status line, localized on the client thread. */
+    private String testStatusLine() {
+        String key = testStatusKey;
+        if (key == null) {
+            return testStatusText == null ? "" : testStatusText;
+        }
+        String argument = testStatusArgument;
+        return argument == null || argument.isEmpty() ? tr(key) : tr(key, argument);
+    }
+
+    /**
      * Applies the quality mode and the custom prompt to the running configuration without closing
      * the screen.
      *
@@ -637,11 +762,15 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
      */
     private void applyPromptSettings() {
         refreshQualityLabel();
+        // Same base and same provider as Save. Building this from the snapshot the screen was opened
+        // with pushed the running provider back to the old one while the form still showed the new
+        // one, so "apply the prompt" silently switched the service the player had just selected.
+        FabricConfig base = writeBackBase();
         try {
             String prompt = customPrompt == null
-                    ? original.customSystemPrompt()
+                    ? base.customSystemPrompt()
                     : TranslationPrompt.fromEditorText(customPrompt.getText());
-            FabricConfig updated = original.withPromptSettings(quality, prompt);
+            FabricConfig updated = base.withProvider(provider).withPromptSettings(quality, prompt);
             if (updated.enabled) {
                 updated.validateProviderConfiguration();
             }
@@ -721,6 +850,13 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
 
     private void refreshTabButtons() {
         if (tabGeneralButton == null) return;
+        // Only when the active tab really changed. Every setting button calls refreshLabels(), which
+        // ends here, and init() also called this right after updateTabVisibility() — so one click on
+        // a toggle rebuilt the five tab labels plus the forty-three settings labels.
+        if (renderedTab == activeTab) {
+            return;
+        }
+        renderedTab = activeTab;
         setLabel(tabGeneralButton, tabTitle("screen.universal_translator.tab.general", activeTab == Tab.GENERAL));
         setLabel(tabScopesButton, tabTitle("screen.universal_translator.tab.scopes", activeTab == Tab.SCOPES));
         setLabel(tabEngineButton, tabTitle("screen.universal_translator.tab.engine", activeTab == Tab.ENGINE));
@@ -743,13 +879,17 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
 
     private void saveAndApply() {
         boolean runtimeChanged = false;
+        // Built on the running configuration, not on the snapshot this screen was opened with: F8
+        // pressed while the screen is open replaces it, and writing back the older snapshot silently
+        // undid that toggle (and the debug switch, provider and target language with it).
+        FabricConfig base = writeBackBase();
         try {
             // One snapshot for the whole form: the general settings, the engine tab's prompt
             // controls (Save writes those too, so applying the prompt and then saving cannot
             // silently restore the value the screen was opened with) and the throughput tuning.
             // Built through one method so the file is read once instead of once per group — this
             // runs straight from a button callback, on the client thread.
-            FabricConfig updated = original.withAllSettings(
+            FabricConfig updated = base.withAllSettings(
                     enabled,
                     translateChat,
                     translateOther,
@@ -792,17 +932,40 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
             FabricTranslationRuntime.initialize(updated);
             updated.save();
             status = tr("status.universal_translator.saved");
-            onBack();
+            // Drawn once before the screen goes away; closing in this callback meant the success
+            // line never appeared anywhere, so Save gave no feedback unless it failed.
+            closeAfterSave();
         } catch (Exception exception) {
             if (runtimeChanged) {
                 try {
-                    FabricTranslationRuntime.initialize(original);
+                    FabricTranslationRuntime.initialize(base);
                 } catch (Exception restoreFailure) {
                     exception.addSuppressed(restoreFailure);
                 }
             }
             status = tr("status.universal_translator.save_failed", exception.getMessage());
         }
+    }
+
+    /**
+     * The configuration a save builds on: the one the runtime is running.
+     *
+     * <p>Falls back to the snapshot the screen was opened with only before the first
+     * {@code initialize}, when there is nothing to build on.
+     */
+    private FabricConfig writeBackBase() {
+        FabricConfig live = FabricTranslationRuntime.diagnosticsConfig();
+        return live == null ? original : live;
+    }
+
+    /** Leaves the screen after the success line has had one frame to be drawn. */
+    private void closeAfterSave() {
+        MinecraftClient client = minecraftClient();
+        if (client == null) {
+            onBack();
+            return;
+        }
+        client.execute(this::onBack);
     }
 
     protected final void renderChrome(Object canvas, int mouseX, int mouseY, float delta) {
@@ -833,35 +996,56 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         }
         drawCentered(canvas, textRenderer(), this.getTitle().getString(), this.width / 2, 16,
                 animatedUi ? SettingsUiAnimation.pulseColor(now) : 0xFFFFFFFF);
-        String rawRuntimeStatus = FabricTranslationRuntime.status();
-        String runtimeStatus = TranslationStatusLocalizer.localize(rawRuntimeStatus,
-                (key, arguments) -> tr(key, arguments));
+        refreshRuntimeStatusLine(now);
+        String runtimeStatus = runtimeStatusLine;
         int belowSave = layout.saveY + 24;
         int messageY = belowSave <= this.height - 10 ? belowSave : SettingsScreenLayout.COMPACT_STATUS_Y;
+        String testLine = testStatusLine();
         if (!status.isEmpty()) {
             drawCentered(canvas, textRenderer(), lit(status),
                     this.width / 2, messageY, 0xFFFF5555);
-        } else if (!testStatus.isEmpty()) {
-            drawCentered(canvas, textRenderer(), lit(testStatus),
+        } else if (!testLine.isEmpty()) {
+            drawCentered(canvas, textRenderer(), lit(testLine),
                     this.width / 2, messageY, testStatusIsError ? 0xFFFF5555 : 0xFF55FF55);
         } else if (!runtimeStatus.isEmpty()) {
             drawCentered(canvas, textRenderer(), lit(runtimeStatus),
                     this.width / 2, messageY,
-                    isFailureStatus(rawRuntimeStatus) ? 0xFFFF5555 : 0xFF55FF55);
+                    runtimeStatusFailure ? 0xFFFF5555 : 0xFF55FF55);
         } else {
             if (activeTab == Tab.OUTGOING) {
-                drawCentered(canvas, textRenderer(),
-                        trStr("screen.universal_translator.info.outgoing_hint"),
+                drawCentered(canvas, textRenderer(), outgoingHint,
                         this.width / 2, layout.contentRow(2) + 6, 0xFFA0A0A0);
             } else if (activeTab == Tab.GENERAL) {
-                drawCentered(canvas, textRenderer(),
-                        trStr("screen.universal_translator.info.keybind"),
+                drawCentered(canvas, textRenderer(), keybindHint,
                         this.width / 2, layout.contentRow(3) + 24, 0xFFA0A0A0);
             }
         }
         if (activeTab == Tab.ENGINE) {
             renderEngineInfo(canvas);
         }
+    }
+
+    /**
+     * Recomputes the localized runtime status at most every {@link #STATUS_LINE_CACHE_NANOS}.
+     *
+     * <p>Both halves were per-frame work: {@code status()} asks the provider, and the localization
+     * walks a table of twenty Chinese phrases plus a language lookup. The line only changes when a
+     * translation starts failing, so a fifth of a second of staleness costs nothing.
+     */
+    private void refreshRuntimeStatusLine(long nowNanos) {
+        if (runtimeStatusAtNanos != 0L && nowNanos - runtimeStatusAtNanos < STATUS_LINE_CACHE_NANOS) {
+            return;
+        }
+        String raw = FabricTranslationRuntime.status();
+        if (raw == null || raw.isEmpty()) {
+            runtimeStatusLine = "";
+            runtimeStatusFailure = false;
+        } else {
+            runtimeStatusLine = TranslationStatusLocalizer.localize(raw,
+                    (key, arguments) -> tr(key, arguments));
+            runtimeStatusFailure = isFailureStatus(raw);
+        }
+        runtimeStatusAtNanos = nowNanos;
     }
 
     protected final void renderOverlay(Object canvas, int mouseX, int mouseY, float delta) {
@@ -1029,10 +1213,11 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     private void drawHudDragPreview(Object canvas) {
         // One layout read and one geometry pass for the whole panel: every helper below used to
         // rebuild the layout object, so drawing an eight-pixel handle cost about twenty of them.
-        int previewX = hudPreviewX();
-        int previewY = hudPreviewY();
-        int previewWidth = hudPreviewW();
-        int previewHeight = HudPreviewGeometry.height(previewY, layout().saveY);
+        Layout layout = layout();
+        int previewX = layout.left;
+        int previewY = layout.contentRow(4);
+        int previewWidth = layout.totalWidth;
+        int previewHeight = HudPreviewGeometry.height(previewY, layout.saveY);
         if (previewHeight <= 0) {
             return;
         }
@@ -1053,8 +1238,10 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     }
 
     private void renderSelection(Object canvas, int mouseX, int mouseY) {
-        String[] values = SettingsSelectionList.values(openSelection);
-        SettingsSelectionList.Layout list = SettingsSelectionList.layout(width, height, values.length);
+        refreshSelectionCache();
+        String[] values = selectionValues;
+        SettingsSelectionList.Layout list = selectionLayout;
+        String selectedValue = selectionValue();
         fillRect(canvas, 0, 0, width, height, 0xB0080B10);
         fillRect(canvas, list.panelLeft() - 1, list.panelTop - 1,
                 list.panelRight() + 1, list.panelBottom + 1, 0xFF55D6FF);
@@ -1067,19 +1254,20 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
             int y = list.y(index);
             boolean hovered = mouseX >= x && mouseX < x + list.buttonWidth
                     && mouseY >= y && mouseY < y + list.buttonHeight;
-            boolean selected = values[index].equalsIgnoreCase(selectionValue());
+            boolean selected = values[index].equalsIgnoreCase(selectedValue);
             fillRect(canvas, x, y, x + list.buttonWidth, y + list.buttonHeight,
                     hovered ? 0xFF3B6178 : selected ? 0xFF28533D : 0xFF303844);
             drawCentered(canvas, textRenderer(),
-                    lit(SettingsSelectionList.displayName(openSelection, values[index], key -> tr(key))),
+                    lit(selectionLabels[index]),
                     x + list.buttonWidth / 2, y + Math.max(1, (list.buttonHeight - 8) / 2),
                     selected ? 0xFF55FF88 : 0xFFFFFFFF);
         }
     }
 
     private boolean selectFromList(double mouseX, double mouseY) {
-        String[] values = SettingsSelectionList.values(openSelection);
-        SettingsSelectionList.Layout list = SettingsSelectionList.layout(width, height, values.length);
+        refreshSelectionCache();
+        String[] values = selectionValues;
+        SettingsSelectionList.Layout list = selectionLayout;
         int selected = list.optionAt(mouseX, mouseY, values.length);
         if (selected >= 0) {
             if (openSelection == SettingsSelectionList.Kind.PROVIDER) {
@@ -1184,8 +1372,13 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         // Centring used to clamp at contentTop, so on a short window the whole block - the privacy
 // hint included - ran below the Save row and Save painted over it. Let the block start above
 // the content area instead, but never over the tab bar.
-int centred = layout.contentTop + (available - blockHeight) / 2;
-return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
+        int centred = layout.contentTop + (available - blockHeight) / 2;
+        // ...and never past the row the Save button lives on either. The sixth engine row sits at a
+        // floor, because contentRowStep has a minimum, so at a 320x200 window it landed on top of
+        // Save: pressing Save hit the workers button (registered later, dispatched first) and the
+        // settings were never written.
+        return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2,
+                Math.min(centred, layout.saveY - 6 - blockHeight));
     }
 
     private int engineRow(int index) {
@@ -1194,7 +1387,13 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
 
     /** Read-only engine facts plus the always-visible privacy hint. */
     private void renderEngineInfo(Object canvas) {
+        Layout layout = layout();
         int y = engineRow(5) + 24;
+        // Nothing left between the last engine row and Save: the summary and the privacy hint were
+        // painted over the Save button on a short window, which also put them under its clicks.
+        if (y + 18 > layout.saveY - 2) {
+            return;
+        }
         if (isLlm()) {
             drawCentered(canvas, textRenderer(), trStr(
                             "screen.universal_translator.engine.summary",
@@ -1228,39 +1427,49 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         // wrote it. The worker now drops its answer unless the screen still shows that provider.
         final String startedProvider = provider;
         fetchingModels = true;
+        releaseFieldFocus();
         setTestStatus(tr("screen.universal_translator.llm.fetching"), false);
-        Thread worker = new Thread(() -> {
-            OpenAiModelCatalog.Catalog catalog = null;
-            String failure = "";
-            try {
-                catalog = OpenAiModelCatalog.fetchCatalog(provider, endpointValue, keyValue);
-            } catch (Exception error) {
-                failure = describe(error);
+        SCREEN_WORKERS.execute(new Runnable() {
+            @Override
+            public void run() {
+                OpenAiModelCatalog.Catalog catalog = null;
+                String failure = "";
+                try {
+                    catalog = OpenAiModelCatalog.fetchCatalog(startedProvider, endpointValue, keyValue);
+                } catch (Exception error) {
+                    failure = describe(error);
+                } finally {
+                    // Released in a finally: a LinkageError or an OutOfMemoryError is not an
+                    // Exception, and leaving the flag set disabled both engine buttons for the rest
+                    // of the screen's life with no message and no way to retry.
+                    fetchingModels = false;
+                }
+                if (!startedProvider.equals(provider)) {
+                    // A different provider is selected now; its own fetch (or the player) owns the
+                    // state.
+                    return;
+                }
+                if (!failure.isEmpty()) {
+                    setTestResult("screen.universal_translator.llm.fetch_failed", failure, true);
+                    return;
+                }
+                if (catalog == null || !catalog.jsonBody()) {
+                    // fetchCatalog answers null for a body it cannot parse instead of throwing, and
+                    // the worker then dereferenced it on a thread with no handler: the player got
+                    // nothing at all.
+                    setTestResult("screen.universal_translator.engine.test_not_json", "", true);
+                    return;
+                }
+                if (catalog.models().isEmpty()) {
+                    setTestResult("screen.universal_translator.llm.fetch_empty", "", true);
+                    return;
+                }
+                fetchedModels = catalog.models();
+                modelPage = 0;
+                modelListOpen = true;
+                setTestStatus("", false);
             }
-            fetchingModels = false;
-            if (!startedProvider.equals(provider)) {
-                // A different provider is selected now; its own fetch (or the player) owns the state.
-                return;
-            }
-            if (!failure.isEmpty()) {
-                setTestStatus(tr("screen.universal_translator.llm.fetch_failed", failure), true);
-                return;
-            }
-            if (!catalog.jsonBody()) {
-                setTestStatus(tr("screen.universal_translator.engine.test_not_json"), true);
-                return;
-            }
-            if (catalog.models().isEmpty()) {
-                setTestStatus(tr("screen.universal_translator.llm.fetch_empty"), true);
-                return;
-            }
-            fetchedModels = catalog.models();
-            modelPage = 0;
-            modelListOpen = true;
-            setTestStatus("", false);
-        }, "universal-translator-model-list");
-        worker.setDaemon(true);
-        worker.start();
+        });
     }
 
     /**
@@ -1281,55 +1490,84 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         final String startedProvider = provider;
         testing = true;
         setTestStatus(tr("screen.universal_translator.engine.testing"), false);
-        Thread worker = new Thread(() -> {
-            String message;
-            boolean error;
-            try {
-                if (llm) {
-                    // Probe the endpoint translations actually use. Reading /models can succeed
-                    // while every translation fails on a wrong chat path or an unset model.
-                    String model = llmModel == null ? "" : llmModel.trim();
-                    if (model.isEmpty()) {
-                        message = tr("screen.universal_translator.engine.test_need_model");
-                        error = true;
+        SCREEN_WORKERS.execute(new Runnable() {
+            @Override
+            public void run() {
+                // Every branch publishes a key plus its one argument: tr(...) resolves through the
+                // client's language manager, which this thread does not own.
+                String key = null;
+                String argument = "";
+                boolean error;
+                try {
+                    if (llm) {
+                        // Probe the endpoint translations actually use. Reading /models can succeed
+                        // while every translation fails on a wrong chat path or an unset model.
+                        String model = llmModel == null ? "" : llmModel.trim();
+                        if (model.isEmpty()) {
+                            key = "screen.universal_translator.engine.test_need_model";
+                            error = true;
+                        } else {
+                            ProviderProbe.probe(startedProvider, endpointValue, keyValue, model);
+                            key = "screen.universal_translator.engine.test_ok_probe";
+                            argument = model;
+                            error = false;
+                        }
+                    } else if (libre) {
+                        String url = libreLanguagesUrl(endpointValue);
+                        EndpointPolicy.requireSafeEndpoint(url);
+                        String body = httpClient.get(URI.create(url),
+                                Collections.<String, String>emptyMap());
+                        // The languages catalog is JSON; anything else means this is not LibreTranslate.
+                        JsonStrings.parse(body);
+                        key = "screen.universal_translator.engine.test_ok_libre";
+                        error = false;
                     } else {
-                        ProviderProbe.probe(provider, endpointValue, keyValue, model);
-                        message = tr("screen.universal_translator.engine.test_ok_probe", model);
+                        // Validate the provider the screen is showing, not the one this snapshot was
+                        // opened with: they differ until the form is saved, and answering for the old
+                        // one told users the wrong thing about the service they had just switched to.
+                        writeBackBase().withProvider(startedProvider).validateProviderConfiguration();
+                        key = "screen.universal_translator.engine.test_ok_config";
                         error = false;
                     }
-                } else if (libre) {
-                    String url = libreLanguagesUrl(endpointValue);
-                    EndpointPolicy.requireSafeEndpoint(url);
-                    String body = new HttpJsonClient(5000, 15000).get(URI.create(url),
-                            Collections.<String, String>emptyMap());
-                    // The languages catalog is JSON; anything else means this is not LibreTranslate.
-                    JsonStrings.parse(body);
-                    message = tr("screen.universal_translator.engine.test_ok_libre");
-                    error = false;
-                } else {
-                    // Validate the provider the screen is showing, not the one this snapshot was
-                    // opened with: they differ until the form is saved, and answering for the old
-                    // one told users the wrong thing about the service they had just switched to.
-                    original.withProvider(provider).validateProviderConfiguration();
-                    message = tr("screen.universal_translator.engine.test_ok_config");
-                    error = false;
+                } catch (Exception failure) {
+                    // Plain text, not a key: the cause is whatever the service answered.
+                    argument = describe(failure);
+                    error = true;
+                } finally {
+                    // See fetchModels: released in a finally so an Error cannot latch the flag.
+                    testing = false;
                 }
-            } catch (Exception failure) {
-                message = describe(failure);
-                error = true;
+                if (!startedProvider.equals(provider)) {
+                    return;
+                }
+                setTestResult(key, argument, error);
             }
-            testing = false;
-            if (!startedProvider.equals(provider)) {
-                return;
-            }
-            setTestStatus(message, error);
-        }, "universal-translator-connection-test");
-        worker.setDaemon(true);
-        worker.start();
+        });
     }
 
+    /** Publishes a line that is already text: an exception message, or a client-thread lookup. */
     private void setTestStatus(String message, boolean error) {
-        testStatus = message;
+        testStatusText = message == null ? "" : message;
+        testStatusArgument = "";
+        testStatusKey = null;
+        testStatusIsError = error;
+    }
+
+    /**
+     * Publishes a status line for the client thread to localize.
+     *
+     * <p>A {@code null} key means the argument is already the whole line, which is what an exception
+     * message is. Otherwise the argument is published before the key, so a reader that sees the key
+     * also sees the argument it belongs to.
+     */
+    private void setTestResult(String key, String argument, boolean error) {
+        if (key == null) {
+            setTestStatus(argument, error);
+            return;
+        }
+        testStatusText = "";
+        testStatusArgument = argument == null ? "" : argument;
+        testStatusKey = key;
         testStatusIsError = error;
     }
 
@@ -1358,23 +1596,29 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
 
     /** Draws the fetched catalog over the settings so a served model can be picked. */
     private void renderModelList(Object canvas, int mouseX, int mouseY) {
+        // One read of the volatile list for the whole frame: a worker thread can replace it at any
+        // moment, and reading size() and get() separately threw IndexOutOfBoundsException on the
+        // render thread whenever the replacement was shorter than the list it replaced.
+        List<String> models = fetchedModels;
         fillRect(canvas, 0, 0, this.width, this.height, 0xFF101010);
         drawCentered(canvas, textRenderer(),
-                trStr("screen.universal_translator.llm.select_model", fetchedModels.size()),
+                trStr("screen.universal_translator.llm.select_model", models.size()),
                 this.width / 2, 20, 0xFFFFFFFF);
         int rows = modelRowsPerPage();
-        modelPage = ModelListPaging.clampPage(modelPage, fetchedModels.size(), rows);
+        modelPage = ModelListPaging.clampPage(modelPage, models.size(), rows);
         int first = modelPage * rows;
-        for (int row = 0; row < rows && first + row < fetchedModels.size(); row++) {
+        for (int row = 0; row < rows && first + row < models.size(); row++) {
             int rowY = MODEL_LIST_TOP + row * MODEL_ROW_HEIGHT;
             boolean hovered = mouseY >= rowY && mouseY < rowY + MODEL_ROW_HEIGHT;
-            drawLeft(canvas, textRenderer(),
-                    lit((hovered ? "> " : "  ") + fetchedModels.get(first + row)),
+            String name = models.get(first + row);
+            // The cursor is only built for the one hovered row; every other row is drawn as the
+            // string it already is, instead of concatenating twenty new strings per frame.
+            drawLeft(canvas, textRenderer(), lit(hovered ? "> " + name : name),
                     24, rowY, hovered ? 0xFFFFD060 : 0xFFE0E0E0);
         }
-        int pages = modelPageCount(rows);
+        int pages = modelPageCount(models.size(), rows);
         drawCentered(canvas, textRenderer(),
-                lit("< " + (modelPage + 1) + "/" + pages + " >"),
+                lit(modelPageLabel(pages)),
                 this.width / 2, this.height - 46, 0xFFFFFFFF);
         drawCentered(canvas, textRenderer(),
                 trStr("screen.universal_translator.llm.select_back"),
@@ -1385,8 +1629,9 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
     }
 
     private void handleModelListClick(double mouseX, double mouseY) {
+        List<String> models = fetchedModels;
         if (mouseY >= this.height - 54 && mouseY < this.height - 38) {
-            int pages = modelPageCount(modelRowsPerPage());
+            int pages = modelPageCount(models.size(), modelRowsPerPage());
             if (pages > 1) {
                 modelPage = mouseX < this.width / 2.0
                         ? (modelPage + pages - 1) % pages : (modelPage + 1) % pages;
@@ -1401,13 +1646,13 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
             return;
         }
         int rows = modelRowsPerPage();
-        modelPage = ModelListPaging.clampPage(modelPage, fetchedModels.size(), rows);
+        modelPage = ModelListPaging.clampPage(modelPage, models.size(), rows);
         int row = (int) ((mouseY - MODEL_LIST_TOP) / MODEL_ROW_HEIGHT);
         int index = modelPage * rows + row;
-        if (row >= rows || index >= fetchedModels.size()) {
+        if (row >= rows || index >= models.size()) {
             return;
         }
-        llmModel = fetchedModels.get(index);
+        llmModel = models.get(index);
         modelListOpen = false;
         refreshLabels();
     }
@@ -1416,8 +1661,18 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         return Math.max(3, (this.height - MODEL_LIST_TOP - MODEL_LIST_FOOTER_HEIGHT) / MODEL_ROW_HEIGHT);
     }
 
-    private int modelPageCount(int rows) {
-        return Math.max(1, (fetchedModels.size() + rows - 1) / rows);
+    private int modelPageCount(int size, int rows) {
+        return Math.max(1, (size + rows - 1) / rows);
+    }
+
+    /** The picker's page footer, rebuilt only when the page or the page count changes. */
+    private String modelPageLabel(int pages) {
+        if (modelPageLabelPage != modelPage || modelPageLabelPages != pages) {
+            modelPageLabel = "< " + (modelPage + 1) + "/" + pages + " >";
+            modelPageLabelPage = modelPage;
+            modelPageLabelPages = pages;
+        }
+        return modelPageLabel;
     }
 
     /**
@@ -1580,10 +1835,6 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
 
         private int contentRow(int index) {
             return contentTop + contentRowStep * index;
-        }
-
-        private int row(int index) {
-            return top + rowStep * index;
         }
     }
 }

@@ -1,10 +1,10 @@
 plugins {
-    id "net.fabricmc.fabric-loom-remap" version "${loom_version}"
+    id "net.fabricmc.fabric-loom-remap" version "${loom_1_21_11_version}"
 }
 
-ext.fabricMinecraftVersion = minecraft_version
-ext.fabricYarnMappings = yarn_mappings
-ext.fabricLoaderVersion = loader_version
-ext.fabricApiVersion = fabric_api_version
+ext.fabricMinecraftVersion = minecraft_1_21_11_version
+ext.fabricYarnMappings = yarn_1_21_11_mappings
+ext.fabricLoaderVersion = loader_1_21_11_version
+ext.fabricApiVersion = fabric_api_1_21_11_version
 
 apply from: rootProject.file("platforms/fabric/1.21/shared.gradle")

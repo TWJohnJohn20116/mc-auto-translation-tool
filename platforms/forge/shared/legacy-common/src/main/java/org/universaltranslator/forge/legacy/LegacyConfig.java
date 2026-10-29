@@ -36,8 +36,12 @@ import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Properties;
 import java.util.Set;
+import java.util.UUID;
 
 final class LegacyConfig {
+    /** Serializes every writer of one configuration file; see {@link #save()}. */
+    private static final java.util.concurrent.ConcurrentHashMap<Path, Object> SAVE_MONITORS =
+            new java.util.concurrent.ConcurrentHashMap<Path, Object>();
     final boolean enabled;
     final boolean translateChat;
     final boolean translateOther;
@@ -210,9 +214,17 @@ final class LegacyConfig {
             }
         }
         Properties stored = new Properties();
+        boolean recovered = false;
         try (InputStreamReader reader = new InputStreamReader(
                 new FileInputStream(file), StandardCharsets.UTF_8)) {
             stored.load(reader);
+        } catch (IOException | RuntimeException malformed) {
+            // Same isolation as the modern Forge config: one unreadable byte used to disable
+            // translation for the whole session, and the broken file stayed in place for the next
+            // launch and for the settings screen that is the only way to repair it.
+            recovered = true;
+            stored = new Properties();
+            quarantine(file, malformed);
         }
         Properties properties = defaults();
         properties.putAll(stored);
@@ -227,8 +239,15 @@ final class LegacyConfig {
         LocalConfigSecurity.restrictToOwner(file.toPath());
         LegacyConfig loaded = new LegacyConfig(
                 properties, file, new File(configDirectory, "universal-translator-cache.properties"));
-        if (migrated) {
-            loaded.save();
+        if (migrated || recovered) {
+            try {
+                loaded.save();
+            } catch (IOException unwritable) {
+                // Reading must not require a writable directory; failing here disabled translation
+                // over an optional write-back.
+                DebugLog.global().log("config", "write", "skipped",
+                        "reason", String.valueOf(unwritable.getClass().getSimpleName()));
+            }
         }
         // The statistics file sits next to the configuration. Reading it here is the one place every
         // platform passes through at startup, so no runtime has to know about statistics.
@@ -414,11 +433,50 @@ final class LegacyConfig {
         return configFile.toPath();
     }
 
+    /**
+     * Moves an unreadable configuration aside so the next launch starts from the defaults.
+     *
+     * <p>Renamed rather than deleted: the file may hold nothing but an edit the player can repair by
+     * hand, and the diagnostics page can point at the copy.
+     */
+    private static void quarantine(File file, Exception cause) {
+        try {
+            File backup = new File(file.getParentFile(), file.getName() + ".corrupt-"
+                    + System.currentTimeMillis());
+            Files.move(file.toPath(), backup.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            DebugLog.global().log("config", "quarantined",
+                    "file", String.valueOf(backup.getName()),
+                    "reason", String.valueOf(cause.getClass().getSimpleName()));
+        } catch (IOException | RuntimeException unquarantinable) {
+            // Nothing else can be done here; the defaults still let the session run.
+            DebugLog.global().log("config", "quarantine", "failed",
+                    "reason", String.valueOf(unquarantinable.getClass().getSimpleName()));
+        }
+    }
+
     void save() throws IOException {
         Path file = configFile.toPath();
-        Path temporary = file.resolveSibling(file.getFileName().toString() + ".tmp");
+        // One writer at a time per configuration file; see the note in the modern Forge config.
+        // Two paths do reach save() together (the settings screen's Save and the F8 toggle).
+        Path lockKey = file.toAbsolutePath();
+        Object monitor;
+        synchronized (SAVE_MONITORS) {
+            monitor = SAVE_MONITORS.get(lockKey);
+            if (monitor == null) {
+                monitor = new Object();
+                SAVE_MONITORS.put(lockKey, monitor);
+            }
+        }
+        synchronized (monitor) {
+            writeAtomically(file);
+        }
+    }
+
+    private void writeAtomically(Path file) throws IOException {
+        // Unique per attempt, so two writers can never delete each other's temporary file.
+        Path temporary = file.resolveSibling(
+                file.getFileName().toString() + "." + UUID.randomUUID() + ".tmp");
         try {
-            Files.deleteIfExists(temporary);
             Files.createFile(temporary);
             LocalConfigSecurity.restrictToOwner(temporary);
             try (OutputStreamWriter writer = new OutputStreamWriter(

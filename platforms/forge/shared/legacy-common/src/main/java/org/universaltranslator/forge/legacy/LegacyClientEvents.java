@@ -36,6 +36,9 @@ public final class LegacyClientEvents {
     private static final Logger LOGGER = LogManager.getLogger("MCAutoTranslationTool");
     // RenderGameOverlayEvent's element type, resolved once: 1.8.9 has a public field, 1.12.2 a getter.
     private static boolean elementTypeResolved;
+    /** One warning per session when the overlay element type cannot be read. */
+    private static final java.util.concurrent.atomic.AtomicBoolean elementTypeWarningIssued =
+            new java.util.concurrent.atomic.AtomicBoolean();
     private static Method elementTypeGetter;
     private static Field elementTypeField;
     private static final long FAILURE_NOTIFICATION_COOLDOWN_MILLIS = 60_000L;
@@ -132,6 +135,7 @@ public final class LegacyClientEvents {
         // their bodies in try/finally, but a stack left behind by a path that never returned would
         // otherwise persist for the whole session and silently stop translation.
         LegacyRenderContext.beginFrame();
+        LegacyTranslationRuntime.refreshProtectedNames();
         Minecraft minecraft = Minecraft.getMinecraft();
         boolean connected = LegacyVersionAccess.connection(minecraft) != null;
         if (connected && !connectedLastTick) {
@@ -370,7 +374,18 @@ public final class LegacyClientEvents {
      */
     private static boolean isAllElementsPass(RenderGameOverlayEvent event) {
         Object type = elementType(event);
-        return type == null || type == RenderGameOverlayEvent.ElementType.ALL;
+        if (type == null) {
+            // The element type could not be read at all. The old answer was "this is the ALL pass",
+            // which drew the square, the label measurement and the outgoing preview for every one of
+            // the dozen passes in a frame - and each of those also re-entered the translation path.
+            // Not drawing is the cheaper mistake of the two, and the warning says why the indicator
+            // is missing instead of leaving it unexplained.
+            if (elementTypeWarningIssued.compareAndSet(false, true)) {
+                LOGGER.warn("HUD indicator disabled: the render overlay element type could not be read");
+            }
+            return false;
+        }
+        return type == RenderGameOverlayEvent.ElementType.ALL;
     }
 
     private static Object elementType(RenderGameOverlayEvent event) {

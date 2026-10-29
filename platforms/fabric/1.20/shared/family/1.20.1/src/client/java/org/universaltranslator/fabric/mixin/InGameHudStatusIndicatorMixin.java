@@ -108,12 +108,15 @@ abstract class InGameHudStatusIndicatorMixin {
         // render path as the indicator and only while that translation is still running, so the
         // player sees the answer arrive instead of waiting for the whole line.
         String outgoingPreview = OutgoingTranslationPreview.text();
-        if (outgoingPreview != null) {
+        TextRenderer previewFont = client.textRenderer;
+        // The text renderer is null while resources reload and the HUD keeps drawing through that
+        // window, so this frame has to skip the preview instead of measuring with nothing.
+        if (outgoingPreview != null && previewFont != null) {
             TranslationRenderContext.pushTextInput();
             try {
                 int previewCenterX = windowWidth / 2;
                 int previewY = Math.max(0, windowHeight - 60);
-                context.drawCenteredTextWithShadow(client.textRenderer, Text.literal(outgoingPreview), previewCenterX, previewY, 0xFFFFFFFF);
+                context.drawCenteredTextWithShadow(previewFont, Text.literal(outgoingPreview), previewCenterX, previewY, 0xFFFFFFFF);
             } finally {
                 TranslationRenderContext.popTextInput();
             }
@@ -137,6 +140,10 @@ abstract class InGameHudStatusIndicatorMixin {
             return;
         }
         TextRenderer font = client.textRenderer;
+        if (font == null) {
+            // Resource reloads null the text renderer while the HUD keeps drawing.
+            return;
+        }
         // This version hooks TextRenderer.getWidth and TextRenderer.drawInternal in order to
         // translate what they render, so measuring or drawing the label unguarded would feed the
         // indicator's own text back into the translation path.

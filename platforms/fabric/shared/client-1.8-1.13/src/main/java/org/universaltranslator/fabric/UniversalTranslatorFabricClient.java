@@ -40,7 +40,7 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
      */
     public static void tickFromMixin() {
         Runnable hook = tickHook;
-        if (hook == null) {
+        if (hook == null || shutdownRequested) {
             return;
         }
         try {
@@ -56,7 +56,12 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
             return;
         }
         shutdownRequested = true;
+        // Dropped here, not just flagged: the tick mixin keeps calling tickFromMixin() on every
+        // tick after this point, and a hook left in place kept resetting the render context and
+        // re-running the status notifier against a runtime with no session.
+        tickHook = null;
         Runnable hook = stopHook;
+        stopHook = null;
         if (hook == null) {
             return;
         }
@@ -69,6 +74,9 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
 
     @Override
     public void onInitializeClient() {
+        // A fresh initialization (a client that re-enters after a full shutdown) must be able to
+        // shut down again; the flag describes one stopped hook, not the whole process.
+        shutdownRequested = false;
         INSTANCE.onInitializeClient();
     }
 

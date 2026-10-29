@@ -54,6 +54,12 @@ jar {
 ext.jarLicenseName = "LICENSE_universal_translator_bundle"
 apply from: rootProject.file("gradle/jar-contents.gradle")
 
+// This bundle is a member of fabricReleaseBundles, so its nested jars end up in fabric-all.jar, but it
+// had no aggregate-bundle verification at all: verifyBundle only checks file names inside this jar and
+// verifyLoaderSelection only casts this bundle's own list. Without this apply, whether Fabric Loader
+// picks the right implementation out of the aggregate for these versions is never proven.
+apply from: rootProject.file("gradle/fabric-bundle-aggregate-verify.gradle")
+
 tasks.register("verifyBundle") {
     dependsOn jar
     doLast {
@@ -61,10 +67,15 @@ tasks.register("verifyBundle") {
         def required = ["fabric.mod.json"] + supportedVersions.collect {
             "META-INF/jars/universal-translator-${it}.jar"
         }
-        required.each { path ->
-            if (!zipTree(archive).matching { include path }.files) {
-                throw new GradleException("Missing bundle entry: ${path}")
-            }
+        // One walk for the whole list. zipTree(archive) used to be built inside the loop, so every
+        // required entry re-expanded the entire aggregate jar — about 110 full ZIP parses per build
+        // across the eight bundles, each nested jar being a multi-megabyte deflate stream.
+        def present = new java.util.zip.ZipFile(archive).withCloseable { zip ->
+            zip.entries().collect { it.name } as Set
+        }
+        def absent = required.findAll { !present.contains(it) }
+        if (!absent.isEmpty()) {
+            throw new GradleException("Missing bundle entry: ${absent.join(', ')}")
         }
         println "Verified ${archive.name}: all ${supportedVersions.size()} Minecraft 1.14/1.15 implementations present"
     }

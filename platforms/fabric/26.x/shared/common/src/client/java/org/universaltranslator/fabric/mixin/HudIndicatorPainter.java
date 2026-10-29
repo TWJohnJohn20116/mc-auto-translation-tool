@@ -27,7 +27,59 @@ import org.universaltranslator.fabric.TranslationRenderContext;
  * members of the class it targets.
  */
 final class HudIndicatorPainter {
+    /**
+     * How long the localized activity label stays cached.
+     *
+     * <p>Resolving it costs a {@code TranslatableContents}, a language-table lookup and a fresh
+     * {@code String} on every frame the indicator shows "translating". The player can change the
+     * language while the game runs, so the value is refreshed once per second instead of being
+     * fixed for the session.
+     */
+    private static final long ACTIVITY_LABEL_REFRESH_MILLIS = 1000L;
+    private static String cachedActivityLabel;
+    private static long cachedActivityLabelAt;
+    /** The label's component, rebuilt only when the label string it wraps changes. */
+    private static String cachedLabelValue;
+    private static Component cachedLabelComponent;
+    private static String cachedPreviewValue;
+    private static Component cachedPreviewComponent;
+
     private HudIndicatorPainter() {
+    }
+
+    private static String activityLabel() {
+        long now = System.currentTimeMillis();
+        String cached = cachedActivityLabel;
+        if (cached != null && now - cachedActivityLabelAt < ACTIVITY_LABEL_REFRESH_MILLIS) {
+            return cached;
+        }
+        String resolved = Component.translatable(
+                "value.universal_translator.hud_content.activity").getString();
+        cachedActivityLabel = resolved;
+        cachedActivityLabelAt = now;
+        return resolved;
+    }
+
+    private static Component labelComponent(String label) {
+        Component cached = cachedLabelComponent;
+        if (cached != null && label.equals(cachedLabelValue)) {
+            return cached;
+        }
+        Component created = Component.literal(label);
+        cachedLabelValue = label;
+        cachedLabelComponent = created;
+        return created;
+    }
+
+    private static Component previewComponent(String preview) {
+        Component cached = cachedPreviewComponent;
+        if (cached != null && preview.equals(cachedPreviewValue)) {
+            return cached;
+        }
+        Component created = Component.literal(preview);
+        cachedPreviewValue = preview;
+        cachedPreviewComponent = created;
+        return created;
     }
 
     /** Draws the indicator square, the outgoing preview and the optional label for this frame. */
@@ -98,17 +150,21 @@ final class HudIndicatorPainter {
             int previewCenterX = graphics.guiWidth() / 2;
             int previewY = Math.max(0, graphics.guiHeight() - 60);
             Font font = Minecraft.getInstance().font;
-            // This string is already the translated answer, and centeredText is itself hooked, so
-            // it has to be marked as local text or the preview is translated again every frame —
-            // with an English target language the player then sees the translation of the
-            // translation drift from frame to frame. pushTextInput is the existing mechanism for
-            // "what this mod draws on purpose" (see SignEditScreenMixin).
-            TranslationRenderContext.pushTextInput();
-            try {
-                graphics.centeredText(font, Component.literal(outgoingPreview),
-                        previewCenterX, previewY, 0xFFFFFFFF);
-            } finally {
-                TranslationRenderContext.popTextInput();
+            // Minecraft nulls the font while it reloads resources and the HUD keeps drawing, so
+            // this frame has to skip the preview instead of measuring with nothing.
+            if (font != null) {
+                // This string is already the translated answer, and centeredText is itself hooked,
+                // so it has to be marked as local text or the preview is translated again every
+                // frame — with an English target language the player then sees the translation of
+                // the translation drift from frame to frame. pushTextInput is the existing
+                // mechanism for "what this mod draws on purpose" (see SignEditScreenMixin).
+                TranslationRenderContext.pushTextInput();
+                try {
+                    graphics.centeredText(font, previewComponent(outgoingPreview),
+                            previewCenterX, previewY, 0xFFFFFFFF);
+                } finally {
+                    TranslationRenderContext.popTextInput();
+                }
             }
         }
 
@@ -123,12 +179,14 @@ final class HudIndicatorPainter {
                 label = quickSettings.getProvider();
             } else if (content == HudIndicatorContent.ACTIVITY
                     && TranslationActivity.isTranslating()) {
-                label = Component.translatable(
-                        "value.universal_translator.hud_content.activity").getString();
+                label = activityLabel();
             }
             if (label != null && !label.isEmpty()) {
                 Font font = Minecraft.getInstance().font;
-                Component text = Component.literal(label);
+                if (font == null) {
+                    return;
+                }
+                Component text = labelComponent(label);
                 // Measure and draw under the same marker as the preview: the label is a setting
                 // value or an already resolved lang string, and both font.width and centeredText
                 // run through the hooked text paths.
@@ -136,12 +194,20 @@ final class HudIndicatorPainter {
                 try {
                     int labelWidth = font.width(text);
                     // Beside the square, never over it: a 6px square cannot hold "zh-TW", and a
-                    // label centred on a right-corner square would run off the screen edge.
+                    // label centred on a right-corner square would run off the screen edge. The
+                    // square itself is clamped above, so the label has to be clamped too.
                     int labelCenterX = corner.isRight()
                             ? left - 2 - labelWidth / 2
                             : right + 2 + labelWidth / 2;
-                    // y is the top of the text line, so centre it against the square by hand.
-                    int labelY = top + (size - 8) / 2;
+                    int minimumCentre = labelWidth / 2;
+                    int maximumCentre = Math.max(minimumCentre, graphics.guiWidth() - labelWidth / 2);
+                    labelCenterX = Math.max(minimumCentre, Math.min(maximumCentre, labelCenterX));
+                    // y is the top of the text line, so centre it against the square by hand. A line
+                    // is font.lineHeight tall, and the square can be smaller than one, in which
+                    // case the label moves above the square instead of onto it.
+                    int labelY = size >= font.lineHeight
+                            ? top + (size - font.lineHeight) / 2
+                            : Math.max(0, top - font.lineHeight);
                     graphics.centeredText(font, text, labelCenterX, labelY, 0xFFFFFFFF);
                 } finally {
                     TranslationRenderContext.popTextInput();

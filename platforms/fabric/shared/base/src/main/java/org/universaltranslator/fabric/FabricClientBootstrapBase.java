@@ -32,6 +32,10 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
     private String lastRuntimeStatus = "";
     private long nextFailureNotificationAt;
     private boolean resendingTranslatedMessage;
+    /** Raw runtime status the two fields below were derived from; see {@link #notifyRuntimeStatus}. */
+    private String localizedStatusSource;
+    private String localizedStatusText = "";
+    private boolean localizedStatusFailure;
 
     protected FabricClientBootstrapBase() {
     }
@@ -100,8 +104,11 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
      *
      * <p>Answered by class name rather than {@code instanceof}: this base is compiled once for every
      * generation from 1.14 to 26.3, and a compile-time {@code ChatScreen} reference would tie it to
-     * one generation's package. The trees that can name the class (the Ornithe ones) still override
-     * this with an exact {@code instanceof} check.
+     * one generation's package. <b>Every shipped generation overrides this with an exact
+     * {@code instanceof}</b>, because the name comparison cannot work in a production client: the
+     * game remaps {@code ChatScreen} to an intermediary name ({@code net.minecraft.class_408} on
+     * 1.14+), so both suffixes below are false at runtime and the chat-screen guard silently
+     * disappeared. The string form stays as the answer for a tree that cannot name the class.
      *
      * <p>Used by {@link #openSettingsFor(Object)}: while the chat screen is open, the settings key
      * belongs to the chat box, not to this mod.
@@ -177,11 +184,13 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
         if (connected && joinHintTicks > 0 && --joinHintTicks == 0) {
             chat("message.universal_translator.join_hint");
         }
-        while (toggleKeyPressed()) {
+        // One toggle per tick: the body below rebuilds the provider, the session and the file, so a
+        // loop over a leftover press count repeated all three that many times on the client thread.
+        if (toggleKeyPressed()) {
             toggleFromKey();
         }
         notifyRuntimeStatus(connected);
-        while (openSettingsKeyPressed()) {
+        if (openSettingsKeyPressed()) {
             openSettingsFor(currentScreen());
         }
     }
@@ -197,7 +206,7 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
         FabricConfig previous = null;
         boolean runtimeChanged = false;
         try {
-            previous = FabricConfig.load(FabricLoader.getInstance().getConfigDir());
+            previous = liveConfig();
             FabricConfig updated = previous.withEnabled(!previous.enabled);
             if (updated.enabled) {
                 updated.validateProviderConfiguration();
@@ -247,10 +256,26 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
             return;
         }
         try {
-            openSettings(parent, FabricConfig.load(FabricLoader.getInstance().getConfigDir()));
+            openSettings(parent, liveConfig());
         } catch (Exception exception) {
             error(LogMessages.SETTINGS_OPEN_FAILED, exception);
         }
+    }
+
+    /**
+     * The configuration to build the next screen or toggle from.
+     *
+     * <p>The runtime already publishes the snapshot it is running, which is the one that was last
+     * written, so the settings key and the toggle key no longer re-read the file: {@code load()}
+     * creates a directory, stats the file, parses it, applies the POSIX restriction (an exception
+     * path on Windows), attaches the statistics file and reconfigures the debug log, all on the
+     * client thread and all visible as a frame hitch when {@code config/} sits on a network drive.
+     * Before the first {@code initialize} — a failed start — there is no snapshot, and the file is
+     * then the only answer.
+     */
+    private static FabricConfig liveConfig() throws java.io.IOException {
+        FabricConfig live = FabricTranslationRuntime.diagnosticsConfig();
+        return live != null ? live : FabricConfig.load(FabricLoader.getInstance().getConfigDir());
     }
 
     /**
@@ -258,6 +283,11 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
      *
      * <p>Failures are rate limited to one chat line per minute; recoveries reuse the overlay so a
      * flapping provider cannot flood the chat.
+     *
+     * <p>The localization and the failure classification are memoized per distinct raw status: both
+     * walk a table of twenty Chinese phrases, and {@link #toggleFromKey} clears
+     * {@link #lastRuntimeStatus} so the very next tick re-ran the whole scan for a status that had
+     * not changed at all.
      */
     final void notifyRuntimeStatus(boolean connected) {
         String current = connected ? FabricTranslationRuntime.status() : "";
@@ -272,8 +302,8 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
             nextFailureNotificationAt = 0L;
             return;
         }
-        String localized = TranslationStatusLocalizer.localize(current, this::translateKey);
-        if (TranslationStatusLocalizer.isFailure(current)) {
+        String localized = localizeStatus(current);
+        if (localizedStatusFailure) {
             long now = System.currentTimeMillis();
             if (now < nextFailureNotificationAt) {
                 return;
@@ -284,6 +314,18 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
             nextFailureNotificationAt = 0L;
             overlay("message.universal_translator.runtime_status", localized);
         }
+    }
+
+    /** Localized form of {@code raw}, reusing the previous answer when the raw status repeats. */
+    private String localizeStatus(String raw) {
+        if (raw.equals(localizedStatusSource)) {
+            return localizedStatusText;
+        }
+        String text = TranslationStatusLocalizer.localize(raw, this::translateKey);
+        localizedStatusSource = raw;
+        localizedStatusText = text;
+        localizedStatusFailure = TranslationStatusLocalizer.isFailure(raw);
+        return text;
     }
 
     /**

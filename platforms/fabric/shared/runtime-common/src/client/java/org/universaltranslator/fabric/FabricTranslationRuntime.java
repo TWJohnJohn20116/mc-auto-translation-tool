@@ -1,6 +1,7 @@
 package org.universaltranslator.fabric;
 
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.network.PlayerListEntry;
 import org.universaltranslator.core.HomeQuickSettingsState;
 import org.universaltranslator.core.TextKind;
 import org.universaltranslator.core.TranslationDiagnosticsSnapshot;
@@ -9,8 +10,8 @@ import org.universaltranslator.core.TranslationTextColor;
 
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
@@ -123,10 +124,31 @@ public final class FabricTranslationRuntime {
             if (client.getNetworkHandler() == null) {
                 return Collections.emptyList();
             }
-            List<String> names = new ArrayList<String>();
-            client.getNetworkHandler().getPlayerList().forEach(entry ->
-                    names.add(entry.getProfile().getName()));
-            return names;
+            // A view over the tab list, not a copy: the caller stops after a thousand names anyway,
+            // and collecting the whole list allocated one string per entry on the render thread.
+            final List<PlayerListEntry> entries = client.getNetworkHandler().getPlayerList();
+            return new Iterable<String>() {
+                @Override
+                public Iterator<String> iterator() {
+                    final Iterator<PlayerListEntry> source = entries.iterator();
+                    return new Iterator<String>() {
+                        @Override
+                        public boolean hasNext() {
+                            return source.hasNext();
+                        }
+
+                        @Override
+                        public String next() {
+                            return source.next().getProfile().getName();
+                        }
+
+                        @Override
+                        public void remove() {
+                            throw new UnsupportedOperationException();
+                        }
+                    };
+                }
+            };
         }
     }
 }

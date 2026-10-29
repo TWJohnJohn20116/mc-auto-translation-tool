@@ -33,9 +33,13 @@ import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Properties;
 import java.util.Set;
+import java.util.UUID;
 
 final class ForgeConfig {
     private static final String FILE_NAME = "universal-translator.properties";
+    /** Serializes every writer of one configuration file; see {@link #save()}. */
+    private static final java.util.concurrent.ConcurrentHashMap<Path, Object> SAVE_MONITORS =
+            new java.util.concurrent.ConcurrentHashMap<Path, Object>();
 
     final boolean enabled;
     final boolean translateChat;
@@ -208,8 +212,16 @@ final class ForgeConfig {
         }
 
         Properties stored = new Properties();
+        boolean recovered = false;
         try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
             stored.load(reader);
+        } catch (IOException | RuntimeException malformed) {
+            // A single unreadable byte used to be fatal for the whole session, and the broken file
+            // stayed on disk, so every later load - including the settings screen that is the only
+            // way to fix it - failed the same way. Move it aside and start from the defaults.
+            recovered = true;
+            stored = new Properties();
+            quarantine(file, malformed);
         }
         Properties properties = defaults();
         properties.putAll(stored);
@@ -224,14 +236,43 @@ final class ForgeConfig {
         LocalConfigSecurity.restrictToOwner(file);
         ForgeConfig loaded = new ForgeConfig(
                 properties, file, configDirectory.resolve("universal-translator-cache.properties"));
-        if (migrated) {
-            loaded.save();
+        if (migrated || recovered) {
+            try {
+                loaded.save();
+            } catch (IOException unwritable) {
+                // Reading must not require a writable directory: a launcher-managed or cloud-synced
+                // configuration directory can be read-only, and failing here disabled translation
+                // for the whole session over an optional write-back.
+                DebugLog.global().log("config", "write", "skipped",
+                        "reason", String.valueOf(unwritable.getClass().getSimpleName()));
+            }
         }
         // The statistics file sits next to the configuration. Reading it here is the one place every
         // platform passes through at startup, so no runtime has to know about statistics.
         TranslationStats.global().attach(file.resolveSibling(TranslationStats.FILE_NAME));
         DebugLog.global().configure(file.resolveSibling(DebugLog.FILE_NAME), loaded.debugLog());
         return loaded;
+    }
+
+    /**
+     * Moves an unreadable configuration aside so the next launch starts from the defaults.
+     *
+     * <p>Renamed rather than deleted: the file may hold nothing but an edit the player can repair by
+     * hand, and the diagnostics page can point at the copy.
+     */
+    private static void quarantine(Path file, Exception cause) {
+        try {
+            Path backup = file.resolveSibling(file.getFileName().toString()
+                    + ".corrupt-" + System.currentTimeMillis());
+            Files.move(file, backup, StandardCopyOption.REPLACE_EXISTING);
+            DebugLog.global().log("config", "quarantined",
+                    "file", String.valueOf(backup.getFileName()),
+                    "reason", String.valueOf(cause.getClass().getSimpleName()));
+        } catch (IOException | RuntimeException unquarantinable) {
+            // Nothing else can be done here; the defaults still let the session run.
+            DebugLog.global().log("config", "quarantine", "failed",
+                    "reason", String.valueOf(unquarantinable.getClass().getSimpleName()));
+        }
     }
 
     ForgeConfig withSettings(
@@ -411,9 +452,29 @@ final class ForgeConfig {
     }
 
     void save() throws IOException {
-        Path temporary = configFile.resolveSibling(configFile.getFileName().toString() + ".tmp");
+        // One writer at a time per configuration file. Two paths do reach save() at the same time —
+        // the settings screen's Save and the F8 toggle — and interleaved writers each removed the
+        // other's temporary file, so one of them moved a half-written file into place.
+        Path lockKey = configFile.toAbsolutePath();
+        Object monitor;
+        synchronized (SAVE_MONITORS) {
+            monitor = SAVE_MONITORS.get(lockKey);
+            if (monitor == null) {
+                monitor = new Object();
+                SAVE_MONITORS.put(lockKey, monitor);
+            }
+        }
+        synchronized (monitor) {
+            writeAtomically();
+        }
+    }
+
+    private void writeAtomically() throws IOException {
+        // Unique per attempt. Writers on the same path used to share one "<file>.tmp" name, and the
+        // second writer's deleteIfExists removed the file the first one was still writing into.
+        Path temporary = configFile.resolveSibling(
+                configFile.getFileName().toString() + "." + UUID.randomUUID() + ".tmp");
         try {
-            Files.deleteIfExists(temporary);
             Files.createFile(temporary);
             LocalConfigSecurity.restrictToOwner(temporary);
             try (Writer writer = Files.newBufferedWriter(

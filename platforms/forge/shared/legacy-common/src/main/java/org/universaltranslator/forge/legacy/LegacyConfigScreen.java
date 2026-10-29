@@ -204,6 +204,20 @@ final class LegacyConfigScreen extends GuiScreen {
     private volatile int modelPage;
     private long animationStartedNanos = System.nanoTime();
     private SettingsSelectionList.Kind openSelection = SettingsSelectionList.Kind.NONE;
+    /**
+     * Last computed layout, keyed on the window size it was computed for.
+     *
+     * <p>One frame of the HUD tab asks for it through a dozen accessors and the engine tab asks for
+     * it twice per row, and every one of those re-ran the shared geometry maths.
+     */
+    private SettingsScreenLayout.Geometry cachedLayout;
+    private int cachedLayoutWidth = -1;
+    private int cachedLayoutHeight = -1;
+    /** How long a localized runtime status may be reused. */
+    private static final long STATUS_CACHE_MILLIS = 200L;
+    private String cachedLocalizedStatus = "";
+    private boolean cachedStatusIsFailure;
+    private long cachedStatusAt;
 
     LegacyConfigScreen(GuiScreen parent, LegacyConfig config) {
         this.parent = parent;
@@ -750,11 +764,12 @@ final class LegacyConfigScreen extends GuiScreen {
      */
     private void applyPromptSettings() {
         refreshQualityLabel();
+        LegacyConfig base = currentConfig();
         try {
             String prompt = customPrompt == null
-                    ? original.customSystemPrompt()
+                    ? base.customSystemPrompt()
                     : TranslationPrompt.fromEditorText(customPrompt.getText());
-            LegacyConfig updated = original.withPromptSettings(quality, prompt);
+            LegacyConfig updated = base.withPromptSettings(quality, prompt);
             if (updated.enabled) {
                 updated.validateProviderConfiguration();
             }
@@ -768,7 +783,64 @@ final class LegacyConfigScreen extends GuiScreen {
     }
 
     private SettingsScreenLayout.Geometry layout() {
-        return SettingsScreenLayout.calculate(width, height, 5);
+        SettingsScreenLayout.Geometry cached = cachedLayout;
+        if (cached != null && cachedLayoutWidth == width && cachedLayoutHeight == height) {
+            return cached;
+        }
+        SettingsScreenLayout.Geometry built = SettingsScreenLayout.calculate(width, height, 5);
+        cachedLayout = built;
+        cachedLayoutWidth = width;
+        cachedLayoutHeight = height;
+        return built;
+    }
+
+    /**
+     * Drops the keyboard focus of every field while the catalog overlay owns the screen.
+     *
+     * <p>The overlay covers the form, but the fields underneath kept the focus, so a keystroke typed
+     * into a field the player could not see and the next Save wrote it.
+     */
+    private void releaseFieldFocus() {
+        if (endpoint != null) {
+            endpoint.setFocused(false);
+        }
+        if (customPrompt != null) {
+            customPrompt.setFocused(false);
+        }
+        if (blockedKeywords != null) {
+            blockedKeywords.setFocused(false);
+        }
+    }
+
+    /**
+     * The runtime status as the status line shows it, reused for {@link #STATUS_CACHE_MILLIS}.
+     *
+     * <p>{@code status()} builds a string out of the provider status and the session's last failure,
+     * and localizing it walks a dozen comparisons plus an {@code I18n} lookup. Both ran once per
+     * frame while the screen was open, even with nothing changing.
+     */
+    private String localizedStatus() {
+        long now = System.currentTimeMillis();
+        if (now - cachedStatusAt < STATUS_CACHE_MILLIS) {
+            return cachedLocalizedStatus;
+        }
+        String raw = LegacyTranslationRuntime.status();
+        cachedLocalizedStatus = TranslationStatusLocalizer.localize(raw, LegacyConfigScreen::tr);
+        cachedStatusIsFailure = isFailureStatus(raw);
+        cachedStatusAt = now;
+        return cachedLocalizedStatus;
+    }
+
+    /**
+     * The configuration this screen edits from, taken from the runtime when it has one.
+     *
+     * <p>{@code withSettings} copies every key it does not own from the object it is given, so
+     * saving from the constructor snapshot silently reverted whatever another path had written
+     * while the screen was open: an F8 toggle, a Home-key target-language change.
+     */
+    private LegacyConfig currentConfig() {
+        LegacyConfig live = LegacyTranslationRuntime.diagnosticsConfig();
+        return live == null ? original : live;
     }
 
     /**
@@ -985,9 +1057,10 @@ final class LegacyConfigScreen extends GuiScreen {
     }
 
     private void saveAndApply() {
+        LegacyConfig base = currentConfig();
         boolean runtimeChanged = false;
         try {
-            LegacyConfig updated = original.withSettings(
+            LegacyConfig updated = base.withSettings(
                     enabled,
                     translateChat,
                     translateOther,
@@ -1032,7 +1105,9 @@ final class LegacyConfigScreen extends GuiScreen {
         } catch (Exception exception) {
             if (runtimeChanged) {
                 try {
-                    LegacyTranslationRuntime.initialize(original);
+                    // Roll back to the configuration that was running before this save, not to the
+                    // snapshot the screen opened with: something else may have changed it since.
+                    LegacyTranslationRuntime.initialize(base);
                 } catch (Exception restoreFailure) {
                     exception.addSuppressed(restoreFailure);
                 }
@@ -1068,12 +1143,13 @@ final class LegacyConfigScreen extends GuiScreen {
         }
         // ESC (1 on this generation's LWJGL2 keyboard) closes the overlay first. GuiScreen would
         // otherwise close the whole screen and drop every unsaved change, even though the overlay
-        // draws its own Back area.
-        if (keyCode == 1) {
-            if (openSelection != SettingsSelectionList.Kind.NONE) {
+        // draws its own Back area. The list is modal for typing too: it covers the fields it would
+        // otherwise write into.
+        if (openSelection != SettingsSelectionList.Kind.NONE) {
+            if (keyCode == 1) {
                 openSelection = SettingsSelectionList.Kind.NONE;
-                return;
             }
+            return;
         }
         if (activeTab == Tab.ENGINE && isLibreTranslate() && endpoint != null && endpoint.textboxKeyTyped(typedChar, keyCode)) {
             return;
@@ -1200,9 +1276,7 @@ final class LegacyConfigScreen extends GuiScreen {
         }
 
         // Status & feedback
-        String rawRuntimeStatus = LegacyTranslationRuntime.status();
-        String runtimeStatus = TranslationStatusLocalizer.localize(rawRuntimeStatus,
-                LegacyConfigScreen::tr);
+        String runtimeStatus = localizedStatus();
         int messageY = layout.saveY() + 24;
         if (messageY > height - 10) {
             messageY = height - 10;
@@ -1214,7 +1288,7 @@ final class LegacyConfigScreen extends GuiScreen {
                     testStatusIsError ? 0xFFFF5555 : 0xFF55FF55);
         } else if (!runtimeStatus.isEmpty()) {
             drawCenteredString(renderer, runtimeStatus, width / 2, messageY,
-                    isFailureStatus(rawRuntimeStatus) ? 0xFFFF5555 : 0xFF55FF55);
+                    cachedStatusIsFailure ? 0xFFFF5555 : 0xFF55FF55);
         }
 
         if (animatedUi) {
@@ -1405,6 +1479,7 @@ final class LegacyConfigScreen extends GuiScreen {
             fetchedModels = catalog.models();
             modelPage = 0;
             modelListOpen = true;
+            releaseFieldFocus();
             setTestStatus("", false);
         }, "universal-translator-model-list");
         worker.setDaemon(true);

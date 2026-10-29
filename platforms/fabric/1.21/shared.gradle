@@ -25,8 +25,15 @@ def sourceLayers = [
         "1.21.11": ["runtime/1.21.9-plus", "draw/1.21.6-plus", "text-renderer/1.21.11", "input/1.21.9-plus"]
 ]
 
+// Groovy's String.minus removes the first occurrence of the substring, not a prefix, so this only
+// worked while the project name contained "platform-fabric-" exactly once (platform-fabric-1.21.4-1.21.5
+// needs ext.fabricSourceVersion to opt out). Strip the prefix explicitly and print the project path
+// with the derived value so a mis-registration is traceable.
 def sourceVersion = project.ext.has("fabricSourceVersion") ?
-        project.ext.fabricSourceVersion.toString() : project.name - "platform-fabric-"
+        project.ext.fabricSourceVersion.toString() :
+        (project.name.startsWith("platform-fabric-")
+                ? project.name.substring("platform-fabric-".length())
+                : project.name)
 // Layer names that are mount flags only: the code they pull in lives in
 // platforms/fabric/shared/*, so this tree has no directory of that name. Kept as an explicit list
 // so the srcDir loop below can tell "flag" from "typo" — previously every name was also treated as
@@ -39,7 +46,8 @@ def sharedFlagLayers = [
 ] as Set
 def layers = sourceLayers[sourceVersion]
 if (layers == null) {
-    throw new GradleException("No Fabric 1.21 source layers are registered for ${sourceVersion}")
+    throw new GradleException(
+            "No Fabric 1.21 source layers are registered for ${sourceVersion} (project ${project.path})")
 }
 
 def sharedRoot = rootProject.file("platforms/fabric/1.21/shared")
@@ -82,6 +90,33 @@ sourceSets {
         resources.srcDir new File(sharedRoot, "common/src/main/resources")
         resources.srcDir rootProject.file("platforms/shared/lang/json")
     }
+}
+
+// The client source directories below are hard-coded instead of coming from sourceLayers, so none of
+// them was covered by the layer check inside sourceSets. Renaming screens/1.20.1-1.21.11 (also matched
+// by a string prefix in platforms/fabric/legacy/shared.gradle) would have left all twelve 1.21 targets
+// compiling without their settings screens and every task still green.
+def requiredSharedDirs = [
+        new File(sharedRoot, "common/src/client/java"),
+        new File(sharedRoot, "screens/1.20.1-1.21.11/src/client/java"),
+        rootProject.file("platforms/fabric/shared/settings/modern/src/main/java"),
+        rootProject.file("platforms/fabric/shared/common/src/client/java"),
+        rootProject.file("platforms/fabric/shared/base/src/main/java"),
+        rootProject.file("platforms/fabric/shared/runtime-common/src/client/java"),
+        rootProject.file("platforms/fabric/shared/draw-context/src/client/java"),
+        rootProject.file("platforms/fabric/shared/client-1.20-1.21/src/client/java"),
+        rootProject.file("platforms/fabric/shared/text-renderer-1.20-1.21/src/client/java"),
+        rootProject.file("platforms/fabric/shared/title-screen-1.19-1.21/src/client/java"),
+        rootProject.file("platforms/fabric/shared/mixin-1.20-1.21/src/client/java"),
+        rootProject.file("platforms/fabric/shared/legacy-common/src/client/java"),
+        rootProject.file("platforms/fabric/shared/rendered-common/src/client/java"),
+        rootProject.file("platforms/fabric/shared/screens-shared/src/client/java")
+]
+def missingSharedDirs = requiredSharedDirs.findAll { !it.isDirectory() }
+if (!missingSharedDirs.isEmpty()) {
+    throw new GradleException(
+            "Missing shared Fabric source directories for ${sourceVersion}: " +
+                    missingSharedDirs.collect { relativePath(it) }.join(", "))
 }
 
 loom {
@@ -160,13 +195,13 @@ processResources {
     // other eleven declared ">=0.19.3", so the same tree advertised two different minimums and
     // nothing compared the number with the property. Rewriting the line here keeps the value honest
     // for every version, including any future one that reuses the global loader_version key.
-    inputs.property "loaderFloor", project.ext.fabricLoaderVersion
+    // Read once into a local so the filter below never touches `project` at execution time.
+    def loaderFloor = project.ext.fabricLoaderVersion.toString()
+    inputs.property "loaderFloor", loaderFloor
     filesMatching("fabric.mod.json") {
         expand "version": project.version
         filter { line ->
-            line.replaceAll(
-                    /"fabricloader": ">=[^"]*"/,
-                    "\"fabricloader\": \">=${project.ext.fabricLoaderVersion}\"")
+            line.replaceAll(/"fabricloader": ">=[^"]*"/, "\"fabricloader\": \">=${loaderFloor}\"")
         }
     }
 }

@@ -5,6 +5,7 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.options.KeyBinding;
 import net.minecraft.client.util.InputUtil;
@@ -94,6 +95,15 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
         @Override
         protected Object currentScreen() {
             return MinecraftClient.getInstance().currentScreen;
+        }
+
+        /**
+         * Exact check: the inherited name comparison can never match a remapped client, where
+         * {@code ChatScreen} is {@code net.minecraft.class_408} at runtime.
+         */
+        @Override
+        protected boolean isChatScreen(Object screen) {
+            return screen instanceof ChatScreen;
         }
 
         @Override

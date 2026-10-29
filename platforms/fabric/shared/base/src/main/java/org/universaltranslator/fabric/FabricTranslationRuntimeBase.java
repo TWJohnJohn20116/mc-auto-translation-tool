@@ -14,6 +14,7 @@ import org.universaltranslator.core.TranslationStore;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.RecentUserText;
 import org.universaltranslator.core.TranslationResult;
+import org.universaltranslator.core.TranslationStatusLocalizer;
 import org.universaltranslator.core.DiagnosticsLogExporter;
 
 import java.io.IOException;
@@ -29,6 +30,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * The translation runtime every Fabric tree shares.
@@ -88,7 +90,17 @@ public abstract class FabricTranslationRuntimeBase {
      * so a single published instance is enough; {@link #shutdown()} clears it.
      */
     private static volatile FabricTranslationRuntimeBase activeRuntime;
-    private CompletableFuture<Void> outgoingTail = CompletableFuture.completedFuture(null);
+    /**
+     * Volatile because {@link #translateOutgoing} no longer holds the instance monitor: a chat line
+     * must not queue behind the provider build {@link #initialize} performs under that monitor.
+     */
+    private volatile CompletableFuture<Void> outgoingTail = CompletableFuture.completedFuture(null);
+    /** Guards the {@link #outgoingTail} hand-off; never held across provider work. */
+    private final Object outgoingLock = new Object();
+    /** Teardowns queued but not finished; caps the reaper's backlog (see {@link #closeInBackground}). */
+    private static final AtomicInteger PENDING_TEARDOWNS = new AtomicInteger();
+    /** Backlog the reaper accepts before the caller performs the teardown itself. */
+    private static final int MAX_PENDING_TEARDOWNS = 2;
     // A single daemon thread serializes the teardown of replaced sessions: at most one reaper
     // thread exists no matter how often the configuration is switched, and two replaced sessions
     // can never tear down concurrently. Threads are created lazily, so a client that never switches
@@ -193,10 +205,15 @@ public abstract class FabricTranslationRuntimeBase {
         recentUserText.clear();
         recentUserTextPresent = false;
         // A new configuration points at a different model and cache file, so the cached sizes are
-        // meaningless for it: let the next diagnostics snapshot read them again.
+        // meaningless for it: let the next diagnostics snapshot read them again, and re-resolve the
+        // model path instead of rebuilding it on every diagnostics call.
         cachedBytesExpireAt = 0L;
+        cachedModelFile = config.offlineDirectory.resolve(config.offlineModel.modelFile());
+        diagnosticsSnapshot = null;
         activeRuntime = this;
-        outgoingTail = CompletableFuture.completedFuture(null);
+        synchronized (outgoingLock) {
+            outgoingTail = CompletableFuture.completedFuture(null);
+        }
         closeInBackground(replaced);
     }
 
@@ -205,9 +222,25 @@ public abstract class FabricTranslationRuntimeBase {
      * thread. {@link #shutdown()} stays synchronous on purpose: it runs while the game is closing,
      * where blocking is free, and it closes whichever session is current at that moment, which is
      * never one that was already handed to the reaper.
+     *
+     * <p>The reaper is a single unbounded queue, so a burst of switches — holding F8 down, or a
+     * HUD drag that re-initializes several times a second — used to queue one live session with its
+     * thread pool and caches per press, each worth up to five seconds of teardown. Past
+     * {@link #MAX_PENDING_TEARDOWNS} the caller now performs the teardown itself: the tick that
+     * switched pays the cost instead of the process growing an unbounded backlog of live sessions.
      */
     private static void closeInBackground(final RenderTranslationSession replaced) {
         if (replaced == null) {
+            return;
+        }
+        if (PENDING_TEARDOWNS.incrementAndGet() > MAX_PENDING_TEARDOWNS) {
+            try {
+                replaced.close();
+            } catch (Throwable ignored) {
+                // Same contract as the reaper body: a teardown must never take the caller down.
+            } finally {
+                PENDING_TEARDOWNS.decrementAndGet();
+            }
             return;
         }
         try {
@@ -220,12 +253,15 @@ public abstract class FabricTranslationRuntimeBase {
                         // A reaper must never die with a teardown still pending. The session is
                         // already unreachable from the live fields, so a failure here can only
                         // leak its resources; there is no caller left to report it to.
+                    } finally {
+                        PENDING_TEARDOWNS.decrementAndGet();
                     }
                 }
             });
         } catch (Throwable rejected) {
             // The executor only rejects once it has been shut down, which this class never does.
             // Leaving the replaced session unclosed still beats blocking the caller.
+            PENDING_TEARDOWNS.decrementAndGet();
         }
     }
 
@@ -263,10 +299,15 @@ public abstract class FabricTranslationRuntimeBase {
     String translateForRender(String original, TextKind kind) {
         RenderTranslationSession active = session;
         FabricConfig config = activeConfig;
-        if (active == null || config == null || !config.allows(kind)
-                || (!config.translateVanilla && kind == TextKind.OTHER
-                && MinecraftContentScope.isVanillaScreen(currentScreen()))
-                || isTranslatorScreen(currentScreen())
+        if (active == null || config == null || !config.allows(kind)) {
+            return original;
+        }
+        // One screen read for both checks: this method runs two to four times for every drawn line
+        // of every frame, and each extra {@code currentScreen()} is a field read per string.
+        Object screen = currentScreen();
+        if ((!config.translateVanilla && kind == TextKind.OTHER
+                && MinecraftContentScope.isVanillaScreen(screen))
+                || isTranslatorScreen(screen)
                 || isLocalChatInput(original)
                 || (recentUserTextPresent && recentUserText.shouldPreserve(original))) {
             return original;
@@ -282,10 +323,22 @@ public abstract class FabricTranslationRuntimeBase {
         protectedPlayerNamesExpireAt = 0L;
         recentUserText.clear();
         recentUserTextPresent = false;
+        // Everything the render hooks and the diagnostics screen read is part of the session: a
+        // snapshot left behind after this point showed the HUD, the status line and the diagnostics
+        // export the state of a translation that is no longer running.
+        activeConfig = null;
+        cachedHome = null;
+        cachedModelFile = null;
+        cachedModelBytes = -1L;
+        cachedCacheBytes = -1L;
+        cachedBytesExpireAt = 0L;
+        diagnosticsSnapshot = null;
         if (activeRuntime == this) {
             activeRuntime = null;
         }
-        outgoingTail = CompletableFuture.completedFuture(null);
+        synchronized (outgoingLock) {
+            outgoingTail = CompletableFuture.completedFuture(null);
+        }
         if (active != null) {
             active.close();
         }
@@ -304,11 +357,35 @@ public abstract class FabricTranslationRuntimeBase {
         if (!playerNameRefresh.compareAndSet(false, true)) {
             return snapshot;
         }
+        // The first snapshot of a session is built right here: the names this protects must be
+        // right from the first frame. Every later refresh runs on the reaper instead, because
+        // walking a tab list of up to a thousand names allocated three collections and a trimmed
+        // copy per name inside a single frame on the render thread.
+        if (protectedPlayerNamesExpireAt == 0L) {
+            try {
+                return refreshPlayerNames(now);
+            } finally {
+                playerNameRefresh.set(false);
+            }
+        }
         try {
-            return refreshPlayerNames(now);
-        } finally {
+            SESSION_REAPER.execute(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        refreshPlayerNames(System.currentTimeMillis());
+                    } catch (Throwable ignored) {
+                        // The previous snapshot simply stays published until the next window; it
+                        // only decides which names are excluded from translation.
+                    } finally {
+                        playerNameRefresh.set(false);
+                    }
+                }
+            });
+        } catch (Throwable rejected) {
             playerNameRefresh.set(false);
         }
+        return snapshot;
     }
 
     private List<String> refreshPlayerNames(long now) {
@@ -355,7 +432,10 @@ public abstract class FabricTranslationRuntimeBase {
                 ? ((TranslationProviderStatus) provider).status() : "";
         // The offline provider already has the specific startup diagnostic. Prefer it over the
         // session's generic wrapper so one failure cannot alternate between two chat messages.
-        if (providerStatus.startsWith("离线翻译失败")) {
+        // The classification is shared with every other platform instead of matching one Chinese
+        // prefix: the offline engine reports several startup failures, and a wording change here
+        // turned "the engine did not start" into a healthy green status.
+        if (TranslationStatusLocalizer.isFailure(providerStatus)) {
             return providerStatus;
         }
         if (active != null && !active.lastFailureStatus().isEmpty()) {
@@ -374,25 +454,46 @@ public abstract class FabricTranslationRuntimeBase {
      * of blocking a frame on a network drive.
      */
     private static final long FILE_SIZE_CACHE_MILLIS = 1_000L;
+    /**
+     * How long one diagnostics snapshot is reused.
+     *
+     * <p>The diagnostics screen asks for this on every frame, and each build calls {@code status()}
+     * — which asks the provider — plus the file-size cache. A quarter of a second is invisible on a
+     * read-out that only changes when a translation fails, and it turns sixty snapshots per second
+     * into four.
+     */
+    private static final long DIAGNOSTICS_CACHE_MILLIS = 250L;
     private volatile long cachedModelBytes = -1L;
     private volatile long cachedCacheBytes = -1L;
     private volatile long cachedBytesExpireAt;
+    /** Model file path resolved once per configuration; {@code resolve()} allocated a {@code Path} per frame. */
+    private volatile Path cachedModelFile;
+    private volatile TranslationDiagnosticsSnapshot diagnosticsSnapshot;
+    private volatile long diagnosticsSnapshotAtMillis;
 
     TranslationDiagnosticsSnapshot diagnostics() {
         FabricConfig config = activeConfig;
         TranslationProvider provider = activeProvider;
         if (config == null) {
             return new TranslationDiagnosticsSnapshot(
-                    false, "", "", "", null, false, false, -1L, -1L, "尚未载入设置");
+                    false, "", "", "", null, false, false, -1L, -1L, "");
         }
-        Path modelFile = config.offlineDirectory.resolve(config.offlineModel.modelFile());
         long now = System.currentTimeMillis();
+        TranslationDiagnosticsSnapshot cached = diagnosticsSnapshot;
+        if (cached != null && now - diagnosticsSnapshotAtMillis < DIAGNOSTICS_CACHE_MILLIS) {
+            return cached;
+        }
         if (now >= cachedBytesExpireAt) {
+            Path modelFile = cachedModelFile;
+            if (modelFile == null) {
+                modelFile = config.offlineDirectory.resolve(config.offlineModel.modelFile());
+                cachedModelFile = modelFile;
+            }
             cachedModelBytes = fileSize(modelFile);
             cachedCacheBytes = fileSize(config.cacheFile);
             cachedBytesExpireAt = now + FILE_SIZE_CACHE_MILLIS;
         }
-        return new TranslationDiagnosticsSnapshot(
+        TranslationDiagnosticsSnapshot built = new TranslationDiagnosticsSnapshot(
                 config.enabled,
                 config.provider,
                 provider == null ? "" : provider.id(),
@@ -403,6 +504,9 @@ public abstract class FabricTranslationRuntimeBase {
                 cachedModelBytes,
                 cachedCacheBytes,
                 status());
+        diagnosticsSnapshot = built;
+        diagnosticsSnapshotAtMillis = now;
+        return built;
     }
 
     Path exportDiagnostics(List<String> localizedLines) throws IOException {
@@ -440,6 +544,12 @@ public abstract class FabricTranslationRuntimeBase {
     }
 
     void protectOutgoingMessage(String message) {
+        // Commands and blank lines are never echoed as chat, so queueing them bought nothing and
+        // cost a lot: one "{@code /gamemode c}" kept the "something was remembered" flag set for
+        // thirty minutes, which put every drawn string of every frame through the queue's monitor.
+        if (message == null || message.trim().isEmpty() || message.startsWith("/")) {
+            return;
+        }
         // Set before the queue: a render hook that reads the flag after this point either sees the
         // entry or pays one lookup, never the other way round.
         recentUserTextPresent = true;
@@ -461,8 +571,12 @@ public abstract class FabricTranslationRuntimeBase {
      * of chat lines does occupy several provider slots at once, and what the chain guarantees is that
      * the completions are delivered in the order the lines were typed. The previous comment claimed
      * the requests were serialized, which sent anyone debugging provider load in the wrong direction.
+     *
+     * <p>Deliberately not {@code synchronized}: {@link #initialize} holds the instance monitor for
+     * the whole provider build — minutes for a cold offline engine — and a chat line waiting behind
+     * that lock reached the server late instead of immediately. Only the tail hand-off is guarded.
      */
-    synchronized CompletableFuture<TranslationResult> translateOutgoing(String message) {
+    CompletableFuture<TranslationResult> translateOutgoing(String message) {
         final RenderTranslationSession active = session;
         final FabricConfig config = activeConfig;
         if (active == null || config == null || !shouldTranslateOutgoing(message)) {
@@ -475,11 +589,13 @@ public abstract class FabricTranslationRuntimeBase {
         CompletableFuture<TranslationResult> translated = active.translateInteractive(
                 message, TextKind.CHAT, config.outgoingTargetLanguage, false,
                 config.streamOutgoing);
-        CompletableFuture<TranslationResult> next = outgoingTail
-                .handle((ignored, failure) -> null)
-                .thenCompose(ignored -> translated);
-        outgoingTail = next.handle((ignored, failure) -> null);
-        return next;
+        synchronized (outgoingLock) {
+            CompletableFuture<TranslationResult> next = outgoingTail
+                    .handle((ignored, failure) -> null)
+                    .thenCompose(ignored -> translated);
+            outgoingTail = next.handle((ignored, failure) -> null);
+            return next;
+        }
     }
 
     /**
@@ -522,6 +638,19 @@ public abstract class FabricTranslationRuntimeBase {
      * runtime's own API unchanged for every other caller.
      */
     FabricConfig diagnosticsConfig() {
+        return activeConfig;
+    }
+
+    /**
+     * The live snapshot the settings screen and the F8 toggle build on.
+     *
+     * <p>Both used to call {@code FabricConfig.load(...)}, which creates a directory, stats the
+     * file, parses it, applies the POSIX restriction (an exception path on Windows), attaches the
+     * statistics file and reconfigures the debug log — straight on the client thread, once per
+     * settings key press. The runtime already holds exactly this snapshot, and it is the one that
+     * was last written, so reading it cannot resurrect an older value either.
+     */
+    FabricConfig currentConfig() {
         return activeConfig;
     }
 

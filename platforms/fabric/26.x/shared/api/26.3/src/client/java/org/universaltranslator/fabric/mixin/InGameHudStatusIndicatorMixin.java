@@ -11,6 +11,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 /**
  * Injects the translation status indicator into the HUD.
  *
+ * <p>Targets {@code Hud} from 26.2 and {@code Gui} before it; the class kept the {@code InGameHud*}
+ * file name from the 1.21 tree, so a search for {@code Hud.class} finds no mixin here. The
+ * {@code @Mixin} target below is the authority, not the file name.
+ *
  * <p>Everything it draws comes from {@code HudIndicatorSettings}: the corner, size, margin, colour,
  * what appears inside the square, and when it is drawn at all. Only the optional label needs a lang
  * entry; the rest is rectangles and literal text.

@@ -66,6 +66,9 @@ sourceSets {
 }
 
 processResources {
+    // expand() reads the template with the platform default charset unless this is set, so a jar
+    // built on a Windows dev box decoded the UTF-8 fabric.mod.json differently than CI did.
+    filteringCharset = "UTF-8"
     inputs.properties(
             "version": project.version,
             "minecraftVersion": gameVersion,
@@ -85,9 +88,10 @@ tasks.withType(JavaCompile).configureEach {
     options.release = 8
 }
 
+// options.release already pins both the language level and the API table for every JavaCompile task
+// in this project, so repeating the 1.8 pair here only gave "what does this build target" a second,
+// contradicting answer.
 java {
-    sourceCompatibility = JavaVersion.VERSION_1_8
-    targetCompatibility = JavaVersion.VERSION_1_8
     withSourcesJar()
 }
 

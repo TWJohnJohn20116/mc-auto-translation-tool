@@ -69,6 +69,12 @@ abstract class InGameHudStatusIndicatorMixin {
                 break;
         }
         MinecraftClient client = MinecraftClient.getInstance();
+        // The injection sits at the RETURN of the HUD render, which still runs while F1 hides the
+        // HUD: without this the square and its label stayed on an otherwise empty screen and were
+        // painted over the chat and the hotbar, because RETURN is the last thing that happens.
+        if (client.options.hudHidden) {
+            return;
+        }
         int windowWidth = client.getWindow().getScaledWidth();
         int windowHeight = client.getWindow().getScaledHeight();
         HudIndicatorCorner corner = settings.getCorner();
@@ -107,45 +113,46 @@ abstract class InGameHudStatusIndicatorMixin {
         // The outgoing chat translation as far as it has been generated. Drawn from the same
         // render path as the indicator and only while that translation is still running, so the
         // player sees the answer arrive instead of waiting for the whole line.
+        //
+        // Both self-drawn strings share one text-input latch: these versions hook
+        // TextRenderer.getWidth and TextRenderer.drawInternal in order to translate what they
+        // render, so measuring or drawing the indicator's own text unguarded would feed it back into
+        // the translation path. One push and one pop per frame instead of two.
         String outgoingPreview = OutgoingTranslationPreview.text();
-        if (outgoingPreview != null) {
-            TranslationRenderContext.pushTextInput();
-            try {
-                int previewY = Math.max(0, windowHeight - 60);
-                int previewX = windowWidth / 2 - client.textRenderer.getWidth(outgoingPreview) / 2;
-                client.textRenderer.drawWithShadow(matrices, outgoingPreview, (float) previewX, (float) previewY, 0xFFFFFFFF);
-            } finally {
-                TranslationRenderContext.popTextInput();
-            }
-        }
-
-        // The label is drawn in both states: the target language and the provider are settings, so
-        // they stay informative even while translation is off.
         HudIndicatorContent content = settings.getContent();
-        if (content == HudIndicatorContent.DOT) {
-            return;
-        }
-        String label = null;
-        if (content == HudIndicatorContent.LANGUAGE) {
-            label = quickSettings.getTargetLanguage();
-        } else if (content == HudIndicatorContent.PROVIDER) {
-            label = quickSettings.getProvider();
-        } else if (content == HudIndicatorContent.ACTIVITY && TranslationActivity.isTranslating()) {
-            label = I18n.translate("value.universal_translator.hud_content.activity");
-        }
-        if (label == null || label.isEmpty()) {
-            return;
-        }
         TextRenderer font = client.textRenderer;
-        // These versions hook TextRenderer.getWidth and TextRenderer.drawInternal in order to
-        // translate what they render, so measuring or drawing the label unguarded would feed the
-        // indicator's own text back into the translation path.
         TranslationRenderContext.pushTextInput();
         try {
+            if (outgoingPreview != null) {
+                int previewY = Math.max(0, windowHeight - 60);
+                int previewX = windowWidth / 2 - font.getWidth(outgoingPreview) / 2;
+                font.drawWithShadow(matrices, outgoingPreview, (float) previewX, (float) previewY, 0xFFFFFFFF);
+            }
+
+            // The label is drawn in both states: the target language and the provider are settings,
+            // so they stay informative even while translation is off.
+            if (content == HudIndicatorContent.DOT) {
+                return;
+            }
+            String label = null;
+            if (content == HudIndicatorContent.LANGUAGE) {
+                label = quickSettings.getTargetLanguage();
+            } else if (content == HudIndicatorContent.PROVIDER) {
+                label = quickSettings.getProvider();
+            } else if (content == HudIndicatorContent.ACTIVITY && TranslationActivity.isTranslating()) {
+                label = I18n.translate("value.universal_translator.hud_content.activity");
+            }
+            if (label == null || label.isEmpty()) {
+                return;
+            }
             int labelWidth = font.getWidth(label);
             // Beside the square, never over it: a 6px square cannot hold "zh-TW", and a label
             // centred on a right-corner square would run off the screen edge.
             int labelLeft = corner.isRight() ? left - 2 - labelWidth : right + 2;
+            // The square is clamped to the window, the label was not: a provider id is wider than
+            // the square, so on a narrow window the right-corner label ran off the left edge and the
+            // left-corner one off the right. Clamped here instead, and cut to the room that is left.
+            labelLeft = Math.max(0, Math.min(windowWidth - labelWidth, labelLeft));
             // y is the top of the text line, so centre it against the square by hand.
             int labelY = top + (size - 8) / 2;
             font.drawWithShadow(matrices, label, (float) labelLeft, (float) labelY, 0xFFFFFFFF);

@@ -1,7 +1,9 @@
 {
   "pack": {
     "description": "MC Auto Translation Tool resources",
-    "max_format": 94,
-    "min_format": [94, 1]
+    "pack_format": 34,
+    "supported_formats": [34, 94],
+    "min_format": 34,
+    "max_format": 94
   }
 }

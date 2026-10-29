@@ -32,7 +32,7 @@ public final class RenderedTextBridge {
      */
     private static final WeakIdentitySet HANDLED_TOOLTIPS = new WeakIdentitySet();
     /**
-     * Recently styled lines, cycling through a fixed ring.
+     * The last line styled and the answer it produced.
      *
      * <p>{@code TranslationTextStyling.applyTranslatedStyle} scans the whole original line for a
      * legacy colour code and, once the player picks a translated colour, rebuilds the translated
@@ -40,31 +40,46 @@ public final class RenderedTextBridge {
      * measured two to four times per frame, so that work used to be repeated for every call even
      * though nothing about the input had changed.
      *
-     * <p>The key is everything the styling reads — original text, translated text and the
-     * configured colour — so a hit is by construction the value a fresh call would return:
-     * switching the colour, the target language or the provider all change at least one key. The
-     * ring is written from the render thread only, and every entry is immutable, so a concurrent
-     * read can only miss or return a complete older entry.
+     * <p>One slot of three plain fields, keyed by everything the styling reads — original text,
+     * translated text and the configured colour — so a hit is by construction the value a fresh call
+     * would return: switching the colour, the target language or the provider all change at least
+     * one key. The eight-slot ring this replaces spent sixteen string comparisons on every call and
+     * allocated an entry object on every miss, which on a frame that draws a hundred distinct lines
+     * was a net loss; the draw hook is followed by the measure hook of the same line, which is
+     * exactly what one slot catches. Every field is written before the answer it belongs to, so a
+     * racing reader either sees the complete entry or misses and recomputes.
      */
-    private static final int STYLE_MEMO_SIZE = 8;
-    private static final StyledText[] STYLE_MEMO = new StyledText[STYLE_MEMO_SIZE];
-    private static int styleMemoCursor;
+    private static String memoOriginal;
+    private static String memoTranslated;
+    private static TranslationTextColor memoColor;
+    private static String memoStyled;
 
-    /** One memo entry: the inputs of a styling call and the string it produced. */
-    private static final class StyledText {
-        private final String original;
-        private final String translated;
-        private final TranslationTextColor color;
-        private final String styled;
+    /**
+     * Scratch lists for the run walk, reused by the render thread they belong to.
+     *
+     * <p>A multi-style line used to allocate three {@code ArrayList}s per call, and
+     * {@code translateStyledSiblings} ran for every component with siblings — a scoreboard side bar
+     * or a tab list is one such component per row, every frame. The lists are cleared before each
+     * walk and never escape it, so one set per thread is enough.
+     */
+    private static final class RunScratch {
+        private final List<String> texts = new ArrayList<String>();
+        private final List<Object> styleKeys = new ArrayList<Object>();
+        private final List<Style> styles = new ArrayList<Style>();
 
-        private StyledText(String original, String translated, TranslationTextColor color,
-                String styled) {
-            this.original = original;
-            this.translated = translated;
-            this.color = color;
-            this.styled = styled;
+        private void reset() {
+            texts.clear();
+            styleKeys.clear();
+            styles.clear();
         }
     }
+
+    private static final ThreadLocal<RunScratch> RUNS = new ThreadLocal<RunScratch>() {
+        @Override
+        protected RunScratch initialValue() {
+            return new RunScratch();
+        }
+    };
 
     /**
      * One flat copy of an {@code OrderedText}, reused by the render thread it belongs to.
@@ -112,28 +127,52 @@ public final class RenderedTextBridge {
         }
     }
 
+    /** True when this call cannot produce a translation at all; the first question every overload asks. */
+    private static boolean bypassRenderTranslation() {
+        return TranslationRenderContext.isTextInput()
+                || !FabricTranslationRuntimeBase.renderTranslationEnabled();
+    }
+
     public static String translate(String text) {
-        String translated = translateRaw(text);
-        if (text == null || text.equals(translated)) {
+        // The drawing and measuring hooks both arrive here for every string of every frame, so the
+        // two guards the other three overloads already had belong before the lookup — and before
+        // anything is done with a null.
+        if (text == null || bypassRenderTranslation()) {
             return text;
         }
-        return styledText(text, translated);
+        if (TranslationRenderContext.isTranslatedResult(text)) {
+            // The line this method returned a moment ago: the measuring hook is handed what the
+            // drawing hook already drew, so answering from the frame's own output set keeps the
+            // repeat off the guard chain and out of the provider.
+            return text;
+        }
+        String translated = translateRaw(text);
+        if (text.equals(translated)) {
+            return text;
+        }
+        String styled = styledText(text, translated);
+        // Both forms, because the two hooks only see the same string when no colour is applied.
+        TranslationRenderContext.rememberTranslation(translated);
+        TranslationRenderContext.rememberTranslation(styled);
+        return styled;
     }
 
     /** Styles one already translated line, reusing the answer when the same line is redrawn. */
     private static String styledText(String original, String translated) {
         TranslationTextColor color = FabricTranslationRuntime.translatedTextColor();
-        for (int index = 0; index < STYLE_MEMO_SIZE; index++) {
-            StyledText entry = STYLE_MEMO[index];
-            if (entry != null && entry.color == color
-                    && (entry.translated == translated || entry.translated.equals(translated))
-                    && (entry.original == original || entry.original.equals(original))) {
-                return entry.styled;
-            }
+        String cached = memoStyled;
+        if (cached != null && memoColor == color
+                && (memoTranslated == translated
+                || (memoTranslated != null && memoTranslated.equals(translated)))
+                && (memoOriginal == original
+                || (memoOriginal != null && memoOriginal.equals(original)))) {
+            return cached;
         }
         String styled = TranslationTextStyling.applyTranslatedStyle(original, translated, color);
-        STYLE_MEMO[styleMemoCursor++ & (STYLE_MEMO_SIZE - 1)] =
-                new StyledText(original, translated, color, styled);
+        memoOriginal = original;
+        memoTranslated = translated;
+        memoColor = color;
+        memoStyled = styled;
         return styled;
     }
 
@@ -143,8 +182,7 @@ public final class RenderedTextBridge {
         }
         // Same fast path as the OrderedText overload: building a component is real work, and the
         // hook runs whether or not translation can answer.
-        if (TranslationRenderContext.isTextInput()
-                || !FabricTranslationRuntimeBase.renderTranslationEnabled()) {
+        if (bypassRenderTranslation()) {
             return text;
         }
         // A component with no children renders exactly its own literal under its own style, so the
@@ -170,8 +208,7 @@ public final class RenderedTextBridge {
         // flattening below is what made it expensive — three allocations and a full codepoint walk
         // per call, before anything was known about the result. With translation switched off, or
         // while the local player is typing, the only correct answer is the line itself.
-        if (TranslationRenderContext.isTextInput()
-                || !FabricTranslationRuntimeBase.renderTranslationEnabled()) {
+        if (bypassRenderTranslation()) {
             return text;
         }
         Flattened flattened = FLATTENED.get();
@@ -185,15 +222,15 @@ public final class RenderedTextBridge {
             original.appendCodePoint(codePoint);
             return true;
         });
+        String visible = original.toString();
         if (flattened.multiStyle) {
             // Flattening would keep only the first segment's colour and drop bold, italic and
             // click events from later segments, so rebuild the line run by run instead.
-            OrderedText rebuilt = rebuildStyledRuns(text);
+            OrderedText rebuilt = rebuildStyledRuns(text, visible);
             if (rebuilt != null) {
                 return rebuilt;
             }
         }
-        String visible = original.toString();
         String translated = translateRaw(visible);
         if (visible.equals(translated)) {
             return text;
@@ -202,11 +239,24 @@ public final class RenderedTextBridge {
         return replacement.asOrderedText();
     }
 
-    /** Rebuilds a multi-style ordered line as one child per style run, or null when it cannot. */
-    private static OrderedText rebuildStyledRuns(OrderedText text) {
-        List<String> texts = new ArrayList<String>();
-        List<Object> styleKeys = new ArrayList<Object>();
-        List<Style> styles = new ArrayList<Style>();
+    /**
+     * Rebuilds a multi-style ordered line as a translated line, or null when it cannot be rebuilt.
+     *
+     * <p>The runs are still walked — they are what tells the bridge whether the line carries more
+     * than one style — but the line is translated <em>once</em>. A run boundary is a style change,
+     * not a sentence boundary: translating each run separately sent two or three requests for one
+     * chat line ("[admin]" and "hello world" are two runs of one sentence), each half was translated
+     * without the other and often came back unchanged, and every one of them spent a slot of the
+     * interactive submission budget. The rebuilt line therefore carries the style of the run its
+     * visible text starts with; per-segment styles cannot be mapped onto a translation that no
+     * longer aligns segment by segment.
+     */
+    private static OrderedText rebuildStyledRuns(OrderedText text, String visible) {
+        RunScratch scratch = RUNS.get();
+        scratch.reset();
+        List<String> texts = scratch.texts;
+        List<Object> styleKeys = scratch.styleKeys;
+        List<Style> styles = scratch.styles;
         StringBuilder current = new StringBuilder();
         AtomicReference<Style> currentStyle = new AtomicReference<Style>();
         text.accept((index, style, codePoint) -> {
@@ -228,11 +278,12 @@ public final class RenderedTextBridge {
         }
         TranslationTextColor color = TranslationStyleRuns.resolveTranslatedColor(
                 sourceHasColor, FabricTranslationRuntime.translatedTextColor());
-        MutableText rebuilt = Text.literal("");
-        for (TranslationStyleRuns.Run run : runs) {
-            rebuilt.append(Text.literal(translateRaw(run.text()))
-                    .setStyle(applyColor(styles.get(run.sourceIndex()), color)));
+        String translated = translateRaw(visible);
+        if (visible.equals(translated)) {
+            return null;
         }
+        MutableText rebuilt = Text.literal(translated)
+                .setStyle(applyColor(styles.get(runs.get(0).sourceIndex()), color));
         return rebuilt.asOrderedText();
     }
 
@@ -253,35 +304,33 @@ public final class RenderedTextBridge {
     }
 
     public static StringVisitable translate(StringVisitable text) {
-        if (text == null) {
-            return null;
-        }
-        if (TranslationRenderContext.isTextInput()
-                || !FabricTranslationRuntimeBase.renderTranslationEnabled()) {
+        if (text == null || bypassRenderTranslation()) {
             return text;
         }
         if (text instanceof Text) {
             return translate((Text) text);
         }
-        String original = text.getString();
-        String translated = translateRaw(original);
-        if (original.equals(translated)) {
-            return text;
-        }
-        return StringVisitable.styled(translated, translatedStyle(Style.EMPTY));
+        // Only the two styled paths translate. A plain StringVisitable carries no per-segment
+        // styles, and rebuilding it as one styled literal made the measured width disagree with the
+        // drawn glyphs — bold and italic change the width, and the separated parts and line breaks
+        // were dropped — which shifted every wrap point that used this measurement.
+        return text;
     }
 
-    /** Translates item names and lore before DrawContext creates tooltip components. */
+    /**
+     * Draw-side tooltip hook.
+     *
+     * <p>No mark is written here: the list this returns is what the game draws, and the mark used to
+     * be pushed out of its eight slots by the next hover, so the following frame translated an
+     * already translated tooltip a second time. The producer ({@link #translateItemTooltip}) owns the
+     * mark, because it is the only place that knows the list it returns is a translation.
+     */
     public static List<Text> translateTooltip(List<Text> lines) {
         if (HANDLED_TOOLTIPS.contains(lines)) {
             // Produced by translateItemTooltip a moment ago; the answer is already in this list.
             return lines;
         }
-        List<Text> result = translateTooltip(lines, false);
-        if (result != lines) {
-            HANDLED_TOOLTIPS.add(result);
-        }
-        return result;
+        return translateTooltip(lines, false);
     }
 
     /** Canonical Screen.getTooltipFromItem hook for inventories and containers. */
@@ -291,7 +340,14 @@ public final class RenderedTextBridge {
             // turned off and bypassed the redaction every other log path goes through.
             DebugLog.global().log("item-tooltip", "producer", "reached");
         }
-        return translateTooltip(lines, true);
+        if (HANDLED_TOOLTIPS.contains(lines)) {
+            return lines;
+        }
+        List<Text> result = translateTooltip(lines, true);
+        if (result != lines) {
+            HANDLED_TOOLTIPS.add(result);
+        }
+        return result;
     }
 
     private static List<Text> translateTooltip(List<Text> lines, boolean itemTooltip) {
@@ -343,10 +399,13 @@ public final class RenderedTextBridge {
      * already renders with the root's own style, so the caller keeps the ordinary path.
      */
     private static Text translateStyledSiblings(Text text) {
-        List<String> texts = new ArrayList<String>();
-        List<Object> styleKeys = new ArrayList<Object>();
-        List<Style> styles = new ArrayList<Style>();
-        collectStyledLeaves(text, texts, styleKeys, styles);
+        RunScratch scratch = RUNS.get();
+        scratch.reset();
+        List<String> texts = scratch.texts;
+        List<Object> styleKeys = scratch.styleKeys;
+        List<Style> styles = scratch.styles;
+        String visible = text.getString();
+        collectStyledLeaves(text, visible, texts, styleKeys, styles);
         if (texts.isEmpty()) {
             return null;
         }
@@ -360,12 +419,16 @@ public final class RenderedTextBridge {
         }
         TranslationTextColor color = TranslationStyleRuns.resolveTranslatedColor(
                 sourceHasColor, FabricTranslationRuntime.translatedTextColor());
-        MutableText rebuilt = Text.literal("");
-        rebuilt.setStyle(text.getStyle());
-        for (TranslationStyleRuns.Run run : runs) {
-            rebuilt.append(Text.literal(translateRaw(run.text()))
-                    .setStyle(applyColor(styles.get(run.sourceIndex()), color)));
+        // One translation for the whole line, exactly as the ordered path above: a sibling boundary
+        // is a style change, so translating each sibling sent one request per segment — none of
+        // them carrying enough context to be translated well — and the rebuilt line keeps the style
+        // of the segment its visible text starts with.
+        String translated = translateRaw(visible);
+        if (visible.equals(translated)) {
+            return null;
         }
+        MutableText rebuilt = Text.literal(translated)
+                .setStyle(applyColor(styles.get(runs.get(0).sourceIndex()), color));
         return rebuilt;
     }
 
@@ -380,15 +443,23 @@ public final class RenderedTextBridge {
      */
     private static void collectStyledLeaves(
             Text node,
+            String full,
             List<String> texts,
             List<Object> styleKeys,
             List<Style> styles
     ) {
         List<Text> children = node.getSiblings();
-        String full = node.getString();
         int childLength = 0;
-        for (Text child : children) {
-            childLength += child.getString().length();
+        String[] childTexts = null;
+        if (!children.isEmpty()) {
+            // Each child's text is built once and reused by the recursive call: asking every node
+            // for its own string and then asking each child again rebuilt the whole subtree twice
+            // per level, which is quadratic in the depth of a server-built chat line.
+            childTexts = new String[children.size()];
+            for (int index = 0; index < children.size(); index++) {
+                childTexts[index] = children.get(index).getString();
+                childLength += childTexts[index].length();
+            }
         }
         // Text a node renders before its children keeps that node's own style.
         if (full.length() > childLength) {
@@ -399,8 +470,11 @@ public final class RenderedTextBridge {
                 styles.add(node.getStyle());
             }
         }
-        for (Text child : children) {
-            collectStyledLeaves(child, texts, styleKeys, styles);
+        if (childTexts == null) {
+            return;
+        }
+        for (int index = 0; index < children.size(); index++) {
+            collectStyledLeaves(children.get(index), childTexts[index], texts, styleKeys, styles);
         }
     }
 

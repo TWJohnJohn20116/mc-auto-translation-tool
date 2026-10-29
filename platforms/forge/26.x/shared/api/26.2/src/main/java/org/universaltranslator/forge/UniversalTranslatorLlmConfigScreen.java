@@ -22,7 +22,7 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
     /** Y of the first catalog row; the picker title sits above it. */
     private static final int LIST_TOP = ModelListPaging.LIST_TOP;
 
-    private final UniversalTranslatorConfigScreen parent;
+    private final UniversalTranslatorConfigScreenBase parent;
     private String initialEndpoint;
     private String initialModel;
     private String initialApiKey = "";
@@ -33,13 +33,15 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
     private volatile String status = "";
     private volatile boolean statusIsError;
     private volatile List<String> fetchedModels = Collections.emptyList();
+    /** Catalog handed over by the worker; applied on the render thread by applyPendingModelList. */
+    private volatile List<String> pendingModelList;
     private volatile boolean fetching;
     /** Written by the catalog worker, read and written by the render thread. */
     private volatile boolean modelListOpen;
     private volatile int modelPage;
 
     UniversalTranslatorLlmConfigScreen(
-            UniversalTranslatorConfigScreen parent,
+            UniversalTranslatorConfigScreenBase parent,
             String endpoint,
             String model,
             boolean hasStoredKey
@@ -101,6 +103,7 @@ int formWidth = Math.max(180, Math.min(360, this.width - 20));
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
+        applyPendingModelList();
         int formWidth = Math.max(180, Math.min(360, this.width - 20));
         int left = (this.width - formWidth) / 2;
         int top = Math.max(42, (this.height - 174) / 2);
@@ -145,10 +148,18 @@ int formWidth = Math.max(180, Math.min(360, this.width - 20));
                 catalog = OpenAiModelCatalog.fetchCatalog(endpointValue, keyValue);
             } catch (Exception error) {
                 failure = describe(error);
+            } finally {
+                // Released in a finally: an Error is not an Exception, and the flag left set made
+                // the fetch button silently do nothing for the rest of the screen's life.
+                fetching = false;
             }
-            fetching = false;
             if (!failure.isEmpty()) {
                 setStatus(tr("screen.universal_translator.llm.fetch_failed", failure), true);
+                return;
+            }
+            if (catalog == null) {
+                // fetchCatalog answers null for a body it cannot parse instead of throwing.
+                setStatus(tr("screen.universal_translator.engine.test_not_json"), true);
                 return;
             }
             // A login page or a proxy error page also parses as "no models". The engine tab's
@@ -162,13 +173,52 @@ int formWidth = Math.max(180, Math.min(360, this.width - 20));
                 setStatus(tr("screen.universal_translator.llm.fetch_empty"), true);
                 return;
             }
-            fetchedModels = models;
-            modelPage = 0;
-            modelListOpen = true;
+            // Published for the render thread to apply in one step; see applyPendingModelList().
+            pendingModelList = models;
             setStatus("", false);
         }, "universal-translator-model-list");
         worker.setDaemon(true);
         worker.start();
+    }
+
+    /**
+     * Applies a catalog the worker just published, on the render thread.
+     *
+     * <p>The worker used to write the list, the page index and the overlay flag itself. Those are
+     * three separate writes to state the render thread reads as a whole, so a frame could pair the
+     * new list with the previous page number. Applying it here also lets the keyboard focus be
+     * dropped before the overlay covers the fields.
+     */
+    private void applyPendingModelList() {
+        List<String> pending = pendingModelList;
+        if (pending == null) {
+            return;
+        }
+        pendingModelList = null;
+        fetchedModels = pending;
+        modelPage = 0;
+        modelListOpen = true;
+        releaseFieldFocusForModelList();
+    }
+
+    /**
+     * Drops keyboard focus from the form fields before the picker covers them.
+     *
+     * <p>The picker is a painted rectangle, not a screen, so nothing intercepts typing while it is
+     * open: whatever still holds focus collects the characters typed over the overlay, and Save then
+     * writes them into the endpoint, the model or the API key. Focus is not restored afterwards on
+     * purpose — the player clicks the field they want.
+     */
+    private void releaseFieldFocusForModelList() {
+        if (endpoint != null) {
+            endpoint.setFocused(false);
+        }
+        if (model != null) {
+            model.setFocused(false);
+        }
+        if (apiKey != null) {
+            apiKey.setFocused(false);
+        }
     }
 
     private void setStatus(String message, boolean error) {
@@ -183,22 +233,25 @@ int formWidth = Math.max(180, Math.min(360, this.width - 20));
 
     /** Draws the fetched catalog over the form so a served model can be picked instead of typed. */
     private void renderModelList(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
+        // One read of the volatile list for the whole frame: the worker can replace it between the
+        // loop bound and the get(), and the mismatch threw out of the render loop.
+        List<String> models = fetchedModels;
         graphics.fill(0, 0, this.width, this.height, 0xFF101010);
         graphics.centeredText(this.font,
-                Component.translatable("screen.universal_translator.llm.select_model", fetchedModels.size()),
+                Component.translatable("screen.universal_translator.llm.select_model", models.size()),
                 this.width / 2, 20, 0xFFFFFF);
         int rows = rowsPerPage();
         // A resize lowers the row count while the picker stays open, so the page index can point
         // past the last page; clamping here is what keeps the overlay and its page counter honest.
-        modelPage = ModelListPaging.clampPage(modelPage, fetchedModels.size(), rows);
+        modelPage = ModelListPaging.clampPage(modelPage, models.size(), rows);
         int first = modelPage * rows;
-        for (int row = 0; row < rows && first + row < fetchedModels.size(); row++) {
+        for (int row = 0; row < rows && first + row < models.size(); row++) {
             int rowY = LIST_TOP + row * LIST_ROW_HEIGHT;
             boolean hovered = mouseY >= rowY && mouseY < rowY + LIST_ROW_HEIGHT;
-            graphics.text(this.font, Component.literal((hovered ? "> " : "  ") + fetchedModels.get(first + row)),
+            graphics.text(this.font, Component.literal((hovered ? "> " : "  ") + models.get(first + row)),
                     24, rowY, hovered ? 0xFFFFD060 : 0xFFE0E0E0);
         }
-        int pages = pageCount(rows);
+        int pages = pageCount(models, rows);
         graphics.centeredText(this.font, Component.literal("< " + (modelPage + 1) + "/" + pages + " >"),
                 this.width / 2, this.height - 46, 0xFFFFFF);
         graphics.centeredText(this.font,
@@ -219,8 +272,9 @@ int formWidth = Math.max(180, Math.min(360, this.width - 20));
     }
 
     private void handleModelListClick(double mouseX, double mouseY) {
+        List<String> models = fetchedModels;
         if (mouseY >= this.height - 54 && mouseY < this.height - 38) {
-            int pages = pageCount(rowsPerPage());
+            int pages = pageCount(models, rowsPerPage());
             if (pages > 1) {
                 modelPage = mouseX < this.width / 2.0
                         ? (modelPage + pages - 1) % pages : (modelPage + 1) % pages;
@@ -235,13 +289,15 @@ int formWidth = Math.max(180, Math.min(360, this.width - 20));
             return;
         }
         int rows = rowsPerPage();
-        modelPage = ModelListPaging.clampPage(modelPage, fetchedModels.size(), rows);
+        modelPage = ModelListPaging.clampPage(modelPage, models.size(), rows);
         int row = ModelListPaging.rowAt(mouseY);
         int index = ModelListPaging.index(modelPage, rows, row);
-        if (row >= rows || index >= fetchedModels.size()) {
+        // row < 0 as well: rowAt answers a negative value above the list top, and a negative index
+        // would pass the size check only because index(-1) happens to land below it today.
+        if (row < 0 || row >= rows || index >= models.size()) {
             return;
         }
-        model.setValue(fetchedModels.get(index));
+        model.setValue(models.get(index));
         modelListOpen = false;
         setStatus("", false);
     }
@@ -250,8 +306,23 @@ int formWidth = Math.max(180, Math.min(360, this.width - 20));
         return ModelListPaging.rows(this.height);
     }
 
-    private int pageCount(int rows) {
-        return ModelListPaging.pageCount(fetchedModels.size(), rows);
+    private int pageCount(List<String> models, int rows) {
+        return ModelListPaging.pageCount(models.size(), rows);
+    }
+
+    /**
+     * ESC closes the picker before the screen.
+     *
+     * <p>Without this override the overlay had no keyboard exit and ESC dropped the whole form,
+     * including an endpoint, a model and a key the player had just typed.
+     */
+    @Override
+    public boolean shouldCloseOnEsc() {
+        if (modelListOpen) {
+            modelListOpen = false;
+            return false;
+        }
+        return super.shouldCloseOnEsc();
     }
 
     @Override

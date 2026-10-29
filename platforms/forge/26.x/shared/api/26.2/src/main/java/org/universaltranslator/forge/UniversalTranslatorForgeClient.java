@@ -45,10 +45,14 @@ public final class UniversalTranslatorForgeClient {
     }
 
     private static void loadConfig() {
+        // Registered before the configuration is loaded on purpose: the title-screen entry performs
+        // its own configuration read when clicked, so it must not depend on this initialization
+        // succeeding. Registering it after initialize() left the entry a dead button for the whole
+        // session whenever the load threw.
+        ForgeTranslationRuntime.setTitleSettingsOpener(UniversalTranslatorForgeClient::openFromTitle);
         try {
             ForgeConfig config = ForgeConfig.load(FMLPaths.CONFIGDIR.get());
             ForgeTranslationRuntime.initialize(config);
-            ForgeTranslationRuntime.setTitleSettingsOpener(UniversalTranslatorForgeClient::openFromTitle);
             UniversalTranslatorForgeMod.LOGGER.info(
                     "MC Auto Translation Tool initialized; enabled={}", config.enabled);
         } catch (Exception exception) {

@@ -11,6 +11,7 @@ import org.universaltranslator.core.TranslationCache;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationProviderStatus;
 import org.universaltranslator.core.TranslationDiagnosticsSnapshot;
+import org.universaltranslator.core.TranslationStatusLocalizer;
 import org.universaltranslator.core.TranslationStore;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.RecentUserText;
@@ -54,6 +55,16 @@ public final class ForgeTranslationRuntime {
     private static volatile long diagnosticsSnapshotAt;
     private static volatile List<String> protectedPlayerNames = Collections.emptyList();
     private static volatile long protectedPlayerNamesExpireAt;
+    /**
+     * Shared fallback published while no configuration is loaded.
+     *
+     * <p>The HUD reads {@link #homeSettings()} several times per frame, and {@code cachedHome} is
+     * null not only before the first {@code initialize}: a failed initialization and the state
+     * after {@link #shutdown()} are null too. Allocating a fresh object per read there made a
+     * broken configuration cost one allocation per HUD read, every frame.
+     */
+    private static final HomeQuickSettingsState DISABLED_HOME =
+            new HomeQuickSettingsState(false, true, TargetLanguage.SIMPLIFIED_CHINESE);
 
     // ---------------------------------------------------------------------------------------------
     // Short-window memo in front of the render lookup (P2-075)
@@ -74,7 +85,16 @@ public final class ForgeTranslationRuntime {
     /** Guards the player-name refresh so a burst of render-thread lookups rebuilds once per window. */
     private static final AtomicBoolean playerNameRefresh = new AtomicBoolean();
     private static final RecentUserText RECENT_USER_TEXT = new RecentUserText();
-    private static CompletableFuture<Void> outgoingTail = CompletableFuture.completedFuture(null);
+    private static volatile CompletableFuture<Void> outgoingTail = CompletableFuture.completedFuture(null);
+    /**
+     * Guards {@link #outgoingTail} only.
+     *
+     * <p>{@code translateOutgoing} used to carry the class monitor, which {@code initialize} holds
+     * for a whole provider build: pressing Enter while a provider was being replaced waited behind
+     * that build for no reason, because the send path only reads the volatile session/config
+     * snapshots and needs mutual exclusion for the ordering tail, not for the runtime.
+     */
+    private static final Object OUTGOING_LOCK = new Object();
     // A single daemon thread serializes the teardown of replaced sessions: at most one reaper
     // thread exists no matter how often the configuration is switched, and two replaced sessions
     // can never tear down concurrently. Threads are created lazily, so a client that never switches
@@ -304,11 +324,27 @@ public final class ForgeTranslationRuntime {
         if (!playerNameRefresh.compareAndSet(false, true)) {
             return snapshot;
         }
+        // Refreshed on the shared reaper instead of the calling thread: this runs on the render
+        // thread for every new chat line, and one refresh walks the whole tab list and allocates
+        // three containers. Readers keep the published snapshot until the new one replaces it.
         try {
-            return refreshPlayerNames(now);
-        } finally {
+            SESSION_REAPER.execute(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        refreshPlayerNames(System.currentTimeMillis());
+                    } catch (Throwable ignored) {
+                        // The previous snapshot stays published and the next window retries.
+                    } finally {
+                        playerNameRefresh.set(false);
+                    }
+                }
+            });
+        } catch (Throwable rejected) {
+            // Only reachable once the executor is shut down, which this class never does.
             playerNameRefresh.set(false);
         }
+        return snapshot;
     }
 
     private static List<String> refreshPlayerNames(long now) {
@@ -327,13 +363,12 @@ public final class ForgeTranslationRuntime {
                 addProtectedLiteral(names, client.getCurrentServer().ip);
             }
             if (protectPlayerNames) {
-                client.getConnection().getOnlinePlayers().forEach(entry -> {
-                    if (names.size() >= MAX_PROTECTED_PLAYER_NAMES) {
-                        return;
-                    }
-                    String name = entry.getProfile().getName();
-                    addProtectedLiteral(names, name);
-                });
+                // limit() stops the source after the bounded number of names, so a 500-player tab
+                // list is no longer walked in full after the cap is reached; the cap itself lives
+                // only here instead of being repeated inside addProtectedLiteral.
+                client.getConnection().getOnlinePlayers().stream()
+                        .limit(MAX_PROTECTED_PLAYER_NAMES)
+                        .forEach(entry -> addProtectedLiteral(names, entry.getProfile().getName()));
             }
             protectedPlayerNames = Collections.unmodifiableList(new ArrayList<String>(names));
         }
@@ -346,8 +381,7 @@ public final class ForgeTranslationRuntime {
             return;
         }
         String normalized = value.trim();
-        if (!normalized.isEmpty() && normalized.length() <= 255
-                && values.size() < MAX_PROTECTED_PLAYER_NAMES && !values.contains(normalized)) {
+        if (!normalized.isEmpty() && normalized.length() <= 255 && !values.contains(normalized)) {
             values.add(normalized);
         }
     }
@@ -359,7 +393,9 @@ public final class ForgeTranslationRuntime {
                 ? ((TranslationProviderStatus) provider).status() : "";
         // The offline provider already has the specific startup diagnostic. Prefer it over the
         // session's generic wrapper so one failure cannot alternate between two chat messages.
-        if (providerStatus.startsWith("离线翻译失败")) {
+        // isFailure() rather than one literal prefix: the wording of the provider status is not a
+        // contract, and a status that stopped matching here was reported as a healthy one.
+        if (TranslationStatusLocalizer.isFailure(providerStatus)) {
             return providerStatus;
         }
         if (active != null && !active.lastFailureStatus().isEmpty()) {
@@ -383,8 +419,11 @@ public final class ForgeTranslationRuntime {
         TranslationProvider provider = activeProvider;
         TranslationDiagnosticsSnapshot snapshot;
         if (config == null) {
+            // Empty status, not a hardcoded Chinese placeholder: the screen renders its own
+            // "settings unavailable" key, and this string reached English and Japanese users
+            // untranslated because it never went through a lang file.
             snapshot = new TranslationDiagnosticsSnapshot(
-                    false, "", "", "", null, false, false, -1L, -1L, "尚未载入设置");
+                    false, "", "", "", null, false, false, -1L, -1L, "");
         } else {
             Path modelFile = config.offlineDirectory.resolve(config.offlineModel.modelFile());
             snapshot = new TranslationDiagnosticsSnapshot(
@@ -428,6 +467,20 @@ public final class ForgeTranslationRuntime {
         return config == null ? TranslationTextColor.ORIGINAL : config.translatedTextColor;
     }
 
+    /**
+     * True when a render-time lookup can produce a translation at all right now.
+     *
+     * <p>A coarse, allocation-free answer for the render hooks, which run for every drawn line
+     * whether translation is enabled or not: flattening a line into a string costs several
+     * allocations per call, and with translation switched off the only correct answer is the line
+     * itself. This is a fast path only; the per-kind and per-screen decisions stay in
+     * {@link #translateForRender}.
+     */
+    static boolean renderTranslationEnabled() {
+        ForgeConfig config = activeConfig;
+        return session != null && config != null && config.enabled;
+    }
+
     static void protectOutgoingMessage(String message) {
         RECENT_USER_TEXT.remember(message);
     }
@@ -439,7 +492,7 @@ public final class ForgeTranslationRuntime {
     }
 
     /** Serializes outgoing requests so rapidly sent chat lines keep their original order. */
-    static synchronized CompletableFuture<TranslationResult> translateOutgoing(String message) {
+    static CompletableFuture<TranslationResult> translateOutgoing(String message) {
         final RenderTranslationSession active = session;
         final ForgeConfig config = activeConfig;
         if (active == null || config == null || !shouldTranslateOutgoing(message)) {
@@ -451,11 +504,13 @@ public final class ForgeTranslationRuntime {
         CompletableFuture<TranslationResult> translated = active.translateInteractive(
                 message, TextKind.CHAT, config.outgoingTargetLanguage, false,
                 config.streamOutgoing);
-        CompletableFuture<TranslationResult> next = outgoingTail
-                .handle((ignored, failure) -> null)
-                .thenCompose(ignored -> translated);
-        outgoingTail = next.handle((ignored, failure) -> null);
-        return next;
+        synchronized (OUTGOING_LOCK) {
+            CompletableFuture<TranslationResult> next = outgoingTail
+                    .handle((ignored, failure) -> null)
+                    .thenCompose(ignored -> translated);
+            outgoingTail = next.handle((ignored, failure) -> null);
+            return next;
+        }
     }
 
     /**
@@ -535,10 +590,8 @@ public final class ForgeTranslationRuntime {
     }
 
     private static HomeQuickSettingsState homeSettingsState(ForgeConfig config) {
-        return config == null
-                ? new HomeQuickSettingsState(false, true, TargetLanguage.SIMPLIFIED_CHINESE)
-                : new HomeQuickSettingsState(
-                        config.enabled, config.translateVanilla, config.targetLanguage,
-                        config.hudIndicatorSettings(), config.provider);
+        return config == null ? DISABLED_HOME : new HomeQuickSettingsState(
+                config.enabled, config.translateVanilla, config.targetLanguage,
+                config.hudIndicatorSettings(), config.provider);
     }
 }

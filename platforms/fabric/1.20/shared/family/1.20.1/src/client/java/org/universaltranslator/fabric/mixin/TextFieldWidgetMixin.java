@@ -13,7 +13,7 @@ import org.universaltranslator.fabric.TranslationRenderContext;
 abstract class TextFieldWidgetMixin {
     @Inject(
             method = "renderButton(Lnet/minecraft/client/gui/DrawContext;IIF)V",
-            at = @At("HEAD"))
+            at = @At("HEAD"), require = 0)
     private void universalTranslator$pushTextInput(
             DrawContext context, int mouseX, int mouseY, float delta, CallbackInfo callback) {
         TranslationRenderContext.pushTextInput();
@@ -21,7 +21,7 @@ abstract class TextFieldWidgetMixin {
 
     @Inject(
             method = "renderButton(Lnet/minecraft/client/gui/DrawContext;IIF)V",
-            at = @At("RETURN"))
+            at = @At("RETURN"), require = 0)
     private void universalTranslator$popTextInput(
             DrawContext context, int mouseX, int mouseY, float delta, CallbackInfo callback) {
         TranslationRenderContext.popTextInput();

@@ -26,21 +26,86 @@ public final class RenderedTextBridge {
     private static volatile IReorderingProcessor orderMemoOutput;
     private static volatile int orderMemoEpoch;
 
+    /**
+     * Recently styled lines, cycling through a fixed ring.
+     *
+     * <p>{@code TranslationTextStyling.applyTranslatedStyle} scans the whole original line for a
+     * legacy colour code and, once the player picks a translated colour, rebuilds the translated
+     * line character by character into a fresh {@code String}. The same line is drawn once and
+     * measured two to four times per frame, so that work used to be repeated for every call even
+     * though nothing about the input had changed.
+     *
+     * <p>The key is everything the styling reads — original text, translated text and the
+     * configured colour — so a hit is by construction the value a fresh call would return.
+     */
+    private static final int STYLE_MEMO_SIZE = 8;
+    private static final StyledText[] STYLE_MEMO = new StyledText[STYLE_MEMO_SIZE];
+    private static int styleMemoCursor;
+
+    /** One memo entry: the inputs of a styling call and the string it produced. */
+    private static final class StyledText {
+        private final String original;
+        private final String translated;
+        private final TranslationTextColor color;
+        private final String styled;
+
+        private StyledText(String original, String translated, TranslationTextColor color,
+                String styled) {
+            this.original = original;
+            this.translated = translated;
+            this.color = color;
+            this.styled = styled;
+        }
+    }
+
     private RenderedTextBridge() {
     }
 
     public static String translate(String text) {
+        // Ask the cheap questions first: this hook runs for every line of every frame, and the
+        // styling below is what made it expensive.
+        if (TranslationRenderContext.isTextInput()
+                || !ForgeTranslationRuntime.renderTranslationEnabled()) {
+            return text;
+        }
+        // GuiGraphics.drawCenteredString measures through Font.width and then draws through
+        // GuiGraphics.drawString, and both are hooked, so the second and third call receive the
+        // line this method just returned.
+        if (TranslationRenderContext.isTranslatedResult(text)) {
+            return text;
+        }
         String translated = translateRaw(text);
         if (text == null || text.equals(translated)) {
             return text;
         }
-        return TranslationTextStyling.applyTranslatedStyle(
-                text, translated, ForgeTranslationRuntime.translatedTextColor());
+        TranslationRenderContext.rememberTranslation(translated);
+        return styledText(text, translated);
+    }
+
+    /** Styles one already translated line, reusing the answer when the same line is redrawn. */
+    private static String styledText(String original, String translated) {
+        TranslationTextColor color = ForgeTranslationRuntime.translatedTextColor();
+        for (int index = 0; index < STYLE_MEMO_SIZE; index++) {
+            StyledText entry = STYLE_MEMO[index];
+            if (entry != null && entry.color == color
+                    && (entry.translated == translated || entry.translated.equals(translated))
+                    && (entry.original == original || entry.original.equals(original))) {
+                return entry.styled;
+            }
+        }
+        String styled = TranslationTextStyling.applyTranslatedStyle(original, translated, color);
+        STYLE_MEMO[styleMemoCursor++ & (STYLE_MEMO_SIZE - 1)] =
+                new StyledText(original, translated, color, styled);
+        return styled;
     }
 
     public static ITextComponent translate(ITextComponent text) {
         if (text == null) {
             return null;
+        }
+        if (TranslationRenderContext.isTextInput()
+                || !ForgeTranslationRuntime.renderTranslationEnabled()) {
+            return text;
         }
         // A component with no children renders exactly its own literal under its own style, so the
         // run walk below would collect a single run and decline to rebuild it every time. Skipping
@@ -60,6 +125,12 @@ public final class RenderedTextBridge {
     public static IReorderingProcessor translate(IReorderingProcessor text) {
         if (text == null) {
             return null;
+        }
+        // The flattening below costs three allocations and a full codepoint walk per call, before
+        // anything is known about the result; with translation off the answer is the line itself.
+        if (TranslationRenderContext.isTextInput()
+                || !ForgeTranslationRuntime.renderTranslationEnabled()) {
+            return text;
         }
         int epoch = ForgeTranslationRuntime.currentRenderEpoch();
         IReorderingProcessor memoised = orderMemoOutput;
@@ -156,6 +227,10 @@ public final class RenderedTextBridge {
     public static ITextProperties translate(ITextProperties text) {
         if (text == null) {
             return null;
+        }
+        if (TranslationRenderContext.isTextInput()
+                || !ForgeTranslationRuntime.renderTranslationEnabled()) {
+            return text;
         }
         if (text instanceof ITextComponent) {
             return translate((ITextComponent) text);

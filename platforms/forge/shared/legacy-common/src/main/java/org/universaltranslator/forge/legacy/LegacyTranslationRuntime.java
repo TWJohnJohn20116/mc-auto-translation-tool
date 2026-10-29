@@ -46,6 +46,15 @@ public final class LegacyTranslationRuntime {
     private static volatile RenderTranslationSession session;
     private static volatile LegacyConfig activeConfig;
     /**
+     * The snapshot the HUD draws when no configuration is loaded.
+     *
+     * <p>A shared instance, not a fresh object: shutdown() and a failed initialize() both leave
+     * {@code cachedHome} null, and the HUD then reads this several times per frame for as long as
+     * the state lasts.
+     */
+    private static final HomeQuickSettingsState DISABLED_SETTINGS =
+            new HomeQuickSettingsState(false, true, TargetLanguage.SIMPLIFIED_CHINESE);
+    /**
      * Settings snapshot the render hooks read.
      *
      * <p>Published by {@link #initialize} and read from the render thread, so it is a volatile field
@@ -217,7 +226,16 @@ public final class LegacyTranslationRuntime {
     static synchronized void shutdown() {
         RenderTranslationSession active = session;
         session = null;
+        // Clear the published settings too, not just the session. Leaving them behind made a failed
+        // initialize() permanent: session == null meant "nothing translates", while the HUD read
+        // cachedHome.enabled == true and kept painting the "translation is on" indicator,
+        // diagnostics() reported a provider that no longer exists, and the Home toggles handed the
+        // broken configuration back and then saved it over the file.
+        activeConfig = null;
         activeProvider = null;
+        cachedHome = null;
+        diagnosticsSnapshot = null;
+        diagnosticsSnapshotAt = 0L;
         protectedPlayerNames = Collections.emptyList();
         protectedPlayerNamesExpireAt = 0L;
         RECENT_USER_TEXT.clear();
@@ -225,6 +243,17 @@ public final class LegacyTranslationRuntime {
         if (active != null) {
             active.close();
         }
+    }
+
+    /**
+     * Refreshes the protected-name snapshot from the client tick instead of from a draw call.
+     *
+     * <p>The supplier below is asked for this on the render thread for every submitted string, so
+     * the refresh ran inside a frame: on a full server that walked the whole tab list between two
+     * draw calls.
+     */
+    static void refreshProtectedNames() {
+        playerNameSnapshot();
     }
 
     private static List<String> playerNameSnapshot() {
@@ -283,7 +312,7 @@ public final class LegacyTranslationRuntime {
         }
         String normalized = value.trim();
         if (!normalized.isEmpty() && normalized.length() <= 255
-                && values.size() < MAX_PROTECTED_PLAYER_NAMES && !values.contains(normalized)) {
+                && !values.contains(normalized)) {
             values.add(normalized);
         }
     }
@@ -489,7 +518,7 @@ public final class LegacyTranslationRuntime {
 
     private static HomeQuickSettingsState homeSettingsState(LegacyConfig config) {
         return config == null
-                ? new HomeQuickSettingsState(false, true, TargetLanguage.SIMPLIFIED_CHINESE)
+                ? DISABLED_SETTINGS
                 : new HomeQuickSettingsState(
                         config.enabled, config.translateVanilla, config.targetLanguage,
                         config.hudIndicatorSettings(), config.provider);

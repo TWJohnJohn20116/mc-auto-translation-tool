@@ -41,6 +41,6 @@
     ],
     "java": ">=25",
     "fabric-api": "*",
-    "universal_translator": "*"
+    "universal_translator": ">=${version}"
   }
 }

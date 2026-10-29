@@ -151,10 +151,25 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private volatile String testStatus = "";
     private volatile boolean testStatusIsError;
     private boolean testing;
-    private boolean fetchingModels;
+    private volatile boolean fetchingModels;
     private volatile List<String> fetchedModels = Collections.emptyList();
     private volatile boolean modelListOpen;
-    private int modelPage;
+    private volatile int modelPage;
+    /** Last computed layout, reused until the window size changes. */
+    private Layout cachedLayout;
+    private int cachedLayoutWidth = -1;
+    private int cachedLayoutHeight = -1;
+    /**
+     * The localized runtime status, refreshed at most five times a second.
+     *
+     * <p>Building it concatenates the provider status and the last failure, and localizing walks a
+     * dozen prefixes plus a language-table lookup before anything is drawn. The screen re-renders
+     * sixty times a second whether or not the status changed. {@code null} means "not computed yet".
+     */
+    private static final long STATUS_CACHE_MILLIS = 200L;
+    private String cachedLocalizedStatus;
+    private boolean cachedLocalizedStatusIsFailure;
+    private long cachedLocalizedStatusAt;
     private long animationStartedNanos = System.nanoTime();
     private SettingsSelectionList.Kind openSelection = SettingsSelectionList.Kind.NONE;
 
@@ -518,7 +533,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
             String prompt = customPrompt == null
                     ? original.customSystemPrompt()
                     : TranslationPrompt.fromEditorText(customPrompt.getValue());
-            FabricConfig updated = original.withPromptSettings(quality, prompt);
+            FabricConfig updated = writeBackBase().withPromptSettings(quality, prompt);
             if (updated.enabled) {
                 updated.validateProviderConfiguration();
             }
@@ -680,10 +695,27 @@ final class UniversalTranslatorConfigScreen extends Screen {
         return TranslationStatusLocalizer.isFailure(value);
     }
 
+    /** The runtime status as drawn: localized, with the colour decision, cached briefly. */
+    private String cachedLocalizedStatus() {
+        long now = System.currentTimeMillis();
+        String cached = cachedLocalizedStatus;
+        if (cached != null && now - cachedLocalizedStatusAt < STATUS_CACHE_MILLIS) {
+            return cached;
+        }
+        String raw = FabricTranslationRuntime.status();
+        String localized = TranslationStatusLocalizer.localize(raw,
+                UniversalTranslatorConfigScreen::tr);
+        cachedLocalizedStatus = localized;
+        cachedLocalizedStatusIsFailure = isFailureStatus(raw);
+        cachedLocalizedStatusAt = now;
+        return localized;
+    }
+
     private void saveAndApply() {
         boolean runtimeChanged = false;
+        FabricConfig base = writeBackBase();
         try {
-            FabricConfig updated = original.withSettings(
+            FabricConfig updated = base.withSettings(
                     enabled,
                     translateChat,
                     translateOther,
@@ -730,13 +762,26 @@ final class UniversalTranslatorConfigScreen extends Screen {
         } catch (Exception exception) {
             if (runtimeChanged) {
                 try {
-                    FabricTranslationRuntime.initialize(original);
+                    FabricTranslationRuntime.initialize(base);
                 } catch (Exception restoreFailure) {
                     exception.addSuppressed(restoreFailure);
                 }
             }
             status = tr("status.universal_translator.save_failed", exception.getMessage());
         }
+    }
+
+    /**
+     * The configuration the screen's edits are applied on top of.
+     *
+     * <p>{@code original} is the snapshot taken when the screen opened; the runtime's live
+     * configuration is what it holds now. Applying edits to the snapshot discarded anything changed
+     * in between: pressing F8 while the screen is open toggles {@code enabled} through the runtime
+     * and saves it, and the next Save wrote the value the screen was opened with back over it.
+     */
+    private FabricConfig writeBackBase() {
+        FabricConfig live = FabricTranslationRuntime.diagnosticsConfig();
+        return live == null ? original : live;
     }
 
     @Override
@@ -780,9 +825,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         }
         graphics.centeredText(this.font, this.title, this.width / 2, 16,
                 animatedUi ? SettingsUiAnimation.pulseColor(now) : 0xFFFFFFFF);
-        String rawRuntimeStatus = FabricTranslationRuntime.status();
-        String runtimeStatus = TranslationStatusLocalizer.localize(rawRuntimeStatus,
-                UniversalTranslatorConfigScreen::tr);
+        String runtimeStatus = cachedLocalizedStatus();
         int belowSave = layout.saveY + 24;
         int messageY = belowSave <= this.height - 10 ? belowSave : SettingsScreenLayout.COMPACT_STATUS_Y;
         if (!status.isEmpty()) {
@@ -794,7 +837,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         } else if (!runtimeStatus.isEmpty()) {
             graphics.centeredText(this.font, Component.literal(runtimeStatus),
                     this.width / 2, messageY,
-                    isFailureStatus(rawRuntimeStatus) ? 0xFFFF5555 : 0xFF55FF55);
+                    cachedLocalizedStatusIsFailure ? 0xFFFF5555 : 0xFF55FF55);
         } else {
             if (activeTab == Tab.OUTGOING) {
                 graphics.centeredText(this.font, Component.translatable("screen.universal_translator.info.outgoing_hint"),
@@ -1187,10 +1230,18 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
                 catalog = OpenAiModelCatalog.fetchCatalog(provider, endpointValue, keyValue);
             } catch (Exception error) {
                 failure = describe(error);
+            } finally {
+                // In a finally block so a LinkageError or OutOfMemoryError from the provider class
+                // cannot leave the guard stuck at true and silence both buttons for the session.
+                fetchingModels = false;
             }
-            fetchingModels = false;
             if (!failure.isEmpty()) {
                 setTestStatus(tr("screen.universal_translator.llm.fetch_failed", failure), true);
+                return;
+            }
+            if (catalog == null) {
+                // fetchCatalog answers null for a body it cannot parse; it does not throw.
+                setTestStatus(tr("screen.universal_translator.engine.test_not_json"), true);
                 return;
             }
             if (!catalog.jsonBody()) {
@@ -1323,21 +1374,25 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
 
     /** Draws the fetched catalog over the settings so a served model can be picked. */
     private void renderModelList(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
+        // Snapshot the list once: the worker replaces it wholesale, so reading size() and get()
+        // through the volatile field separately can mix two different lists and throw on the
+        // render thread.
+        List<String> models = fetchedModels;
         graphics.fill(0, 0, this.width, this.height, 0xFF101010);
         graphics.centeredText(this.font,
-                Component.translatable("screen.universal_translator.llm.select_model", fetchedModels.size()),
+                Component.translatable("screen.universal_translator.llm.select_model", models.size()),
                 this.width / 2, 20, 0xFFFFFFFF);
         int rows = modelRowsPerPage();
-        modelPage = ModelListPaging.clampPage(modelPage, fetchedModels.size(), rows);
+        modelPage = ModelListPaging.clampPage(modelPage, models.size(), rows);
         int first = modelPage * rows;
-        for (int row = 0; row < rows && first + row < fetchedModels.size(); row++) {
+        for (int row = 0; row < rows && first + row < models.size(); row++) {
             int rowY = MODEL_LIST_TOP + row * MODEL_ROW_HEIGHT;
             boolean hovered = mouseY >= rowY && mouseY < rowY + MODEL_ROW_HEIGHT;
             graphics.text(this.font,
-                    Component.literal((hovered ? "> " : "  ") + fetchedModels.get(first + row)),
+                    Component.literal((hovered ? "> " : "  ") + models.get(first + row)),
                     24, rowY, hovered ? 0xFFFFD060 : 0xFFE0E0E0);
         }
-        int pages = modelPageCount(rows);
+        int pages = ModelListPaging.pageCount(models.size(), rows);
         graphics.centeredText(this.font, Component.literal("< " + (modelPage + 1) + "/" + pages + " >"),
                 this.width / 2, this.height - 46, 0xFFFFFFFF);
         graphics.centeredText(this.font, Component.translatable("screen.universal_translator.llm.select_back"),
@@ -1347,8 +1402,11 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
     }
 
     private void handleModelListClick(double mouseX, double mouseY) {
+        List<String> models = fetchedModels;
+        int rows = modelRowsPerPage();
+        modelPage = ModelListPaging.clampPage(modelPage, models.size(), rows);
         if (mouseY >= this.height - 54 && mouseY < this.height - 38) {
-            int pages = modelPageCount(modelRowsPerPage());
+            int pages = ModelListPaging.pageCount(models.size(), rows);
             if (pages > 1) {
                 modelPage = mouseX < this.width / 2.0
                         ? (modelPage + pages - 1) % pages : (modelPage + 1) % pages;
@@ -1362,24 +1420,18 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         if (mouseY < MODEL_LIST_TOP) {
             return;
         }
-        int rows = modelRowsPerPage();
-        modelPage = ModelListPaging.clampPage(modelPage, fetchedModels.size(), rows);
         int row = (int) ((mouseY - MODEL_LIST_TOP) / MODEL_ROW_HEIGHT);
         int index = modelPage * rows + row;
-        if (row >= rows || index >= fetchedModels.size()) {
+        if (row >= rows || index >= models.size()) {
             return;
         }
-        llmModel = fetchedModels.get(index);
+        llmModel = models.get(index);
         modelListOpen = false;
         refreshLabels();
     }
 
     private int modelRowsPerPage() {
         return Math.max(3, (this.height - MODEL_LIST_TOP - MODEL_LIST_FOOTER_HEIGHT) / MODEL_ROW_HEIGHT);
-    }
-
-    private int modelPageCount(int rows) {
-        return Math.max(1, (fetchedModels.size() + rows - 1) / rows);
     }
 
     @Override
@@ -1446,10 +1498,20 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
     }
 
     private Layout layout() {
+        // The HUD tab asks for the layout a dozen times per frame, once per accessor, and the
+        // calculation allocates a fourteen-field object each time. Keyed by the only inputs it has.
+        Layout cached = cachedLayout;
+        if (cached != null && cachedLayoutWidth == width && cachedLayoutHeight == height) {
+            return cached;
+        }
         SettingsScreenLayout.Geometry geometry = SettingsScreenLayout.calculate(width, height, 5);
-        return new Layout(geometry.left(), geometry.right(), geometry.totalWidth(), geometry.buttonWidth(),
+        Layout created = new Layout(geometry.left(), geometry.right(), geometry.totalWidth(), geometry.buttonWidth(),
                 geometry.top(), geometry.rowStep(), geometry.targetY(), geometry.endpointY(), geometry.saveY(),
                 geometry.tabY(), geometry.tabWidth(), geometry.tabGap(), geometry.contentTop(), geometry.contentRowStep());
+        cachedLayout = created;
+        cachedLayoutWidth = width;
+        cachedLayoutHeight = height;
+        return created;
     }
 
     private static final class Layout {

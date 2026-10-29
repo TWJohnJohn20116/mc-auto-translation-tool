@@ -1,3 +1,12 @@
+// This tree expands ${resourcePackFormat} in pack.mcmeta unconditionally, so a version module that
+// forgets the coordinate used to fail inside processResources with "Cannot get property
+// 'forgeResourcePackFormat' on extra properties extension" pointing at this file instead of at the
+// version directory that is missing the line.
+if (!project.ext.has("forgeResourcePackFormat")) {
+    throw new GradleException(
+            "Missing forgeResourcePackFormat before applying Forge 26.x shared.gradle for ${project.path}")
+}
+
 def sourceLayers = [
         "26.1"  : "api/26.1-26.1.2",
         "26.1.1": "api/26.1-26.1.2",

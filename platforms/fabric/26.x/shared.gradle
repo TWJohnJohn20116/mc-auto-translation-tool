@@ -20,11 +20,22 @@ def sourceLayers = [
         "26.3"  : ["api/26.1-26.3", "api/26.2-26.3", "api/26.3"]
 ]
 
-def gameVersion = project.name - "platform-fabric-"
+// Groovy's String.minus removes the first occurrence of the substring, not a prefix, so deriving the
+// version from the project name this way only happens to work while each name contains
+// "platform-fabric-" exactly once. Strip the prefix explicitly and report both the project path and
+// the derived value when the lookup fails.
+def gameVersion = project.name.startsWith("platform-fabric-")
+        ? project.name.substring("platform-fabric-".length())
+        : project.name
 def layers = sourceLayers[gameVersion]
 if (layers == null) {
-    throw new GradleException("No Fabric 26.x source layer is registered for ${gameVersion}")
+    throw new GradleException(
+            "No Fabric 26.x source layer is registered for ${gameVersion} (project ${project.path})")
 }
+// Layer names that are mount flags only; 26.x has none today, but the list keeps a typo from being
+// mistaken for one. Gradle ignores a missing srcDir in silence, so an unchecked name would let a
+// project build with an entire API layer missing.
+def sharedFlagLayers = [] as Set
 
 def sharedRoot = rootProject.file("platforms/fabric/26.x/shared")
 
@@ -86,7 +97,14 @@ sourceSets {
         // shares; each tree keeps only its generation-specific FabricTranslationRuntime.
         java.srcDir rootProject.file("platforms/fabric/shared/base/src/main/java")
         layers.each { layer ->
-            java.srcDir new File(sharedRoot, "${layer}/src/client/java")
+            def layerDir = new File(sharedRoot, "${layer}/src/client/java")
+            if (layerDir.directory) {
+                java.srcDir layerDir
+            } else if (!sharedFlagLayers.contains(layer)) {
+                throw new GradleException(
+                        "Source layer '${layer}' of ${gameVersion} has no directory under ${sharedRoot}" +
+                                " and is not one of the shared flag layers ${sharedFlagLayers}")
+            }
         }
     }
 }

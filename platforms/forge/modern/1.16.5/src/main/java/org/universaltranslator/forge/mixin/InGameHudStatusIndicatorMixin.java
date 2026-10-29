@@ -111,8 +111,13 @@ abstract class InGameHudStatusIndicatorMixin {
             int previewCenterX = screenWidth / 2;
             int previewY = Math.max(0, screenHeight - 60);
             TranslationRenderContext.pushTextInput();
-            AbstractGui.drawCenteredString(pose, Minecraft.getInstance().font, outgoingPreview, previewCenterX, previewY, 0xFFFFFFFF);
-            TranslationRenderContext.popTextInput();
+            try {
+                AbstractGui.drawCenteredString(pose, Minecraft.getInstance().font, outgoingPreview, previewCenterX, previewY, 0xFFFFFFFF);
+            } finally {
+                // A throw inside the draw must not leave the depth latched: until the next tick's
+                // reset, every other line on screen would then be treated as local input.
+                TranslationRenderContext.popTextInput();
+            }
         }
 
         // The label is drawn in both states: the target language and the provider are settings, so
@@ -131,19 +136,28 @@ abstract class InGameHudStatusIndicatorMixin {
             }
             if (label != null && !label.isEmpty()) {
                 FontRenderer font = Minecraft.getInstance().font;
+                if (font == null) {
+                    // Minecraft drops its text renderer while resources reload (F3+T, a pack switch,
+                    // /reload) and the HUD still draws every frame: measuring or drawing through it
+                    // threw an NPE out of the render loop.
+                    return;
+                }
                 ITextComponent text = new StringTextComponent(label);
                 TranslationRenderContext.pushTextInput();
-                int labelWidth = font.width(label);
-                // Beside the square, never over it: a 6px square cannot hold "zh-TW", and a label
-                // centred on a right-corner square would run off the screen edge.
-                int labelCenterX = corner.isRight()
-                        ? left - 2 - labelWidth / 2
-                        : right + 2 + labelWidth / 2;
-                // y is the top of the text line, so centre it against the square by hand.
-                int labelY = top + (size - 8) / 2;
-                AbstractGui.drawCenteredString(
-                        pose, font, text.getString(), labelCenterX, labelY, 0xFFFFFFFF);
-                TranslationRenderContext.popTextInput();
+                try {
+                    int labelWidth = font.width(label);
+                    // Beside the square, never over it: a 6px square cannot hold "zh-TW", and a label
+                    // centred on a right-corner square would run off the screen edge.
+                    int labelCenterX = corner.isRight()
+                            ? left - 2 - labelWidth / 2
+                            : right + 2 + labelWidth / 2;
+                    // y is the top of the text line, so centre it against the square by hand.
+                    int labelY = top + (size - 8) / 2;
+                    AbstractGui.drawCenteredString(
+                            pose, font, text.getString(), labelCenterX, labelY, 0xFFFFFFFF);
+                } finally {
+                    TranslationRenderContext.popTextInput();
+                }
             }
         }
     }

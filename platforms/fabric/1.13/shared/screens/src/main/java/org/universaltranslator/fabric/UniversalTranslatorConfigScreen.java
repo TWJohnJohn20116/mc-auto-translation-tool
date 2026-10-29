@@ -107,6 +107,10 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorScreenBas
 
     private final Screen parent;
     private final FabricConfig original;
+    /** Last geometry handed out by {@link #layout()}, with the window size it was computed for. */
+    private SettingsScreenLayout.Geometry cachedLayout;
+    private int cachedWindowWidth = -1;
+    private int cachedWindowHeight = -1;
     private boolean enabled;
     private boolean translateChat;
     private boolean translateOther;
@@ -486,8 +490,11 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorScreenBas
      */
     private void applyPromptSettings() {
         refreshQualityLabel();
+        // Same shape as saveAndApply: the runtime is restored if the rebuild fails halfway, so the
+        // promise in the javadoc above holds and the next Save cannot persist a half-applied state.
+        boolean runtimeChanged = false;
+        FabricConfig base = writeBackBase();
         try {
-            FabricConfig base = writeBackBase();
             String prompt = customPrompt == null
                     ? base.customSystemPrompt()
                     : TranslationPrompt.fromEditorText(customPrompt.getText());
@@ -495,10 +502,18 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorScreenBas
             if (updated.enabled) {
                 updated.validateProviderConfiguration();
             }
+            runtimeChanged = true;
             FabricTranslationRuntime.initialize(updated);
             updated.save();
             setTestStatus(tr("screen.universal_translator.diagnostics.settings_saved"), false);
         } catch (Exception exception) {
+            if (runtimeChanged) {
+                try {
+                    FabricTranslationRuntime.initialize(base);
+                } catch (Exception restoreFailure) {
+                    exception.addSuppressed(restoreFailure);
+                }
+            }
             setTestStatus(tr("screen.universal_translator.diagnostics.settings_failed",
                     describe(exception)), true);
         }
@@ -741,7 +756,13 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorScreenBas
             String modelValue = llmModel == null || llmModel.trim().isEmpty()
                     ? tr("screen.universal_translator.engine.key_unset") : llmModel.trim();
             modelPickButton.message = tr("screen.universal_translator.engine.model", modelValue);
+        }
+        // Their own buttons, not the model picker's: tying them to that unrelated widget left both
+        // labels unwritten whenever the provider has no model picker.
+        if (testConnectionButton != null) {
             testConnectionButton.message = tr("screen.universal_translator.engine.test");
+        }
+        if (checkSettingsButton != null) {
             checkSettingsButton.message = tr(isLibreTranslate()
                     ? "screen.universal_translator.engine.test"
                     : "screen.universal_translator.engine.check");
@@ -794,8 +815,22 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorScreenBas
         }
     }
 
+    /**
+     * The screen geometry, recomputed only when the window changes.
+     *
+     * <p>{@code calculate(...)} is pure but allocates a fourteen-field object, and the HUD tab calls
+     * this a dozen times per frame through the individual accessors.
+     */
     private SettingsScreenLayout.Geometry layout() {
-        return SettingsScreenLayout.calculate(width, height, 5);
+        SettingsScreenLayout.Geometry cached = cachedLayout;
+        if (cached != null && cachedWindowWidth == width && cachedWindowHeight == height) {
+            return cached;
+        }
+        SettingsScreenLayout.Geometry computed = SettingsScreenLayout.calculate(width, height, 5);
+        cachedLayout = computed;
+        cachedWindowWidth = width;
+        cachedWindowHeight = height;
+        return computed;
     }
 
     /**
@@ -1460,10 +1495,11 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
                     message = tr("screen.universal_translator.engine.test_ok_libre");
                     error = false;
                 } else {
-                    // Validate the provider the screen is showing, not the one this snapshot was
-                    // opened with: they differ until the form is saved, and answering for the old
-                    // one told users the wrong thing about the service they had just switched to.
-                    original.withProvider(provider).validateProviderConfiguration();
+                    // Validate the provider the screen is showing, against the configuration the
+                    // runtime is running with: {@link #original} is the snapshot taken when this
+                    // screen opened, so a credential entered in the LLM screen and a provider
+                    // switched here never reached this check.
+                    writeBackBase().withProvider(provider).validateProviderConfiguration();
                     message = tr("screen.universal_translator.engine.test_ok_config");
                     error = false;
                 }
@@ -1483,6 +1519,9 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
     private void setTestStatus(String message, boolean error) {
         testStatus = message;
         testStatusIsError = error;
+        // The save-failure line outranks the test line in render(), and nothing ever cleared it: one
+        // failed save hid every later "test connection" result until the screen was reopened.
+        status = "";
     }
 
     /** LibreTranslate exposes reachability on {@code /languages}, not on {@code /translate}. */
@@ -1522,7 +1561,9 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
     }
 
     private void handleModelListClick(double mouseX, double mouseY) {
-        if (mouseY >= this.height - 54 && mouseY < this.height - 38) {
+        // Bands match what renderModelList draws: an 8px line at height-46 occupies
+        // [height-46, height-38), and "back" at height-30 occupies [height-30, height-22).
+        if (mouseY >= this.height - 48 && mouseY < this.height - 36) {
             int pages = modelPageCount(modelRowsPerPage());
             if (pages > 1) {
                 modelPage = mouseX < this.width / 2.0
@@ -1530,7 +1571,7 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
             }
             return;
         }
-        if (mouseY >= this.height - 38 && mouseY < this.height - 20) {
+        if (mouseY >= this.height - 34 && mouseY < this.height - 18) {
             modelListOpen = false;
             return;
         }
@@ -1578,9 +1619,12 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         if (!TranslationProviderCatalog.usesLlmEditor(selectedProvider)) {
             return;
         }
-        this.llmEndpoint = original.editorEndpoint(selectedProvider);
-        this.llmApiKey = original.editorApiKey(selectedProvider);
-        this.llmModel = original.editorModel(selectedProvider);
+        // The live configuration, not {@link #original}: credentials saved from the LLM screen were
+        // overwritten with their screen-open-time values here, and the next Save wrote those back.
+        FabricConfig base = writeBackBase();
+        this.llmEndpoint = base.editorEndpoint(selectedProvider);
+        this.llmApiKey = base.editorApiKey(selectedProvider);
+        this.llmModel = base.editorModel(selectedProvider);
     }
 
     void applyLlmSettings(String endpoint, String model, String apiKey) {

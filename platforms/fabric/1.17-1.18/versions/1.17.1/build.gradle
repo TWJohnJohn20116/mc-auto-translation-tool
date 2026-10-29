@@ -1,5 +1,5 @@
 plugins {
-    id "net.fabricmc.fabric-loom-remap" version "${loom_1_19_2_version}"
+    id "net.fabricmc.fabric-loom-remap" version "${loom_1_17_version}"
 }
 
 ext.legacyMinecraftVersion = minecraft_1_17_1_version

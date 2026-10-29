@@ -1,5 +1,6 @@
 package org.universaltranslator.fabric;
 
+import org.universaltranslator.core.ModelListPaging;
 import org.universaltranslator.core.UiLimits;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
@@ -15,11 +16,9 @@ import java.util.List;
 /** Local-only editor for an OpenAI-compatible hosted or loopback LLM endpoint. */
 final class UniversalTranslatorLlmConfigScreen extends Screen {
     /** Height of a single catalog row in the model picker overlay. */
-    private static final int LIST_ROW_HEIGHT = 12;
+    private static final int LIST_ROW_HEIGHT = ModelListPaging.ROW_HEIGHT;
     /** Y of the first catalog row; the picker title sits above it. */
-    private static final int LIST_TOP = 46;
-    /** Room kept under the rows for the paging, back, and hint lines. */
-    private static final int LIST_FOOTER_HEIGHT = 62;
+    private static final int LIST_TOP = ModelListPaging.LIST_TOP;
 
     private final UniversalTranslatorConfigScreen parent;
     private String initialEndpoint;
@@ -33,8 +32,10 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
     private volatile boolean statusIsError;
     private volatile List<String> fetchedModels = Collections.emptyList();
     private volatile boolean fetching;
-    private boolean modelListOpen;
-    private int modelPage;
+    // Written by the worker that fetches the catalog and read by the render thread, so both need
+    // the same visibility the list itself already had.
+    private volatile boolean modelListOpen;
+    private volatile int modelPage;
 
     UniversalTranslatorLlmConfigScreen(
             UniversalTranslatorConfigScreen parent,
@@ -119,8 +120,11 @@ int formWidth = Math.max(180, Math.min(360, this.width - 20));
                 models = OpenAiModelCatalog.fetch(endpointValue, keyValue);
             } catch (Exception error) {
                 failure = describe(error);
+            } finally {
+                // In a finally block so a LinkageError or OutOfMemoryError from the provider class
+                // cannot leave the guard stuck at true and silence the button for the session.
+                fetching = false;
             }
-            fetching = false;
             if (!failure.isEmpty()) {
                 setStatus(tr("screen.universal_translator.llm.fetch_failed", failure), true);
                 return;
@@ -132,13 +136,9 @@ int formWidth = Math.max(180, Math.min(360, this.width - 20));
             fetchedModels = models;
             modelPage = 0;
             modelListOpen = true;
-            // Nothing intercepts typing while the picker covers the form, so drop focus: a hidden
-            // field must not collect the characters the user types over the overlay. Without this
-            // the model name — and, worse, the API key — was silently rewritten and then saved.
-            // Same guard as the 1.21 screen; 26.x lost it when the body was copied by hand.
-            endpoint.setFocused(false);
-            model.setFocused(false);
-            apiKey.setFocused(false);
+            // The focus guard now runs in extractRenderState while the overlay is open: touching a
+            // child widget from this thread raced init() (every resize rebuilds the three fields)
+            // and dropped focus on instances that were already gone.
             setStatus("", false);
         }, "universal-translator-model-list");
         worker.setDaemon(true);
@@ -175,26 +175,53 @@ int formWidth = Math.max(180, Math.min(360, this.width - 20));
         }
         super.extractRenderState(graphics, mouseX, mouseY, delta);
         if (modelListOpen) {
+            releaseFieldFocus();
             renderModelList(graphics, mouseX, mouseY);
+        }
+    }
+
+    /**
+     * Drops focus from the form while the picker covers it.
+     *
+     * <p>Applied on every frame the overlay is open rather than once when the list arrives: a
+     * resize rebuilds the three fields in {@code init()}, and a one-shot call would leave the fresh
+     * instances focused, so the characters typed over the overlay went into the hidden API key
+     * field again.
+     */
+    private void releaseFieldFocus() {
+        if (endpoint != null) {
+            endpoint.setFocused(false);
+        }
+        if (model != null) {
+            model.setFocused(false);
+        }
+        if (apiKey != null) {
+            apiKey.setFocused(false);
         }
     }
 
     /** Draws the fetched catalog over the form so a served model can be picked instead of typed. */
     private void renderModelList(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
+        // Snapshot the list once: the worker replaces it wholesale, so reading size() and get()
+        // through the volatile field separately can mix two different lists and throw on the
+        // render thread.
+        List<String> models = fetchedModels;
+        int rows = ModelListPaging.rows(this.height);
+        // The overlay survives a resize, which lowers the page count, so clamp before drawing.
+        modelPage = ModelListPaging.clampPage(modelPage, models.size(), rows);
         graphics.fill(0, 0, this.width, this.height, 0xFF101010);
         graphics.centeredText(this.font,
-                Component.translatable("screen.universal_translator.llm.select_model", fetchedModels.size()),
+                Component.translatable("screen.universal_translator.llm.select_model", models.size()),
                 this.width / 2, 20, 0xFFFFFF);
-        int rows = rowsPerPage();
         int first = modelPage * rows;
-        for (int row = 0; row < rows && first + row < fetchedModels.size(); row++) {
+        for (int row = 0; row < rows && first + row < models.size(); row++) {
             int rowY = LIST_TOP + row * LIST_ROW_HEIGHT;
             boolean hovered = mouseY >= rowY && mouseY < rowY + LIST_ROW_HEIGHT;
             graphics.text(this.font,
-                    Component.literal((hovered ? "> " : "  ") + fetchedModels.get(first + row)),
+                    Component.literal((hovered ? "> " : "  ") + models.get(first + row)),
                     24, rowY, hovered ? 0xFFFFD060 : 0xFFE0E0E0);
         }
-        int pages = pageCount(rows);
+        int pages = ModelListPaging.pageCount(models.size(), rows);
         graphics.centeredText(this.font, Component.literal("< " + (modelPage + 1) + "/" + pages + " >"),
                 this.width / 2, this.height - 46, 0xFFFFFF);
         graphics.centeredText(this.font,
@@ -208,45 +235,49 @@ int formWidth = Math.max(180, Math.min(360, this.width - 20));
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
         if (modelListOpen) {
-            handleModelListClick(event.x(), event.y());
-            return true;
+            // `|| super` keeps the "did the overlay consume this click" contract: a click it did
+            // not take still reaches the form. The overlay used to swallow every click, including
+            // the ones it did nothing with.
+            return handleModelListClick(event.x(), event.y())
+                    || super.mouseClicked(event, doubleClick);
         }
         return super.mouseClicked(event, doubleClick);
     }
 
-    private void handleModelListClick(double mouseX, double mouseY) {
+    /** @return true when the overlay consumed the click, false when it declined to. */
+    private boolean handleModelListClick(double mouseX, double mouseY) {
+        List<String> models = fetchedModels;
+        int rows = ModelListPaging.rows(this.height);
+        modelPage = ModelListPaging.clampPage(modelPage, models.size(), rows);
         if (mouseY >= this.height - 54 && mouseY < this.height - 38) {
-            int pages = pageCount(rowsPerPage());
+            int pages = ModelListPaging.pageCount(models.size(), rows);
             if (pages > 1) {
                 modelPage = mouseX < this.width / 2.0
                         ? (modelPage + pages - 1) % pages : (modelPage + 1) % pages;
             }
-            return;
+            return true;
         }
         if (mouseY >= this.height - 38 && mouseY < this.height - 20) {
             modelListOpen = false;
-            return;
+            return true;
         }
         if (mouseY < LIST_TOP) {
-            return;
+            // Above the rows: close the picker and let the click through.
+            modelListOpen = false;
+            return false;
         }
-        int rows = rowsPerPage();
-        int row = (int) ((mouseY - LIST_TOP) / LIST_ROW_HEIGHT);
-        int index = modelPage * rows + row;
-        if (row >= rows || index >= fetchedModels.size()) {
-            return;
+        int row = ModelListPaging.rowAt(mouseY);
+        int index = ModelListPaging.index(modelPage, rows, row);
+        if (row < 0 || row >= rows || index >= models.size()) {
+            // Past the last row: close rather than swallow, so the player cannot get stuck behind
+            // an overlay whose only exit was an 18-pixel strip at the bottom.
+            modelListOpen = false;
+            return false;
         }
-        model.setValue(fetchedModels.get(index));
+        model.setValue(models.get(index));
         modelListOpen = false;
         setStatus("", false);
-    }
-
-    private int rowsPerPage() {
-        return Math.max(3, (this.height - LIST_TOP - LIST_FOOTER_HEIGHT) / LIST_ROW_HEIGHT);
-    }
-
-    private int pageCount(int rows) {
-        return Math.max(1, (fetchedModels.size() + rows - 1) / rows);
+        return true;
     }
 
     @Override

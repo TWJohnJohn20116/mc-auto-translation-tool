@@ -111,8 +111,13 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorSe
     @Override
     protected TextFieldWidget newTextField(int x, int y, int width, int height,
             String initialText) {
-        return new TextFieldWidget(textRenderer(), x, y, width, height,
-                Text.literal(initialText));
+        // The Text argument is the hint shown while the field is empty, not its value. Passing the
+        // saved value there made a cleared field look filled with grey text while getText() was
+        // already empty, so saving wrote the setting away.
+        TextFieldWidget field = new TextFieldWidget(textRenderer(), x, y, width, height,
+                Text.literal(""));
+        field.setText(initialText == null ? "" : initialText);
+        return field;
     }
 
     @Override

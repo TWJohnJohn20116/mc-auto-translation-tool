@@ -49,21 +49,22 @@ abstract class TextRendererMixin {
         return RenderedTextBridge.translate(text);
     }
 
-    @ModifyVariable(method = "getWidth(Ljava/lang/String;)I", at = @At("HEAD"), argsOnly = true)
+    @ModifyVariable(method = "getWidth(Ljava/lang/String;)I", at = @At("HEAD"),
+            argsOnly = true, require = 0)
     private String universalTranslator$translateMeasuredString(String text) {
         return RenderedTextBridge.translate(text);
     }
 
     @ModifyVariable(
             method = "getWidth(Lnet/minecraft/text/StringVisitable;)I",
-            at = @At("HEAD"), argsOnly = true)
+            at = @At("HEAD"), argsOnly = true, require = 0)
     private StringVisitable universalTranslator$translateMeasuredText(StringVisitable text) {
         return RenderedTextBridge.translate(text);
     }
 
     @ModifyVariable(
             method = "getWidth(Lnet/minecraft/text/OrderedText;)I",
-            at = @At("HEAD"), argsOnly = true)
+            at = @At("HEAD"), argsOnly = true, require = 0)
     private OrderedText universalTranslator$translateMeasuredOrderedText(OrderedText text) {
         return RenderedTextBridge.translate(text);
     }

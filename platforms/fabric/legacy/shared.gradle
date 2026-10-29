@@ -74,6 +74,18 @@ def layers = sourceLayers[gameVersion]
 if (layers == null) {
     throw new GradleException("No Fabric legacy source layers are registered for ${gameVersion}")
 }
+// Layer names that are mount flags only: the code they pull in lives in platforms/fabric/shared/*,
+// so this tree has no client source directory of that name. Kept as an explicit list so the srcDir
+// loop below can tell "flag" from "typo" — every name used to be treated as a path as well, which
+// silently added four non-existent source directories to twenty-one projects and would have produced
+// a duplicate class the day one of those directories appeared.
+def sharedFlagLayers = [
+        "family/1.16-common",
+        "family/1.16.0-1.16.4",
+        "family/1.16.5",
+        "family/1.17",
+        "rendered/1.19.2-plus"
+] as Set
 
 def sharedRoot = rootProject.file("platforms/fabric/legacy/shared")
 def rootForLayer = { layer ->
@@ -251,7 +263,18 @@ if (splitEnvironment) {
                 java.srcDir rootProject.file("platforms/fabric/shared/mixin-1.14-1.16/src/client/java")
             }
             layers.each { layer ->
-                java.srcDir new File(rootForLayer(layer), "${layer}/src/client/java")
+                def layerDir = new File(rootForLayer(layer), "${layer}/src/client/java")
+                if (layerDir.directory) {
+                    java.srcDir layerDir
+                } else if (!sharedFlagLayers.contains(layer)) {
+                    // Neither a directory nor a known mount flag: a typo, or a layer whose sources were
+                    // never added. Gradle ignores a missing srcDir in silence, so the project would
+                    // build without the code the table promised.
+                    throw new GradleException(
+                            "Source layer '${layer}' of ${gameVersion} has no directory under " +
+                                    "${rootForLayer(layer)} and is not one of the shared flag layers " +
+                                    sharedFlagLayers)
+                }
             }
         }
     }
@@ -338,13 +361,26 @@ if (splitEnvironment) {
                 java.srcDir rootProject.file("platforms/fabric/shared/mixin-1.14-1.16/src/client/java")
             }
             layers.each { layer ->
-                java.srcDir new File(rootForLayer(layer), "${layer}/src/client/java")
+                def layerDir = new File(rootForLayer(layer), "${layer}/src/client/java")
+                if (layerDir.directory) {
+                    java.srcDir layerDir
+                } else if (!sharedFlagLayers.contains(layer)) {
+                    throw new GradleException(
+                            "Source layer '${layer}' of ${gameVersion} has no directory under " +
+                                    "${rootForLayer(layer)} and is not one of the shared flag layers " +
+                                    sharedFlagLayers)
+                }
             }
         }
     }
 }
 
 processResources {
+    // fabric.mod.json is the only resource with non-ASCII content ("authors"), and Copy.expand reads
+    // the template with the platform default charset unless this is set: on a Windows dev box the
+    // UTF-8 author name would be decoded as CP950/CP936 and written back with replacement characters,
+    // so the same commit produced a different jar locally than on CI.
+    filteringCharset = "UTF-8"
     inputs.properties(
             "version": project.version,
             "minecraftVersion": gameVersion,

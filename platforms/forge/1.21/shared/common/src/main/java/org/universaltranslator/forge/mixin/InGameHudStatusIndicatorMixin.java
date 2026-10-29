@@ -97,6 +97,13 @@ abstract class InGameHudStatusIndicatorMixin {
         // render path as the indicator and only while that translation is still running, so the
         // player sees the answer arrive instead of waiting for the whole line.
         String outgoingPreview = OutgoingTranslationPreview.text();
+        net.minecraft.client.gui.Font font = net.minecraft.client.Minecraft.getInstance().font;
+        // Minecraft clears its font while a resource reload rebuilds it (F3+T, a pack change,
+        // /reload); both draws below and the label measurement go through it, so a reload landing on
+        // a frame threw out of the render loop and closed the client.
+        if (font == null) {
+            return;
+        }
         if (outgoingPreview != null) {
             int previewCenterX = graphics.guiWidth() / 2;
             int previewY = Math.max(0, graphics.guiHeight() - 60);
@@ -108,7 +115,7 @@ abstract class InGameHudStatusIndicatorMixin {
             TranslationRenderContext.pushTextInput();
             try {
                 graphics.drawCenteredString(
-                        net.minecraft.client.Minecraft.getInstance().font,
+                        font,
                         net.minecraft.network.chat.Component.literal(outgoingPreview),
                         previewCenterX, previewY, 0xFFFFFFFF);
             } finally {
@@ -131,8 +138,6 @@ abstract class InGameHudStatusIndicatorMixin {
                         "value.universal_translator.hud_content.activity").getString();
             }
             if (label != null && !label.isEmpty()) {
-                net.minecraft.client.gui.Font font =
-                        net.minecraft.client.Minecraft.getInstance().font;
                 net.minecraft.network.chat.Component text =
                         net.minecraft.network.chat.Component.literal(label);
                 // Measuring is inside the guard too: TextRenderer.getWidth is one of the hooked

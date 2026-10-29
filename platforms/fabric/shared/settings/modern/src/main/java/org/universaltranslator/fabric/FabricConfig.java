@@ -61,6 +61,17 @@ final class FabricConfig {
      * why, and their old file under a name nothing pointed at.
      */
     private static volatile String corruptionBackup;
+    /**
+     * Configuration files whose damaged contents could not be moved aside.
+     *
+     * <p>{@link #load(Path)} keeps the defaults in memory after a quarantine failure, but the
+     * damaged bytes are still the only copy of the player's settings. Every later save — F8, the home
+     * quick settings, the settings screen — would have replaced that file with the default snapshot;
+     * the load itself was the only save that skipped the write. Marking the path makes the refusal
+     * last as long as the condition does: the marker is dropped as soon as a load reads the file.
+     */
+    private static final Set<Path> UNQUARANTINED =
+            Collections.synchronizedSet(new java.util.HashSet<Path>());
 
     final boolean enabled;
     final boolean translateChat;
@@ -237,6 +248,8 @@ final class FabricConfig {
         boolean recovered = false;
         try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
             stored.load(reader);
+            // Readable again: whatever blocked the earlier quarantine is gone, so saves are allowed.
+            UNQUARANTINED.remove(file);
         } catch (IOException | RuntimeException malformed) {
             // Before this, a single damaged byte took the whole mod away: the exception escaped
             // load(), the bootstrap logged one line and shut translation down, and every later
@@ -251,6 +264,11 @@ final class FabricConfig {
             recovered = true;
             stored = new Properties();
             corruptionBackup = quarantine(file);
+            if (corruptionBackup == null) {
+                // The damaged bytes are still in place and are the only copy of the player's
+                // settings: refuse to write over them until a load can read the file again.
+                UNQUARANTINED.add(file);
+            }
             DebugLog.global().log("config-corrupt", "cause", malformed.getClass().getSimpleName(),
                     "backup", corruptionBackup == null ? "" : corruptionBackup);
         }
@@ -259,9 +277,20 @@ final class FabricConfig {
         boolean legacyMigration = !stored.containsKey("config-version");
         boolean migrated = configVersion(stored) < 6;
         if (legacyMigration) {
-            properties.setProperty("display-mode", "translated-only");
-            properties.setProperty("translate-english-only", "true");
-            properties.setProperty("translated-text-color", "original");
+            // Per key: this used to overwrite all three unconditionally, so a hand-written file that
+            // simply had not been created by this build yet — the version key is the only thing
+            // checked — was rewritten to the historical defaults, including a display mode the
+            // player had chosen. The values are still on disk at this point, so the guard has to be
+            // "the file does not say" rather than "the file is old".
+            if (!stored.containsKey("display-mode")) {
+                properties.setProperty("display-mode", "translated-only");
+            }
+            if (!stored.containsKey("translate-english-only")) {
+                properties.setProperty("translate-english-only", "true");
+            }
+            if (!stored.containsKey("translated-text-color")) {
+                properties.setProperty("translated-text-color", "original");
+            }
         }
         properties.setProperty("config-version", "6");
         LocalConfigSecurity.restrictToOwner(file);
@@ -572,7 +601,15 @@ final class FabricConfig {
     }
 
     void save() throws IOException {
-        Path temporary = configFile.resolveSibling(configFile.getFileName().toString() + ".tmp");
+        if (UNQUARANTINED.contains(configFile)) {
+            throw new IOException("The damaged configuration could not be moved aside; it is kept"
+                    + " untouched at " + configFile.getFileName());
+        }
+        // Unique per attempt. Writers on the same path used to share one "<file>.tmp" name, so a
+        // second save — F8 pressed while the screen's Save is running — deleted the file the first
+        // one was writing into, and the move then truncated the real configuration.
+        Path temporary = configFile.resolveSibling(
+                configFile.getFileName().toString() + "." + java.util.UUID.randomUUID() + ".tmp");
         try {
             Files.deleteIfExists(temporary);
             Files.createFile(temporary);
@@ -649,9 +686,21 @@ final class FabricConfig {
         if ("offline".equalsIgnoreCase(provider)) {
             TranslationProvider local = LlamaCppOfflineProvider.forModel(
                     offlineDirectory, offlineAutoDownload, offlineModel);
-            return apiFallback
-                    ? new FallbackTranslationProvider(local, createApiProvider(apiFallbackProvider))
-                    : local;
+            if (!apiFallback) {
+                return local;
+            }
+            // A fallback that cannot be built must not take the offline engine with it. The fallback
+            // provider is optional, and the default provider name for it needs a credential, so an
+            // unfilled key used to make createProvider() throw — the session was never built and
+            // local translation did not run at all, for a setting the player had not even enabled.
+            try {
+                return new FallbackTranslationProvider(local, createApiProvider(apiFallbackProvider));
+            } catch (RuntimeException fallbackFailure) {
+                DebugLog.global().log("config-provider", "fallback", "unavailable",
+                        "provider", apiFallbackProvider,
+                        "cause", fallbackFailure.getClass().getSimpleName());
+                return local;
+            }
         }
         return createApiProvider(provider);
     }
@@ -766,7 +815,10 @@ final class FabricConfig {
                 return fallback;
             }
             int parsed = Integer.parseInt(raw.trim());
-            return parsed < min || parsed > max ? fallback : parsed;
+            // Clamped, not discarded: a value outside the range still says what the player wanted
+            // ("a bigger indicator", "hug the edge"), and the old fallback turned 200 into 6 and 0
+            // into 4, which is the opposite of the intent and was then written back as if chosen.
+            return Math.max(min, Math.min(max, parsed));
         } catch (RuntimeException invalid) {
             return fallback;
         }

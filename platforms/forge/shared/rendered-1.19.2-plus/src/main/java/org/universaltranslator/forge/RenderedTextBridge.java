@@ -30,8 +30,112 @@ public final class RenderedTextBridge {
      * is translated a second time and can change between frames.
      */
     private static final WeakIdentitySet HANDLED_TOOLTIPS = new WeakIdentitySet();
+    /**
+     * Recently styled lines, cycling through a fixed ring.
+     *
+     * <p>{@code TranslationTextStyling.applyTranslatedStyle} scans the whole original line for a
+     * legacy colour code and, once the player picks a translated colour, rebuilds the translated
+     * line character by character into a fresh {@code String}. The same line is drawn once and
+     * measured two to four times per frame, so that work used to be repeated for every call even
+     * though nothing about the input had changed.
+     *
+     * <p>The key is everything the styling reads — original text, translated text and the
+     * configured colour — so a hit is by construction the value a fresh call would return:
+     * switching the colour, the target language or the provider all change at least one key. The
+     * ring is written from the render thread only, and every entry is immutable, so a concurrent
+     * read can only miss or return a complete older entry.
+     */
+    private static final int STYLE_MEMO_SIZE = 8;
+    private static final StyledText[] STYLE_MEMO = new StyledText[STYLE_MEMO_SIZE];
+    private static int styleMemoCursor;
+
+    /** One memo entry: the inputs of a styling call and the string it produced. */
+    private static final class StyledText {
+        private final String original;
+        private final String translated;
+        private final TranslationTextColor color;
+        private final String styled;
+
+        private StyledText(String original, String translated, TranslationTextColor color,
+                String styled) {
+            this.original = original;
+            this.translated = translated;
+            this.color = color;
+            this.styled = styled;
+        }
+    }
+
+    /**
+     * One flat copy of a {@code FormattedCharSequence}, reused by the render thread it belongs to.
+     *
+     * <p>Flattening used to allocate a {@code StringBuilder}, a {@code Style[]} and a
+     * {@code boolean[]} for every drawn line; the builder is the only part that has to grow with
+     * the text, so it is kept and reset instead. Nothing nested calls back into this method on the
+     * same thread, so one buffer per thread is enough.
+     */
+    private static final class Flattened {
+        private final StringBuilder text = new StringBuilder();
+        private Style first = Style.EMPTY;
+        private boolean multiStyle;
+
+        private StringBuilder reset() {
+            text.setLength(0);
+            first = Style.EMPTY;
+            multiStyle = false;
+            return text;
+        }
+    }
+
+    private static final ThreadLocal<Flattened> FLATTENED = new ThreadLocal<Flattened>() {
+        @Override
+        protected Flattened initialValue() {
+            return new Flattened();
+        }
+    };
+
+    /**
+     * The three per-run lists and the run builder, reused per thread.
+     *
+     * <p>Every multi-style line rebuilt three {@code ArrayList}s, a {@code StringBuilder} and one
+     * {@code String} per run, once per frame per line. Neither caller nests into the other — the
+     * translation of a run never re-enters this class — so one set of buffers per thread is enough
+     * and the two entries below are cleared before they are filled.
+     */
+    private static final class RunBuffers {
+        private final List<String> texts = new ArrayList<String>();
+        private final List<Object> styleKeys = new ArrayList<Object>();
+        private final List<Style> styles = new ArrayList<Style>();
+        private final StringBuilder current = new StringBuilder();
+
+        private void clear() {
+            texts.clear();
+            styleKeys.clear();
+            styles.clear();
+            current.setLength(0);
+        }
+    }
+
+    private static final ThreadLocal<RunBuffers> RUN_BUFFERS = new ThreadLocal<RunBuffers>() {
+        @Override
+        protected RunBuffers initialValue() {
+            return new RunBuffers();
+        }
+    };
 
     private RenderedTextBridge() {
+    }
+
+    /**
+     * Answers without walking anything when translation cannot apply to this line at all.
+     *
+     * <p>Every render hook calls this for every line of every frame, and the flattening, the style
+     * walk and the guard chain behind it are all real work. With translation switched off, or while
+     * the local player is typing, the only correct answer is the line itself. The enabled flag is
+     * the published settings snapshot, so this is one volatile read and no allocation.
+     */
+    private static boolean renderTranslationOff() {
+        return TranslationRenderContext.isTextInput()
+                || !ForgeTranslationRuntime.homeSettings().isEnabled();
     }
 
     public static String translate(String text) {
@@ -42,22 +146,48 @@ public final class RenderedTextBridge {
         if (TranslationRenderContext.isTranslatedResult(text)) {
             return text;
         }
+        if (renderTranslationOff()) {
+            return text;
+        }
         String translated = translateRaw(text);
         if (text == null || text.equals(translated)) {
             return text;
         }
-        String styled = TranslationTextStyling.applyTranslatedStyle(
-                text, translated, ForgeTranslationRuntime.translatedTextColor());
+        String styled = styledText(text, translated);
         // Both forms: the measuring hook is handed what the drawing hook then receives, and the two
         // only match when no translated colour is applied.
         TranslationRenderContext.rememberTranslation(translated);
-        TranslationRenderContext.rememberTranslation(styled);
+        if (styled != translated) {
+            TranslationRenderContext.rememberTranslation(styled);
+        }
+        return styled;
+    }
+
+    /** Styles one already translated line, reusing the answer when the same line is redrawn. */
+    private static String styledText(String original, String translated) {
+        TranslationTextColor color = ForgeTranslationRuntime.translatedTextColor();
+        for (int index = 0; index < STYLE_MEMO_SIZE; index++) {
+            StyledText entry = STYLE_MEMO[index];
+            if (entry != null && entry.color == color
+                    && (entry.translated == translated || entry.translated.equals(translated))
+                    && (entry.original == original || entry.original.equals(original))) {
+                return entry.styled;
+            }
+        }
+        String styled = TranslationTextStyling.applyTranslatedStyle(original, translated, color);
+        STYLE_MEMO[styleMemoCursor++ & (STYLE_MEMO_SIZE - 1)] =
+                new StyledText(original, translated, color, styled);
         return styled;
     }
 
     public static Component translate(Component text) {
         if (text == null) {
             return null;
+        }
+        // Same fast path as the ordered overload: building a component is real work, and the hook
+        // runs whether or not translation can answer.
+        if (renderTranslationOff()) {
+            return text;
         }
         // A component with no children renders exactly its own literal under its own style, so the
         // run walk below would collect a single run and decline to rebuild it every time. Skipping
@@ -78,19 +208,21 @@ public final class RenderedTextBridge {
         if (text == null) {
             return null;
         }
-        StringBuilder original = new StringBuilder();
-        final Style[] firstStyle = new Style[]{Style.EMPTY};
-        final boolean[] multiStyle = new boolean[]{false};
+        if (renderTranslationOff()) {
+            return text;
+        }
+        Flattened flattened = FLATTENED.get();
+        StringBuilder original = flattened.reset();
         text.accept((index, style, codePoint) -> {
             if (original.length() == 0) {
-                firstStyle[0] = style;
-            } else if (!multiStyle[0] && !style.equals(firstStyle[0])) {
-                multiStyle[0] = true;
+                flattened.first = style;
+            } else if (!flattened.multiStyle && !style.equals(flattened.first)) {
+                flattened.multiStyle = true;
             }
             original.appendCodePoint(codePoint);
             return true;
         });
-        if (multiStyle[0]) {
+        if (flattened.multiStyle) {
             // Flattening would keep only the first segment's colour and drop bold, italic and
             // click events from later segments, so rebuild the line run by run instead. Returning
             // the line untouched — as this used to — skipped translation for every server-built
@@ -109,7 +241,7 @@ public final class RenderedTextBridge {
             return text;
         }
         MutableComponent replacement = Component.literal(translated)
-                .setStyle(translatedStyle(firstStyle[0]));
+                .setStyle(translatedStyle(flattened.first));
         return replacement.getVisualOrderText();
     }
 
@@ -124,10 +256,12 @@ public final class RenderedTextBridge {
      * needed to differ when the three bridges were collapsed into this shared layer.
      */
     private static FormattedCharSequence rebuildStyledRuns(FormattedCharSequence text) {
-        List<String> texts = new ArrayList<String>();
-        List<Object> styleKeys = new ArrayList<Object>();
-        List<Style> styles = new ArrayList<Style>();
-        StringBuilder current = new StringBuilder();
+        RunBuffers buffers = RUN_BUFFERS.get();
+        buffers.clear();
+        List<String> texts = buffers.texts;
+        List<Object> styleKeys = buffers.styleKeys;
+        List<Style> styles = buffers.styles;
+        StringBuilder current = buffers.current;
         final Style[] currentStyle = new Style[]{null};
         text.accept((index, style, codePoint) -> {
             if (currentStyle[0] == null || !style.equals(currentStyle[0])) {
@@ -176,6 +310,9 @@ public final class RenderedTextBridge {
         if (text == null) {
             return null;
         }
+        if (renderTranslationOff()) {
+            return text;
+        }
         if (text instanceof Component) {
             return translate((Component) text);
         }
@@ -193,11 +330,7 @@ public final class RenderedTextBridge {
             // Produced by translateItemTooltip a moment ago; the answer is already in this list.
             return lines;
         }
-        List<Component> result = translateTooltip(lines, false);
-        if (result != lines) {
-            HANDLED_TOOLTIPS.add(result);
-        }
-        return result;
+        return translateTooltip(lines, false);
     }
 
     /** Canonical Screen.getTooltipFromItem hook for inventories and containers. */
@@ -205,7 +338,15 @@ public final class RenderedTextBridge {
         if (ITEM_TOOLTIP_REACHED.compareAndSet(false, true)) {
             DebugLog.global().log("item-tooltip", "producer", "reached");
         }
-        return translateTooltip(lines, true);
+        List<Component> result = translateTooltip(lines, true);
+        if (result != lines) {
+            // Marked here, on the producing side, because that is the list the consuming hook then
+            // receives. Registering only inside the consumer meant the consumer's own answer was
+            // marked instead: the producer's list was never in the set, so every hover translated
+            // the same lines a second time.
+            HANDLED_TOOLTIPS.add(result);
+        }
+        return result;
     }
 
     private static List<Component> translateTooltip(List<Component> lines, boolean itemTooltip) {
@@ -256,9 +397,11 @@ public final class RenderedTextBridge {
      * already renders with the root's own style, so the caller keeps the ordinary path.
      */
     private static Component translateStyledSiblings(Component text) {
-        List<String> texts = new ArrayList<String>();
-        List<Object> styleKeys = new ArrayList<Object>();
-        List<Style> styles = new ArrayList<Style>();
+        RunBuffers buffers = RUN_BUFFERS.get();
+        buffers.clear();
+        List<String> texts = buffers.texts;
+        List<Object> styleKeys = buffers.styleKeys;
+        List<Style> styles = buffers.styles;
         collectStyledLeaves(text, texts, styleKeys, styles);
         if (texts.isEmpty()) {
             return null;

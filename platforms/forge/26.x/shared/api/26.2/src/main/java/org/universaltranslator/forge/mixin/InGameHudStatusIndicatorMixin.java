@@ -103,13 +103,18 @@ abstract class InGameHudStatusIndicatorMixin {
             // The mod's own hooks cover both calls below (DrawContext for the draw, TextRenderer for
             // the width), so without this guard the indicator translated its own settings values and
             // an already translated preview. beginFrame() clears the depth every tick, which is what
-            // makes a plain push/pop safe here.
+            // makes a plain push/pop safe here; the finally keeps a throw inside the draw from
+            // latching the depth for the rest of the tick, which would stop every other line from
+            // being translated until the next one.
             TranslationRenderContext.pushTextInput();
-            graphics.centeredText(
-                    net.minecraft.client.Minecraft.getInstance().font,
-                    net.minecraft.network.chat.Component.literal(outgoingPreview),
-                    previewCenterX, previewY, 0xFFFFFFFF);
-            TranslationRenderContext.popTextInput();
+            try {
+                graphics.centeredText(
+                        net.minecraft.client.Minecraft.getInstance().font,
+                        net.minecraft.network.chat.Component.literal(outgoingPreview),
+                        previewCenterX, previewY, 0xFFFFFFFF);
+            } finally {
+                TranslationRenderContext.popTextInput();
+            }
         }
 
         // The label is drawn in both states: the target language and the provider are settings, so
@@ -129,19 +134,28 @@ abstract class InGameHudStatusIndicatorMixin {
             if (label != null && !label.isEmpty()) {
                 net.minecraft.client.gui.Font font =
                         net.minecraft.client.Minecraft.getInstance().font;
+                if (font == null) {
+                    // Minecraft drops its text renderer while resources reload (F3+T, a pack switch,
+                    // /reload) and the HUD still draws every frame: measuring or drawing through it
+                    // threw an NPE out of the render loop.
+                    return;
+                }
                 net.minecraft.network.chat.Component text =
                         net.minecraft.network.chat.Component.literal(label);
                 TranslationRenderContext.pushTextInput();
-                int labelWidth = font.width(text);
-                // Beside the square, never over it: a 6px square cannot hold "zh-TW", and a label
-                // centred on a right-corner square would run off the screen edge.
-                int labelCenterX = corner.isRight()
-                        ? left - 2 - labelWidth / 2
-                        : right + 2 + labelWidth / 2;
-                // y is the top of the text line, so centre it against the square by hand.
-                int labelY = top + (size - 8) / 2;
-                graphics.centeredText(font, text, labelCenterX, labelY, 0xFFFFFFFF);
-                TranslationRenderContext.popTextInput();
+                try {
+                    int labelWidth = font.width(text);
+                    // Beside the square, never over it: a 6px square cannot hold "zh-TW", and a label
+                    // centred on a right-corner square would run off the screen edge.
+                    int labelCenterX = corner.isRight()
+                            ? left - 2 - labelWidth / 2
+                            : right + 2 + labelWidth / 2;
+                    // y is the top of the text line, so centre it against the square by hand.
+                    int labelY = top + (size - 8) / 2;
+                    graphics.centeredText(font, text, labelCenterX, labelY, 0xFFFFFFFF);
+                } finally {
+                    TranslationRenderContext.popTextInput();
+                }
             }
         }
     }

@@ -190,6 +190,13 @@ tasks.register("releaseJar", Copy) {
     from(tasks.named("renameJar").flatMap { it.output })
     into(layout.buildDirectory.dir("release"))
     rename { "mc-auto-translation-tool-forge-${gameVersion}-${project.version}.jar" }
+    // Copy never removes anything, and the file name contains project.version, so every mod_version
+    // bump left the previous jar in build/release. They are never collected (the release collector
+    // matches the exact version) but they flooded the failure diagnostics, which list the first 50
+    // jars found under build/.
+    doFirst {
+        delete(layout.buildDirectory.dir("release"))
+    }
 }
 
 def normalizedReleaseJar = layout.buildDirectory.file(
@@ -217,11 +224,12 @@ tasks.named("build").configure {
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
-    if ((project.ext.legacyJavaRelease as int) == 8) {
-        sourceCompatibility = targetCompatibility = JavaVersion.VERSION_1_8
-    } else {
-        options.release = project.ext.legacyJavaRelease as int
-    }
+    // --release is the only form that also pins the API table. The previous "== 8" branch set
+    // sourceCompatibility/targetCompatibility only, so javac ran on the JDK 21 toolchain: syntax was
+    // limited to 8 while java.lang/java.util still resolved to 21, and a single Java 9+ call from the
+    // srcDir-mounted translator-core would have produced a jar that compiled here and died with
+    // NoSuchMethodError on an actual Java 8 client. --release 8 is fully supported on JDK 21.
+    options.release = project.ext.legacyJavaRelease as int
 }
 
 tasks.named("compileJava", JavaCompile).configure {

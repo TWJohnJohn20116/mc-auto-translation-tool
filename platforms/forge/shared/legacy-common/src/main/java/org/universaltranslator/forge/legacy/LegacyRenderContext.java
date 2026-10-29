@@ -4,7 +4,8 @@ import org.universaltranslator.core.TextKind;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
-import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.Set;
 
 /** Thread-local render category set by legacy ASM hooks. */
@@ -23,7 +24,8 @@ public final class LegacyRenderContext {
             new ThreadLocal<Set<String>>() {
                 @Override
                 protected Set<String> initialValue() {
-                    return new HashSet<String>();
+                    // Insertion ordered so a full set drops its oldest entry instead of every entry.
+                    return new LinkedHashSet<String>();
                 }
             };
     /** Cap on {@link #TRANSLATED_RESULTS}; a frame cannot legitimately need more. */
@@ -89,7 +91,14 @@ public final class LegacyRenderContext {
         }
         Set<String> results = TRANSLATED_RESULTS.get();
         if (results.size() >= MAX_FRAME_TRANSLATIONS) {
-            results.clear();
+            // Drop the oldest entry rather than the whole frame. Clearing made a dense frame forget
+            // the lines it had just produced, and those lines then went back through the whole
+            // translation path on the next frame.
+            Iterator<String> oldest = results.iterator();
+            if (oldest.hasNext()) {
+                oldest.next();
+                oldest.remove();
+            }
         }
         results.add(translated);
     }

@@ -57,6 +57,13 @@ final class HudIndicatorOverlay {
         // Window (the field exists but is not visible), so each injection point passes what it
         // already has: render(FZII)V carries width/height, renderHotbar carries the Window.
         Minecraft client = Minecraft.getInstance();
+        TextRenderer font = client.textRenderer;
+        if (font == null) {
+            // The renderer is null while a resource reload swaps it; the 1.14-1.15 body checks this
+            // and this copy did not, so a reload could draw the label through a null font. The check
+            // sits here, before the outgoing preview measures with the same font.
+            return;
+        }
         HudIndicatorCorner corner = settings.getCorner();
         int margin = settings.getMargin();
         int size = settings.getSize();
@@ -98,8 +105,8 @@ final class HudIndicatorOverlay {
             TranslationRenderContext.pushTextInput();
             try {
                 int previewY = Math.max(0, windowHeight - 60);
-                int previewX = windowWidth / 2 - client.textRenderer.getWidth(outgoingPreview) / 2;
-                client.textRenderer.drawWithShadow(outgoingPreview, previewX, previewY, 0xFFFFFFFF);
+                int previewX = windowWidth / 2 - font.getWidth(outgoingPreview) / 2;
+                font.drawWithShadow(outgoingPreview, previewX, previewY, 0xFFFFFFFF);
             } finally {
                 TranslationRenderContext.popTextInput();
             }
@@ -122,12 +129,6 @@ final class HudIndicatorOverlay {
         if (label == null || label.isEmpty()) {
             return;
         }
-        TextRenderer font = client.textRenderer;
-        if (font == null) {
-            // The renderer is null while a resource reload swaps it; the 1.14-1.15 body checks this
-            // and this copy did not, so a reload could draw the label through a null font.
-            return;
-        }
         // This version hooks TextRenderer.getWidth and TextRenderer.draw in order to translate what
         // it renders, so measuring or drawing the label unguarded would feed the indicator's own
         // text back into the translation path.
@@ -135,8 +136,10 @@ final class HudIndicatorOverlay {
         try {
             int labelWidth = font.getWidth(label);
             // Beside the square, never over it: a 6px square cannot hold "zh-TW", and a label
-            // centred on a right-corner square would run off the screen edge.
+            // centred on a right-corner square would run off the screen edge. Clamped afterwards,
+            // because the square can sit against either edge.
             int labelLeft = corner.isRight() ? left - 2 - labelWidth : right + 2;
+            labelLeft = Math.max(2, Math.min(windowWidth - labelWidth - 2, labelLeft));
             // y is the top of the text line, so centre it against the square by hand.
             int labelY = top + (size - 8) / 2;
             font.drawWithShadow(label, labelLeft, labelY, 0xFFFFFFFF);

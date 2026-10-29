@@ -7,8 +7,9 @@ import org.apache.logging.log4j.Logger;
 @Mod(
         modid = UniversalTranslatorForgeMod.MOD_ID,
         name = "MC Auto Translation Tool",
-        // Left empty so FML resolves the version from the mcmod.info metadata that the
-        // build stamps with gradle.properties mod_version, instead of a stale constant.
+        // Left empty so FML falls back to whatever version metadata the jar carries instead of a
+        // stale constant. Note that this jar ships no mcmod.info, so the versions on the 1.8.9 and
+        // 1.12.2 mod lists are empty until that metadata file exists.
         version = "",
         clientSideOnly = true,
         acceptableRemoteVersions = "*")

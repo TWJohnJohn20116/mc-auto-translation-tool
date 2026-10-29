@@ -31,8 +31,33 @@ public final class UniversalTranslatorNeoForgeClient {
     private static boolean connectedLastTick;
     private static int joinHintTicks = -1;
     private static boolean resendingTranslatedMessage;
+    /**
+     * Writes the configuration file away from the client tick thread.
+     *
+     * <p>The tick handler is the client's render thread: {@code save()} there is a delete, a create,
+     * a buffered write and a move, and on Windows an on-access virus scanner turns those into tens of
+     * milliseconds of frozen frame. Daemon thread, because a pending write must never hold the JVM
+     * open, and the runtime has already been switched to the new configuration by the time it runs.
+     */
+    private static final java.util.concurrent.ExecutorService CONFIG_WRITER =
+            java.util.concurrent.Executors.newSingleThreadExecutor(task -> {
+                Thread thread = new Thread(task, "universal-translator-config-writer");
+                thread.setDaemon(true);
+                return thread;
+            });
 
     private UniversalTranslatorNeoForgeClient() {
+    }
+
+    /**
+     * The configuration the runtime is running, or a fresh read before the first load.
+     *
+     * <p>Reading the file on every key press put a full {@code .properties} parse (plus a directory
+     * check) on the tick thread; after startup the runtime already holds the same values.
+     */
+    private static ForgeConfig liveConfig() throws java.io.IOException {
+        ForgeConfig live = ForgeTranslationRuntime.diagnosticsConfig();
+        return live != null ? live : ForgeConfig.load(FMLPaths.CONFIGDIR.get());
     }
 
     private static void loadConfig() {
@@ -129,7 +154,7 @@ public final class UniversalTranslatorNeoForgeClient {
 
     private static void openSettings(Minecraft client) {
         try {
-            ForgeConfig config = ForgeConfig.load(FMLPaths.CONFIGDIR.get());
+            ForgeConfig config = liveConfig();
             client.gui.setScreen(new UniversalTranslatorConfigScreen(client.gui.screen(), config));
         } catch (Exception exception) {
             UniversalTranslatorNeoForgeMod.LOGGER.error(LogMessages.SETTINGS_OPEN_FAILED, exception);
@@ -140,14 +165,23 @@ public final class UniversalTranslatorNeoForgeClient {
 
     private static void toggle(Minecraft client) {
         try {
-            ForgeConfig previous = ForgeConfig.load(FMLPaths.CONFIGDIR.get());
+            ForgeConfig previous = liveConfig();
             ForgeConfig updated = previous.withEnabled(!previous.enabled);
             if (updated.enabled) {
                 updated.validateProviderConfiguration();
             }
             ForgeTranslationRuntime.initialize(updated);
             ForgeRuntimeStatusNotifier.reset();
-            updated.save();
+            CONFIG_WRITER.execute(() -> {
+                try {
+                    updated.save();
+                } catch (Exception failure) {
+                    UniversalTranslatorNeoForgeMod.LOGGER.error(
+                            "Could not save MC Auto Translation Tool settings", failure);
+                    client.execute(() -> client.gui.hud.setOverlayMessage(
+                            Component.translatable("message.universal_translator.toggle_failed"), false));
+                }
+            });
             client.gui.hud.setOverlayMessage(
                     Component.translatable(
                             "message.universal_translator.toggle",

@@ -10,6 +10,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.universaltranslator.core.TextKind;
 import org.universaltranslator.fabric.TranslationRenderContext;
 
+/**
+ * Tags the HUD regions with the {@code TextKind} they draw.
+ *
+ * <p>Targets {@code Hud} from 26.2 and {@code Gui} before it; the class kept the {@code InGameHud*}
+ * file name from the 1.21 tree, whose methods ({@code renderChat}, {@code renderScoreboardSidebar})
+ * no longer exist here — 26.x uses the {@code extract*} family. Compare with the 1.21 copy before
+ * porting a fix between the two.
+ */
 @Mixin(Hud.class)
 abstract class InGameHudContextMixin {
     @Inject(

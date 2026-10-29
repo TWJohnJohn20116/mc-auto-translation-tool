@@ -36,10 +36,14 @@ public final class UniversalTranslatorForgeClient {
     }
 
     private static void loadConfig() {
+        // Registered before the configuration is loaded on purpose: the title-screen entry performs
+        // its own configuration read when clicked, so it must not depend on this initialization
+        // succeeding. Registering it after initialize() left the entry a dead button for the whole
+        // session whenever the load threw.
+        ForgeTranslationRuntime.setTitleSettingsOpener(UniversalTranslatorForgeClient::openFromTitle);
         try {
             ForgeConfig config = ForgeConfig.load(FMLPaths.CONFIGDIR.get());
             ForgeTranslationRuntime.initialize(config);
-            ForgeTranslationRuntime.setTitleSettingsOpener(UniversalTranslatorForgeClient::openFromTitle);
             UniversalTranslatorForgeMod.LOGGER.info(
                     "MC Auto Translation Tool initialized; enabled={}", config.enabled);
         } catch (Exception exception) {
@@ -86,6 +90,7 @@ public final class UniversalTranslatorForgeClient {
                 return;
             }
             TranslationRenderContext.beginFrame();
+            ForgeTranslationRuntime.refreshProtectedNames();
             Minecraft client = Minecraft.getInstance();
             boolean connected = client.level != null && client.getConnection() != null;
             if (connected && !connectedLastTick) {
@@ -151,7 +156,12 @@ public final class UniversalTranslatorForgeClient {
 
     private static void toggle(Minecraft client) {
         try {
-            ForgeConfig previous = ForgeConfig.load(FMLPaths.CONFIGDIR.get());
+            // The live configuration is what F8 acts on. Re-reading the file first parsed the whole
+            // properties file on the client tick only to throw the result away.
+            ForgeConfig previous = ForgeTranslationRuntime.diagnosticsConfig();
+            if (previous == null) {
+                previous = ForgeConfig.load(FMLPaths.CONFIGDIR.get());
+            }
             ForgeConfig updated = previous.withEnabled(!previous.enabled);
             if (updated.enabled) {
                 updated.validateProviderConfiguration();

@@ -43,15 +43,49 @@ requiredCoordinates.each { coordinate ->
 
 def sharedRoot = rootProject.file("platforms/neoforge/shared")
 def entryLayer = new File(sharedRoot, "entrypoints/${project.ext.neoforgeEntryLayer}")
-if (!entryLayer.isDirectory()) {
+if (!new File(entryLayer, "src/main/java").isDirectory()) {
+    // A directory without src/main/java contributes no @Mod class, and a srcDir that does not exist is
+    // ignored in silence: the jar then ships no entrypoint at all and the loader reports "no mod
+    // entrypoint" for a module whose build was green.
     throw new GradleException(
-            "Unknown NeoForge entry layer '${project.ext.neoforgeEntryLayer}'")
+            "NeoForge entry layer '${project.ext.neoforgeEntryLayer}' has no src/main/java under ${sharedRoot}")
+}
+
+// Which entrypoint layers compile the shared client body (entrypoints/common), and the per-layer
+// directories that hold it. Every registered layer must appear here even when the list is empty:
+// a layer missing from the map used to mean it had to re-implement the shared client on its own,
+// with nothing pointing that out.
+def entryLayerSharedDirs = [
+        "1.20.2-1.20.4" : [],
+        "1.20.6"        : ["entrypoints/common"],
+        "1.21-1.21.1"   : ["entrypoints/common"],
+        "1.21.2-1.21.8" : [],
+        "1.21.9-1.21.11": [],
+        "26.1-26.1.2"   : [],
+        "26.2"          : []
+]
+if (!entryLayerSharedDirs.containsKey(project.ext.neoforgeEntryLayer)) {
+    throw new GradleException(
+            "NeoForge entry layer '${project.ext.neoforgeEntryLayer}' is not listed in " +
+                    "entryLayerSharedDirs of platforms/neoforge/shared.gradle")
+}
+def entryLayerShared = entryLayerSharedDirs[project.ext.neoforgeEntryLayer].collect {
+    new File(sharedRoot, it)
+}
+def missingEntryShares = entryLayerShared.findAll { !new File(it, "src/main/java").isDirectory() }
+if (!missingEntryShares.isEmpty()) {
+    throw new GradleException(
+            "Missing shared NeoForge entrypoint directories: " +
+                    missingEntryShares.collect { it.name }.join(", "))
 }
 
 def metadataLayer = new File(sharedRoot, "metadata/${project.ext.neoforgeMetadataLayer}")
-if (!metadataLayer.isDirectory()) {
+if (!new File(metadataLayer, "src/main/resources/universal-translator.neoforge.mixins.json").isFile()) {
+    // processResources copies this directory with from(), which is silent when the file is absent, so
+    // the 19 toml files kept pointing at a MixinConfigs entry that no jar contained.
     throw new GradleException(
-            "Unknown NeoForge metadata layer '${project.ext.neoforgeMetadataLayer}'")
+            "NeoForge metadata layer '${project.ext.neoforgeMetadataLayer}' does not ship " +
+                    "universal-translator.neoforge.mixins.json under ${sharedRoot}")
 }
 
 def forgeSharedRoot = rootProject.file(project.ext.neoforgeForgeSharedRoot)
@@ -109,6 +143,30 @@ if (!missingSharedLayers.isEmpty()) {
     throw new GradleException("Missing Forge shared layers: " + missingSharedLayers.join(", "))
 }
 
+// A template that holds a placeholder the module never supplies used to reach the jar unchanged, so
+// pack.mcmeta shipped as "\"pack_format\": ${packFormat}" — not valid JSON, which makes the whole
+// built-in resource pack (and with it every language file) unreadable while the build stays green.
+// Checked against the sources so the failure names the coordinate, not "template evaluation failed".
+def packTemplates = []
+packTemplates.add(new File(metadataLayer, "src/main/resources/pack.mcmeta"))
+forgeLayers.each { packTemplates.add(new File(it, "src/main/resources/pack.mcmeta")) }
+forgeExtraRoots.each { packTemplates.add(new File(it, "src/main/resources/pack.mcmeta")) }
+def missingPackCoordinates = []
+packTemplates.findAll { it.isFile() }.each { template ->
+    def body = template.getText("UTF-8")
+    if (body.contains('${packFormat}') && !project.ext.has("neoforgePackFormat")) {
+        missingPackCoordinates.add("neoforgePackFormat (${relativePath(template)})".toString())
+    }
+    if (body.contains('${resourcePackFormat}') && !project.ext.has("neoforgeResourcePackFormat")) {
+        missingPackCoordinates.add("neoforgeResourcePackFormat (${relativePath(template)})".toString())
+    }
+}
+if (!missingPackCoordinates.isEmpty()) {
+    throw new GradleException(
+            "${project.path} ships a pack.mcmeta template with unexpanded placeholders; declare " +
+                    missingPackCoordinates.join(", "))
+}
+
 version = project.mod_version
 group = project.maven_group
 
@@ -141,10 +199,8 @@ sourceSets {
         java.srcDir new File(entryLayer, "src/main/java")
         // UniversalTranslatorNeoForgeClient is identical for the 1.20.6 and 1.21-1.21.1 entrypoint
         // layers; the other layers differ in how they read the client state, so they keep their own.
-        if (project.ext.neoforgeEntryLayer in ["1.20.6", "1.21-1.21.1"]) {
-            java.srcDir new File(rootProject.file("platforms/neoforge/shared"),
-                    "entrypoints/common/src/main/java")
-        }
+        // The mapping lives in entryLayerSharedDirs above so a new layer cannot silently omit it.
+        entryLayerShared.each { shared -> java.srcDir new File(shared, "src/main/java") }
         forgeLayers.each { layer -> java.srcDir new File(layer, "src/main/java") }
         forgeExtraRoots.each { extra -> java.srcDir new File(extra, "src/main/java") }
         forgeScreenRoots.each { root -> java.srcDir new File(root, "src/main/java") }
@@ -186,16 +242,20 @@ tasks.named("processResources", ProcessResources).configure {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 
     inputs.property "version", project.version
+    // One expansion covering every format coordinate the module declares. Registering a separate
+    // content filter per coordinate meant the first one also ran over a template holding the other
+    // placeholder, which SimpleTemplateEngine reports as MissingPropertyException.
+    def packFormatValues = [:]
     if (project.ext.has("neoforgePackFormat")) {
-        inputs.property "packFormat", project.ext.neoforgePackFormat
-        filesMatching("pack.mcmeta") {
-            expand "packFormat": project.ext.neoforgePackFormat
-        }
+        packFormatValues["packFormat"] = project.ext.neoforgePackFormat
     }
     if (project.ext.has("neoforgeResourcePackFormat")) {
-        inputs.property "resourcePackFormat", project.ext.neoforgeResourcePackFormat
+        packFormatValues["resourcePackFormat"] = project.ext.neoforgeResourcePackFormat
+    }
+    if (!packFormatValues.isEmpty()) {
+        packFormatValues.each { key, value -> inputs.property(key.toString(), value) }
         filesMatching("pack.mcmeta") {
-            expand "resourcePackFormat": project.ext.neoforgeResourcePackFormat
+            expand packFormatValues
         }
     }
     filesMatching("META-INF/neoforge.mods.toml") {

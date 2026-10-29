@@ -27,8 +27,23 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        // An open overlay owns the keyboard: without this the key reached the focused field behind
+        // the full-screen list, so typing while the picker was up edited the endpoint, the prompt or
+        // the blocked keywords the player could not see, and the next Save wrote it.
+        if (isOverlayOpen()) {
+            handleSelectionKey(keyCode);
+            return true;
+        }
         // ESC closes the overlay, not the whole settings screen.
         return handleSelectionKey(keyCode) || super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+    @Override
+    public boolean charTyped(char chr, int modifiers) {
+        if (isOverlayOpen()) {
+            return true;
+        }
+        return super.charTyped(chr, modifiers);
     }
 
     @Override

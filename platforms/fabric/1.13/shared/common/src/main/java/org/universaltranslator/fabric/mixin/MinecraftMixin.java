@@ -28,8 +28,16 @@ abstract class MinecraftMixin {
             return;
         }
         long window = client.window.getWindow();
-        boolean u = GLFW.glfwGetKey(window, HotkeyKeys.settingsCode()) == GLFW.GLFW_PRESS;
-        boolean f8 = GLFW.glfwGetKey(window, HotkeyKeys.toggleCode()) == GLFW.GLFW_PRESS;
+        // A handle of 0 means GLFW has no current context, which happens while the window is being
+        // recreated and for the first ticks after a full-screen toggle: glfwGetKey then answers
+        // GLFW_RELEASE for every key, so the hotkeys went silent with nothing in the log. The status
+        // notification below is not a key read, so it still runs.
+        boolean u = false;
+        boolean f8 = false;
+        if (window != 0L) {
+            u = GLFW.glfwGetKey(window, HotkeyKeys.settingsCode()) == GLFW.GLFW_PRESS;
+            f8 = GLFW.glfwGetKey(window, HotkeyKeys.toggleCode()) == GLFW.GLFW_PRESS;
+        }
         if (u && !universalTranslator$uHeld) {
             UniversalTranslatorFabricClient.openSettingsFromKey();
         }

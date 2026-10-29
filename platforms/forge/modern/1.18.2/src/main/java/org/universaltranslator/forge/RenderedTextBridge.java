@@ -27,23 +27,101 @@ public final class RenderedTextBridge {
     private static volatile FormattedCharSequence orderMemoInput;
     private static volatile FormattedCharSequence orderMemoOutput;
     private static volatile int orderMemoEpoch;
+    // Same one-tick memo for the component path. The chat overlay, the HUD and the sidebar hand the
+    // same Component instances back every frame, and rebuilding them runs collectStyledLeaves,
+    // mergeAdjacent and one Run per style segment — three lists plus one allocation per segment per
+    // component per frame. Keyed on the instance and the tick epoch, like the ordered-line memo.
+    private static volatile Component componentMemoInput;
+    private static volatile Component componentMemoOutput;
+    private static volatile int componentMemoEpoch;
+
+    /**
+     * Recently styled lines, cycling through a fixed ring.
+     *
+     * <p>{@code TranslationTextStyling.applyTranslatedStyle} scans the whole original line for a
+     * legacy colour code and, once the player picks a translated colour, rebuilds the translated
+     * line character by character into a fresh {@code String}. The same line is drawn once and
+     * measured two to four times per frame, so that work used to be repeated for every call even
+     * though nothing about the input had changed.
+     *
+     * <p>The key is everything the styling reads — original text, translated text and the
+     * configured colour — so a hit is by construction the value a fresh call would return.
+     */
+    private static final int STYLE_MEMO_SIZE = 8;
+    private static final StyledText[] STYLE_MEMO = new StyledText[STYLE_MEMO_SIZE];
+    private static int styleMemoCursor;
+
+    /** One memo entry: the inputs of a styling call and the string it produced. */
+    private static final class StyledText {
+        private final String original;
+        private final String translated;
+        private final TranslationTextColor color;
+        private final String styled;
+
+        private StyledText(String original, String translated, TranslationTextColor color,
+                String styled) {
+            this.original = original;
+            this.translated = translated;
+            this.color = color;
+            this.styled = styled;
+        }
+    }
 
     private RenderedTextBridge() {
     }
 
     public static String translate(String text) {
+        // Ask the cheap questions first: this hook runs for every line of every frame, and the
+        // styling below is what made it expensive.
+        if (TranslationRenderContext.isTextInput()
+                || !ForgeTranslationRuntime.renderTranslationEnabled()) {
+            return text;
+        }
         String translated = translateRaw(text);
         if (text == null || text.equals(translated)) {
             return text;
         }
-        return TranslationTextStyling.applyTranslatedStyle(
-                text, translated, ForgeTranslationRuntime.translatedTextColor());
+        return styledText(text, translated);
+    }
+
+    /** Styles one already translated line, reusing the answer when the same line is redrawn. */
+    private static String styledText(String original, String translated) {
+        TranslationTextColor color = ForgeTranslationRuntime.translatedTextColor();
+        for (int index = 0; index < STYLE_MEMO_SIZE; index++) {
+            StyledText entry = STYLE_MEMO[index];
+            if (entry != null && entry.color == color
+                    && (entry.translated == translated || entry.translated.equals(translated))
+                    && (entry.original == original || entry.original.equals(original))) {
+                return entry.styled;
+            }
+        }
+        String styled = TranslationTextStyling.applyTranslatedStyle(original, translated, color);
+        STYLE_MEMO[styleMemoCursor++ & (STYLE_MEMO_SIZE - 1)] =
+                new StyledText(original, translated, color, styled);
+        return styled;
     }
 
     public static Component translate(Component text) {
         if (text == null) {
             return null;
         }
+        if (TranslationRenderContext.isTextInput()
+                || !ForgeTranslationRuntime.renderTranslationEnabled()) {
+            return text;
+        }
+        int epoch = ForgeTranslationRuntime.currentRenderEpoch();
+        Component memoised = componentMemoOutput;
+        if (memoised != null && componentMemoInput == text && componentMemoEpoch == epoch) {
+            return memoised;
+        }
+        Component result = translateComponent(text);
+        componentMemoInput = text;
+        componentMemoOutput = result;
+        componentMemoEpoch = epoch;
+        return result;
+    }
+
+    private static Component translateComponent(Component text) {
         // A component with no children renders exactly its own literal under its own style, so the
         // run walk below would collect a single run and decline to rebuild it every time. Skipping
         // it keeps an ordinary label at one string copy and one cache lookup per frame.
@@ -62,6 +140,12 @@ public final class RenderedTextBridge {
     public static FormattedCharSequence translate(FormattedCharSequence text) {
         if (text == null) {
             return null;
+        }
+        // The flattening below costs three allocations and a full codepoint walk per call, before
+        // anything is known about the result; with translation off the answer is the line itself.
+        if (TranslationRenderContext.isTextInput()
+                || !ForgeTranslationRuntime.renderTranslationEnabled()) {
+            return text;
         }
         int epoch = ForgeTranslationRuntime.currentRenderEpoch();
         FormattedCharSequence memoised = orderMemoOutput;
@@ -158,6 +242,10 @@ public final class RenderedTextBridge {
     public static FormattedText translate(FormattedText text) {
         if (text == null) {
             return null;
+        }
+        if (TranslationRenderContext.isTextInput()
+                || !ForgeTranslationRuntime.renderTranslationEnabled()) {
+            return text;
         }
         if (text instanceof Component) {
             return translate((Component) text);
