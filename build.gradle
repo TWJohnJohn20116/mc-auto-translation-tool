@@ -600,8 +600,10 @@ tasks.register("validateNeoForgeModuleCoordinates") {
         // comparing against the directory name; a missing property stays unresolved and is reported.
         def resolvedCoordinate = { String raw ->
             def value = raw.trim()
-            if (value.startsWith('"') || value.startsWith("'")) {
-                return unquote(value).replaceAll("^'", '').replaceAll("'$", '')
+            if (value.length() >= 2
+                    && (value.startsWith('"') || value.startsWith("'"))
+                    && value.endsWith(value.substring(0, 1))) {
+                return value.substring(1, value.length() - 1)
             }
             def resolved = findProperty(value)
             resolved == null ? "unresolved:${value}" : resolved.toString()
