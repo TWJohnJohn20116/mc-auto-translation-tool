@@ -1,72 +1,80 @@
 package org.universaltranslator.core;
 
+import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
 import java.util.function.Function;
 
 /** Stable provider IDs shared by every Minecraft/loader configuration screen. */
 public final class TranslationProviderCatalog {
-    private static final String[] PROVIDERS = {
-            "offline",
-            "libretranslate",
-            "baidu",
-            "tencent-tmt",
-            "tencent-hunyuan",
-            "aliyun-mt",
-            "youdao",
-            "volcengine-mt",
-            "iflytek-niutrans",
-            "huawei-cloud-mt",
-            "deepseek",
-            "dashscope",
-            "volcengine-ark",
-            "zhipu",
-            "openai-compatible",
-            "azure-openai",
-            "deepl",
-            "gemini",
-            "claude",
-            "custom-http-json"
+    /**
+     * Every provider in one place: its id, its English display name, and whether the settings screen
+     * edits it through the endpoint/key/model editor.
+     *
+     * <p>These three facts used to live in three separate lists — an id array, a twenty-branch
+     * {@code displayName} chain and a nine-branch {@code usesLlmEditor} chain — so adding a provider
+     * meant remembering three edits, and forgetting the third one silently shipped a provider that
+     * could not be configured. Everything below is derived from this table.
+     */
+    private static final Provider[] TABLE = {
+            new Provider("offline", "Offline", false),
+            new Provider("libretranslate", "LibreTranslate", false),
+            new Provider("baidu", "Baidu Translate", false),
+            new Provider("tencent-tmt", "Tencent TMT", false),
+            new Provider("tencent-hunyuan", "Tencent Hunyuan", false),
+            new Provider("aliyun-mt", "Alibaba Cloud MT", false),
+            new Provider("youdao", "Youdao", false),
+            new Provider("volcengine-mt", "Volcengine MT", false),
+            new Provider("iflytek-niutrans", "iFlytek NiuTrans", false),
+            new Provider("huawei-cloud-mt", "Huawei Cloud MT", false),
+            new Provider("deepseek", "DeepSeek", true),
+            new Provider("dashscope", "Alibaba Qwen", true),
+            new Provider("volcengine-ark", "Volcengine Ark", true),
+            new Provider("zhipu", "Zhipu GLM", true),
+            new Provider("openai-compatible", "OpenAI Compatible", true),
+            new Provider("azure-openai", "Azure OpenAI", true),
+            new Provider("deepl", "DeepL", true),
+            new Provider("gemini", "Google Gemini", true),
+            new Provider("claude", "Anthropic Claude", true),
+            new Provider("custom-http-json", "Custom HTTP JSON", false),
     };
+
+    /** The ids in table order, which is the order every screen cycles through. */
+    private static final String[] IDS;
+
+    /** Id to row, so lookups on a render path do not walk the table. */
+    private static final Map<String, Provider> BY_ID = new HashMap<String, Provider>();
+
+    static {
+        IDS = new String[TABLE.length];
+        for (int index = 0; index < TABLE.length; index++) {
+            IDS[index] = TABLE[index].id;
+            BY_ID.put(TABLE[index].id, TABLE[index]);
+        }
+    }
 
     private TranslationProviderCatalog() {
     }
 
     public static String[] values() {
-        return PROVIDERS.clone();
+        return IDS.clone();
     }
 
     public static String next(String current) {
-        for (int index = 0; index < PROVIDERS.length; index++) {
-            if (PROVIDERS[index].equalsIgnoreCase(current)) {
-                return PROVIDERS[(index + 1) % PROVIDERS.length];
+        for (int index = 0; index < IDS.length; index++) {
+            if (IDS[index].equalsIgnoreCase(current)) {
+                return IDS[(index + 1) % IDS.length];
             }
         }
         return "offline";
     }
 
     public static String displayName(String provider) {
-        if (provider == null) return "Unknown";
-        if ("offline".equalsIgnoreCase(provider)) return "Offline";
-        if ("libretranslate".equalsIgnoreCase(provider)) return "LibreTranslate";
-        if ("baidu".equalsIgnoreCase(provider)) return "Baidu Translate";
-        if ("tencent-tmt".equalsIgnoreCase(provider)) return "Tencent TMT";
-        if ("tencent-hunyuan".equalsIgnoreCase(provider)) return "Tencent Hunyuan";
-        if ("aliyun-mt".equalsIgnoreCase(provider)) return "Alibaba Cloud MT";
-        if ("youdao".equalsIgnoreCase(provider)) return "Youdao";
-        if ("volcengine-mt".equalsIgnoreCase(provider)) return "Volcengine MT";
-        if ("iflytek-niutrans".equalsIgnoreCase(provider)) return "iFlytek NiuTrans";
-        if ("huawei-cloud-mt".equalsIgnoreCase(provider)) return "Huawei Cloud MT";
-        if ("deepseek".equalsIgnoreCase(provider)) return "DeepSeek";
-        if ("dashscope".equalsIgnoreCase(provider)) return "Alibaba Qwen";
-        if ("volcengine-ark".equalsIgnoreCase(provider)) return "Volcengine Ark";
-        if ("zhipu".equalsIgnoreCase(provider)) return "Zhipu GLM";
-        if ("openai-compatible".equalsIgnoreCase(provider)) return "OpenAI Compatible";
-        if ("azure-openai".equalsIgnoreCase(provider)) return "Azure OpenAI";
-        if ("deepl".equalsIgnoreCase(provider)) return "DeepL";
-        if ("gemini".equalsIgnoreCase(provider)) return "Google Gemini";
-        if ("claude".equalsIgnoreCase(provider)) return "Anthropic Claude";
-        if ("custom-http-json".equalsIgnoreCase(provider)) return "Custom HTTP JSON";
-        return provider;
+        Provider row = find(provider);
+        if (row != null) {
+            return row.displayName;
+        }
+        return provider == null ? "Unknown" : provider;
     }
 
     /**
@@ -112,17 +120,32 @@ public final class TranslationProviderCatalog {
      *
      * <p>Azure OpenAI, DeepL, Gemini and Claude all have those three values (the "model" being the
      * Azure deployment name for Azure, and DeepL's {@code model_type} for DeepL), so the editor is
-     * what stores them; no settings screen needs a branch of its own.
+     * what stores them; no settings screen needs a branch of its own. The flag now comes from the
+     * table, so a new provider cannot be added without stating whether it needs the editor.
      */
     public static boolean usesLlmEditor(String provider) {
-        return "deepseek".equalsIgnoreCase(provider)
-                || "dashscope".equalsIgnoreCase(provider)
-                || "volcengine-ark".equalsIgnoreCase(provider)
-                || "zhipu".equalsIgnoreCase(provider)
-                || "openai-compatible".equalsIgnoreCase(provider)
-                || "azure-openai".equalsIgnoreCase(provider)
-                || "deepl".equalsIgnoreCase(provider)
-                || "gemini".equalsIgnoreCase(provider)
-                || "claude".equalsIgnoreCase(provider);
+        Provider row = find(provider);
+        return row != null && row.llmEditor;
+    }
+
+    /** The row for {@code provider}, or {@code null} when the id is unknown. */
+    private static Provider find(String provider) {
+        if (provider == null) {
+            return null;
+        }
+        return BY_ID.get(provider.trim().toLowerCase(Locale.ROOT));
+    }
+
+    /** One row of the catalog. */
+    private static final class Provider {
+        private final String id;
+        private final String displayName;
+        private final boolean llmEditor;
+
+        private Provider(String id, String displayName, boolean llmEditor) {
+            this.id = id;
+            this.displayName = displayName;
+            this.llmEditor = llmEditor;
+        }
     }
 }

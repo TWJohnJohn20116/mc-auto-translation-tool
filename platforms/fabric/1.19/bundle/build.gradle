@@ -74,19 +74,9 @@ tasks.register("verifyLoaderSelection", JavaExec) {
     args([jar.archiveFile.get().asFile.absolutePath] + supportedVersions)
 }
 
-tasks.register("verifyPreparedReleaseBundle", JavaExec) {
-    dependsOn rootProject.tasks.named("verifyPreparedReleaseAssets"), testClasses
-    classpath = sourceSets.test.runtimeClasspath
-    mainClass = "org.universaltranslator.bundle.BundleResolutionVerifier"
-    javaLauncher = javaToolchains.launcherFor {
-        languageVersion = JavaLanguageVersion.of(25)
-    }
-    def allVersions = supportedVersions +
-            ["26.1", "26.1.1", "26.1.2", "26.2"]
-    args([rootProject.layout.buildDirectory.file(
-            "release-assets/MCAutoTranslationTool-${project.mod_version}-fabric-all.jar"
-    ).get().asFile.absolutePath] + allVersions)
-}
+// Aggregate-bundle resolution check; the expected version list is settings.gradle's
+// platformDependencies, so adding a Minecraft version never means editing this file again.
+apply from: rootProject.file("gradle/fabric-bundle-aggregate-verify.gradle")
 
 test {
     enabled = false

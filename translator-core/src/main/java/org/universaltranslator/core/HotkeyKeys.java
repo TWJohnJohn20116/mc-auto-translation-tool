@@ -23,16 +23,42 @@ public final class HotkeyKeys {
     /** {@code GLFW_KEY_F8}. */
     public static final int DEFAULT_TOGGLE = 297;
 
+    /** Highest key code accepted from a settings file; anything above it is a typo, not a key. */
+    private static final int MAXIMUM_CODE = 400;
+    /** Longest decimal key code accepted; every code this class knows has three digits. */
+    private static final int MAXIMUM_NUMERIC_CHARS = 3;
+
     private static volatile int settings = DEFAULT_SETTINGS;
     private static volatile int toggle = DEFAULT_TOGGLE;
+
+    /**
+     * The configured text exactly as the settings file held it.
+     *
+     * <p>{@link #nameOf(int)} used to be the only thing {@link #settingsName()} could return, and it
+     * did not cover every code {@link #codeOf(String, int)} accepts: a player who set
+     * {@code settings-key=RIGHT} had {@code settings-key=262} written back on the next save, and
+     * {@code "262"} was not a name the old {@code codeOf} could read, so the hotkey silently reverted
+     * to U on the following start. Remembering the text the file contained removes that round trip
+     * for every current and future spelling, and the numeric form is now readable as well so entries
+     * an older build already wrote keep working.
+     */
+    private static volatile String settingsSource;
+    private static volatile String toggleSource;
 
     private HotkeyKeys() {
     }
 
-    /** Installs the configured codes; {@code null} or an unknown name keeps the default. */
+    /**
+     * Installs the configured codes; {@code null} or an unknown name keeps the default.
+     *
+     * <p>The value is remembered as given when it resolves to the installed code, so a save writes
+     * back what the player typed (including a numeric code) instead of a re-derived name.
+     */
     public static void install(String settingsName, String toggleName) {
         settings = codeOf(settingsName, DEFAULT_SETTINGS);
         toggle = codeOf(toggleName, DEFAULT_TOGGLE);
+        settingsSource = sourceNameOf(settingsName, settings);
+        toggleSource = sourceNameOf(toggleName, toggle);
     }
 
     /** Code the settings screen opens on. */
@@ -45,22 +71,48 @@ public final class HotkeyKeys {
         return toggle;
     }
 
-    /** Configured name of the settings key, for the diagnostics screen. */
+    /** Configured name of the settings key, for the diagnostics screen and for saving. */
     public static String settingsName() {
-        return nameOf(settings);
+        String source = settingsSource;
+        return source != null ? source : nameOf(settings);
     }
 
-    /** Configured name of the toggle key, for the diagnostics screen. */
+    /** Configured name of the toggle key, for the diagnostics screen and for saving. */
     public static String toggleName() {
-        return nameOf(toggle);
+        String source = toggleSource;
+        return source != null ? source : nameOf(toggle);
+    }
+
+    /**
+     * The text to write back for a configured value.
+     *
+     * <p>The value the file held is kept as written, so a save does not rewrite a spelling the player
+     * chose. The one exception is a bare number — that is what the build without a complete
+     * {@link #nameOf(int)} wrote, and saving the name instead heals the entry the first time the
+     * settings are saved.
+     *
+     * @param configured value read from the settings file, possibly {@code null}
+     * @param code code {@link #codeOf(String, int)} produced for that value
+     * @return a value that maps back to {@code code}
+     */
+    private static String sourceNameOf(String configured, int code) {
+        if (configured != null) {
+            String trimmed = configured.trim();
+            if (!trimmed.isEmpty() && codeOf(trimmed, -1) == code) {
+                boolean numeric = numericCodeOrZero(trimmed.toUpperCase(Locale.ROOT)) > 0;
+                return numeric ? nameOf(code) : trimmed;
+            }
+        }
+        return nameOf(code);
     }
 
     /**
      * Resolves a configured key name to its GLFW code.
      *
-     * <p>Accepts a single letter or digit, {@code F1}-{@code F24}, and the word names below. Comparison
-     * ignores case and surrounding whitespace, and a leading {@code KEY_} / {@code GLFW_KEY_} prefix is
-     * tolerated so a value copied from a log still works.
+     * <p>Accepts a single letter or digit, {@code F1}-{@code F24}, the 26 word names below, and a
+     * plain decimal code (an older build could only write the number). Comparison ignores case and
+     * surrounding whitespace, and a leading {@code KEY_} / {@code GLFW_KEY_} prefix is tolerated so a
+     * value copied from a log still works.
      */
     public static int codeOf(String name, int fallback) {
         if (name == null) {
@@ -79,6 +131,12 @@ public final class HotkeyKeys {
                 return c; // GLFW_KEY_0 == 48
             }
             return fallback;
+        }
+        int numeric = numericCodeOrZero(value);
+        if (numeric > 0) {
+            // A settings file written by a build that only had nameOf(int) holds the raw code
+            // ("settings-key=262"); it means the same key as "RIGHT" and stays readable.
+            return numeric;
         }
         if (value.startsWith("F")) {
             try {
@@ -120,7 +178,13 @@ public final class HotkeyKeys {
         return fallback;
     }
 
-    /** Inverse of {@link #codeOf(String, int)} for the codes it can produce. */
+    /**
+     * Inverse of {@link #codeOf(String, int)} for every code that method can produce.
+     *
+     * <p>All 26 word names {@code codeOf} accepts are covered, so {@code nameOf(codeOf(name))} is
+     * {@code name} for every name in this class. A code with no name is returned as its decimal
+     * form, which {@code codeOf} reads back.
+     */
     public static String nameOf(int code) {
         if (code >= 65 && code <= 90) {
             return String.valueOf((char) code);
@@ -137,10 +201,52 @@ public final class HotkeyKeys {
             case 257: return "ENTER";
             case 258: return "TAB";
             case 259: return "BACKSPACE";
+            case 260: return "INSERT";
+            case 261: return "DELETE";
+            case 262: return "RIGHT";
+            case 263: return "LEFT";
+            case 264: return "DOWN";
+            case 265: return "UP";
+            case 266: return "PAGE_UP";
+            case 267: return "PAGE_DOWN";
+            case 268: return "HOME";
+            case 269: return "END";
+            case 280: return "CAPS_LOCK";
+            case 281: return "SCROLL_LOCK";
+            case 282: return "NUM_LOCK";
+            case 283: return "PRINT_SCREEN";
+            case 284: return "PAUSE";
             case 340: return "LEFT_SHIFT";
             case 341: return "LEFT_CONTROL";
             case 342: return "LEFT_ALT";
+            case 344: return "RIGHT_SHIFT";
+            case 345: return "RIGHT_CONTROL";
+            case 346: return "RIGHT_ALT";
             default: return String.valueOf(code);
+        }
+    }
+
+    /**
+     * A key code a settings file stored as a number.
+     *
+     * @param value upper-case value with the {@code KEY_} prefixes already removed
+     * @return the code, or {@code 0} when the value is not a plausible key code
+     */
+    private static int numericCodeOrZero(String value) {
+        if (value.isEmpty() || value.length() > MAXIMUM_NUMERIC_CHARS) {
+            return 0;
+        }
+        for (int index = 0; index < value.length(); index++) {
+            char character = value.charAt(index);
+            if (character < '0' || character > '9') {
+                return 0;
+            }
+        }
+        try {
+            int code = Integer.parseInt(value);
+            return code > 0 && code <= MAXIMUM_CODE ? code : 0;
+        } catch (NumberFormatException tooLarge) {
+            return 0;
         }
     }
 

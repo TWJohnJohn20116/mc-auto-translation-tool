@@ -8,6 +8,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import org.universaltranslator.forge.ForgeMixinDiagnostics;
 import org.universaltranslator.forge.RenderedTextBridge;
 
 import java.util.List;
@@ -24,6 +25,8 @@ abstract class ScreenMixin {
             Minecraft client,
             ItemStack stack,
             CallbackInfoReturnable<List<Component>> callback) {
+        ForgeMixinDiagnostics.optionalHookActive(
+                ForgeMixinDiagnostics.ITEM_TOOLTIP, "screen-item-tooltip");
         callback.setReturnValue(RenderedTextBridge.translateItemTooltip(callback.getReturnValue()));
     }
 }

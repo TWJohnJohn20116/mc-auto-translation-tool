@@ -132,6 +132,13 @@ int formWidth = Math.max(180, Math.min(360, this.width - 20));
             fetchedModels = models;
             modelPage = 0;
             modelListOpen = true;
+            // Nothing intercepts typing while the picker covers the form, so drop focus: a hidden
+            // field must not collect the characters the user types over the overlay. Without this
+            // the model name — and, worse, the API key — was silently rewritten and then saved.
+            // Same guard as the 1.21 screen; 26.x lost it when the body was copied by hand.
+            endpoint.setFocused(false);
+            model.setFocused(false);
+            apiKey.setFocused(false);
             setStatus("", false);
         }, "universal-translator-model-list");
         worker.setDaemon(true);

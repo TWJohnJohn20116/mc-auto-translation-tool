@@ -8,6 +8,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.universaltranslator.forge.ForgeMixinDiagnostics;
 import org.universaltranslator.forge.ForgeTranslationRuntime;
 
 /** Adds a single title-screen entry that opens translation settings. */
@@ -17,8 +18,13 @@ abstract class TitleScreenMixin extends Screen {
         super(title);
     }
 
-    @Inject(method = "init", at = @At("TAIL"))
+    // Optional: a convenience entry point, not part of the render pipeline. require = 0 is explicit
+    // because the shared injector config sets defaultRequire: 0; the first run is reported so a
+    // skipped hook shows up in the debug log.
+    @Inject(method = "init", at = @At("TAIL"), require = 0)
     private void universalTranslator$addQuickSettings(CallbackInfo callback) {
+        ForgeMixinDiagnostics.optionalHookActive(
+                ForgeMixinDiagnostics.TITLE_SCREEN_ENTRY, "title-screen-entry");
         int x = Math.max(4, this.width - 136);
         addRenderableWidget(new Button(
                 x, 6, 132, 20,

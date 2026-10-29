@@ -1,0 +1,108 @@
+// The aggregate-bundle verification every Fabric bundle shares.
+//
+// Each bundle ships its own implementation JARs, but the release asset
+// MCAutoTranslationTool-<mod_version>-fabric-all.jar carries all of them in one file, and only
+// prepareReleaseAssets builds it. This task hands that file to the project's own
+// BundleResolutionVerifier so Fabric Loader really selects an implementation per Minecraft version.
+//
+// Apply it after the project has declared `java`, its test dependencies and its verifier:
+//
+//     apply from: rootProject.file("gradle/fabric-bundle-aggregate-verify.gradle")
+//
+// The expected versions come from settings.gradle (gradle.ext.fabricReleaseVersions /
+// gradle.ext.fabricBundleVersions). They used to be hand-copied into four bundles and had already
+// drifted — three missed 26.3 and one missed 1.16-1.16.4 — so the lists are read from one place now.
+//
+// CI 修-1: the argument list is built at configuration time, exactly like the previous per-bundle
+// tasks (`args([jar] + allVersions)`). It used to be assembled inside `doFirst`, which made the fork
+// see no versions at all and BundleResolutionVerifier failed with
+// `Usage: <bundle.jar> <minecraft-version>...`. Keeping `args(...)` at configuration time also
+// removes the configuration/execution mixing: the authoritative list is a constant for the build,
+// not something the execution phase can widen or narrow.
+//
+// CI 修-2 (run 40866139468): the argument list is the version list of THIS bundle, never the global
+// one. Fabric Loader's resolver is generation-specific: the old nested JARs (1.13-1.24 depend on an
+// old `fabric` API and an old `minecraft`) are `HARD_DEP_NO_CANDIDATE` in the 26.x generation, so
+// feeding 26.x the 51-version global list made it fail with "only the wrong version is present:
+// 1.14.3" while 1.21.x (which resolves the older entries) stayed green. What this task can prove is
+// "inside this bundle's Loader generation, every embedded JAR is the one Loader picks" — a list that
+// spans generations cannot be handed to one resolver. The global list survives only as the
+// missing-version warning below; it never reaches `args` and never throws.
+
+// This script is applied from a bundle project. settings.gradle names every bundle project
+// `platform-fabric-<bundle>` (its projectDir points at the bundle directory), so the project's own
+// name is the lookup key; a nested `...:bundle` layout falls back to the parent's name.
+def platformProjectName = project.name.startsWith("platform-fabric-")
+        ? project.name.toString()
+        : (project.parent == null ? project.name : project.parent.name).toString()
+
+if (!project.gradle.ext.has("fabricBundleVersions") || !project.gradle.ext.has("fabricReleaseVersions")) {
+    throw new GradleException(
+            "gradle.ext.fabricBundleVersions/fabricReleaseVersions are missing; settings.gradle must " +
+                    "expose them before ${project.path} applies " +
+                    "gradle/fabric-bundle-aggregate-verify.gradle.")
+}
+
+tasks.register("verifyPreparedReleaseBundle", JavaExec) {
+    dependsOn rootProject.tasks.named("verifyPreparedReleaseAssets"), testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "org.universaltranslator.bundle.BundleResolutionVerifier"
+    // The bundle test harness runs against a Loader generation that needs a Java 25 launcher.
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+
+    def aggregateJar = rootProject.layout.buildDirectory.file(
+            "release-assets/MCAutoTranslationTool-${project.mod_version}-fabric-all.jar"
+    ).get().asFile
+
+    // This bundle's own versions (settings.gradle derives them from platformDependencies, with the
+    // 1.13.0 -> 1.13 launcher-id normalisation shared with fabricReleaseVersions).
+    def versionsOfBundle = project.gradle.ext.fabricBundleVersions
+    def bundleVersions = (versionsOfBundle(platformProjectName) as List).collect { it.toString() }
+    // The global release list: warning fodder only, so that a stale downloads/ still shows up.
+    def allVersions = (project.gradle.ext.fabricReleaseVersions as List).collect { it.toString() }
+    // Global minus this bundle: the versions some *other* bundle owns. They cannot be resolved by
+    // this generation's Loader, so they are checked for presence in the archive and nothing more.
+    def foreignVersions = allVersions.findAll { !bundleVersions.contains(it) }
+
+    // An empty list would fork the verifier with the JAR path only and fail with the opaque
+    // `Usage: <bundle.jar> <minecraft-version>...` again (the CI 修-1 symptom). Fail at
+    // configuration time with the project name that was looked up instead.
+    if (bundleVersions.isEmpty()) {
+        throw new GradleException(
+                "settings.gradle has no platformDependencies entry for '${platformProjectName}', so " +
+                        "${project.path}:verifyPreparedReleaseBundle would verify nothing.")
+    }
+
+    // Configuration time: the bundle-scoped list, no zipTree walk involved. This is what the JVM
+    // fork actually receives.
+    args([aggregateJar.absolutePath] + bundleVersions)
+
+    doFirst {
+        // Execution time: only diagnostics and existence checks live here, never the arguments.
+        if (!aggregateJar.isFile()) {
+            throw new GradleException(
+                    "Missing release aggregate ${aggregateJar}; run :prepareReleaseAssets first.")
+        }
+        println "Verifying Fabric Loader resolution for ${bundleVersions.size()} Minecraft versions of " +
+                "${platformProjectName}: ${bundleVersions.join(', ')}"
+        // One walk of the archive: the names of the nested implementation JARs it really carries.
+        // This is a warning only — the args above stay this bundle's list.
+        def carried = project.zipTree(aggregateJar)
+                .matching { include "META-INF/jars/universal-translator-*.jar" }
+                .files.collect { it.name }
+        def absent = foreignVersions.findAll {
+            !carried.contains("universal-translator-${it}.jar")
+        }
+        if (!absent.isEmpty()) {
+            logger.warn(
+                    "${aggregateJar.name} carries ${foreignVersions.size() - absent.size()} of the " +
+                            "${foreignVersions.size()} Fabric versions owned by other bundles; not present: " +
+                            "${absent.join(', ')}. Those versions belong to a different Loader generation, " +
+                            "so they are not passed to the verifier here. The aggregate is built by " +
+                            "prepareReleaseAssets from downloads/, so a version listed in settings.gradle " +
+                            "but missing there means downloads/ is stale.")
+        }
+    }
+}

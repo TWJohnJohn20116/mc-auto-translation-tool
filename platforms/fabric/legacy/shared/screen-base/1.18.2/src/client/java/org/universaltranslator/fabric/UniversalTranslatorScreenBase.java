@@ -6,8 +6,9 @@ import net.minecraft.text.Text;
 /**
  * Per-generation half of the Universal Translator screens for Minecraft 1.18.2.
  *
- * <p>1.18.2 renamed {@code Screen#onClose} to {@code close} and {@code isPauseScreen} to
- * {@code shouldPause}, and both are now {@code @Override}s of the vanilla methods.
+ * <p>1.18.2 renamed {@code Screen#onClose} to {@code close}; the pause hook had already been renamed
+ * {@code isPauseScreen} to {@code shouldPause} one generation earlier, in 1.18.1. Both are
+ * {@code @Override}s of the vanilla methods here.
  */
 abstract class UniversalTranslatorScreenBase extends Screen {
     UniversalTranslatorScreenBase(Text title) {
@@ -32,7 +33,15 @@ abstract class UniversalTranslatorScreenBase extends Screen {
         return pausesGame();
     }
 
+    /**
+     * Whether the singleplayer game keeps running behind this screen.
+     *
+     * <p>Answered in one place for every generation that shares the screens: 1.16.5, 1.17, 1.17.1,
+     * 1.18, 1.18.1 and now 1.18.2 all return {@code false}. 1.18.2 used to answer {@code true} from
+     * a seam of its own, so opening the settings there froze the world while the same screen on
+     * 1.18.1 did not.
+     */
     protected boolean pausesGame() {
-        return true;
+        return false;
     }
 }

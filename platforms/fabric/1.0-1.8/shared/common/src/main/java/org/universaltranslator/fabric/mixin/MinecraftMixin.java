@@ -19,7 +19,10 @@ abstract class MinecraftMixin {
     @Unique
     private boolean universalTranslator$f8Held;
 
-    @Inject(method = "tick()V", at = @At("RETURN"), require = 0)
+    // require = 1: this is the only entry point for the hotkeys and for the client task queue on
+    // 1.3.1-1.7.10. Losing it silently (which is what require = 0 did) leaves the keys doing
+    // nothing with no line in the log; Mixin now fails the class loudly instead.
+    @Inject(method = "tick()V", at = @At("RETURN"), require = 1)
     private void universalTranslator$pollKeys(CallbackInfo callback) {
         // Drop any render context left latched by a render method that threw before its RETURN
         // injection could pop it (Mixin 0.8.x has no exception exit injection point).

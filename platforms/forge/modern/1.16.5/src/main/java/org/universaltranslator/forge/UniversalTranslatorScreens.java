@@ -164,6 +164,17 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     private static final String TRANSLATE_PATH = "/translate";
     private static final String LANGUAGES_PATH = "/languages";
 
+    /** Last computed layout plus the size it was computed for; see {@link #layout()}. */
+    private Layout layoutCache;
+    private int layoutCacheWidth = -1;
+    private int layoutCacheHeight = -1;
+
+    /** Cached status line and its age, so the render path does not localise once per frame. */
+    private String localizedStatus = "";
+    private boolean localizedStatusFailure;
+    private long localizedStatusAt;
+    private static final long STATUS_CACHE_MILLIS = 200L;
+
     UniversalTranslatorConfigScreenBase(Screen parent, ForgeConfig config) {
         super(new TranslationTextComponent("screen.universal_translator.settings.title"));
         this.parent = parent;
@@ -693,9 +704,6 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         }
         graphics.centered(title, width / 2, 16,
                 animatedUi ? SettingsUiAnimation.pulseColor(now) : 0xFFFFFFFF);
-        String rawStatus = ForgeTranslationRuntime.status();
-        String localized = TranslationStatusLocalizer.localize(rawStatus,
-                UniversalTranslatorConfigScreenBase::tr);
         int belowSave = layout.saveY + 24;
         int messageY = belowSave <= height - 10 ? belowSave : SettingsScreenLayout.COMPACT_STATUS_Y;
         if (!status.isEmpty()) {
@@ -703,11 +711,15 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         } else if (!testStatus.isEmpty()) {
             graphics.centered(new StringTextComponent(testStatus), width / 2, messageY,
                     testStatusIsError ? 0xFFFF5555 : 0xFF55FF55);
-        } else if (!localized.isEmpty()) {
-            graphics.centered(new StringTextComponent(localized), width / 2, messageY,
-                    TranslationStatusLocalizer.isFailure(rawStatus) ? 0xFFFF5555 : 0xFF55FF55);
         } else {
-            if (activeTab == Tab.OUTGOING) {
+            // Only localise when the line is actually shown: this used to run
+            // ForgeTranslationRuntime.status() plus a prefix/contains pass over the localised text
+            // on every frame, even while a test result or an error was on screen.
+            String localized = cachedLocalizedStatus();
+            if (!localized.isEmpty()) {
+                graphics.centered(new StringTextComponent(localized), width / 2, messageY,
+                        localizedStatusFailure ? 0xFFFF5555 : 0xFF55FF55);
+            } else if (activeTab == Tab.OUTGOING) {
                 graphics.centered(new TranslationTextComponent("screen.universal_translator.info.outgoing_hint"),
                         width / 2, layout.contentRow(2) + 6, 0xFFA0A0A0);
             } else if (activeTab == Tab.GENERAL) {
@@ -719,6 +731,28 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
             renderEngineInfo(graphics);
         }
         return opening;
+    }
+
+    /**
+     * The localised runtime status, refreshed at most every {@value #STATUS_CACHE_MILLIS} ms.
+     *
+     * <p>{@link ForgeTranslationRuntime#status()} reads the live provider and
+     * {@link TranslationStatusLocalizer#localize} runs a prefix/contains pass over the result, yet
+     * the render path asked for both on every frame of the settings screen. The runtime already
+     * caches its diagnostics snapshot for 250 ms; this is the same idea one layer up, where the
+     * expensive part (the language-table lookups) actually lives.
+     */
+    private String cachedLocalizedStatus() {
+        long now = System.currentTimeMillis();
+        if (localizedStatusAt != 0L && now - localizedStatusAt < STATUS_CACHE_MILLIS) {
+            return localizedStatus;
+        }
+        String raw = ForgeTranslationRuntime.status();
+        localizedStatus = TranslationStatusLocalizer.localize(raw,
+                UniversalTranslatorConfigScreenBase::tr);
+        localizedStatusFailure = TranslationStatusLocalizer.isFailure(raw);
+        localizedStatusAt = now;
+        return localizedStatus;
     }
 
     protected final void renderSettingsAfter(ForgeScreenCanvas graphics, int mouseX, int mouseY,
@@ -1113,7 +1147,7 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         // delta into a real offset, and bound the offset rather than the drawn position: clamping
         // the drawing while the offset kept growing created a dead zone the user had to drag back
         // through. Both axes share one scale, so a diagonal drag moves the handle diagonally.
-        double scale = hudScale();
+        double scale = hudPreviewGeometry().scale;
         if (scale <= 0.0D) {
             return false;
         }
@@ -1154,32 +1188,64 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         return Math.max(lower, Math.min(upper, value));
     }
 
-    private int hudPreviewX() {
-        return layout().left;
-    }
-
-    private int hudPreviewY() {
-        return layout().contentRow(4);
-    }
-
-    private int hudPreviewW() {
-        return layout().totalWidth;
-    }
-
     /**
-     * Panel height, capped by the space above the Save/Cancel row.
+     * Every number the HUD preview needs, computed in one pass.
      *
-     * <p>{@code contentRow(4)} does not shrink on very short windows because the row step has a
-     * floor, so a fixed height would overlap Save. Clamping here keeps the panel clear of it.
+     * <p>These used to be nine accessors that called each other: {@code hudHandleY} reached
+     * {@code hudContentY} and {@code hudScale} twice each, and every one of them called
+     * {@code layout()}, which built a fresh {@code SettingsScreenLayout.Geometry} plus a fresh
+     * {@code Layout}. One frame of the HUD tab therefore ran {@code SettingsScreenLayout.calculate}
+     * about twenty times and allocated forty short-lived objects on the render thread, for eight
+     * numbers that cannot change within a frame.
      */
-    private int hudPreviewH() {
-        int available = layout().saveY - 4 - hudPreviewY();
-        if (available < HUD_DRAG_HANDLE_SIZE) {
-            // No room above Save: skip the preview entirely rather than draw a panel that
-            // overlaps it, which is exactly what the cap above exists to prevent.
-            return 0;
+    private static final class HudPreviewGeometry {
+        private final int panelX;
+        private final int panelY;
+        private final int panelW;
+        private final int panelH;
+        private final int handleX;
+        private final int handleY;
+        private final double scale;
+
+        private HudPreviewGeometry(int panelX, int panelY, int panelW, int panelH,
+                                   int handleX, int handleY, double scale) {
+            this.panelX = panelX;
+            this.panelY = panelY;
+            this.panelW = panelW;
+            this.panelH = panelH;
+            this.handleX = handleX;
+            this.handleY = handleY;
+            this.scale = scale;
         }
-        return Math.min(HUD_DRAG_PREVIEW_HEIGHT, available);
+    }
+
+    private HudPreviewGeometry hudPreviewGeometry() {
+        Layout layout = layout();
+        int panelX = layout.left;
+        int panelY = layout.contentRow(4);
+        int panelW = layout.totalWidth;
+        // contentRow(4) does not shrink on very short windows because the row step has a floor, so
+        // a fixed height would overlap Save. Clamping here keeps the panel clear of it.
+        int available = layout.saveY - 4 - panelY;
+        if (panelW <= 0 || available < HUD_DRAG_HANDLE_SIZE) {
+            // No room above Save: skip the preview entirely rather than draw a panel that overlaps
+            // it, which is exactly what the cap above exists to prevent.
+            return new HudPreviewGeometry(panelX, panelY, panelW, 0, panelX, panelY, 0.0D);
+        }
+        int panelH = Math.min(HUD_DRAG_PREVIEW_HEIGHT, available);
+        // One scale for both axes: the panel is wide and short, so separate factors used to differ
+        // fivefold and make the pointer delta mean a different number of pixels per axis.
+        double scale = Math.min(panelW / (double) HUD_PREVIEW_SCREEN_WIDTH,
+                panelH / (double) HUD_PREVIEW_SCREEN_HEIGHT);
+        int contentX = panelX + Math.max(0,
+                (panelW - (int) Math.round(HUD_PREVIEW_SCREEN_WIDTH * scale)) / 2);
+        int contentY = panelY + Math.max(0,
+                (panelH - (int) Math.round(HUD_PREVIEW_SCREEN_HEIGHT * scale)) / 2);
+        int handleX = Math.max(panelX, Math.min(panelX + panelW - HUD_DRAG_HANDLE_SIZE,
+                contentX + (int) Math.round((hudAnchorX() + hudIndicatorOffsetX) * scale)));
+        int handleY = Math.max(panelY, Math.min(panelY + panelH - HUD_DRAG_HANDLE_SIZE,
+                contentY + (int) Math.round((hudAnchorY() + hudIndicatorOffsetY) * scale)));
+        return new HudPreviewGeometry(panelX, panelY, panelW, panelH, handleX, handleY, scale);
     }
 
     /**
@@ -1198,58 +1264,13 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
                 : hudIndicatorMargin;
     }
 
-    /**
-     * One scale for both axes.
-     *
-     * <p>The panel is wide and short, so the horizontal and vertical factors used to differ by a
-     * factor of five: a 320x240 screen was drawn at the panel width across and at 0.2x down, which
-     * put the bottom corners in the wrong place before any drag and made the pointer delta mean a
-     * different number of pixels on each axis. The smaller of the two fits the whole screen.
-     */
-    private double hudScale() {
-        int width = hudPreviewW();
-        int height = hudPreviewH();
-        if (width <= 0 || height <= 0) {
-            return 0.0D;
-        }
-        return Math.min(width / (double) HUD_PREVIEW_SCREEN_WIDTH,
-                height / (double) HUD_PREVIEW_SCREEN_HEIGHT);
-    }
-
-    /** Left edge of the letterboxed screen inside the panel. */
-    private int hudContentX() {
-        int scaled = (int) Math.round(HUD_PREVIEW_SCREEN_WIDTH * hudScale());
-        return hudPreviewX() + Math.max(0, (hudPreviewW() - scaled) / 2);
-    }
-
-    /** Top edge of the letterboxed screen inside the panel. */
-    private int hudContentY() {
-        int scaled = (int) Math.round(HUD_PREVIEW_SCREEN_HEIGHT * hudScale());
-        return hudPreviewY() + Math.max(0, (hudPreviewH() - scaled) / 2);
-    }
-
-    private int hudHandleX() {
-        int px = hudPreviewX();
-        int pw = hudPreviewW();
-        int x = hudContentX() + (int) Math.round((hudAnchorX() + hudIndicatorOffsetX) * hudScale());
-        return Math.max(px, Math.min(px + pw - HUD_DRAG_HANDLE_SIZE, x));
-    }
-
-    private int hudHandleY() {
-        int py = hudPreviewY();
-        int ph = hudPreviewH();
-        int y = hudContentY() + (int) Math.round((hudAnchorY() + hudIndicatorOffsetY) * hudScale());
-        return Math.max(py, Math.min(py + ph - HUD_DRAG_HANDLE_SIZE, y));
-    }
-
     private boolean insideHudDragHandle(double mouseX, double mouseY) {
-        if (hudPreviewH() <= 0) {
+        HudPreviewGeometry geometry = hudPreviewGeometry();
+        if (geometry.panelH <= 0) {
             return false;
         }
-        int hx = hudHandleX();
-        int hy = hudHandleY();
-        return mouseX >= hx && mouseX < hx + HUD_DRAG_HANDLE_SIZE
-                && mouseY >= hy && mouseY < hy + HUD_DRAG_HANDLE_SIZE;
+        return mouseX >= geometry.handleX && mouseX < geometry.handleX + HUD_DRAG_HANDLE_SIZE
+                && mouseY >= geometry.handleY && mouseY < geometry.handleY + HUD_DRAG_HANDLE_SIZE;
     }
 
     /**
@@ -1262,17 +1283,14 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         if (activeTab != Tab.HUD) {
             return;
         }
-        int px = hudPreviewX();
-        int py = hudPreviewY();
-        int pw = hudPreviewW();
-        int ph = hudPreviewH();
-        if (ph <= 0) {
+        HudPreviewGeometry geometry = hudPreviewGeometry();
+        if (geometry.panelH <= 0) {
             return;
         }
-        graphics.fill(px, py, px + pw, py + ph, 0x40000000);
-        int hx = hudHandleX();
-        int hy = hudHandleY();
-        graphics.fill(hx, hy, hx + HUD_DRAG_HANDLE_SIZE, hy + HUD_DRAG_HANDLE_SIZE,
+        graphics.fill(geometry.panelX, geometry.panelY,
+                geometry.panelX + geometry.panelW, geometry.panelY + geometry.panelH, 0x40000000);
+        graphics.fill(geometry.handleX, geometry.handleY,
+                geometry.handleX + HUD_DRAG_HANDLE_SIZE, geometry.handleY + HUD_DRAG_HANDLE_SIZE,
                 hudDragging ? 0xFFFFAA00 : 0xFF00AA00);
     }
 
@@ -1357,28 +1375,39 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         return new TranslationTextComponent(key, arguments).getString();
     }
 
+    /**
+     * Screen layout, rebuilt only when the window size changes.
+     *
+     * <p>{@code calculate} plus a {@code Layout} allocation used to run on every call, and the
+     * render path called it from a dozen places per frame (see {@link #hudPreviewGeometry()} for
+     * the worst offender). The screen size is the only input, so one cache entry is enough and it
+     * also keeps {@code engineBlockTop()}/{@code engineRow()} allocation-free.
+     */
     private Layout layout() {
+        Layout cached = layoutCache;
+        if (cached != null && layoutCacheWidth == width && layoutCacheHeight == height) {
+            return cached;
+        }
         SettingsScreenLayout.Geometry geometry = SettingsScreenLayout.calculate(width, height, 5);
-        return new Layout(geometry.left(), geometry.right(), geometry.totalWidth(), geometry.buttonWidth(),
-                geometry.top(), geometry.rowStep(), geometry.targetY(), geometry.endpointY(), geometry.saveY(),
-                geometry.tabY(), geometry.tabWidth(), geometry.tabGap(), geometry.contentTop(), geometry.contentRowStep());
+        Layout computed = new Layout(geometry.left(), geometry.right(), geometry.totalWidth(),
+                geometry.buttonWidth(), geometry.saveY(), geometry.tabY(), geometry.tabWidth(),
+                geometry.tabGap(), geometry.contentTop(), geometry.contentRowStep());
+        layoutCache = computed;
+        layoutCacheWidth = width;
+        layoutCacheHeight = height;
+        return computed;
     }
 
     private static final class Layout {
-        private final int left, right, totalWidth, buttonWidth, top, rowStep, targetY, endpointY, saveY;
+        private final int left, right, totalWidth, buttonWidth, saveY;
         private final int tabY, tabWidth, tabGap, contentTop, contentRowStep;
 
-        private Layout(int left, int right, int totalWidth, int buttonWidth, int top,
-                       int rowStep, int targetY, int endpointY, int saveY,
+        private Layout(int left, int right, int totalWidth, int buttonWidth, int saveY,
                        int tabY, int tabWidth, int tabGap, int contentTop, int contentRowStep) {
             this.left = left;
             this.right = right;
             this.totalWidth = totalWidth;
             this.buttonWidth = buttonWidth;
-            this.top = top;
-            this.rowStep = rowStep;
-            this.targetY = targetY;
-            this.endpointY = endpointY;
             this.saveY = saveY;
             this.tabY = tabY;
             this.tabWidth = tabWidth;
@@ -1402,10 +1431,6 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         private int contentRow(int index) {
             return contentTop + contentRowStep * index;
         }
-
-        private int row(int index) {
-            return top + rowStep * index;
-        }
     }
 }
 
@@ -1425,6 +1450,11 @@ abstract class UniversalTranslatorDiagnosticsScreenBase extends Screen {
     private boolean debugEnabled;
     private String exportStatus = "";
     private boolean exportFailed;
+    /** Cached page lines; see {@link #cachedDisplayLines()}. */
+    private List<String> linesCache = Collections.emptyList();
+    private boolean linesCacheStatisticsPage;
+    private long linesCacheAt;
+    private static final long LINES_CACHE_MILLIS = 200L;
 
     UniversalTranslatorDiagnosticsScreenBase(Screen parent, ForgeConfig config) {
         super(new TranslationTextComponent("screen.universal_translator.diagnostics.title"));
@@ -1494,6 +1524,9 @@ abstract class UniversalTranslatorDiagnosticsScreenBase extends Screen {
     }
 
     private void refreshPageLabels() {
+        // The page may have changed: drop the cached lines so the next frame renders the new page
+        // instead of the previous one for up to one cache window.
+        invalidateDisplayLines();
         if (pageButton != null) {
             pageButton.setMessage(new TranslationTextComponent(statisticsPage
                     ? "screen.universal_translator.stats.show_diagnostics"
@@ -1538,6 +1571,7 @@ abstract class UniversalTranslatorDiagnosticsScreenBase extends Screen {
     /** Clears the process-wide counters and writes the cleared values out. */
     private void resetStatistics() {
         TranslationStats.global().reset();
+        invalidateDisplayLines();
         exportStatus = tr("screen.universal_translator.stats.reset_done");
         exportFailed = false;
     }
@@ -1558,7 +1592,7 @@ abstract class UniversalTranslatorDiagnosticsScreenBase extends Screen {
                         : title,
                 width / 2, 18, 0xFFFFFFFF);
         int left = Math.max(10, (width - Math.min(360, width - 20)) / 2);
-        List<String> lines = displayLines();
+        List<String> lines = cachedDisplayLines();
         // Stop before the status line and the button rows. A short window shows fewer lines instead
         // of drawing text on top of a button, and the last visible line says that it was cut.
         int limit = Math.max(1, (height - 96 - LINE_START) / LINE_STEP + 1);
@@ -1593,6 +1627,35 @@ abstract class UniversalTranslatorDiagnosticsScreenBase extends Screen {
             return Collections.singletonList(
                     tr("screen.universal_translator.diagnostics.unavailable"));
         }
+    }
+
+    /**
+     * The lines the current page shows, rebuilt at most every {@value #LINES_CACHE_MILLIS} ms.
+     *
+     * <p>Each rebuild allocates one {@code TranslationTextComponent} plus its varargs array per
+     * line, calls {@code getString()} (language-table lookup and {@code String.format}) for each of
+     * them, and on the counters page runs {@code TranslationStats.snapshot()} including its
+     * percentile sort. That used to happen on every frame the screen was open. The runtime already
+     * caches its diagnostics snapshot for 250 ms; this is the missing layer above it, where the
+     * localisation cost actually sits.
+     */
+    private List<String> cachedDisplayLines() {
+        long now = System.currentTimeMillis();
+        if (linesCacheAt != 0L && linesCacheStatisticsPage == statisticsPage
+                && now - linesCacheAt < LINES_CACHE_MILLIS) {
+            return linesCache;
+        }
+        List<String> lines = displayLines();
+        linesCache = lines;
+        linesCacheStatisticsPage = statisticsPage;
+        linesCacheAt = now;
+        return lines;
+    }
+
+    /** Drops the cached page so the next frame rebuilds it. */
+    private void invalidateDisplayLines() {
+        linesCache = Collections.emptyList();
+        linesCacheAt = 0L;
     }
 
     private List<String> safeLines() {
@@ -1659,12 +1722,16 @@ abstract class UniversalTranslatorDiagnosticsScreenBase extends Screen {
 }
 
 abstract class UniversalTranslatorLlmConfigScreenBase extends Screen {
-    /** Height of a single catalog row in the model picker overlay. */
-    private static final int LIST_ROW_HEIGHT = 12;
+    /**
+     * Row geometry of the catalog overlay, taken from the shared {@link ModelListPaging}.
+     *
+     * <p>This screen used to carry its own copies of the three numbers (12 / 46 / 62) and re-derive
+     * the page arithmetic inline, so the same catalog had a different hit box here than on the
+     * engine tab, and neither copy clamped the current page.
+     */
+    private static final int LIST_ROW_HEIGHT = ModelListPaging.ROW_HEIGHT;
     /** Y of the first catalog row; the picker title sits above it. */
-    private static final int LIST_TOP = 46;
-    /** Room kept under the rows for the paging, back, and hint lines. */
-    private static final int LIST_FOOTER_HEIGHT = 62;
+    private static final int LIST_TOP = ModelListPaging.LIST_TOP;
     private static final int ESCAPE_KEY = 256;
 
     private final UniversalTranslatorConfigScreenBase parent;
@@ -1818,6 +1885,10 @@ abstract class UniversalTranslatorLlmConfigScreenBase extends Screen {
         graphics.centered(new TranslationTextComponent("screen.universal_translator.llm.select_model",
                 fetchedModels.size()), width / 2, 20, 0xFFFFFFFF);
         int rows = rowsPerPage();
+        // clampPage runs before drawing, exactly like the engine tab's overlay: the overlay stays
+        // open across a resize, so shrinking the window lowers the page count while modelPage keeps
+        // its old value, and the list then rendered an empty page whose counter denied it.
+        modelPage = ModelListPaging.clampPage(modelPage, fetchedModels.size(), rows);
         int first = modelPage * rows;
         for (int row = 0; row < rows && first + row < fetchedModels.size(); row++) {
             int rowY = LIST_TOP + row * LIST_ROW_HEIGHT;
@@ -1860,9 +1931,10 @@ abstract class UniversalTranslatorLlmConfigScreenBase extends Screen {
             return;
         }
         int rows = rowsPerPage();
-        int row = (int) ((mouseY - LIST_TOP) / LIST_ROW_HEIGHT);
-        int index = modelPage * rows + row;
-        if (row >= rows || index >= fetchedModels.size()) {
+        modelPage = ModelListPaging.clampPage(modelPage, fetchedModels.size(), rows);
+        int row = ModelListPaging.rowAt(mouseY);
+        int index = ModelListPaging.index(modelPage, rows, row);
+        if (row < 0 || row >= rows || index >= fetchedModels.size()) {
             return;
         }
         model.setValue(fetchedModels.get(index));
@@ -1887,11 +1959,11 @@ abstract class UniversalTranslatorLlmConfigScreenBase extends Screen {
     }
 
     private int rowsPerPage() {
-        return Math.max(3, (height - LIST_TOP - LIST_FOOTER_HEIGHT) / LIST_ROW_HEIGHT);
+        return ModelListPaging.rows(height);
     }
 
     private int pageCount(int rows) {
-        return Math.max(1, (fetchedModels.size() + rows - 1) / rows);
+        return ModelListPaging.pageCount(fetchedModels.size(), rows);
     }
 
     @Override

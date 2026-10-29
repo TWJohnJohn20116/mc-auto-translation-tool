@@ -6,6 +6,20 @@ plugins {
 version = project.mod_version
 group = project.maven_group
 
+// This module keeps a hand-written source set instead of applying platforms/neoforge/shared.gradle
+// (that would pull the Forge project into configuration and re-trigger the Minecraft Mavenizer for
+// 3.5 minutes). The coordinates below are declarative only — nothing reads them at build time —
+// but they put 1.20.1 inside validateNeoForgeModuleCoordinates and validateSharedPlatformLayouts,
+// which previously described every NeoForge version except this one.
+ext.neoforgeMinecraftVersion = "1.20.1"
+ext.neoforgeVersion = "1.20.1-47.1.106"
+ext.neoforgeJavaRelease = 17
+ext.neoforgeEntryLayer = "1.20.2-1.20.4"
+ext.neoforgeMetadataLayer = "1.20-1.20.4"
+ext.neoforgeForgeSharedRoot = "platforms/forge/modern/shared"
+ext.neoforgeForgeLayers = ["common", "family/1.19.2-plus"]
+ext.neoforgeForgeExtraRoots = ["platforms/forge/modern/1.20.1"]
+
 base {
     archivesName = "mc-auto-translation-tool-neoforge-1.20.1"
 }
@@ -57,6 +71,11 @@ sourceSets {
                 project(":translator-core").file("src/main/java")
         ]
         resources.setSrcDirs([])
+        // Same reason as platforms/neoforge/shared.gradle: the language files live in
+        // platforms/shared/lang/json, outside every Forge tree, and this project clears the default
+        // resource directories. processResources already pulls src/main/resources for the mixin
+        // config and META-INF/mods.toml, so only the shared lang dir has to be added here.
+        resources.srcDir rootProject.file("platforms/shared/lang/json")
     }
 }
 

@@ -241,6 +241,11 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   `cache-read-only: false`，並先確認快取用量沒有逼近上限。
 - 不要降低既有檢查強度：`check`、`verifyBundle`、`verifyLoaderSelection`、`verifyPreparedReleaseAssets`
   與 `scripts/verify_release_jars.py` 的驗證都必須保留。
+- **`check` 不再包含發布驗證**（2026-10-29，第二輪審計 C2-163）：`verifyPreparedReleaseAssets` 需要
+  `downloads/<mod_version>/SHA256SUMS.txt`，而它是**發布後**才存在的檔案，掛在 PR 必經的 `check`
+  等同讓「改版本號」與「必經檢查」互鎖（bump 後第一次 PR 必紅，且每個無關 PR 都要重掃 48 顆 JAR）。
+  現在它是獨立任務，由 `verifyPublishedRelease` 聚合，只由 `prepare-release.yml`／`release-assets`
+  job 明確呼叫。改動時不要把它加回 `check`，也不要讓 `check` 依賴 `downloads/`。
 - 新增或調整平台目標時，必須同步四處：`settings.gradle` 的 `platformProjects`、對應 workflow 的 matrix
   （`build.yml` 是靜態 matrix；`legacy-targets.yml` 是 `plan` job 裡那份 JSON）、`gradle.properties`
   的版本變數，以及本檔的目標名稱清單。
@@ -309,9 +314,11 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   有問題的版本：1.0.0～1.2.5 上游只發佈帶側別後綴的 feather（`1.0.0-client+build.3`），而
   `ploceus.featherMappings` 只會組出一般命名（`1.0.0+build.31`）；1.6.2／1.7.3／1.7.5／1.7.7 雖然
   有部分 build 的成品，但 ploceus 的 version manifest 對不上（`unable to read version details`，
-  來自 `manifest/VersionDetails.java` 的解析）。目錄仍在 `platforms/fabric/1.0-1.8/versions/`，
-  要恢復就把版本加回 `settings.gradle` 的 `platformProjects`、`platformDependencies` 與 bundle 的
-  `supportedVersions` 這三處。這個 bundle 不在 48 顆發布資產裡，所以它紅燈時對使用者沒有影響，
+  來自 `manifest/VersionDetails.java` 的解析）。這 12 個目錄已於 2026-10-29（第二輪審計 S2-128）
+  **整個刪除**——它們從未被任何 workflow 建置、也沒有發布過，留著只會被誤認為可用目標。要恢復某個
+  版本，必須同時（1）重建 `platforms/fabric/1.0-1.8/versions/<版本>/build.gradle`、（2）加回
+  `settings.gradle` 的 `platformProjects` 與 `platformDependencies`、（3）加回 bundle 的
+  `supportedVersions`。這個 bundle 不在 48 顆發布資產裡，所以它紅燈時對使用者沒有影響，
   但排程紅燈會掩蓋其他目標真正的失敗。
 - 判斷「某個版本的 mappings 能不能用」**不能只看 artifact 有沒有回 200**：`1.6.2+build.5` 的 `.pom`
   與 `.jar` 都存在，ploceus 仍然建不起來。反過來說，**`maven-metadata.xml` 是過期不完整的**
@@ -346,8 +353,9 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   （它沒有語系參數，無法翻譯，只能在失敗時顯示）；成功時的繁中摘要由每個建置 job 最後的
   「寫入建置摘要」步驟用 `$GITHUB_STEP_SUMMARY` 產生，`ci-status` 另外寫一張彙總表。
   該步驟必須是 `if: always()`，且不得讓 job 因此變紅（取值一律加 `|| true`，缺值時顯示「未知」）。
-  那段 bash 在每個建置 job 各有一份（GitHub 運算式不支援共用、YAML 錨點在此不建議使用），
-  修改時要一起改。
+  **那段 bash 只有一份**：`scripts/ci/write-build-summary.sh`（2026-10-29，第二輪審計 S2-221）。
+  以前七個 job 各貼一份，改一處漏六處；現在各 job 只呼叫這個腳本並傳入自己的引數，
+  要調整顯示格式時只改那一個檔案。
 - runner 固定為 `ubuntu-24.04`，不要改回 `ubuntu-latest`：`ubuntu-latest` 將於 2026-10-19 遷移到
   Ubuntu 26，會讓 23 個建置目標同時面對環境突變。要升級時應一次性改版號並用 CI 驗證。
 - 不要為了讓 CI 變綠而刪除測試或放寬驗證；要修的是程式碼。

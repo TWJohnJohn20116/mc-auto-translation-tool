@@ -15,6 +15,7 @@ import org.universaltranslator.core.TranslationStore;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.RecentUserText;
 import org.universaltranslator.core.TranslationResult;
+import org.universaltranslator.core.TranslationStatusLocalizer;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -291,7 +292,9 @@ public final class ForgeTranslationRuntime {
                 ? ((TranslationProviderStatus) provider).status() : "";
         // The offline provider already has the specific startup diagnostic. Prefer it over the
         // session's generic wrapper so one failure cannot alternate between two chat messages.
-        if (providerStatus.startsWith("离线翻译失败")) {
+        // Decided through the shared classifier rather than a copy of the offline provider's Chinese
+        // message prefix: that copy silently stopped matching as soon as the wording changed.
+        if (TranslationStatusLocalizer.isFailure(providerStatus)) {
             return providerStatus;
         }
         if (active != null && !active.lastFailureStatus().isEmpty()) {
@@ -315,8 +318,12 @@ public final class ForgeTranslationRuntime {
         TranslationProvider provider = activeProvider;
         TranslationDiagnosticsSnapshot snapshot;
         if (config == null) {
+            // Empty rather than a Chinese placeholder: the status is handed to
+            // TranslationStatusLocalizer, whose table has no entry for a made-up literal, so the
+            // literal reached English and Japanese players untranslated. The screens render their
+            // own localized "settings are not loaded" line for this case.
             snapshot = new TranslationDiagnosticsSnapshot(
-                    false, "", "", "", null, false, false, -1L, -1L, "尚未载入设置");
+                    false, "", "", "", null, false, false, -1L, -1L, "");
         } else {
             Path modelFile = config.offlineDirectory.resolve(config.offlineModel.modelFile());
             snapshot = new TranslationDiagnosticsSnapshot(

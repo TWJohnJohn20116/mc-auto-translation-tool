@@ -1837,7 +1837,10 @@ public final class ProviderSelfTest {
                     new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT)));
             assertEquals("你好", high.translate(
                     new TranslationRequest("Hello", "auto", "zh-TW", TextKind.CHAT)));
-            assertEquals("openai-compatible:quality-model", standard.id());
+            // The id names the endpoint as well as the model (@<endpoint digest>), so two hosts that
+            // serve the same model name cannot share cached translations; the readable prefix is
+            // unchanged.
+            assertTrue(standard.id().startsWith("openai-compatible:quality-model@"));
             assertFalse(standard.id().equals(high.id()));
         } finally {
             server.close();

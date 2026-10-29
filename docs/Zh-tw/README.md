@@ -56,7 +56,11 @@ Fabric、Forge 與 NeoForge 均可按 `U` 開啟圖形設定，直接編輯屏�
 
 ### Fabric：一個 JAR 即可
 
-涵蓋 **1.13–1.21.11** 與 **26.1–26.3**。JAR 內含各版本精確實作，由 Fabric Loader 依目前遊戲版本自動選擇。Java 隨遊戲為 8、17、21 或 25。1.14–1.14.2 因 Yarn 無法 remap，僅提供引導實作；完整設定頁從 1.14.3 起。
+這顆 JAR 內含 **51 個精確版本實作**，涵蓋：1.13、1.13.1、1.13.2；1.14–1.14.4、1.15–1.15.2；1.16–1.16.5；1.17、1.17.1、1.18、1.18.1、1.18.2；1.19–1.19.4；1.20–1.20.6；1.21–1.21.11；26.1、26.1.1、26.1.2、26.2、26.3。清單以外的版本不會載入任何實作。
+
+**前提：Fabric Loader ≥ 0.19.3。** bundle 的 `fabric.mod.json` 就是這樣宣告 `fabricloader` 下限；Loader 低於 0.19.3 的實例（例如 1.13.2 常見的 Legacy Fabric 0.16.10、部分仍停在 0.18.1 的 1.20.1／1.21.11 啟動器）會在載入階段回報 `requires fabric loader 0.19.3 or later`，整個模組不載入。請先把該實例的 Loader 升到 0.19.3 以上。
+
+Java 隨遊戲為 8、17、21 或 25。1.14–1.14.2 因 Yarn 無法 remap，僅提供引導實作；完整設定頁從 1.14.3 起。
 
 [下載 Fabric JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4/MCAutoTranslationTool-1.4-fabric-all.jar)
 
@@ -64,7 +68,9 @@ Fabric、Forge 與 NeoForge 均可按 `U` 開啟圖形設定，直接編輯屏�
 
 ### Forge：依 Minecraft 版本選擇
 
-Forge 只在已驗證相容的相鄰版本間共用 JAR，沒有 Fabric 那種多實作巢狀選版。
+Forge 只在已驗證相容的相鄰版本間共用 JAR，沒有 Fabric 那種多實作巢狀選版。族群 JAR 的
+`mods.toml` 用連續版本區間（如 `[1.21,1.21.6)`）宣告，比實際轉接清單寬：**區間裡的缺口沒有實作**
+（例如 1.21.2 沒有對應目標），只有下表逐項列出的版本才是實際支援範圍。
 
 | Minecraft | Java | 下載 |
 | --- | ---: | --- |
@@ -82,7 +88,8 @@ Forge 只在已驗證相容的相鄰版本間共用 JAR，沒有 Fabric 那種�
 
 ### NeoForge：必須依版本分開
 
-NeoForge / FML **不能**像 Fabric Loader 那樣，在同一個 JAR 裡巢狀多套同 `modId` 實作再依遊戲版本只啟用一套：重複 modId 會無法載入，Jar-in-Jar 只用來嵌入相依函式庫。1.20.1（Java 17、NeoForge 47）與 1.21.1 / 1.21.3 / 1.21.11（Java 21、NeoForge 21.1 / 21.3 / 21.11）API 也不相容，所以正式版是每個 Minecraft 版本一顆獨立 JAR，共 19 顆。
+NeoForge / FML **不能**像 Fabric Loader 那樣，在同一個 JAR 裡巢狀多套同 `modId` 實作再依遊戲版本只啟用一套：重複 modId 會無法載入，Jar-in-Jar 只用來嵌入相依函式庫。1.20.1（Java 17、NeoForge 47）與 1.21.1 / 1.21.3 / 1.21.11（Java 21、NeoForge 21.1 / 21.3 / 21.11）API 也不相容，所以正式版是每個 Minecraft 版本一顆獨立 JAR，共 19 顆。NeoForge 只有下表這 19 個版本：1.20.2
+的座標無法解析、1.20.3 沒有對應目標，兩者都不提供下載。
 
 | Minecraft | NeoForge | Java | 下載 |
 | --- | --- | ---: | --- |
@@ -139,7 +146,7 @@ NeoForge / FML **不能**像 Fabric Loader 那樣，在同一個 JAR 裡巢狀�
 ## 目前驗證狀態
 
 目前正式版的所有目標均通過乾淨建置、共用核心自我測試、Mixin/refmap、執行階段映射、發佈結構與
-SHA-256 驗證。Fabric 全版本 JAR 內含 46 個精確實作，並已通過各目標版本的真實 Loader
+SHA-256 驗證。Fabric 全版本 JAR 內含 51 個精確實作，並已通過各目標版本的真實 Loader
 選擇測試；NeoForge 1.20.1 已完成實際用戶端啟動與模組初始化。
 
 「可以編譯」不等於「已完成伺服器內人工回歸」。各版本的建置、啟動與人工驗證層級會分別記錄，

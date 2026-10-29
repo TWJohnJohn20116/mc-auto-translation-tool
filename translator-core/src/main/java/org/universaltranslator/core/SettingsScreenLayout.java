@@ -7,6 +7,14 @@ public final class SettingsScreenLayout {
     public static final int COMPACT_STATUS_Y = 6;
     /** Narrowest tab that still has room for a two-character label. */
     public static final int MINIMUM_TAB_WIDTH = 20;
+    /**
+     * Tightest row step the compressed layout will use.
+     *
+     * <p>A control row is {@link #BUTTON_HEIGHT} high, so below this the rows start to cover each
+     * other. It is a floor rather than a target: it only applies when the screen is too short for the
+     * full form and the rows have to give way to the action row.
+     */
+    public static final int MINIMUM_ROW_STEP = 8;
 
     private SettingsScreenLayout() {
     }
@@ -45,12 +53,29 @@ public final class SettingsScreenLayout {
         // Minecraft normally exposes at least 240 logical pixels, but mobile launchers,
         // custom GUI scales and embedded windows can be smaller. Keep the action row on-screen
         // by shifting the form upward instead of leaving Save and Cancel outside mouse reach.
+        //
+        // The shift itself needs a floor: a 200x160 window moved top from 20 to -56, which put
+        // row(0), row(1) and row(2) above the top edge where nothing can be clicked, and traded one
+        // unreachable row for another. The form now moves up only as far as the header allows and
+        // takes the rest out of the row step, so the whole form stays inside the screen.
         int bottomLimit = Math.max(BUTTON_HEIGHT, screenHeight - 4);
         int overflow = saveY + BUTTON_HEIGHT - bottomLimit;
         if (overflow > 0) {
-            top -= overflow;
+            int endpointGap = screenHeight >= 300 ? 32 : 28;
+            top = Math.max(minimumTop, top - overflow);
+            while (rowStep > MINIMUM_ROW_STEP) {
+                int candidateTarget = top + rowStep * 7 + 2;
+                int candidateEndpoint = candidateTarget + endpointGap;
+                int candidateSave = screenHeight >= 330
+                        ? 296 : Math.max(candidateEndpoint + 22, screenHeight - 24);
+                if (candidateSave + BUTTON_HEIGHT <= screenHeight
+                        && candidateEndpoint + BUTTON_HEIGHT <= candidateSave) {
+                    break;
+                }
+                rowStep -= 2;
+            }
             targetY = top + rowStep * 7 + 2;
-            endpointY = targetY + (screenHeight >= 300 ? 32 : 28);
+            endpointY = targetY + endpointGap;
             saveY = screenHeight >= 330
                     ? 296 : Math.max(endpointY + 22, screenHeight - 24);
         }

@@ -19,6 +19,7 @@ import org.universaltranslator.core.HudIndicatorSettings;
 import org.universaltranslator.core.HudIndicatorVisibility;
 import org.universaltranslator.core.OutgoingTranslationPreview;
 import org.universaltranslator.core.TranslationActivity;
+import org.universaltranslator.forge.ForgeMixinDiagnostics;
 import org.universaltranslator.forge.ForgeTranslationRuntime;
 import org.universaltranslator.forge.TranslationRenderContext;
 
@@ -35,9 +36,14 @@ import org.universaltranslator.forge.TranslationRenderContext;
  */
 @Mixin(Gui.class)
 abstract class InGameHudStatusIndicatorMixin {
-    @Inject(method = "render(Lcom/mojang/blaze3d/vertex/PoseStack;F)V", at = @At("RETURN"))
+    // Optional: pure HUD decoration. require = 0 is explicit (the shared injector config uses
+    // defaultRequire: 0), and the first run is reported so a skipped hook is visible in the debug
+    // log instead of looking like "translation is off".
+    @Inject(method = "render(Lcom/mojang/blaze3d/vertex/PoseStack;F)V", at = @At("RETURN"),
+            require = 0)
     private void universalTranslator$renderStatusIndicator(
             PoseStack pose, float delta, CallbackInfo callback) {
+        ForgeMixinDiagnostics.optionalHookActive(ForgeMixinDiagnostics.HUD_INDICATOR, "hud-indicator");
         // Read the settings first: a disabled indicator draws nothing at all.
         // One read per frame: the runtime publishes a finished snapshot, and this method needs
         // four different fields off the same one.

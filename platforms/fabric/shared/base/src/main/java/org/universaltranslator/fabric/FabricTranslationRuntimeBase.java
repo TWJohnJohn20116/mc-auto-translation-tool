@@ -68,6 +68,26 @@ public abstract class FabricTranslationRuntimeBase {
     /** Guards the player-name refresh so a burst of render-thread lookups rebuilds once per window. */
     private final AtomicBoolean playerNameRefresh = new AtomicBoolean();
     private final RecentUserText recentUserText = new RecentUserText();
+    /**
+     * True once something was remembered in {@link #recentUserText} and until the next reset.
+     *
+     * <p>{@code shouldPreserve} is synchronized and normalizes its argument, and the render path asks
+     * it about every drawn string two to four times per frame. The queue is empty for almost every
+     * frame of a normal session — it only fills after the player types a line, and then only for
+     * thirty minutes — so the render path checks this flag first and never enters the monitor in the
+     * common case. Written before the queue is touched and cleared with it, so a stale {@code true}
+     * can only cost one lookup, never a missing match.
+     */
+    private volatile boolean recentUserTextPresent;
+    /**
+     * The instance that published the live session, for the static fast path the render bridge uses.
+     *
+     * <p>{@code RenderedTextBridge} is a static class that cannot reach whichever runtime the
+     * generation-specific entry points built, and the bridge runs for every drawn line of every
+     * frame — including the frames where translation is switched off. One process runs one client,
+     * so a single published instance is enough; {@link #shutdown()} clears it.
+     */
+    private static volatile FabricTranslationRuntimeBase activeRuntime;
     private CompletableFuture<Void> outgoingTail = CompletableFuture.completedFuture(null);
     // A single daemon thread serializes the teardown of replaced sessions: at most one reaper
     // thread exists no matter how often the configuration is switched, and two replaced sessions
@@ -171,6 +191,11 @@ public abstract class FabricTranslationRuntimeBase {
         protectedPlayerNames = Collections.emptyList();
         protectedPlayerNamesExpireAt = 0L;
         recentUserText.clear();
+        recentUserTextPresent = false;
+        // A new configuration points at a different model and cache file, so the cached sizes are
+        // meaningless for it: let the next diagnostics snapshot read them again.
+        cachedBytesExpireAt = 0L;
+        activeRuntime = this;
         outgoingTail = CompletableFuture.completedFuture(null);
         closeInBackground(replaced);
     }
@@ -217,6 +242,24 @@ public abstract class FabricTranslationRuntimeBase {
                 || screen instanceof UniversalTranslatorLlmConfigScreen;
     }
 
+    /**
+     * True when a render-time lookup can produce a translation at all right now.
+     *
+     * <p>A coarse, allocation-free answer for the hooks that have to do real work before they can
+     * ask {@link #translateForRender}: flattening an {@code OrderedText} into a string costs three
+     * allocations per call, and the hooks run for every drawn line whether translation is enabled
+     * or not. This is only ever a fast path — the kind-by-kind and per-screen decisions stay in
+     * {@code translateForRender}.
+     */
+    public static boolean renderTranslationEnabled() {
+        FabricTranslationRuntimeBase runtime = activeRuntime;
+        if (runtime == null) {
+            return false;
+        }
+        FabricConfig config = runtime.activeConfig;
+        return runtime.session != null && config != null && config.enabled;
+    }
+
     String translateForRender(String original, TextKind kind) {
         RenderTranslationSession active = session;
         FabricConfig config = activeConfig;
@@ -225,7 +268,7 @@ public abstract class FabricTranslationRuntimeBase {
                 && MinecraftContentScope.isVanillaScreen(currentScreen()))
                 || isTranslatorScreen(currentScreen())
                 || isLocalChatInput(original)
-                || recentUserText.shouldPreserve(original)) {
+                || (recentUserTextPresent && recentUserText.shouldPreserve(original))) {
             return original;
         }
         return active.lookup(original, kind);
@@ -238,6 +281,10 @@ public abstract class FabricTranslationRuntimeBase {
         protectedPlayerNames = Collections.emptyList();
         protectedPlayerNamesExpireAt = 0L;
         recentUserText.clear();
+        recentUserTextPresent = false;
+        if (activeRuntime == this) {
+            activeRuntime = null;
+        }
         outgoingTail = CompletableFuture.completedFuture(null);
         if (active != null) {
             active.close();
@@ -317,6 +364,20 @@ public abstract class FabricTranslationRuntimeBase {
         return providerStatus;
     }
 
+    /**
+     * File sizes the diagnostics snapshot reports, refreshed at most once a second.
+     *
+     * <p>Both values are two {@code stat} calls each ({@code isRegularFile} then {@code size}), and
+     * the snapshot is built on whichever thread asked for it — which is the render thread while the
+     * diagnostics screen is open. Cached because a two-line read-out does not need a live file
+     * system: the numbers are display-only, and a second of staleness is invisible next to the cost
+     * of blocking a frame on a network drive.
+     */
+    private static final long FILE_SIZE_CACHE_MILLIS = 1_000L;
+    private volatile long cachedModelBytes = -1L;
+    private volatile long cachedCacheBytes = -1L;
+    private volatile long cachedBytesExpireAt;
+
     TranslationDiagnosticsSnapshot diagnostics() {
         FabricConfig config = activeConfig;
         TranslationProvider provider = activeProvider;
@@ -325,6 +386,12 @@ public abstract class FabricTranslationRuntimeBase {
                     false, "", "", "", null, false, false, -1L, -1L, "尚未载入设置");
         }
         Path modelFile = config.offlineDirectory.resolve(config.offlineModel.modelFile());
+        long now = System.currentTimeMillis();
+        if (now >= cachedBytesExpireAt) {
+            cachedModelBytes = fileSize(modelFile);
+            cachedCacheBytes = fileSize(config.cacheFile);
+            cachedBytesExpireAt = now + FILE_SIZE_CACHE_MILLIS;
+        }
         return new TranslationDiagnosticsSnapshot(
                 config.enabled,
                 config.provider,
@@ -333,8 +400,8 @@ public abstract class FabricTranslationRuntimeBase {
                 config.offlineModel,
                 config.offlineAutoDownload,
                 config.diskCache,
-                fileSize(modelFile),
-                fileSize(config.cacheFile),
+                cachedModelBytes,
+                cachedCacheBytes,
                 status());
     }
 
@@ -373,6 +440,9 @@ public abstract class FabricTranslationRuntimeBase {
     }
 
     void protectOutgoingMessage(String message) {
+        // Set before the queue: a render hook that reads the flag after this point either sees the
+        // entry or pays one lookup, never the other way round.
+        recentUserTextPresent = true;
         recentUserText.remember(message);
     }
 
@@ -398,6 +468,7 @@ public abstract class FabricTranslationRuntimeBase {
         if (active == null || config == null || !shouldTranslateOutgoing(message)) {
             return CompletableFuture.completedFuture(TranslationResult.unchanged(message));
         }
+        recentUserTextPresent = true;
         recentUserText.remember(message);
         // Capture the tab-list/server literals on Minecraft's calling thread. The translation
         // itself may finish on a worker, but must not inspect client network state there.

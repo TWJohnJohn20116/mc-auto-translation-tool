@@ -19,6 +19,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Process-wide translation counters, persisted next to the configuration.
@@ -68,6 +70,15 @@ public final class TranslationStats {
     private long cacheMisses;
     private long promptTokens;
     private long completionTokens;
+    private long rejected;
+    /**
+     * Bumped by every counter update. {@link #snapshot()} rebuilds its immutable view only when
+     * this moved, so a diagnostics screen that redraws every frame reuses one snapshot instead of
+     * re-boxing 512 latencies and re-sorting them sixty times a second.
+     */
+    private long revision;
+    private Snapshot cachedSnapshot;
+    private long cachedRevision = -1L;
     private volatile Path file;
     private volatile boolean flusherStarted;
 
@@ -114,17 +125,65 @@ public final class TranslationStats {
         startFlusher();
     }
 
-    /** Records that a translation was answered from the cache, without touching the provider. */
+    /**
+     * Records that a translation was answered from the cache, without touching the provider.
+     *
+     * <p>Called once per answer, from the same place the provider success is counted: a lookup
+     * whose request is later rejected must not move the hit rate, otherwise the ratio is computed
+     * from two differently-scoped populations.
+     */
     public void recordCacheHit() {
+        recordCacheHits(1);
+    }
+
+    /**
+     * Records several cache answers at once, for a request that only settles its counters when its
+     * restored text is accepted.
+     *
+     * @param count number of cache answers; values below one do nothing
+     */
+    public void recordCacheHits(int count) {
+        if (count <= 0) {
+            return;
+        }
         synchronized (lock) {
-            cacheHits++;
+            cacheHits += count;
+            revision++;
         }
     }
 
     /** Records that a translation had to be requested from the provider. */
     public void recordCacheMiss() {
+        recordCacheMisses(1);
+    }
+
+    /**
+     * Records several provider lookups at once; see {@link #recordCacheHits(int)}.
+     *
+     * @param count number of lookups that missed the cache; values below one do nothing
+     */
+    public void recordCacheMisses(int count) {
+        if (count <= 0) {
+            return;
+        }
         synchronized (lock) {
-            cacheMisses++;
+            cacheMisses += count;
+            revision++;
+        }
+    }
+
+    /**
+     * Records one request whose result was thrown away because the assembled text failed the
+     * display check.
+     *
+     * <p>Kept apart from {@link #recordFailure} on purpose: the provider answered, so the request
+     * is not a provider failure, but it also produced nothing usable. Without this counter the
+     * exported report showed cache lookups that no request could be matched against.
+     */
+    public void recordRejected() {
+        synchronized (lock) {
+            rejected++;
+            revision++;
         }
     }
 
@@ -144,6 +203,7 @@ public final class TranslationStats {
             counters.latencySum += latencyMillis;
             counters.latencyCount++;
             addLatencySample(latencyMillis);
+            revision++;
         }
     }
 
@@ -167,6 +227,7 @@ public final class TranslationStats {
             counters.latencySum += latencyMillis;
             counters.latencyCount++;
             addLatencySample(latencyMillis);
+            revision++;
         }
     }
 
@@ -218,6 +279,7 @@ public final class TranslationStats {
             ProviderCounters counters = counters(providerId);
             counters.promptTokens += prompt;
             counters.completionTokens += completion;
+            revision++;
         }
     }
 
@@ -233,11 +295,24 @@ public final class TranslationStats {
             failures = 0L;
             cacheHits = 0L;
             cacheMisses = 0L;
+            rejected = 0L;
             promptTokens = 0L;
             completionTokens = 0L;
+            revision++;
         }
         flush();
     }
+
+    /**
+     * Serializes the writers of one statistics file, keyed by its absolute path.
+     *
+     * <p>Three unrelated callers reach {@link #flush()}: the periodic flusher thread, the JVM
+     * shutdown hook and the "reset statistics" button on every diagnostics screen. They used to
+     * write through one fixed {@code .tmp} name with no mutual exclusion at all, so two overlapping
+     * flushes truncated each other's file and the recorded totals were silently lost.
+     */
+    private static final ConcurrentHashMap<String, Object> PATH_LOCKS =
+            new ConcurrentHashMap<String, Object>();
 
     /** Writes the counters out. Never throws: statistics must not be able to break a translation. */
     public void flush() {
@@ -249,40 +324,85 @@ public final class TranslationStats {
         synchronized (lock) {
             properties = toProperties();
         }
-        try {
-            Path temporary = target.resolveSibling(target.getFileName().toString() + ".tmp");
-            try (Writer writer = Files.newBufferedWriter(temporary, StandardCharsets.UTF_8)) {
-                properties.store(writer, "MC Auto Translation Tool - translation statistics");
-            }
+        synchronized (lockFor(target)) {
+            Path temporary = null;
             try {
-                Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING,
-                        StandardCopyOption.ATOMIC_MOVE);
-            } catch (AtomicMoveNotSupportedException unsupported) {
-                Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+                // A unique name per attempt: a shared ".tmp" is what allowed one writer to truncate
+                // the file another writer was still filling.
+                temporary = target.resolveSibling(target.getFileName().toString() + "."
+                        + UUID.randomUUID() + ".tmp");
+                try (Writer writer = Files.newBufferedWriter(temporary, StandardCharsets.UTF_8)) {
+                    properties.store(writer, "MC Auto Translation Tool - translation statistics");
+                }
+                try {
+                    Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING,
+                            StandardCopyOption.ATOMIC_MOVE);
+                } catch (AtomicMoveNotSupportedException unsupported) {
+                    Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+                }
+                temporary = null;
+            } catch (IOException | RuntimeException failed) {
+                // Not a translation failure, but no longer invisible: a statistics file that never
+                // lands used to be indistinguishable from one that was simply not due yet.
+                DebugLog.global().logFailure("stats-flush", failed);
+            } finally {
+                if (temporary != null) {
+                    try {
+                        Files.deleteIfExists(temporary);
+                    } catch (IOException ignored) {
+                        // Best effort only: the name is unique, so a leftover is never reused.
+                    }
+                }
             }
-        } catch (IOException | RuntimeException ignored) {
-            // A read-only or full configuration directory is not a translation failure.
         }
     }
 
-    /** An immutable view of the counters, safe to hand to a render thread. */
+    /** The monitor that serializes every writer of {@code target}, process-wide. */
+    private static Object lockFor(Path target) {
+        String key = target.toAbsolutePath().normalize().toString();
+        Object fresh = new Object();
+        Object existing = PATH_LOCKS.putIfAbsent(key, fresh);
+        return existing == null ? fresh : existing;
+    }
+
+    /**
+     * An immutable view of the counters, safe to hand to a render thread.
+     *
+     * <p>The diagnostics screens ask for this from {@code render()}, i.e. sixty times a second while
+     * they are open, but the counters only change when a provider call settles. The view is
+     * therefore reused until a counter update bumps {@link #revision}; building it under the same
+     * lock the workers use is then a one-integer test on an idle screen instead of 512 boxings and a
+     * sort every frame.
+     */
     public Snapshot snapshot() {
         synchronized (lock) {
-            List<Long> samples = new ArrayList<Long>(latencyCount);
-            for (int index = 0; index < latencyCount; index++) {
-                samples.add(Long.valueOf(latencySamples[index]));
+            Snapshot cached = cachedSnapshot;
+            if (cached != null && cachedRevision == revision) {
+                return cached;
             }
-            List<ProviderLine> lines = new ArrayList<ProviderLine>(providers.size());
-            for (Map.Entry<String, ProviderCounters> entry : providers.entrySet()) {
-                ProviderCounters counters = entry.getValue();
-                lines.add(new ProviderLine(entry.getKey(), counters.requests, counters.successes,
-                        counters.failures, counters.latencySum, counters.latencyCount,
-                        counters.promptTokens, counters.completionTokens));
-            }
-            return new Snapshot(requests, successes, failures, cacheHits, cacheMisses,
-                    promptTokens, completionTokens,
-                    new LinkedHashMap<String, Long>(failuresByReason), lines, samples);
+            Snapshot built = buildSnapshot();
+            cachedSnapshot = built;
+            cachedRevision = revision;
+            return built;
         }
+    }
+
+    /** Builds a fresh view; must be called with {@link #lock} held. */
+    private Snapshot buildSnapshot() {
+        List<Long> samples = new ArrayList<Long>(latencyCount);
+        for (int index = 0; index < latencyCount; index++) {
+            samples.add(Long.valueOf(latencySamples[index]));
+        }
+        List<ProviderLine> lines = new ArrayList<ProviderLine>(providers.size());
+        for (Map.Entry<String, ProviderCounters> entry : providers.entrySet()) {
+            ProviderCounters counters = entry.getValue();
+            lines.add(new ProviderLine(entry.getKey(), counters.requests, counters.successes,
+                    counters.failures, counters.latencySum, counters.latencyCount,
+                    counters.promptTokens, counters.completionTokens));
+        }
+        return new Snapshot(requests, successes, failures, cacheHits, cacheMisses, rejected,
+                promptTokens, completionTokens,
+                new LinkedHashMap<String, Long>(failuresByReason), lines, samples);
     }
 
     /**
@@ -326,7 +446,7 @@ public final class TranslationStats {
         Snapshot snapshot = snapshot();
         List<String> lines = new ArrayList<String>(5);
         lines.add("Statistics: requests=" + snapshot.requests() + " success=" + snapshot.successes()
-                + " failure=" + snapshot.failures());
+                + " failure=" + snapshot.failures() + " rejected=" + snapshot.rejected());
         lines.add("Statistics cache: hit=" + snapshot.cacheHits() + " miss=" + snapshot.cacheMisses()
                 + " hit-rate=" + snapshot.cacheHitRate() + "%");
         lines.add("Statistics latency: average=" + snapshot.averageLatencyMillis() + "ms p50="
@@ -459,6 +579,7 @@ public final class TranslationStats {
             failures = longValue(properties, "failures");
             cacheHits = longValue(properties, "cache-hits");
             cacheMisses = longValue(properties, "cache-misses");
+            rejected = longValue(properties, "rejected");
             promptTokens = longValue(properties, "prompt-tokens");
             completionTokens = longValue(properties, "completion-tokens");
             for (String key : properties.stringPropertyNames()) {
@@ -497,6 +618,7 @@ public final class TranslationStats {
                     }
                 }
             }
+            revision++;
         }
     }
 
@@ -507,6 +629,7 @@ public final class TranslationStats {
         properties.setProperty("failures", Long.toString(failures));
         properties.setProperty("cache-hits", Long.toString(cacheHits));
         properties.setProperty("cache-misses", Long.toString(cacheMisses));
+        properties.setProperty("rejected", Long.toString(rejected));
         properties.setProperty("prompt-tokens", Long.toString(promptTokens));
         properties.setProperty("completion-tokens", Long.toString(completionTokens));
         for (Map.Entry<String, Long> entry : failuresByReason.entrySet()) {
@@ -633,11 +756,19 @@ public final class TranslationStats {
         private final long failures;
         private final long cacheHits;
         private final long cacheMisses;
+        private final long rejected;
         private final long promptTokens;
         private final long completionTokens;
         private final Map<String, Long> failuresByReason;
         private final List<ProviderLine> providers;
         private final List<Long> latencySamples;
+        /** Sum of {@link #latencySamples}, computed once so a panel can ask for the average freely. */
+        private final long latencyTotal;
+        /**
+         * Ascending copy of the latency samples, built on first use and shared by every percentile.
+         * Volatile so the render thread never publishes a half-filled array to a later reader.
+         */
+        private volatile long[] sortedSamples;
 
         private Snapshot(
                 long requests,
@@ -645,6 +776,7 @@ public final class TranslationStats {
                 long failures,
                 long cacheHits,
                 long cacheMisses,
+                long rejected,
                 long promptTokens,
                 long completionTokens,
                 Map<String, Long> failuresByReason,
@@ -656,11 +788,17 @@ public final class TranslationStats {
             this.failures = failures;
             this.cacheHits = cacheHits;
             this.cacheMisses = cacheMisses;
+            this.rejected = rejected;
             this.promptTokens = promptTokens;
             this.completionTokens = completionTokens;
             this.failuresByReason = Collections.unmodifiableMap(failuresByReason);
             this.providers = Collections.unmodifiableList(providers);
             this.latencySamples = Collections.unmodifiableList(latencySamples);
+            long total = 0L;
+            for (Long sample : this.latencySamples) {
+                total += sample.longValue();
+            }
+            this.latencyTotal = total;
         }
 
         public long requests() {
@@ -681,6 +819,15 @@ public final class TranslationStats {
 
         public long cacheMisses() {
             return cacheMisses;
+        }
+
+        /**
+         * Requests whose translation was discarded because the assembled text failed the display
+         * check. Together with {@link #successes()} and {@link #failures()} this accounts for every
+         * request, which is what the diagnostics screen promises.
+         */
+        public long rejected() {
+            return rejected;
         }
 
         public long promptTokens() {
@@ -707,14 +854,8 @@ public final class TranslationStats {
 
         /** Average request latency over the retained samples, or {@code 0} when none were kept. */
         public long averageLatencyMillis() {
-            if (latencySamples.isEmpty()) {
-                return 0L;
-            }
-            long total = 0L;
-            for (Long sample : latencySamples) {
-                total += sample.longValue();
-            }
-            return total / latencySamples.size();
+            int count = latencySamples.size();
+            return count <= 0 ? 0L : latencyTotal / count;
         }
 
         /**
@@ -728,17 +869,34 @@ public final class TranslationStats {
          * @return latency in milliseconds
          */
         public long percentileLatencyMillis(int percentile) {
-            if (latencySamples.isEmpty()) {
+            long[] sorted = sortedSamples();
+            if (sorted.length == 0) {
                 return 0L;
             }
             int bounded = Math.max(0, Math.min(100, percentile));
-            long[] sorted = new long[latencySamples.size()];
-            for (int index = 0; index < sorted.length; index++) {
-                sorted[index] = latencySamples.get(index).longValue();
-            }
-            Arrays.sort(sorted);
             int position = (int) Math.ceil(bounded / 100.0d * sorted.length) - 1;
             return sorted[Math.max(0, Math.min(sorted.length - 1, position))];
+        }
+
+        /**
+         * The samples in ascending order, sorted on first use.
+         *
+         * <p>One snapshot answers several percentiles -- the exported report asks for p50 and p95
+         * of the same view -- and the diagnostics panel redraws the same view every frame, so the
+         * sort must not run per call. Two threads may race to build it; both produce the same array
+         * and the field is only published once it is complete.
+         */
+        private long[] sortedSamples() {
+            long[] local = sortedSamples;
+            if (local == null) {
+                local = new long[latencySamples.size()];
+                for (int index = 0; index < local.length; index++) {
+                    local[index] = latencySamples.get(index).longValue();
+                }
+                Arrays.sort(local);
+                sortedSamples = local;
+            }
+            return local;
         }
 
         /** The retained latency sample count, for a panel that wants to say how it was measured. */

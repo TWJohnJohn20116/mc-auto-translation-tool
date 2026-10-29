@@ -5,6 +5,7 @@ import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.client.resources.I18n;
+import org.universaltranslator.core.ModelListPaging;
 import org.universaltranslator.core.provider.OpenAiModelCatalog;
 
 import java.io.IOException;
@@ -17,11 +18,9 @@ final class LegacyLlmConfigScreen extends GuiScreen {
     private static final int CANCEL = 2;
     private static final int FETCH = 3;
     /** Height of a single catalog row in the model picker overlay. */
-    private static final int LIST_ROW_HEIGHT = 12;
+    private static final int LIST_ROW_HEIGHT = ModelListPaging.ROW_HEIGHT;
     /** Y of the first catalog row; the picker title sits above it. */
-    private static final int LIST_TOP = 46;
-    /** Room kept under the rows for the paging, back, and hint lines. */
-    private static final int LIST_FOOTER_HEIGHT = 62;
+    private static final int LIST_TOP = ModelListPaging.LIST_TOP;
     private static final int ESCAPE_KEY = 1;
 
     private final LegacyConfigScreen parent;
@@ -155,18 +154,23 @@ final class LegacyLlmConfigScreen extends GuiScreen {
 
     /** Draws the fetched catalog over the form so a served model can be picked instead of typed. */
     private void renderModelList(int mouseX, int mouseY) {
+        // Same snapshot rule as LegacyConfigScreen: the fetch worker replaces the volatile list
+        // wholesale, so reading it twice (bound, then element) could throw
+        // IndexOutOfBoundsException out of the render loop.
+        List<String> models = fetchedModels;
         drawRect(0, 0, width, height, 0xFF101010);
-        drawCenteredString(renderer, tr("screen.universal_translator.llm.select_model", fetchedModels.size()),
+        drawCenteredString(renderer, tr("screen.universal_translator.llm.select_model", models.size()),
                 width / 2, 20, 0xFFFFFF);
-        int rows = rowsPerPage();
+        int rows = ModelListPaging.rows(height);
+        modelPage = ModelListPaging.clampPage(modelPage, models.size(), rows);
         int first = modelPage * rows;
-        for (int row = 0; row < rows && first + row < fetchedModels.size(); row++) {
+        for (int row = 0; row < rows && first + row < models.size(); row++) {
             int rowY = LIST_TOP + row * LIST_ROW_HEIGHT;
             boolean hovered = mouseY >= rowY && mouseY < rowY + LIST_ROW_HEIGHT;
-            drawString(renderer, (hovered ? "> " : "  ") + fetchedModels.get(first + row),
+            drawString(renderer, (hovered ? "> " : "  ") + models.get(first + row),
                     24, rowY, hovered ? 0xFFFFD060 : 0xFFE0E0E0);
         }
-        int pages = pageCount(rows);
+        int pages = ModelListPaging.pageCount(models.size(), rows);
         drawCenteredString(renderer, "< " + (modelPage + 1) + "/" + pages + " >",
                 width / 2, height - 46, 0xFFFFFF);
         drawCenteredString(renderer, tr("screen.universal_translator.llm.select_back"),
@@ -176,8 +180,10 @@ final class LegacyLlmConfigScreen extends GuiScreen {
     }
 
     private void handleModelListClick(double mouseX, double mouseY) {
+        List<String> models = fetchedModels;
+        int rows = ModelListPaging.rows(height);
         if (mouseY >= height - 54 && mouseY < height - 38) {
-            int pages = pageCount(rowsPerPage());
+            int pages = ModelListPaging.pageCount(models.size(), rows);
             if (pages > 1) {
                 modelPage = mouseX < width / 2.0
                         ? (modelPage + pages - 1) % pages : (modelPage + 1) % pages;
@@ -191,23 +197,15 @@ final class LegacyLlmConfigScreen extends GuiScreen {
         if (mouseY < LIST_TOP) {
             return;
         }
-        int rows = rowsPerPage();
-        int row = (int) ((mouseY - LIST_TOP) / LIST_ROW_HEIGHT);
-        int index = modelPage * rows + row;
-        if (row >= rows || index >= fetchedModels.size()) {
+        modelPage = ModelListPaging.clampPage(modelPage, models.size(), rows);
+        int row = ModelListPaging.rowAt(mouseY);
+        int index = ModelListPaging.index(modelPage, rows, row);
+        if (row >= rows || index >= models.size()) {
             return;
         }
-        model.setText(fetchedModels.get(index));
+        model.setText(models.get(index));
         modelListOpen = false;
         setStatus("", false);
-    }
-
-    private int rowsPerPage() {
-        return Math.max(3, (height - LIST_TOP - LIST_FOOTER_HEIGHT) / LIST_ROW_HEIGHT);
-    }
-
-    private int pageCount(int rows) {
-        return Math.max(1, (fetchedModels.size() + rows - 1) / rows);
     }
 
     @Override

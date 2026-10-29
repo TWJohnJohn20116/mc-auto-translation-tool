@@ -57,8 +57,15 @@ This document records only completed validation. “Builds successfully” is no
 | 26.1, 26.1.1, 26.1.2, 26.2 | Forge 62.0.9–65.1.1 | 25 | Compile passed for all four exact targets | Pending | Pending |
 | 26.1, 26.1.1, 26.1.2, 26.2, 26.3, single JAR | Fabric Loader 0.19.3+ | 25 | Passed; Loader selection passed for all five versions | 26.1 baseline passed | Pending |
 
-The stable release starts from 33 formally shipped target JARs that share the same translation core
-and reduces them to 16 directly installable release JARs. Additional adjacent-version source targets
+> The table mixes two kinds of Fabric rows: the single JARs are validated on Fabric Loader 0.19.3,
+> while the 1.20.1 and 1.21.11 rows are historical records of the earlier per-version JARs on Loader
+> 0.18.1. 1.4 ships only `fabric-all`, whose `fabric.mod.json` declares `fabricloader >= 0.19.3`, so
+> an instance below 0.19.3 (including the Legacy Fabric 0.16.10 commonly used on 1.13.2) loads none
+> of the embedded implementations.
+
+The stable release starts from 48 formally shipped target JARs that share the same translation core
+and reduces them to 31 directly installable release JARs (32 release assets together with
+`SHA256SUMS.txt`). Additional adjacent-version source targets
 are build-tested separately and are not counted as stable downloads. Fabric 1.20.1 completed Loom remapping.
 The Forge 1.20.1 artifact was renamed into the SRG runtime namespace and contains a refmap for all
 nine Mixin classes. Forge 1.21.11 was adapted to the Forge 7 event bus and Mojmap runtime. Its

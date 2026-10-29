@@ -41,9 +41,9 @@ JDK 25 or later is required:
 ```
 
 Output is written to `platforms/fabric/26.x/bundle/build/libs/`. This single JAR supports the
-currently supported Minecraft 26.x releases: 26.1, 26.1.1, 26.1.2, and 26.2. It embeds four exact-version
+currently supported Minecraft 26.x releases: 26.1, 26.1.1, 26.1.2, 26.2, and 26.3. It embeds five exact-version
 implementations, and Fabric Loader selects the matching one. The build verifies every nested JAR
-and exercises real Loader resolution for all four versions.
+and exercises real Loader resolution for all five versions.
 
 ## Single Fabric 1.17/1.18 JAR
 
@@ -355,8 +355,8 @@ It checks ZIP structure, expanded metadata, entrypoints, declared Mixin classes 
 Fabric JARs, legacy Forge runtime mappings, SHA-256 values, and checksum-manifest coverage. Legacy
 Fabric and Forge `build` tasks run the same verifier against their generated release JARs.
 
-The publish workflow reduces the 33 release build artifacts to 16 directly installable JARs. It
-flattens all 45 Fabric implementations into one Loader-selected bundle, broadens four Forge
+The publish workflow reduces the 48 release build artifacts to 31 directly installable JARs. It
+flattens all 51 Fabric implementations into one Loader-selected bundle, broadens four Forge
 families after confirming compatible payloads, and keeps Forge/NeoForge 1.20.1 as separately
 verified loader-specific JARs. Different APIs remain separate. Reproduce and validate
 the publish set with:

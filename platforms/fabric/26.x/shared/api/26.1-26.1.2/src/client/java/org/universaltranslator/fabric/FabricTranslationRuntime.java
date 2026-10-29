@@ -91,6 +91,20 @@ public final class FabricTranslationRuntime {
         return INSTANCE.diagnosticsConfig();
     }
 
+    /**
+     * Cheap answer to "is any render translation possible right now?".
+     *
+     * <p>The render bridge asks this once per {@code Font.width(...)} call, which a large screen
+     * reaches thousands of times per frame, so the answer must not allocate and must not walk the
+     * text. The runtime builds no session while the master switch is off ({@code initialize} skips
+     * it), so a disabled configuration means every render lookup returns its input unchanged and
+     * the whole string-building preamble can be skipped.
+     */
+    static boolean renderTranslationActive() {
+        FabricConfig config = INSTANCE.diagnosticsConfig();
+        return config != null && config.enabled;
+    }
+
     private static final class Impl extends FabricTranslationRuntimeBase {
         @Override
         protected Object currentScreen() {

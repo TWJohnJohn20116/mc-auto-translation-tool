@@ -27,6 +27,11 @@ RELEASE_JAR = re.compile(
 )
 WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:")  # `C:` / `c:` drive prefix
 
+#: 一個完整的 Maven version restriction：`[1.21,1.21.5)`、`[1.21.1,1.21.1]`、`(1.0,2.0]`。
+#: 產生端（`prepare_release_assets.py`）只宣告「真正有實作」的版本，所以 `versionRange`
+#: 可能是多個精確 restriction 的聯集（逗號分隔）；每一段都必須同時有上下界。
+VERSION_RANGE_RESTRICTION = re.compile(r"[\[(][^\[\](),]+,[^\[\](),]+[\])]")
+
 
 class VerificationError(RuntimeError):
     pass
@@ -363,6 +368,34 @@ def _validate_legacy_forge_mapping(
         )
 
 
+def _parse_version_ranges(spec: str) -> list[str] | None:
+    """把 `versionRange` 拆成一串「上下界都在」的 restriction；不是這種形式就回傳 None。
+
+    這裡原本是一條 `re.fullmatch` 只認單一區間，於是「只宣告真正有實作的版本」這種聯集寫法
+    會被擋下。改成逐段比對但保留同樣的強度：整串必須由完整 restriction 加逗號組成，
+    任何單邊開區間（`[1.21,)`）、推薦版本語法（`,1.21`）、空字串、尾端逗號或殘留字元都
+    不接受，一個還是多個 restriction 都必須有上下界。
+    """
+    if not spec:
+        return None
+    restrictions: list[str] = []
+    position = 0
+    while position < len(spec):
+        match = VERSION_RANGE_RESTRICTION.match(spec, position)
+        if match is None:
+            return None
+        restrictions.append(match.group(0))
+        position = match.end()
+        if position == len(spec):
+            break
+        if spec[position] != ",":
+            return None
+        position += 1
+        if position == len(spec):
+            return None
+    return restrictions or None
+
+
 def _validate_forge(
     archive: zipfile.ZipFile,
     label: str,
@@ -385,7 +418,7 @@ def _validate_forge(
     minecraft_range = _forge_minecraft_range(metadata)
     if not minecraft_range:
         raise VerificationError(f"missing exact Minecraft dependency range in {metadata_path}")
-    if not re.fullmatch(r"[\[(][^,]+,[^\])]+[\])]", minecraft_range):
+    if _parse_version_ranges(minecraft_range) is None:
         raise VerificationError(
             f"Forge Minecraft dependency must be a bounded range: {minecraft_range}"
         )

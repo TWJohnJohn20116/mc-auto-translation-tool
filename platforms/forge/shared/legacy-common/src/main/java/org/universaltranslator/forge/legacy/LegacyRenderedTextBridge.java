@@ -20,6 +20,12 @@ public final class LegacyRenderedTextBridge {
         if (LegacyRenderContext.isTextInput()) {
             return text;
         }
+        // drawCenteredString draws through drawString and measures through getStringWidth, and both
+        // are hooked, so the second and third call receive the string this method just returned.
+        // Re-translating it cost a second provider lookup per centred line per frame.
+        if (LegacyRenderContext.isTranslatedResult(text)) {
+            return text;
+        }
         return translate(text, LegacyRenderContext.current());
     }
 
@@ -31,8 +37,13 @@ public final class LegacyRenderedTextBridge {
         if (text.equals(translated)) {
             return text;
         }
-        return TranslationTextStyling.applyTranslatedStyle(
+        String styled = TranslationTextStyling.applyTranslatedStyle(
                 text, translated, LegacyTranslationRuntime.translatedTextColor());
+        // Both forms are marked: the measuring hook receives the styled line that drawString then
+        // gets handed, and the two are only the same object when no colour is applied.
+        LegacyRenderContext.rememberTranslation(translated);
+        LegacyRenderContext.rememberTranslation(styled);
+        return styled;
     }
 
     /** High-level tooltip hook used by both 1.8.9 and 1.12.2. */

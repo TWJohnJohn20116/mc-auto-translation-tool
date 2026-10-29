@@ -11,9 +11,11 @@ import org.universaltranslator.forge.TranslationRenderContext;
 /** Keeps the local sign editor preview untranslated until the player saves it. */
 @Mixin(AbstractSignEditScreen.class)
 abstract class SignEditScreenMixin {
+    // Essential: without the push the sign editor preview is translated while the player types, and
+    // the text sent on save is the translated copy. A missing target must fail loudly.
     @Inject(
             method = "render(Lnet/minecraft/client/gui/GuiGraphics;IIF)V",
-            at = @At("HEAD"))
+            at = @At("HEAD"), require = 1)
     private void universalTranslator$pushSignInput(
             GuiGraphics context, int mouseX, int mouseY, float delta, CallbackInfo callback) {
         TranslationRenderContext.pushTextInput();
@@ -21,7 +23,7 @@ abstract class SignEditScreenMixin {
 
     @Inject(
             method = "render(Lnet/minecraft/client/gui/GuiGraphics;IIF)V",
-            at = @At("RETURN"))
+            at = @At("RETURN"), require = 1)
     private void universalTranslator$popSignInput(
             GuiGraphics context, int mouseX, int mouseY, float delta, CallbackInfo callback) {
         TranslationRenderContext.popTextInput();

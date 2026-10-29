@@ -1,5 +1,6 @@
 package org.universaltranslator.fabric;
 
+import org.universaltranslator.core.ModelListPaging;
 import org.universaltranslator.core.UiLimits;
 import java.util.Collections;
 import java.util.List;
@@ -10,7 +11,13 @@ import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.client.resource.language.I18n;
 import org.universaltranslator.core.provider.OpenAiModelCatalog;
 
-/** OpenAI-compatible LLM settings shared by Forge 1.8.9 and 1.12.2. */
+/**
+ * OpenAI-compatible LLM settings for the 1.13 Fabric builds.
+ *
+ * <p>It used to claim it was shared with Forge 1.8.9 and 1.12.2. It is not: those build from
+ * {@code platforms/forge/shared/legacy-common} and their own {@code Legacy*Screen} classes, so the
+ * comment sent readers to the wrong file (audit S2-095).
+ */
 final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorScreenBase {
     /** Height of a single catalog row in the model picker overlay. */
     private static final int LIST_ROW_HEIGHT = 12;
@@ -36,6 +43,14 @@ final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorScreen
     private volatile boolean statusIsError;
     private volatile List<String> fetchedModels = Collections.emptyList();
     private volatile boolean fetching;
+    /**
+     * A fetched catalog waiting for the client thread to open the picker with it.
+     *
+     * <p>The worker used to assign {@code modelPage} and {@code modelListOpen} itself, so the overlay
+     * could come up while {@code fetchedModels} and the page index disagreed; applying the result from
+     * {@link #tick()} keeps both on the client thread.
+     */
+    private volatile List<String> pendingModels;
     private boolean modelListOpen;
     private int modelPage;
 
@@ -130,8 +145,13 @@ final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorScreen
                 models = OpenAiModelCatalog.fetch(endpointValue, keyValue);
             } catch (Exception error) {
                 failure = describe(error);
+            } finally {
+                // Released in a finally: a LinkageError / NoClassDefFoundError from a provider class
+                // is not an Exception, and releasing the guard at the end of the lambda body left the
+                // fetch button returning immediately for the rest of the screen's life with no
+                // message — the only way out was closing and reopening the screen.
+                fetching = false;
             }
-            fetching = false;
             if (!failure.isEmpty()) {
                 setStatus(tr("screen.universal_translator.llm.fetch_failed", failure), true);
                 return;
@@ -140,9 +160,8 @@ final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorScreen
                 setStatus(tr("screen.universal_translator.llm.fetch_empty"), true);
                 return;
             }
-            fetchedModels = models;
-            modelPage = 0;
-            modelListOpen = true;
+            // Handed to the client thread instead of touching modelPage/modelListOpen here.
+            pendingModels = models;
             setStatus("", false);
         }, "universal-translator-model-list");
         worker.setDaemon(true);
@@ -155,8 +174,7 @@ final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorScreen
     }
 
     private static String describe(Exception error) {
-        String message = error.getMessage();
-        return message == null || message.trim().isEmpty() ? error.getClass().getSimpleName() : message;
+        return ScreenText.describe(error);
     }
 
     @Override
@@ -164,6 +182,19 @@ final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorScreen
         endpoint.tick();
         model.tick();
         apiKey.tick();
+        applyPendingModels();
+    }
+
+    /** Opens the picker once the worker has published a catalog; client thread only. */
+    private void applyPendingModels() {
+        List<String> pending = pendingModels;
+        if (pending == null) {
+            return;
+        }
+        pendingModels = null;
+        fetchedModels = pending;
+        modelPage = 0;
+        modelListOpen = true;
     }
 
     @Override
@@ -266,6 +297,9 @@ final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorScreen
         drawCenteredString(renderer, tr("screen.universal_translator.llm.select_model", fetchedModels.size()),
                 width / 2, 20, 0xFFFFFF);
         int rows = rowsPerPage();
+        // The window can shrink after the page was picked (resize, lower GUI scale), so the page index
+        // is clamped before use; otherwise the header could read "3/1" and the list drew nothing.
+        modelPage = ModelListPaging.clampPage(modelPage, fetchedModels.size(), rows);
         int first = modelPage * rows;
         for (int row = 0; row < rows && first + row < fetchedModels.size(); row++) {
             int rowY = LIST_TOP + row * LIST_ROW_HEIGHT;

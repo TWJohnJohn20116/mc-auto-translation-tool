@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.request import Request, urlopen
+
+from _cache_paths import forge_mavenizer_caches, minecraft_libraries, mirror_dir
 
 BMCL = "https://bmclapi2.bangbang93.com"
 META_REPLACEMENTS = (
@@ -25,10 +26,12 @@ META_REPLACEMENTS = (
     ("https://launchermeta.mojang.com", BMCL),
     ("https://launcher.mojang.com", BMCL),
 )
-CACHE_ROOT = Path(r"D:\Gradle\cache\caches\minecraftforge\forgegradle\mavenizer\caches")
+# 快取位置由 _cache_paths 決定（GRADLE_USER_HOME → ~/.gradle），不再硬編 D:\Gradle\cache。
+CACHE_ROOT = forge_mavenizer_caches()
 MOJANG_MAVEN = CACHE_ROOT / "maven" / "mojang"
-SERVE_DIR = Path(r"D:\Gradle\cache\mc-mirror")
-MC_LIBS = Path(os.environ.get("APPDATA", "")) / ".minecraft" / "libraries"
+SERVE_DIR = mirror_dir()
+# APPDATA 無法定位時是 None：寧可只寫 Gradle 快取，也不要把 library 寫進當前工作目錄。
+MC_LIBS = minecraft_libraries()
 
 
 def log(message: str) -> None:
@@ -78,7 +81,7 @@ def seed_file(item: dict) -> str:
     path = item["path"]
     sha1 = item.get("sha1")
     targets = [MOJANG_MAVEN / path]
-    if MC_LIBS.drive or MC_LIBS.parts:
+    if MC_LIBS is not None:
         targets.append(MC_LIBS / path)
     data = None
     for target in targets:
@@ -99,6 +102,8 @@ def main() -> None:
     CACHE_ROOT.mkdir(parents=True, exist_ok=True)
     MOJANG_MAVEN.mkdir(parents=True, exist_ok=True)
     SERVE_DIR.mkdir(parents=True, exist_ok=True)
+    if MC_LIBS is None:
+        log("APPDATA 未設定：只寫 Gradle 快取（不寫 .minecraft/libraries）")
 
     version_json = rewrite_meta(fetch(f"{BMCL}/version/1.18.2/json").decode("utf-8"))
     if "https://bmclapi2.bangbang93.com/maven/" in version_json:
@@ -156,7 +161,16 @@ def main() -> None:
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     log("READY")
-    thread.join()
+    # 原本是裸的 thread.join()：正常路徑永不返回，只能 Ctrl-C，而且沒有關閉 socket 的清理。
+    # 這裡把 KeyboardInterrupt 當成正常結束路徑，關掉服務後才返回。
+    try:
+        thread.join()
+    except KeyboardInterrupt:
+        log("收到中斷，關閉鏡像服務")
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
 
 
 if __name__ == "__main__":

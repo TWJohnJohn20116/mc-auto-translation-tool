@@ -68,3 +68,11 @@ all active text-entry widgets are explicitly excluded.
 - Offline component downloads accept only HTTPS and validate resume ranges, type, fixed size, and SHA-256; a failed mirror falls back to the official source.
 - Source-text cache keys use SHA-256. The local cache stores only hashed keys and translations, not plaintext source text.
 - API keys are not written to logs or packaged in release JARs.
+
+## Further reading (traditional Chinese handbook)
+
+This document covers concepts only: why no server is needed, the data flow, multi-version
+boundaries, capture strategy, and the security boundary. The directory quick-reference table, the
+architecture FAQ (`legacy/` in two places, how 60+ versions share code, how `fabric-all` is
+assembled), and the day-to-day development workflow currently exist only in the traditional Chinese
+edition: [專案架構設計全景手冊](../Zh-tw/ARCHITECTURE.md).

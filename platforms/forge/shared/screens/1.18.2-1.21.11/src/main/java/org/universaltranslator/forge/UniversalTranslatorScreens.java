@@ -38,6 +38,8 @@ import java.net.URI;
 import java.nio.file.Path;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import static org.universaltranslator.forge.ForgeScreenText.empty;
 import static org.universaltranslator.forge.ForgeScreenText.hint;
 import static org.universaltranslator.forge.ForgeScreenText.literal;
@@ -163,8 +165,6 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     private static final int MODEL_ROW_HEIGHT = ModelListPaging.ROW_HEIGHT;
     /** Y of the first model row; the picker title sits above it. */
     private static final int MODEL_LIST_TOP = ModelListPaging.LIST_TOP;
-    /** Room kept under the model rows for the paging, back, and hint lines. */
-    private static final int MODEL_LIST_FOOTER_HEIGHT = ModelListPaging.FOOTER_HEIGHT;
     private static final String LIBRETRANSLATE_PROVIDER = "libretranslate";
     private static final String TRANSLATE_PATH = "/translate";
     private static final String LANGUAGES_PATH = "/languages";
@@ -1073,10 +1073,10 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         int blockHeight = layout.contentRowStep * 5 + 20 + 46;
         int available = layout.saveY - 6 - layout.contentTop;
         // Centring used to clamp at contentTop, so on a short window the whole block - the privacy
-// hint included - ran below the Save row and Save painted over it. Let the block start above
-// the content area instead, but never over the tab bar.
-int centred = layout.contentTop + (available - blockHeight) / 2;
-return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
+        // hint included - ran below the Save row and Save painted over it. Let the block start above
+        // the content area instead, but never over the tab bar.
+        int centred = layout.contentTop + (available - blockHeight) / 2;
+        return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
     }
 
     private int engineRow(int index) {
@@ -1236,19 +1236,25 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
 
     /** Draws the fetched catalog over the settings so a served model can be picked. */
     private void renderModelList(ForgeScreenCanvas graphics, int mouseX, int mouseY) {
+        // One read of the volatile list for the whole frame. The fetch worker replaces it wholesale,
+        // and reading the field again inside the loop and for the page counter let the bound come from
+        // one list and the element from the next: IndexOutOfBoundsException out of the render loop,
+        // which closes the client. Everything below works on the local snapshot and on the page this
+        // snapshot can actually show.
+        List<String> models = fetchedModels;
         graphics.fill(0, 0, width, height, 0xFF101010);
         graphics.centered(translatable("screen.universal_translator.llm.select_model",
-                fetchedModels.size()), width / 2, 20, 0xFFFFFFFF);
-        int rows = modelRowsPerPage();
-        modelPage = ModelListPaging.clampPage(modelPage, fetchedModels.size(), rows);
+                models.size()), width / 2, 20, 0xFFFFFFFF);
+        int rows = ModelListPaging.rows(height);
+        modelPage = ModelListPaging.clampPage(modelPage, models.size(), rows);
         int first = modelPage * rows;
-        for (int row = 0; row < rows && first + row < fetchedModels.size(); row++) {
+        for (int row = 0; row < rows && first + row < models.size(); row++) {
             int rowY = MODEL_LIST_TOP + row * MODEL_ROW_HEIGHT;
             boolean hovered = mouseY >= rowY && mouseY < rowY + MODEL_ROW_HEIGHT;
-            graphics.text(literal((hovered ? "> " : "  ") + fetchedModels.get(first + row)),
+            graphics.text(literal((hovered ? "> " : "  ") + models.get(first + row)),
                     24, rowY, hovered ? 0xFFFFD060 : 0xFFE0E0E0);
         }
-        int pages = modelPageCount(rows);
+        int pages = ModelListPaging.pageCount(models.size(), rows);
         graphics.centered(literal("< " + (modelPage + 1) + "/" + pages + " >"),
                 width / 2, height - 46, 0xFFFFFFFF);
         graphics.centered(translatable("screen.universal_translator.llm.select_back"),
@@ -1258,8 +1264,12 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
     }
 
     private void handleModelListClick(double mouseX, double mouseY) {
+        // Same snapshot rule as renderModelList: the paging and the selected entry must come from one
+        // list, or a fetch that lands mid-click selects a model the player never saw.
+        List<String> models = fetchedModels;
+        int rows = ModelListPaging.rows(height);
         if (mouseY >= height - 54 && mouseY < height - 38) {
-            int pages = modelPageCount(modelRowsPerPage());
+            int pages = ModelListPaging.pageCount(models.size(), rows);
             if (pages > 1) {
                 modelPage = mouseX < width / 2.0
                         ? (modelPage + pages - 1) % pages : (modelPage + 1) % pages;
@@ -1273,24 +1283,15 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         if (mouseY < MODEL_LIST_TOP) {
             return;
         }
-        int rows = modelRowsPerPage();
-        modelPage = ModelListPaging.clampPage(modelPage, fetchedModels.size(), rows);
-        int row = (int) ((mouseY - MODEL_LIST_TOP) / MODEL_ROW_HEIGHT);
-        int index = modelPage * rows + row;
-        if (row >= rows || index >= fetchedModels.size()) {
+        modelPage = ModelListPaging.clampPage(modelPage, models.size(), rows);
+        int row = ModelListPaging.rowAt(mouseY);
+        int index = ModelListPaging.index(modelPage, rows, row);
+        if (row >= rows || index >= models.size()) {
             return;
         }
-        llmModel = fetchedModels.get(index);
+        llmModel = models.get(index);
         modelListOpen = false;
         refreshLabels();
-    }
-
-    private int modelRowsPerPage() {
-        return Math.max(3, (height - MODEL_LIST_TOP - MODEL_LIST_FOOTER_HEIGHT) / MODEL_ROW_HEIGHT);
-    }
-
-    private int modelPageCount(int rows) {
-        return Math.max(1, (fetchedModels.size() + rows - 1) / rows);
     }
 
     @Override
@@ -1415,17 +1416,53 @@ abstract class UniversalTranslatorDiagnosticsScreenBase extends Screen {
     private static final int LINE_STEP = 17;
     /** First line's y, just under the title. */
     private static final int LINE_START = 43;
+    /**
+     * How long a built page may be reused.
+     *
+     * <p>{@code renderDiagnostics} runs every frame and rebuilding the page localizes 4–10 lines,
+     * goes through the runtime snapshot and — on the counters page — re-sorts 512 latencies. The
+     * window matches the runtime's own diagnostics cache, so the page can never be more than one
+     * window behind what that cache would have answered anyway.
+     */
+    private static final long LINE_REFRESH_MILLIS = 250L;
+    /** Name of the one background thread that writes diagnostic archives. */
+    private static final String EXPORT_THREAD_NAME = "universal-translator-diagnostics-export";
+    /**
+     * Serializes archive exports away from the render thread.
+     *
+     * <p>Both buttons used to run the whole I/O chain inline: the debug log is read line by line,
+     * redacted with a regex per line, copied into a {@code StringBuilder} and deflated into a zip,
+     * all while the client thread was inside the click handler — hundreds of milliseconds to seconds
+     * of frozen window on a multi-megabyte log, with every tick stopped. One daemon thread keeps the
+     * cost off that thread and off the frame budget; a single thread also keeps two presses from
+     * writing the same archive twice.
+     */
+    private static final ExecutorService EXPORTER =
+            Executors.newSingleThreadExecutor(task -> {
+                Thread thread = new Thread(task, EXPORT_THREAD_NAME);
+                thread.setDaemon(true);
+                return thread;
+            });
 
     private final Screen parent;
     private final ForgeConfig config;
     private Button debugButton;
     private Button pageButton;
     private Button resetButton;
+    private Button exportButton;
+    private Button bundleButton;
     /** Whether the counters page is shown instead of the engine diagnostics page. */
     private boolean statisticsPage;
     private boolean debugEnabled;
-    private String exportStatus = "";
-    private boolean exportFailed;
+    /** Rendered page contents, or {@code null} when the next frame must rebuild them. */
+    private List<String> cachedLines;
+    /** {@link System#currentTimeMillis()} when {@link #cachedLines} was built. */
+    private long cachedLinesAt;
+    /** Written from the export thread, read by the render thread. */
+    private volatile String exportStatus = "";
+    private volatile boolean exportFailed;
+    /** True while an archive is being written; the buttons are flat and further presses ignored. */
+    private volatile boolean exporting;
 
     UniversalTranslatorDiagnosticsScreenBase(Screen parent, ForgeConfig config) {
         super(translatable("screen.universal_translator.diagnostics.title"));
@@ -1441,23 +1478,25 @@ abstract class UniversalTranslatorDiagnosticsScreenBase extends Screen {
             // made by another screen, is reflected instead of showing a stale value.
             debugEnabled = live.debugLog();
         }
+        // Entering the screen, or rebuilding it after a resize, is the natural point to recompute.
+        invalidateLines();
         int totalWidth = Math.max(180, Math.min(320, width - 24));
         int gap = 8;
         int buttonWidth = (totalWidth - gap) / 2;
         int left = (width - totalWidth) / 2;
 
-
         debugButton = addRenderableWidget(ButtonSpec.of(literal(""), button -> {
             debugEnabled = !debugEnabled;
             applyDebugMode();
         }).bounds(left, height - 76, buttonWidth, 20).build());
-        addRenderableWidget(ButtonSpec.of(
+        bundleButton = addRenderableWidget(ButtonSpec.of(
                 translatable("screen.universal_translator.debug.bundle"),
                 button -> exportBundle())
                 .bounds(left + buttonWidth + gap, height - 76, buttonWidth, 20).build());
 
         pageButton = addRenderableWidget(ButtonSpec.of(literal(""), button -> {
             statisticsPage = !statisticsPage;
+            invalidateLines();
             refreshPageLabels();
         }).bounds(left, height - 52, buttonWidth, 20).build());
         resetButton = addRenderableWidget(ButtonSpec.of(
@@ -1468,11 +1507,29 @@ abstract class UniversalTranslatorDiagnosticsScreenBase extends Screen {
         addRenderableWidget(ButtonSpec.of(
                 translatable("screen.universal_translator.diagnostics.back"), button -> onClose())
                 .bounds(left, height - 28, buttonWidth, 20).build());
-        addRenderableWidget(ButtonSpec.of(
+        exportButton = addRenderableWidget(ButtonSpec.of(
                 translatable("screen.universal_translator.diagnostics.export"), button -> exportLog())
                 .bounds(left + buttonWidth + gap, height - 28, buttonWidth, 20).build());
         refreshDebugLabel();
         refreshPageLabels();
+        refreshExportButtons();
+    }
+
+    /** Drops the built page so the next frame rebuilds it once. */
+    private void invalidateLines() {
+        cachedLines = null;
+        cachedLinesAt = 0L;
+    }
+
+    /** True while an archive is being written; both archive buttons go flat so one cannot queue twice. */
+    private void refreshExportButtons() {
+        boolean idle = !exporting;
+        if (bundleButton != null) {
+            bundleButton.active = idle;
+        }
+        if (exportButton != null) {
+            exportButton.active = idle;
+        }
     }
 
     /**
@@ -1531,6 +1588,7 @@ abstract class UniversalTranslatorDiagnosticsScreenBase extends Screen {
             exportStatus = tr("screen.universal_translator.debug.changed",
                     tr(UiTextKeys.onOff(debugEnabled)));
             exportFailed = false;
+            invalidateLines();
         } catch (Exception failure) {
             exportStatus = settingsFailure(failure);
             exportFailed = true;
@@ -1542,6 +1600,7 @@ abstract class UniversalTranslatorDiagnosticsScreenBase extends Screen {
         TranslationStats.global().reset();
         exportStatus = tr("screen.universal_translator.stats.reset_done");
         exportFailed = false;
+        invalidateLines();
     }
 
     private String settingsFailure(Exception failure) {
@@ -1584,8 +1643,23 @@ abstract class UniversalTranslatorDiagnosticsScreenBase extends Screen {
         }
     }
 
-    /** The lines the current page shows. */
+    /** The lines the current page shows, served from {@link #cachedLines} while it is still fresh. */
     private List<String> displayLines() {
+        long now = System.currentTimeMillis();
+        List<String> cached = cachedLines;
+        if (cached == null || now - cachedLinesAt >= LINE_REFRESH_MILLIS) {
+            cached = computeLines();
+            cachedLines = cached;
+            cachedLinesAt = now;
+        }
+        return cached;
+    }
+
+    /**
+     * Rebuilds the page: 4–10 localized lines plus, on the counters page, the statistics snapshot
+     * behind {@code TranslationStats}, which boxes 512 latencies and sorts them.
+     */
+    private List<String> computeLines() {
         try {
             return statisticsPage
                     ? TranslationStats.global().localizedLines(
@@ -1598,6 +1672,13 @@ abstract class UniversalTranslatorDiagnosticsScreenBase extends Screen {
     }
 
     private List<String> safeLines() {
+        // Nothing can be reported before the first configuration load, and the runtime would answer
+        // with an empty status that the page localizes as "waiting for the first translation". The
+        // shared key says what is actually going on.
+        if (ForgeTranslationRuntime.diagnosticsConfig() == null) {
+            return Collections.singletonList(
+                    tr("screen.universal_translator.diagnostics.settings_unavailable"));
+        }
         try {
             TranslationDiagnosticsSnapshot snapshot = ForgeTranslationRuntime.diagnostics();
             return snapshot == null
@@ -1609,15 +1690,13 @@ abstract class UniversalTranslatorDiagnosticsScreenBase extends Screen {
     }
 
     private void exportLog() {
-        try {
-            DiagnosticsLogExporter.export(config.offlineDirectory.getParent()
-                    .resolve("universal-translator-diagnostics"), safeLines());
-            exportStatus = tr("screen.universal_translator.diagnostics.exported");
-            exportFailed = false;
-        } catch (Exception ignored) {
-            exportStatus = tr("screen.universal_translator.diagnostics.export_failed");
-            exportFailed = true;
-        }
+        final Path directory = config.offlineDirectory.getParent()
+                .resolve("universal-translator-diagnostics");
+        // The page is already built and cached by the render thread; the worker only writes it out.
+        final List<String> lines = safeLines();
+        startExport("screen.universal_translator.diagnostics.export",
+                "screen.universal_translator.diagnostics.exported", null,
+                () -> DiagnosticsLogExporter.export(directory, lines));
     }
 
     /**
@@ -1631,18 +1710,76 @@ abstract class UniversalTranslatorDiagnosticsScreenBase extends Screen {
             exportFailed = true;
             return;
         }
-        try {
-            Path configFile = live.configFile();
-            Path archive = DiagnosticsBundleExporter.export(
-                    configFile.getParent(), configFile,
-                    configFile.resolveSibling(DebugLog.FILE_NAME), "forge", safeLines());
-            exportStatus = tr("screen.universal_translator.debug.bundle_exported",
-                    archive.getFileName().toString());
-            exportFailed = false;
-        } catch (Exception failure) {
-            exportStatus = tr("screen.universal_translator.diagnostics.export_failed");
-            exportFailed = true;
+        final Path configFile = live.configFile();
+        // Snapshot the page here: the worker thread must never walk this screen's state.
+        final List<String> lines = safeLines();
+        startExport("screen.universal_translator.debug.bundle",
+                "screen.universal_translator.debug.bundle_exported", "", () -> {
+                    Path archive = DiagnosticsBundleExporter.export(
+                            configFile.getParent(), configFile,
+                            configFile.resolveSibling(DebugLog.FILE_NAME), "forge", lines);
+                    return archive;
+                });
+    }
+
+    /**
+     * Runs one export on {@link #EXPORTER} and reports the outcome back on the client thread.
+     *
+     * <p>The click handler returns immediately: the status line names the export that is running and
+     * both archive buttons go flat until the worker reports. No {@code CompletableFuture} is involved
+     * on purpose — any join or {@code get()} on the render path would reintroduce the freeze.
+     *
+     * @param busyKey       key naming the export while it runs; an ellipsis is appended
+     * @param successKey    key shown when the job returns
+     * @param successExtras named argument for {@code successKey}, or {@code null} when it takes none
+     * @param job           performs the I/O; its return value is used only when non-null
+     */
+    private void startExport(String busyKey, String successKey, String successExtras, ExportJob job) {
+        if (exporting) {
+            return;
         }
+        exporting = true;
+        exportFailed = false;
+        exportStatus = tr(busyKey) + "\u2026";
+        refreshExportButtons();
+        EXPORTER.execute(() -> {
+            Path written = null;
+            boolean failed;
+            try {
+                written = job.run();
+                failed = false;
+            } catch (Exception ignored) {
+                failed = true;
+            }
+            finishExport(successKey, successExtras, written, failed);
+        });
+    }
+
+    /** Publishes one export result on the client thread and re-enables the buttons. */
+    private void finishExport(String successKey, String successExtras, Path written, boolean failed) {
+        Runnable apply = () -> {
+            exporting = false;
+            exportFailed = failed;
+            if (failed) {
+                exportStatus = tr("screen.universal_translator.diagnostics.export_failed");
+            } else if (successExtras == null) {
+                exportStatus = tr(successKey);
+            } else {
+                exportStatus = tr(successKey, written == null
+                        ? successExtras : written.getFileName().toString());
+            }
+            refreshExportButtons();
+        };
+        if (minecraft == null) {
+            apply.run();
+        } else {
+            minecraft.execute(apply);
+        }
+    }
+
+    /** One export job, run on the exporter thread and never on the client thread. */
+    private interface ExportJob {
+        Path run() throws Exception;
     }
 
     @Override
@@ -1662,11 +1799,9 @@ abstract class UniversalTranslatorDiagnosticsScreenBase extends Screen {
 
 abstract class UniversalTranslatorLlmConfigScreenBase extends Screen {
     /** Height of a single catalog row in the model picker overlay. */
-    private static final int LIST_ROW_HEIGHT = 12;
+    private static final int LIST_ROW_HEIGHT = ModelListPaging.ROW_HEIGHT;
     /** Y of the first catalog row; the picker title sits above it. */
-    private static final int LIST_TOP = 46;
-    /** Room kept under the rows for the paging, back, and hint lines. */
-    private static final int LIST_FOOTER_HEIGHT = 62;
+    private static final int LIST_TOP = ModelListPaging.LIST_TOP;
     private static final int ESCAPE_KEY = 256;
 
     private final UniversalTranslatorConfigScreenBase parent;
@@ -1820,18 +1955,21 @@ abstract class UniversalTranslatorLlmConfigScreenBase extends Screen {
 
     /** Draws the fetched catalog over the form so a served model can be picked instead of typed. */
     private void renderModelList(ForgeScreenCanvas graphics, int mouseX, int mouseY) {
+        // Snapshot first: see the note on UniversalTranslatorConfigScreenBase.renderModelList.
+        List<String> models = fetchedModels;
         graphics.fill(0, 0, width, height, 0xFF101010);
         graphics.centered(translatable("screen.universal_translator.llm.select_model",
-                fetchedModels.size()), width / 2, 20, 0xFFFFFFFF);
-        int rows = rowsPerPage();
+                models.size()), width / 2, 20, 0xFFFFFFFF);
+        int rows = ModelListPaging.rows(height);
+        modelPage = ModelListPaging.clampPage(modelPage, models.size(), rows);
         int first = modelPage * rows;
-        for (int row = 0; row < rows && first + row < fetchedModels.size(); row++) {
+        for (int row = 0; row < rows && first + row < models.size(); row++) {
             int rowY = LIST_TOP + row * LIST_ROW_HEIGHT;
             boolean hovered = mouseY >= rowY && mouseY < rowY + LIST_ROW_HEIGHT;
-            graphics.text(literal((hovered ? "> " : "  ") + fetchedModels.get(first + row)),
+            graphics.text(literal((hovered ? "> " : "  ") + models.get(first + row)),
                     24, rowY, hovered ? 0xFFFFD060 : 0xFFE0E0E0);
         }
-        int pages = pageCount(rows);
+        int pages = ModelListPaging.pageCount(models.size(), rows);
         graphics.centered(literal("< " + (modelPage + 1) + "/" + pages + " >"),
                 width / 2, height - 46, 0xFFFFFFFF);
         graphics.centered(translatable("screen.universal_translator.llm.select_back"),
@@ -1852,8 +1990,10 @@ abstract class UniversalTranslatorLlmConfigScreenBase extends Screen {
         if (!modelListOpen) {
             return false;
         }
+        List<String> models = fetchedModels;
+        int rows = ModelListPaging.rows(height);
         if (mouseY >= height - 54 && mouseY < height - 38) {
-            int pages = pageCount(rowsPerPage());
+            int pages = ModelListPaging.pageCount(models.size(), rows);
             if (pages > 1) {
                 modelPage = mouseX < width / 2.0
                         ? (modelPage + pages - 1) % pages : (modelPage + 1) % pages;
@@ -1867,13 +2007,13 @@ abstract class UniversalTranslatorLlmConfigScreenBase extends Screen {
         if (mouseY < LIST_TOP) {
             return true;
         }
-        int rows = rowsPerPage();
-        int row = (int) ((mouseY - LIST_TOP) / LIST_ROW_HEIGHT);
-        int index = modelPage * rows + row;
-        if (row >= rows || index >= fetchedModels.size()) {
+        modelPage = ModelListPaging.clampPage(modelPage, models.size(), rows);
+        int row = ModelListPaging.rowAt(mouseY);
+        int index = ModelListPaging.index(modelPage, rows, row);
+        if (row >= rows || index >= models.size()) {
             return true;
         }
-        model.setValue(fetchedModels.get(index));
+        model.setValue(models.get(index));
         modelListOpen = false;
         setStatus("", false);
         return true;
@@ -1898,14 +2038,6 @@ abstract class UniversalTranslatorLlmConfigScreenBase extends Screen {
     /** Whether the catalog overlay currently owns the screen; version layers gate typing on it. */
     protected final boolean isModelListOpen() {
         return modelListOpen;
-    }
-
-    private int rowsPerPage() {
-        return Math.max(3, (height - LIST_TOP - LIST_FOOTER_HEIGHT) / LIST_ROW_HEIGHT);
-    }
-
-    private int pageCount(int rows) {
-        return Math.max(1, (fetchedModels.size() + rows - 1) / rows);
     }
 
     @Override

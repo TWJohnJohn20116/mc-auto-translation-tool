@@ -10,9 +10,28 @@ import java.net.SocketTimeoutException;
 /** Tries a privacy-preserving primary provider before an optional online fallback. */
 public final class FallbackTranslationProvider
         implements TranslationProvider, TranslationProviderStatus, AutoCloseable {
+    /**
+     * Transient primary failures tolerated before the primary is skipped for a while. Below this the
+     * cost of trying it is one failed call, which is cheaper than a short-circuit that would keep a
+     * working engine idle.
+     */
+    private static final int FAILURES_BEFORE_SHORT_CIRCUIT = 3;
+    /** Short-circuit length for the first burst of failures. */
+    private static final long SHORT_CIRCUIT_BASE_MILLIS = 5000L;
+    /** Upper bound of the short-circuit, so a recovered engine is noticed within a minute. */
+    private static final long SHORT_CIRCUIT_MAX_MILLIS = 60000L;
+
     private final TranslationProvider primary;
     private final TranslationProvider fallback;
     private volatile String lastStatus = "";
+    /**
+     * Consecutive transient primary failures. Read and written without a lock: the value only
+     * decides when to stop trying the primary, and four workers racing it can at worst trip the
+     * short-circuit one request early.
+     */
+    private volatile int consecutiveFailures;
+    /** Instant until which the primary is skipped; {@code 0} while it is being tried. */
+    private volatile long primaryBlockedUntilMillis;
 
     public FallbackTranslationProvider(TranslationProvider primary, TranslationProvider fallback) {
         if (primary == null || fallback == null) {
@@ -39,30 +58,82 @@ public final class FallbackTranslationProvider
 
     @Override
     public String translate(TranslationRequest request) throws Exception {
-        try {
-            String translated = primary.translate(request);
-            lastStatus = primary instanceof TranslationProviderStatus
-                    ? ((TranslationProviderStatus) primary).status()
-                    : "主翻译服务运行中";
-            return translated;
-        } catch (Exception primaryFailure) {
-            if (isInterruption(primaryFailure)) {
-                // The session is being cancelled (TranslationCoordinator.close() interrupts its
-                // workers). Never hand the pending text to the online fallback after that: restore
-                // the interrupt flag and let the caller unwind instead of transmitting off-device.
-                Thread.currentThread().interrupt();
-                throw primaryFailure;
-            }
+        Exception primaryFailure = null;
+        if (!primaryShortCircuited()) {
             try {
-                String translated = fallback.translate(request);
-                lastStatus = "主翻译服务失败，已使用 API 回退";
+                String translated = primary.translate(request);
+                consecutiveFailures = 0;
+                updateStatus(primaryStatus());
                 return translated;
-            } catch (Exception fallbackFailure) {
-                lastStatus = "主翻译服务和 API 回退均失败";
-                fallbackFailure.addSuppressed(primaryFailure);
-                throw fallbackFailure;
+            } catch (Exception failure) {
+                if (isInterruption(failure)) {
+                    // The session is being cancelled (TranslationCoordinator.close() interrupts its
+                    // workers). Never hand the pending text to the online fallback after that: restore
+                    // the interrupt flag and let the caller unwind instead of transmitting off-device.
+                    Thread.currentThread().interrupt();
+                    throw failure;
+                }
+                if (!FailurePolicy.mayFallBack(failure)) {
+                    // A text that does not fit the local context, a rejected answer or a protocol
+                    // error fails the same way anywhere. Falling back used to send exactly those texts
+                    // to the online API — a privacy decision the user never made — and every later
+                    // encounter with the same text repeated it.
+                    updateStatus("主翻译服务无法处理这段文字");
+                    throw failure;
+                }
+                recordPrimaryFailure();
+                primaryFailure = failure;
             }
         }
+        try {
+            String translated = fallback.translate(request);
+            updateStatus("主翻译服务失败，已使用 API 回退");
+            return translated;
+        } catch (Exception fallbackFailure) {
+            updateStatus("主翻译服务和 API 回退均失败");
+            if (primaryFailure != null) {
+                fallbackFailure.addSuppressed(primaryFailure);
+            }
+            throw fallbackFailure;
+        }
+    }
+
+    /** Whether the primary is being skipped after a burst of transient failures. */
+    private boolean primaryShortCircuited() {
+        long until = primaryBlockedUntilMillis;
+        return until != 0L && System.currentTimeMillis() < until;
+    }
+
+    /**
+     * Counts one transient primary failure and short-circuits the primary once they pile up.
+     *
+     * <p>Without this every line of a broken engine paid a full failed attempt before the fallback
+     * answered: lock contention, an exception, and a round trip of latency, per line, for as long as
+     * the engine stayed down. The short-circuit doubles from five seconds and stops at a minute, so a
+     * recovered engine is picked up again quickly and a permanently broken one costs one probe per
+     * minute instead of one per line.
+     */
+    private void recordPrimaryFailure() {
+        int failures = consecutiveFailures + 1;
+        consecutiveFailures = failures;
+        if (failures >= FAILURES_BEFORE_SHORT_CIRCUIT) {
+            int step = Math.min(4, failures - FAILURES_BEFORE_SHORT_CIRCUIT);
+            long backoff = Math.min(SHORT_CIRCUIT_MAX_MILLIS, SHORT_CIRCUIT_BASE_MILLIS << step);
+            primaryBlockedUntilMillis = System.currentTimeMillis() + backoff;
+        }
+    }
+
+    /** Writes the status only when it actually changed; this runs on every translated line. */
+    private void updateStatus(String next) {
+        if (!next.equals(lastStatus)) {
+            lastStatus = next;
+        }
+    }
+
+    private String primaryStatus() {
+        return primary instanceof TranslationProviderStatus
+                ? ((TranslationProviderStatus) primary).status()
+                : "主翻译服务运行中";
     }
 
     private static boolean isInterruption(Throwable failure) {

@@ -38,11 +38,8 @@ import org.universaltranslator.core.UiLimits;
 /** Minimal dependency-free settings screen, opened with U by default. */
 abstract class UniversalTranslatorSettingsScreen extends Screen {
     /** The preview panel is a miniature of Minecraft's 320x240 minimum logical screen. */
-    private static final int HUD_PREVIEW_SCREEN_WIDTH = 320;
-    private static final int HUD_PREVIEW_SCREEN_HEIGHT = 240;
-    /** Tallest the preview panel may be. It shrinks on short windows so it never hits Save. */
-    private static final int HUD_DRAG_PREVIEW_HEIGHT = 48;
-    private static final int HUD_DRAG_HANDLE_SIZE = 8;
+    private static final int HUD_PREVIEW_SCREEN_WIDTH = HudPreviewGeometry.SCREEN_WIDTH;
+    private static final int HUD_PREVIEW_SCREEN_HEIGHT = HudPreviewGeometry.SCREEN_HEIGHT;
     /** Height of one row in the engine tab's model picker overlay. */
     private static final int MODEL_ROW_HEIGHT = ModelListPaging.ROW_HEIGHT;
     /** Y of the first model row; the picker title sits above it. */
@@ -132,7 +129,15 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     private boolean hudDragging;
     private double hudDragLastX;
     private double hudDragLastY;
-    private String provider;
+    /**
+     * Selected provider name.
+     *
+     * <p>Volatile because the engine tab's worker threads compare it against the value they started
+     * with, to drop a model list that belongs to a provider the player has already switched away
+     * from. Without the guarantee the worker could keep reading the old name and publish the old
+     * provider's catalogue over the new one.
+     */
+    private volatile String provider;
     private String llmEndpoint;
     private String llmApiKey;
     private String llmModel;
@@ -199,13 +204,25 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     /** Result of the engine tab's connection test; written by its worker thread. */
     private volatile String testStatus = "";
     private volatile boolean testStatusIsError;
-    private boolean testing;
-    private boolean fetchingModels;
+    /**
+     * In-flight flags for the two engine-tab requests.
+     *
+     * <p>Both are written by the worker thread that finishes the request and read by the client
+     * thread that starts the next one, so a plain {@code boolean} left the reader free to keep
+     * seeing {@code true} after the worker had cleared it: the button then answered "already
+     * running" forever and only closing the screen recovered it.
+     */
+    private volatile boolean testing;
+    private volatile boolean fetchingModels;
     private volatile List<String> fetchedModels = Collections.emptyList();
     private volatile boolean modelListOpen;
     private int modelPage;
     private long animationStartedNanos = System.nanoTime();
     private SettingsSelectionList.Kind openSelection = SettingsSelectionList.Kind.NONE;
+    /** Layout snapshot for the current window size; see {@link #layout()}. */
+    private Layout cachedLayout;
+    private int cachedWindowWidth = -1;
+    private int cachedWindowHeight = -1;
 
     protected UniversalTranslatorSettingsScreen(Screen parent, FabricConfig config, Text title) {
         super(title);
@@ -727,7 +744,12 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     private void saveAndApply() {
         boolean runtimeChanged = false;
         try {
-            FabricConfig updated = original.withSettings(
+            // One snapshot for the whole form: the general settings, the engine tab's prompt
+            // controls (Save writes those too, so applying the prompt and then saving cannot
+            // silently restore the value the screen was opened with) and the throughput tuning.
+            // Built through one method so the file is read once instead of once per group — this
+            // runs straight from a button callback, on the client thread.
+            FabricConfig updated = original.withAllSettings(
                     enabled,
                     translateChat,
                     translateOther,
@@ -753,12 +775,12 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
                     new HudIndicatorSettings(hudIndicator, hudIndicatorCorner,
                             hudIndicatorSize, hudIndicatorMargin, hudIndicatorColor,
                             hudIndicatorContent, hudIndicatorVisibility,
-                            hudIndicatorOffsetX, hudIndicatorOffsetY))
-                    // Save writes the engine tab's prompt controls too, so applying the prompt and
-                    // then saving cannot silently restore the value the screen was opened with.
-                    .withPromptSettings(quality, TranslationPrompt.fromEditorText(
-                            customPrompt == null ? "" : customPrompt.getText()))
-                    .withTranslationTuning(workers, batchSize);
+                            hudIndicatorOffsetX, hudIndicatorOffsetY),
+                    quality,
+                    TranslationPrompt.fromEditorText(
+                            customPrompt == null ? "" : customPrompt.getText()),
+                    workers,
+                    batchSize);
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
                     && (updated.tencentSecretId.isEmpty() || updated.tencentSecretKey.isEmpty())) {
                 throw new IllegalArgumentException(tr("error.universal_translator.tencent_credentials"));
@@ -934,12 +956,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
      * One offset unit is one pixel of the 320x240 virtual screen.
      */
     private int clampOffsetToPreview(int value, int anchor, int extent) {
-        int lower = Math.max(HudIndicatorSettings.MIN_OFFSET, -anchor);
-        int upper = Math.min(HudIndicatorSettings.MAX_OFFSET, extent - anchor - hudIndicatorSize);
-        if (upper < lower) {
-            upper = lower;
-        }
-        return Math.max(lower, Math.min(upper, value));
+        return HudPreviewGeometry.clampOffset(value, anchor, extent, hudIndicatorSize);
     }
 
     private int hudPreviewX() {
@@ -954,20 +971,9 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         return layout().totalWidth;
     }
 
-    /**
-     * Panel height, capped by the space above the Save/Cancel row.
-     *
-     * <p>{@code contentRow(4)} does not shrink on very short windows because the row step has a
-     * floor, so a fixed height would overlap Save. Clamping here keeps the panel clear of it.
-     */
+    /** Panel height; 0 means there is no room above Save and the preview is skipped. */
     private int hudPreviewH() {
-        int available = layout().saveY - 4 - hudPreviewY();
-        if (available < HUD_DRAG_HANDLE_SIZE) {
-            // No room above Save: skip the preview entirely rather than draw a panel that
-            // overlaps it, which is exactly what the cap above exists to prevent.
-            return 0;
-        }
-        return Math.min(HUD_DRAG_PREVIEW_HEIGHT, available);
+        return HudPreviewGeometry.height(hudPreviewY(), layout().saveY);
     }
 
     /**
@@ -986,74 +992,63 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
                 : hudIndicatorMargin;
     }
 
-    /**
-     * One scale for both axes.
-     *
-     * <p>The panel is wide and short, so the horizontal and vertical factors used to differ by a
-     * factor of five: a 320x240 screen was drawn at the panel width across and at 0.2x down, which
-     * put the bottom corners in the wrong place before any drag and made the pointer delta mean a
-     * different number of pixels on each axis. The smaller of the two fits the whole screen.
-     */
     private double hudScale() {
-        int width = hudPreviewW();
-        int height = hudPreviewH();
-        if (width <= 0 || height <= 0) {
-            return 0.0D;
-        }
-        return Math.min(width / (double) HUD_PREVIEW_SCREEN_WIDTH,
-                height / (double) HUD_PREVIEW_SCREEN_HEIGHT);
-    }
-
-    /** Left edge of the letterboxed screen inside the panel. */
-    private int hudContentX() {
-        int scaled = (int) Math.round(HUD_PREVIEW_SCREEN_WIDTH * hudScale());
-        return hudPreviewX() + Math.max(0, (hudPreviewW() - scaled) / 2);
-    }
-
-    /** Top edge of the letterboxed screen inside the panel. */
-    private int hudContentY() {
-        int scaled = (int) Math.round(HUD_PREVIEW_SCREEN_HEIGHT * hudScale());
-        return hudPreviewY() + Math.max(0, (hudPreviewH() - scaled) / 2);
+        return HudPreviewGeometry.scale(hudPreviewW(), hudPreviewH());
     }
 
     private int hudHandleX() {
-        int px = hudPreviewX();
-        int pw = hudPreviewW();
-        int x = hudContentX() + (int) Math.round((hudAnchorX() + hudIndicatorOffsetX) * hudScale());
-        return Math.max(px, Math.min(px + pw - HUD_DRAG_HANDLE_SIZE, x));
+        return HudPreviewGeometry.handleX(hudPreviewX(), hudPreviewW(),
+                HudPreviewGeometry.contentX(hudPreviewX(), hudPreviewW(), hudScale()),
+                hudAnchorX(), hudIndicatorOffsetX, hudScale());
     }
 
     private int hudHandleY() {
-        int py = hudPreviewY();
-        int ph = hudPreviewH();
-        int y = hudContentY() + (int) Math.round((hudAnchorY() + hudIndicatorOffsetY) * hudScale());
-        return Math.max(py, Math.min(py + ph - HUD_DRAG_HANDLE_SIZE, y));
+        return HudPreviewGeometry.handleY(hudPreviewY(), hudPreviewH(),
+                HudPreviewGeometry.contentY(hudPreviewY(), hudPreviewH(), hudScale()),
+                hudAnchorY(), hudIndicatorOffsetY, hudScale());
     }
 
     private boolean insideHudDragHandle(double mouseX, double mouseY) {
-        if (hudPreviewH() <= 0) {
+        int previewY = hudPreviewY();
+        int previewHeight = HudPreviewGeometry.height(previewY, layout().saveY);
+        if (previewHeight <= 0) {
             return false;
         }
-        int hx = hudHandleX();
-        int hy = hudHandleY();
-        return mouseX >= hx && mouseX < hx + HUD_DRAG_HANDLE_SIZE
-                && mouseY >= hy && mouseY < hy + HUD_DRAG_HANDLE_SIZE;
+        int previewX = hudPreviewX();
+        int previewWidth = hudPreviewW();
+        double scale = HudPreviewGeometry.scale(previewWidth, previewHeight);
+        int contentX = HudPreviewGeometry.contentX(previewX, previewWidth, scale);
+        int contentY = HudPreviewGeometry.contentY(previewY, previewHeight, scale);
+        return HudPreviewGeometry.insideHandle(mouseX, mouseY,
+                HudPreviewGeometry.handleX(previewX, previewWidth, contentX,
+                        hudAnchorX(), hudIndicatorOffsetX, scale),
+                HudPreviewGeometry.handleY(previewY, previewHeight, contentY,
+                        hudAnchorY(), hudIndicatorOffsetY, scale));
     }
 
     private void drawHudDragPreview(Object canvas) {
-        int px = hudPreviewX();
-        int py = hudPreviewY();
-        int pw = hudPreviewW();
-        int ph = hudPreviewH();
-        if (ph <= 0) {
+        // One layout read and one geometry pass for the whole panel: every helper below used to
+        // rebuild the layout object, so drawing an eight-pixel handle cost about twenty of them.
+        int previewX = hudPreviewX();
+        int previewY = hudPreviewY();
+        int previewWidth = hudPreviewW();
+        int previewHeight = HudPreviewGeometry.height(previewY, layout().saveY);
+        if (previewHeight <= 0) {
             return;
         }
-        fillRect(canvas, px, py, px + pw, py + ph, 0x40000000);
+        double scale = HudPreviewGeometry.scale(previewWidth, previewHeight);
+        fillRect(canvas, previewX, previewY, previewX + previewWidth, previewY + previewHeight,
+                0x40000000);
         // A corner marker on the anchor edge the indicator hugs, so the four corner options are
         // visible in the preview instead of only in the button label.
-        int hx = hudHandleX();
-        int hy = hudHandleY();
-        fillRect(canvas, hx, hy, hx + HUD_DRAG_HANDLE_SIZE, hy + HUD_DRAG_HANDLE_SIZE,
+        int handleX = HudPreviewGeometry.handleX(previewX, previewWidth,
+                HudPreviewGeometry.contentX(previewX, previewWidth, scale),
+                hudAnchorX(), hudIndicatorOffsetX, scale);
+        int handleY = HudPreviewGeometry.handleY(previewY, previewHeight,
+                HudPreviewGeometry.contentY(previewY, previewHeight, scale),
+                hudAnchorY(), hudIndicatorOffsetY, scale);
+        fillRect(canvas, handleX, handleY,
+                handleX + HudPreviewGeometry.HANDLE_SIZE, handleY + HudPreviewGeometry.HANDLE_SIZE,
                 hudDragging ? 0xFFFFAA00 : 0xFF00AA00);
     }
 
@@ -1227,6 +1222,11 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         }
         final String endpointValue = llmEndpoint;
         final String keyValue = llmApiKey;
+        // Snapshot the provider the answer belongs to. Switching providers while the request is in
+        // flight used to publish the previous service's catalogue — and force the picker open — so
+        // the player could pick a model name the new provider has never heard of, and the save then
+        // wrote it. The worker now drops its answer unless the screen still shows that provider.
+        final String startedProvider = provider;
         fetchingModels = true;
         setTestStatus(tr("screen.universal_translator.llm.fetching"), false);
         Thread worker = new Thread(() -> {
@@ -1238,6 +1238,10 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
                 failure = describe(error);
             }
             fetchingModels = false;
+            if (!startedProvider.equals(provider)) {
+                // A different provider is selected now; its own fetch (or the player) owns the state.
+                return;
+            }
             if (!failure.isEmpty()) {
                 setTestStatus(tr("screen.universal_translator.llm.fetch_failed", failure), true);
                 return;
@@ -1272,6 +1276,9 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         final boolean libre = LIBRETRANSLATE_PROVIDER.equalsIgnoreCase(provider);
         final String endpointValue = llm ? llmEndpoint : endpoint.getText().trim();
         final String keyValue = llmApiKey;
+        // Same snapshot rule as fetchModels: a verdict about the provider the player has already
+        // switched away from would describe the wrong service.
+        final String startedProvider = provider;
         testing = true;
         setTestStatus(tr("screen.universal_translator.engine.testing"), false);
         Thread worker = new Thread(() -> {
@@ -1312,6 +1319,9 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
                 error = true;
             }
             testing = false;
+            if (!startedProvider.equals(provider)) {
+                return;
+            }
             setTestStatus(message, error);
         }, "universal-translator-connection-test");
         worker.setDaemon(true);
@@ -1488,13 +1498,39 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         return trStr(key, arguments);
     }
 
+    /**
+     * The layout for the current window size, computed once per size.
+     *
+     * <p>Every {@code hudPreview*}, {@code hudHandle*}, {@code engineRow} and {@code tabX} call used
+     * to recompute {@link SettingsScreenLayout#calculate} and build two objects from it, and those
+     * call each other — a single HUD frame asked for about twenty of them. The geometry depends on
+     * nothing but the window size and the tab count, so the result is a snapshot of that size and
+     * a resize (or {@code init} on a new screen) is what invalidates it.
+     */
     private Layout layout() {
-        SettingsScreenLayout.Geometry geometry = SettingsScreenLayout.calculate(this.width, this.height, 5);
-        return new Layout(geometry.left(), geometry.right(), geometry.totalWidth(), geometry.buttonWidth(),
+        int windowWidth = this.width;
+        int windowHeight = this.height;
+        Layout cached = cachedLayout;
+        if (cached != null && cachedWindowWidth == windowWidth && cachedWindowHeight == windowHeight) {
+            return cached;
+        }
+        SettingsScreenLayout.Geometry geometry = SettingsScreenLayout.calculate(windowWidth, windowHeight, 5);
+        Layout computed = new Layout(geometry.left(), geometry.right(), geometry.totalWidth(), geometry.buttonWidth(),
                 geometry.top(), geometry.rowStep(), geometry.targetY(), geometry.endpointY(), geometry.saveY(),
                 geometry.tabY(), geometry.tabWidth(), geometry.tabGap(), geometry.contentTop(), geometry.contentRowStep());
+        cachedLayout = computed;
+        cachedWindowWidth = windowWidth;
+        cachedWindowHeight = windowHeight;
+        return computed;
     }
 
+    /**
+     * One window size's layout, with the row helpers this screen asks for.
+     *
+     * <p>Held by {@link #layout()} as a per-size snapshot, so it is built at most once per resize.
+     * The accessors are the same names the rest of the class reads as fields; that duplication with
+     * {@link SettingsScreenLayout.Geometry} is what {@code S2-077} still has to remove.
+     */
     private static final class Layout {
         private final int left;
         private final int right;

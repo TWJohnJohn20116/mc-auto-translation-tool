@@ -129,27 +129,11 @@ jobs:
           TARGET: 核心檢查
           OUTCOME: ${{ steps.checks.outcome }}
           ARTIFACT: check-reports
-        run: |
-          case "${OUTCOME:-}" in
-            success) result="成功" ;;
-            failure) result="失敗" ;;
-            skipped) result="略過（本次未要求）" ;;
-            *) result="未知（${OUTCOME:-未執行}）" ;;
-          esac
-          version="$(sed -n 's|.*gradle-\([0-9][0-9.]*\)-.*|\1|p' gradle/wrapper/gradle-wrapper.properties | head -n 1 || true)"
-          {
-            echo "## 建置摘要"
-            echo
-            echo "| 項目 | 內容 |"
-            echo "| --- | --- |"
-            echo "| 目標 | ${TARGET:-未指定} |"
-            echo "| Gradle 版本 | ${version:-未知} |"
-            echo "| 結果 | ${result} |"
-            echo "| artifact | ${ARTIFACT:-無} |"
-          } >> "$GITHUB_STEP_SUMMARY"
+        # 摘要本文只留一份：scripts/ci/write-build-summary.sh（差異只在上面三個 env）。
+        run: bash scripts/ci/write-build-summary.sh
 
   lint:
-    name: 檢查 workflow
+    name: 檢查 workflow 與腳本
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -176,12 +160,62 @@ jobs:
       - name: 檢查所有 workflow
         run: actionlint -color
 
+      # actionlint 的預設掃描範圍只有 .github/workflows/*.yml，composite action 不在裡面，
+      # 但它才是 6 個呼叫端（build.yml 4 處、legacy-targets.yml 3 處、prepare-release.yml 1 處）
+      # 唯一的建置入口。少了這一步，errexit 復辟、重試 grep 掉了 -i、PIPESTATUS 被換成 $? 這類
+      # 回歸會完全靜默，只表現為「重試變成死碼」或某次 Maven 抖動造成假紅燈（2026-10-04 兩次）。
+      - name: 檢查 composite action
+        run: |
+          set -euo pipefail
+          # 明確把檔案路徑傳給 actionlint。若這一版的 actionlint 還不認得 action metadata
+          # （會以 workflow-only 的語法錯誤擋下），只忽略那一類訊息，其餘一律視為失敗——
+          # 下面的契約斷言才是實際生效的守門員，兩者都不吞掉真正的錯誤。
+          if actionlint -color .github/actions/gradle-build/action.yml > /tmp/actionlint-action.log 2>&1; then
+            cat /tmp/actionlint-action.log
+            echo "actionlint 已檢查 composite action"
+          else
+            if grep -qE 'unexpected key|is not defined for "workflow"|"jobs" section|missing .*workflow' /tmp/actionlint-action.log; then
+              echo "::notice::這一版 actionlint 不支援 action metadata，改用下列契約斷言檢查 composite action"
+            else
+              cat /tmp/actionlint-action.log
+              exit 1
+            fi
+          fi
+          action="${GITHUB_WORKSPACE:-.}/.github/actions/gradle-build/action.yml"
+          # AGENTS.md 的兩條硬契約只存在於註解裡，這裡讓它們在 PR 上就紅：
+          # 1) `set +e` 必須在，否則 bash -e 會讓失敗的 `./gradlew | tee` 直接結束，
+          #    底下的重試邏輯變成死碼。
+          grep -qE '^[[:space:]]*set \+e$' "$action" \
+            || { echo "::error::gradle-build/action.yml 缺少 set +e（errexit 會讓重試變死碼）"; exit 1; }
+          # 2) 重試的 grep 必須不區分大小寫（ForgeGradle 吐的是小寫的
+          #    "could not resolve plugin artifact"）。
+          grep -q 'grep -qiE' "$action" \
+            || { echo "::error::gradle-build/action.yml 的重試 grep 缺少 -i"; exit 1; }
+          # 3) 離開碼必須取自 PIPESTATUS[0]，取 $? 會拿到 tee 的狀態而永遠是 0。
+          grep -q 'PIPESTATUS\[0\]' "$action" \
+            || { echo "::error::gradle-build/action.yml 必須用 PIPESTATUS[0] 取 Gradle 的離開碼"; exit 1; }
+          # 摘要腳本現在是全專案共用的一份（7 個 job 都呼叫它），先做語法檢查。
+          bash -n scripts/ci/write-build-summary.sh
+          echo "composite action 與摘要腳本檢查通過"
+
+      # scripts/*.py 的單元測試原本沒有任何 CI 入口（AGENTS.md 也禁止本機執行），於是
+      # 「有測試」等於紙上覆蓋：600 KiB 分片尺寸、ZIP metadata、Forge 版本範圍這些契約
+      # 都沒有東西守著。這裡只跑純 Python、不裝第三方依賴、不碰 Gradle，成本是幾秒。
+      - name: 設定 Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: 執行腳本單元測試
+        run: python -m unittest discover -s scripts -p "test_*.py" -v
+
   plan:
     name: 解析建置目標
     runs-on: ubuntu-24.04
     outputs:
       targets: ${{ steps.resolve.outputs.targets }}
       forge_changed: ${{ steps.forge.outputs.changed }}
+      release_changed: ${{ steps.release.outputs.changed }}
     steps:
       - name: 取出原始碼
         uses: actions/checkout@v7
@@ -227,6 +261,33 @@ jobs:
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "這個 PR 只動到文件、網站、下載資產或 Fabric，略過 Forge／NeoForge 建置"
+          fi
+
+      # 發布資產驗證要讀 downloads/<version> 的 74 個檔案（31.7 MB）、把 8 組分片在記憶體
+      # 串接、對 48 顆邏輯 JAR 逐 entry 做 ZIP 解析與 SHA-256。純文件、網站或平台程式的 PR
+      # 不可能改變它的結論，所以照 forge_changed 的同一個機制做路徑閘門。
+      # 一樣只略過「步驟」，job 仍會執行並回報成功，CI 總結 才不會卡在 waiting。
+      - name: 判斷有沒有動到發布資產
+        id: release
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" != "pull_request" || -z "$BASE_REF" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "非 PR 觸發，一律驗證發布資產"
+            exit 0
+          fi
+          git fetch --no-tags --depth=1 origin "$BASE_REF"
+          # 保守策略：只有「所有變更都落在與發布資產無關的路徑」時才略過。
+          if git diff --name-only FETCH_HEAD HEAD | grep -qE \
+            '^(downloads/|LICENSE$|docs/en/THIRD_PARTY_OFFLINE\.md$|gradle\.properties$|CHANGELOG\.md$|scripts/prepare_release_assets\.py$|scripts/verify_release_jars\.py$|scripts/release_layout\.py$|\.github/workflows/publish-release\.yml$)'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "這個 PR 有動到發布資產相關路徑"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "這個 PR 沒有動到發布資產相關路徑，略過發布資產驗證"
           fi
 
   platform-build:
@@ -324,24 +385,8 @@ jobs:
           TARGET: ${{ matrix.target }}
           OUTCOME: ${{ steps.build.outcome }}
           ARTIFACT: platform-${{ matrix.target }}
-        run: |
-          case "${OUTCOME:-}" in
-            success) result="成功" ;;
-            failure) result="失敗" ;;
-            skipped) result="略過（本次未要求）" ;;
-            *) result="未知（${OUTCOME:-未執行}）" ;;
-          esac
-          version="$(sed -n 's|.*gradle-\([0-9][0-9.]*\)-.*|\1|p' gradle/wrapper/gradle-wrapper.properties | head -n 1 || true)"
-          {
-            echo "## 建置摘要"
-            echo
-            echo "| 項目 | 內容 |"
-            echo "| --- | --- |"
-            echo "| 目標 | ${TARGET:-未指定} |"
-            echo "| Gradle 版本 | ${version:-未知} |"
-            echo "| 結果 | ${result} |"
-            echo "| artifact | ${ARTIFACT:-無} |"
-          } >> "$GITHUB_STEP_SUMMARY"
+        # 摘要本文只留一份：scripts/ci/write-build-summary.sh（差異只在上面三個 env）。
+        run: bash scripts/ci/write-build-summary.sh
 
   legacy-build:
     name: 建置舊版 ${{ matrix.target }}
@@ -423,24 +468,8 @@ jobs:
           TARGET: ${{ matrix.target }}
           OUTCOME: ${{ steps.build.outcome }}
           ARTIFACT: legacy-${{ matrix.target }}
-        run: |
-          case "${OUTCOME:-}" in
-            success) result="成功" ;;
-            failure) result="失敗" ;;
-            skipped) result="略過（本次未要求）" ;;
-            *) result="未知（${OUTCOME:-未執行}）" ;;
-          esac
-          version="$(sed -n 's|.*gradle-\([0-9][0-9.]*\)-.*|\1|p' gradle/wrapper/gradle-wrapper.properties | head -n 1 || true)"
-          {
-            echo "## 建置摘要"
-            echo
-            echo "| 項目 | 內容 |"
-            echo "| --- | --- |"
-            echo "| 目標 | ${TARGET:-未指定} |"
-            echo "| Gradle 版本 | ${version:-未知} |"
-            echo "| 結果 | ${result} |"
-            echo "| artifact | ${ARTIFACT:-無} |"
-          } >> "$GITHUB_STEP_SUMMARY"
+        # 摘要本文只留一份：scripts/ci/write-build-summary.sh（差異只在上面三個 env）。
+        run: bash scripts/ci/write-build-summary.sh
 
   release-assets:
     name: 驗證縮減後的發布 JAR
@@ -452,17 +481,26 @@ jobs:
         uses: actions/checkout@v7
 
       - name: 設定 Java 25
+        if: >-
+          contains(needs.plan.outputs.targets, ',release,') ||
+          (needs.plan.outputs.targets == '' && needs.plan.outputs.release_changed == 'true')
         uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "25"
 
       - name: 設定 Python
+        if: >-
+          contains(needs.plan.outputs.targets, ',release,') ||
+          (needs.plan.outputs.targets == '' && needs.plan.outputs.release_changed == 'true')
         uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
       - name: 設定 Gradle
+        if: >-
+          contains(needs.plan.outputs.targets, ',release,') ||
+          (needs.plan.outputs.targets == '' && needs.plan.outputs.release_changed == 'true')
         uses: gradle/actions/setup-gradle@v6
         with:
           # v6 的預設快取是 Gradle 的商業服務（gradle-actions-caching），這裡明確
@@ -472,16 +510,28 @@ jobs:
           # 提供繁中摘要，失敗時才顯示它的英文面板方便對照 log。
           add-job-summary: on-failure
 
+      # `check` 已不再包含發布驗證（第二輪審計 C2-163）：它需要 downloads/<mod_version>，而那個
+      # 目錄是「發布後」才存在的，掛在 PR 必經路徑等同讓改版本號與必經檢查互鎖。聚合任務
+      # verifyPublishedRelease（根 build.gradle，dependsOn verifyPreparedReleaseAssets）留給 release
+      # 流程明確呼叫，這裡是呼叫點之一（另一個是 prepare-release.yml 的收集後驗證）。
       - name: 驗證所有發布 JAR 與 Fabric 選版
         id: build
-        if: needs.plan.outputs.targets == '' || contains(needs.plan.outputs.targets, ',release,')
+        if: >-
+          contains(needs.plan.outputs.targets, ',release,') ||
+          (needs.plan.outputs.targets == '' && needs.plan.outputs.release_changed == 'true')
         uses: ./.github/actions/gradle-build
         with:
+          # 逐一呼叫要驗的 fabric bundle：驗證器本體收斂在 gradle/fabric-bundle-aggregate-verify.gradle，
+          # 但每個 bundle 專案各自編譯自己的 BundleResolutionVerifier 測試類別，所以要各自被叫到。
+          # 26.x 之前完全沒有 aggregate 覆蓋，是這次補上的重點。
+          # -PtargetPlatform 必須同時列出這些 bundle，settings.gradle 才會把它們 include 進來
+          # （只列 fabric-1.21.x 時 :platform-fabric-26.x 會直接「專案不存在」）。
           args: >-
             --no-daemon --max-workers=2
-            -PtargetPlatform=fabric-1.21.x
-            verifyPreparedReleaseAssets
+            -PtargetPlatform=fabric-1.21.x,fabric-26.x
+            verifyPublishedRelease
             :platform-fabric-1.21.x:verifyPreparedReleaseBundle
+            :platform-fabric-26.x:verifyPreparedReleaseBundle
 
       - name: 上傳縮減後的發布 JAR
         if: >-
@@ -503,24 +553,8 @@ jobs:
           TARGET: 發布資產
           OUTCOME: ${{ steps.build.outcome }}
           ARTIFACT: release-assets
-        run: |
-          case "${OUTCOME:-}" in
-            success) result="成功" ;;
-            failure) result="失敗" ;;
-            skipped) result="略過（本次未要求）" ;;
-            *) result="未知（${OUTCOME:-未執行}）" ;;
-          esac
-          version="$(sed -n 's|.*gradle-\([0-9][0-9.]*\)-.*|\1|p' gradle/wrapper/gradle-wrapper.properties | head -n 1 || true)"
-          {
-            echo "## 建置摘要"
-            echo
-            echo "| 項目 | 內容 |"
-            echo "| --- | --- |"
-            echo "| 目標 | ${TARGET:-未指定} |"
-            echo "| Gradle 版本 | ${version:-未知} |"
-            echo "| 結果 | ${result} |"
-            echo "| artifact | ${ARTIFACT:-無} |"
-          } >> "$GITHUB_STEP_SUMMARY"
+        # 摘要本文只留一份：scripts/ci/write-build-summary.sh（差異只在上面三個 env）。
+        run: bash scripts/ci/write-build-summary.sh
 
   # 網站（website/）目前沒有其他檢查。這個 job 只在 PR 有動到 website/ 時才真的跑，
   # 所以一般 PR 幾乎零成本；Dependabot 的 npm 更新 PR 才會被實際驗證。
@@ -604,7 +638,7 @@ jobs:
           import json, os, sys
           labels = {
               "check": "核心檢查",
-              "lint": "Workflow 檢查",
+              "lint": "Workflow 與腳本檢查",
               "plan": "解析建置目標",
               "platform-build": "平台建置",
               "legacy-build": "舊版建置",

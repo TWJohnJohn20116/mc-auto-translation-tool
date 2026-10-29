@@ -2,9 +2,9 @@ package org.universaltranslator.core;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
@@ -118,6 +118,11 @@ public final class TranslationCoordinator implements AutoCloseable {
     /**
      * Shared body of both entry points. {@code listener} is {@code null} for the ordinary path, which
      * must not pay for any of the preview bookkeeping.
+     *
+     * <p>Four steps that used to be interleaved in one 130-line method: reject what must not be
+     * translated, describe the request, hand it to the workers exactly once, and attach the preview.
+     * Separating them is what lets the de-duplication and the activity counter be reviewed — and
+     * eventually tested — on their own instead of by reading three different catch blocks together.
      */
     private CompletableFuture<TranslationResult> translate(
             final String text,
@@ -153,101 +158,171 @@ public final class TranslationCoordinator implements AutoCloseable {
         // The protected-literal snapshot is identified by its contents so that requests with
         // different player-name snapshots cannot accidentally share an in-flight result, while
         // requests that only differ in the list instance still de-duplicate.
-        final String requestKey = CACHE_FORMAT_VERSION + "\n" + provider.id() + "\n" + effectiveSource + "\n"
-                + targetLanguage + "\n" + effectiveKind + "\n" + preserveHanText + "\n"
-                + protectedLiteralsSignature(protectedLiterals) + "\n" + text;
-        CompletableFuture<TranslationResult> existing = inFlight.get(requestKey);
-        if (existing == null) {
-            final CompletableFuture<TranslationResult> created =
-                    new CompletableFuture<TranslationResult>();
-            existing = inFlight.putIfAbsent(requestKey, created);
-            if (existing == null) {
-                existing = created;
-                // Only work that is really handed to the provider is counted. Every other exit
-                // above returns a future that performs no provider work (closed session, nothing
-                // to translate, or losing the putIfAbsent race to a thread that already counted
-                // this request), and none of those may light the HUD indicator.
-                // begin() sits before executor.execute(...) so a worker can never settle this
-                // future - and therefore run the end() below - before the count went up.
-                TranslationActivity.begin();
-                // Side-effect only: whenComplete returns a NEW future, which is deliberately
-                // discarded so the future handed back to callers keeps its identity and its
-                // original exception semantics. whenComplete (not thenRun) so failures,
-                // cancellation and close() decrement too.
-                created.whenComplete((result, failure) -> TranslationActivity.end());
-                try {
-                    executor.execute(() -> {
-                    try {
-                        ProtectedText protectedText = ProtectedText.parse(
-                                text, protectedLiterals, preserveHanText);
-                        if (!LanguageHeuristics.shouldTranslateToTarget(
-                                protectedText.getUnprotectedTemplateText(), chineseTarget)) {
-                            created.complete(TranslationResult.unchanged(text));
-                            return;
-                        }
-                        // The cache writes, the adopted cache hits and the success counters of the
-                        // segment layer are held back until the restored text is known to be
-                        // displayable. A value that only fails here used to stay cached under its
-                        // key, was read back by every later round, passed the per-segment check
-                        // again and failed this one again, so a single such key broke its line for
-                        // the whole session and occupied a slot in the platform's retry table for
-                        // good.
-                        PendingCommit pendingCommit = new PendingCommit();
-                        String restored;
-                        try {
-                            restored = TranslationOutputValidator.requireDisplaySafe(
-                                    text, translateSegments(protectedText, effectiveSource,
-                                            targetLanguage, chineseTarget, effectiveKind, listener,
-                                            pendingCommit));
-                        } catch (RuntimeException rejected) {
-                            // Undo everything this request stored or reused: the next request for the
-                            // same line has to reach the provider again instead of being served a
-                            // value that can never be displayed. Rethrown unchanged so the failure
-                            // the caller reports keeps its type, its message and its cause.
-                            pendingCommit.rollback(cache);
-                            throw rejected;
-                        }
-                        pendingCommit.commit();
-                        created.complete(TranslationResult.success(
-                                text, restored));
-                    } catch (Exception exception) {
-                        created.complete(TranslationResult.failure(text, failureMessage(exception)));
-                    } catch (Throwable fatal) {
-                        // LinkageError/UnsatisfiedLinkError from the offline native library,
-                        // OutOfMemoryError and StackOverflowError are not Exception subtypes.
-                        // Complete the future first so callers never leak an in-flight entry,
-                        // then let the fatal error propagate and kill the worker thread.
-                        created.complete(TranslationResult.failure(text, failureMessage(fatal)));
-                        throw fatal;
-                    } finally {
-                        inFlight.remove(requestKey, created);
-                    }
-                    });
-                } catch (RejectedExecutionException busy) {
-                    inFlight.remove(requestKey, created);
-                    created.complete(TranslationResult.failure(
-                            text, "Translation queue is busy; retrying later"));
-                } catch (Throwable fatal) {
-                    // begin() already ran; without this the count would never come back down and the
-                    // HUD indicator would be stuck showing "translating" for the rest of the session.
-                    TranslationActivity.end();
-                    throw fatal;
-                }
-            }
-        }
-        final CompletableFuture<TranslationResult> settled = existing;
+        final Submission submission = new Submission(text, effectiveSource, targetLanguage,
+                effectiveKind, protectedLiterals, preserveHanText, chineseTarget, listener,
+                provider.id(), protectedLiteralsSignature(protectedLiterals));
+        final CompletableFuture<TranslationResult> settled = settle(submission);
         if (listener != null) {
-            // The completed translation is published last, so the preview always ends on exactly the
-            // text the caller receives. It also covers the request that lost the de-duplication race
-            // above and was answered by a provider call another thread had already started: that
-            // caller still sees the translation arrive, it just arrives complete.
-            settled.whenComplete((result, failure) -> {
-                if (result != null && result.isTranslated()) {
-                    listener.onPartialText(result.getTranslatedText());
-                }
-            });
+            attachPreview(settled, listener);
         }
         return settled;
+    }
+
+    /**
+     * The future for this request, submitting a worker when it is the first caller.
+     *
+     * <p>Only work that is really handed to the provider is counted. A caller that loses the
+     * de-duplication race gets the future another thread already counted, and no other exit here
+     * performs provider work, so none of them may light the HUD indicator. {@code begin()} sits
+     * before {@code executor.execute(...)} so a worker can never settle this future — and therefore
+     * run the matching {@code end()} — before the count went up.
+     *
+     * @return the shared future for this request key
+     */
+    private CompletableFuture<TranslationResult> settle(final Submission submission) {
+        CompletableFuture<TranslationResult> existing = inFlight.get(submission.requestKey);
+        if (existing != null) {
+            return existing;
+        }
+        final CompletableFuture<TranslationResult> created =
+                new CompletableFuture<TranslationResult>();
+        existing = inFlight.putIfAbsent(submission.requestKey, created);
+        if (existing != null) {
+            // Lost the race: the winner already counted this request and is translating it.
+            return existing;
+        }
+        TranslationActivity.begin();
+        // Side-effect only: whenComplete returns a NEW future, which is deliberately discarded so the
+        // future handed back to callers keeps its identity and its original exception semantics.
+        // whenComplete (not thenRun) so failures, cancellation and close() decrement too.
+        created.whenComplete((result, failure) -> TranslationActivity.end());
+        try {
+            executor.execute(() -> runWorker(submission, created));
+        } catch (RejectedExecutionException busy) {
+            inFlight.remove(submission.requestKey, created);
+            created.complete(TranslationResult.failure(
+                    submission.text, "Translation queue is busy; retrying later"));
+        } catch (Throwable fatal) {
+            // begin() already ran; without this the count would never come back down and the
+            // HUD indicator would be stuck showing "translating" for the rest of the session.
+            TranslationActivity.end();
+            throw fatal;
+        }
+        return created;
+    }
+
+    /**
+     * The worker body: protect, translate segment by segment, validate the assembled text, then
+     * commit or roll back.
+     *
+     * <p>The cache writes, the adopted cache hits and the success counters of the segment layer are
+     * held back until the restored text is known to be displayable. A value that only fails the
+     * display check used to stay cached under its key, was read back by every later round, passed the
+     * per-segment check again and failed this one again, so a single such key broke its line for the
+     * whole session and occupied a slot in the platform's retry table for good.
+     */
+    private void runWorker(final Submission submission, final CompletableFuture<TranslationResult> created) {
+        final String text = submission.text;
+        try {
+            ProtectedText protectedText = ProtectedText.parse(
+                    text, submission.protectedLiterals, submission.preserveHanText);
+            if (!LanguageHeuristics.shouldTranslateToTarget(
+                    protectedText.getUnprotectedTemplateText(), submission.chineseTarget)) {
+                created.complete(TranslationResult.unchanged(text));
+                return;
+            }
+            PendingCommit pendingCommit = new PendingCommit();
+            String restored;
+            try {
+                restored = TranslationOutputValidator.requireDisplaySafe(
+                        text, translateSegments(protectedText, submission.sourceLanguage,
+                                submission.targetLanguage, submission.chineseTarget, submission.kind,
+                                submission.listener, pendingCommit));
+            } catch (RuntimeException rejected) {
+                // Undo everything this request stored or reused: the next request for the same line
+                // has to reach the provider again instead of being served a value that can never be
+                // displayed. Rethrown unchanged so the failure the caller reports keeps its type, its
+                // message and its cause.
+                pendingCommit.rollback(cache);
+                throw rejected;
+            }
+            pendingCommit.commit();
+            created.complete(TranslationResult.success(text, restored));
+        } catch (Exception exception) {
+            created.complete(TranslationResult.failure(text, failureMessage(exception)));
+        } catch (Throwable fatal) {
+            // LinkageError/UnsatisfiedLinkError from the offline native library, OutOfMemoryError and
+            // StackOverflowError are not Exception subtypes. Complete the future first so callers
+            // never leak an in-flight entry, then let the fatal error propagate and kill the worker
+            // thread.
+            created.complete(TranslationResult.failure(text, failureMessage(fatal)));
+            throw fatal;
+        } finally {
+            inFlight.remove(submission.requestKey, created);
+        }
+    }
+
+    /**
+     * Publishes the settled translation to {@code listener} as one last partial text.
+     *
+     * <p>The completed translation is published last, so the preview always ends on exactly the text
+     * the caller receives. It also covers the request that lost the de-duplication race and was
+     * answered by a provider call another thread had already started: that caller still sees the
+     * translation arrive, it just arrives complete.
+     */
+    private static void attachPreview(
+            CompletableFuture<TranslationResult> settled,
+            final TranslationStreamListener listener
+    ) {
+        settled.whenComplete((result, failure) -> {
+            if (result != null && result.isTranslated()) {
+                listener.onPartialText(result.getTranslatedText());
+            }
+        });
+    }
+
+    /**
+     * One request as handed to the workers.
+     *
+     * <p>Immutable, and captured by the worker lambda instead of the caller's eight separate locals.
+     * The request key is built here so that everything that changes the answer — and nothing that
+     * does not — is in one place.
+     */
+    private static final class Submission {
+        private final String text;
+        private final String sourceLanguage;
+        private final String targetLanguage;
+        private final TextKind kind;
+        private final Iterable<String> protectedLiterals;
+        private final boolean preserveHanText;
+        private final boolean chineseTarget;
+        private final TranslationStreamListener listener;
+        private final String requestKey;
+
+        private Submission(
+                String text,
+                String sourceLanguage,
+                String targetLanguage,
+                TextKind kind,
+                Iterable<String> protectedLiterals,
+                boolean preserveHanText,
+                boolean chineseTarget,
+                TranslationStreamListener listener,
+                String providerId,
+                String literalsSignature
+        ) {
+            this.text = text;
+            this.sourceLanguage = sourceLanguage;
+            this.targetLanguage = targetLanguage;
+            this.kind = kind;
+            this.protectedLiterals = protectedLiterals;
+            this.preserveHanText = preserveHanText;
+            this.chineseTarget = chineseTarget;
+            this.listener = listener;
+            this.requestKey = CACHE_FORMAT_VERSION + "\n" + providerId + "\n" + sourceLanguage + "\n"
+                    + targetLanguage + "\n" + kind + "\n" + preserveHanText + "\n"
+                    + literalsSignature + "\n" + text;
+        }
     }
 
     /**
@@ -361,10 +436,11 @@ public final class TranslationCoordinator implements AutoCloseable {
         String providerId = provider.id();
         String cacheKey = CACHE_FORMAT_VERSION + "\n" + providerId
                 + "\n" + sourceLanguage + "\n" + targetLanguage + "\n" + kind + "\n" + core;
-        // Cache hits and cache misses are counted here because this is the one place a lookup and a
-        // provider request both happen. They are a few additions under one short lock, and nothing
-        // is written to disk on this path. Successes are journalled instead of counted: the caller
-        // only counts them once the restored text has passed the display check.
+        // Cache hits and cache misses are booked on the per-request PendingCommit rather than here.
+        // They used to be counted (and logged) the moment a segment was looked up, while the provider
+        // successes were held back until the restored text passed the display check, so a request that
+        // was rejected after its segments had been assembled left one cache miss behind and no
+        // success or failure: the reported hit rate was computed from two different populations.
         TranslationStats stats = TranslationStats.global();
         String translated = cache.get(cacheKey);
         if (translated != null) {
@@ -375,8 +451,7 @@ public final class TranslationCoordinator implements AutoCloseable {
             }
         }
         if (translated == null) {
-            stats.recordCacheMiss();
-            DebugLog.global().logCache(false, providerId, kind.name(), core);
+            pendingCommit.recordMiss(providerId);
             TranslationRequest request = new TranslationRequest(
                     core, sourceLanguage, targetLanguage, kind);
             TranslationStreamListener segmentListener = null;
@@ -407,8 +482,7 @@ public final class TranslationCoordinator implements AutoCloseable {
             pendingCommit.recordKey(cacheKey);
             cache.put(cacheKey, translated);
         } else {
-            stats.recordCacheHit();
-            DebugLog.global().logCache(true, providerId, kind.name(), core);
+            pendingCommit.recordHit(providerId);
             // The value is adopted, so this request becomes answerable for it. A key whose value
             // passed the per-segment check but whose assembled text is rejected must disappear,
             // otherwise a cache written by a version with laxer checks keeps failing every retry.
@@ -429,13 +503,22 @@ public final class TranslationCoordinator implements AutoCloseable {
         }
         // Complete callers before interrupting workers. Otherwise an interrupted
         // provider can win the race and publish an ordinary failure result even
-        // though the whole translation session is being cancelled.
-        for (CompletableFuture<TranslationResult> future : inFlight.values()) {
-            future.completeExceptionally(
-                    new CancellationException("Translation session was closed"));
-        }
-        inFlight.clear();
+        // though the whole translation session is being closed.
+        //
+        // The exception deliberately is a SessionClosedException and not a
+        // CancellationException. A CompletableFuture that was handed a CancellationException
+        // reports isCancelled() == true, and get(...) then rethrows that exception as itself
+        // instead of wrapping it in an ExecutionException -- so a caller could not tell a
+        // closed session apart from a cancelled request, and a queued or running request that
+        // the session abandoned looked like a cancellation rather than a failure.
+        settleOpenRequests();
         executor.shutdownNow();
+        // Requests that were registered while the sweep above was running are not covered by
+        // its weakly consistent iteration, and the queue drained by shutdownNow never runs the
+        // worker that would have settled them. Settling again is safe: the first completion of
+        // a future is the one that counts, every later call is a no-op, so no request is
+        // settled twice even though both sweeps can see the same entry.
+        settleOpenRequests();
         // Wait for interrupted workers to leave provider.translate(...) before the provider
         // is torn down. Otherwise a worker can loop back into a retrying provider (for
         // example ResilientTranslationProvider retrying an IOException) against an
@@ -462,6 +545,45 @@ public final class TranslationCoordinator implements AutoCloseable {
             } catch (Exception ignored) {
                 // Minecraft is shutting down or applying a replacement configuration.
             }
+        }
+    }
+
+    /**
+     * Fails every request this session still owns with a {@link SessionClosedException} and
+     * forgets it, so {@code get(...)} on a queued or running request throws
+     * {@link java.util.concurrent.ExecutionException} instead of blocking until its timeout or
+     * reporting a cancellation.
+     *
+     * <p>An entry is removed only when it still maps to the same future, so a request that was
+     * registered for the same key after the sweep started keeps its own future. Nothing here
+     * blocks: it runs on the caller's thread, on the futures' own lock-free completion path.
+     */
+    private void settleOpenRequests() {
+        for (Map.Entry<String, CompletableFuture<TranslationResult>> entry : inFlight.entrySet()) {
+            CompletableFuture<TranslationResult> future = entry.getValue();
+            future.completeExceptionally(
+                    new SessionClosedException("Translation session was closed"));
+            inFlight.remove(entry.getKey(), future);
+        }
+    }
+
+    /**
+     * Terminal signal for a request that the closed session can never answer.
+     *
+     * <p>An {@link IllegalStateException}, and specifically <em>not</em> a
+     * {@link java.util.concurrent.CancellationException}: {@code CompletableFuture} treats a
+     * future completed with a cancellation exception as cancelled, so {@code get(...)} rethrows
+     * the cancellation itself and the caller cannot separate "shut down under me" from
+     * "somebody cancelled this". It is a distinct type rather than a bare
+     * {@code IllegalStateException} because the render path has to recognise exactly this
+     * outcome: a session that is going away must not be recorded as a retryable provider
+     * failure.
+     */
+    public static final class SessionClosedException extends IllegalStateException {
+        private static final long serialVersionUID = 1L;
+
+        public SessionClosedException(String message) {
+            super(message);
         }
     }
 
@@ -513,6 +635,16 @@ public final class TranslationCoordinator implements AutoCloseable {
         private final List<String> touchedKeys = new ArrayList<String>();
         /** Provider calls that succeeded, counted only once the request itself has succeeded. */
         private final List<ProviderSuccess> successes = new ArrayList<ProviderSuccess>();
+        /**
+         * Cache answers of this request. Held here instead of being counted in the segment as they
+         * happen, because a request can still be rejected after all of its segments were assembled:
+         * counted eagerly they produced cache numbers with no matching request, and the reported hit
+         * rate was a ratio of two differently-scoped populations.
+         */
+        private int cacheHits;
+        private int cacheMisses;
+        /** Provider of the first looked-up segment, used for the one log line this request writes. */
+        private String providerId;
 
         private void recordKey(String cacheKey) {
             touchedKeys.add(cacheKey);
@@ -522,12 +654,31 @@ public final class TranslationCoordinator implements AutoCloseable {
             successes.add(new ProviderSuccess(providerId, elapsedMillis));
         }
 
+        private void recordHit(String providerId) {
+            adopt(providerId);
+            cacheHits++;
+        }
+
+        private void recordMiss(String providerId) {
+            adopt(providerId);
+            cacheMisses++;
+        }
+
+        private void adopt(String segmentProviderId) {
+            if (providerId == null) {
+                providerId = segmentProviderId;
+            }
+        }
+
         /** Counts the provider calls of a request whose restored text is about to be shown. */
         private void commit() {
             TranslationStats stats = TranslationStats.global();
             for (ProviderSuccess success : successes) {
                 stats.recordSuccess(success.providerId, success.elapsedMillis);
             }
+            stats.recordCacheHits(cacheHits);
+            stats.recordCacheMisses(cacheMisses);
+            logSummary("cache");
         }
 
         /**
@@ -544,6 +695,33 @@ public final class TranslationCoordinator implements AutoCloseable {
             for (String key : touchedKeys) {
                 store.remove(key);
             }
+            // The request produced nothing usable, so its cache answers stay out of the hit rate and
+            // the request itself is counted once, as rejected, instead of leaving orphaned misses.
+            TranslationStats.global().recordRejected();
+            // Still one line: a rejection is exactly what support needs to see in the log.
+            logSummary("cache-rejected");
+        }
+
+        /**
+         * Writes this request's cache outcome as one log line.
+         *
+         * <p>The coordinator used to log every segment separately, so one forty-line item tooltip
+         * produced forty lines and forty file-system appends -- all of them serialized on the debug
+         * log's lock while the four workers were waiting on it. The information is the same at the
+         * request level, and the count of appends drops with the segment count.
+         *
+         * @param event log event name, so a rejected request is recognisable in the file
+         */
+        private void logSummary(String event) {
+            if (providerId == null) {
+                return;
+            }
+            DebugLog.global().log(event,
+                    "provider", providerId,
+                    "segments", Integer.toString(cacheHits + cacheMisses),
+                    "hits", Integer.toString(cacheHits),
+                    "misses", Integer.toString(cacheMisses),
+                    "provider-calls", Integer.toString(successes.size()));
         }
     }
 

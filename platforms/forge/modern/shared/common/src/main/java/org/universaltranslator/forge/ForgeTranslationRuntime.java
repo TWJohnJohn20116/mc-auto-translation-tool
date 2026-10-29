@@ -55,6 +55,22 @@ public final class ForgeTranslationRuntime {
     private static volatile List<String> protectedPlayerNames = Collections.emptyList();
     private static volatile long protectedPlayerNamesExpireAt;
 
+    // ---------------------------------------------------------------------------------------------
+    // Short-window memo in front of the render lookup (P2-075)
+    // ---------------------------------------------------------------------------------------------
+    // A drawn line is looked up at least twice (once to measure it, once to draw it), and a HUD
+    // repeats the same handful of strings every frame. The session lookup builds a RenderKey and
+    // probes three maps per call, so the immediate repeat is answered here instead. The window is
+    // one client tick: results are allowed to lag the arrival of a worker-thread translation by at
+    // most one tick (50 ms), which is below perception, while a stale config can never leak because
+    // initialize() and shutdown() bump the same epoch.
+    private static final int RENDER_MEMO_SLOTS = 64;
+    private static final String[] RENDER_MEMO_KEYS = new String[RENDER_MEMO_SLOTS];
+    private static final String[] RENDER_MEMO_VALUES = new String[RENDER_MEMO_SLOTS];
+    private static final TextKind[] RENDER_MEMO_KINDS = new TextKind[RENDER_MEMO_SLOTS];
+    private static final int[] RENDER_MEMO_EPOCHS = new int[RENDER_MEMO_SLOTS];
+    private static volatile int renderMemoEpoch = 1;
+
     /** Guards the player-name refresh so a burst of render-thread lookups rebuilds once per window. */
     private static final AtomicBoolean playerNameRefresh = new AtomicBoolean();
     private static final RecentUserText RECENT_USER_TEXT = new RecentUserText();
@@ -155,6 +171,11 @@ public final class ForgeTranslationRuntime {
         cachedHome = homeSettingsState(config);
         protectedPlayerNames = Collections.emptyList();
         protectedPlayerNamesExpireAt = 0L;
+        // The previous diagnostics snapshot describes the previous provider; drop it so the screen
+        // never shows a provider id that has just been replaced.
+        diagnosticsSnapshot = null;
+        diagnosticsSnapshotAt = 0L;
+        invalidateRenderMemo();
         RECENT_USER_TEXT.clear();
         outgoingTail = CompletableFuture.completedFuture(null);
         closeInBackground(replaced);
@@ -203,17 +224,68 @@ public final class ForgeTranslationRuntime {
                 || RECENT_USER_TEXT.shouldPreserve(original)) {
             return original;
         }
-        return active.lookup(original, kind);
+        return lookupWithMemo(active, original, kind);
+    }
+
+    /**
+     * Starts a new memo window. Called once per client tick by every Forge client entry point,
+     * before that tick's frames render.
+     */
+    static void beginRenderFrame() {
+        renderMemoEpoch++;
+    }
+
+    /** Epoch of the current memo window; the shared {@code RenderedTextBridge} memos use it too. */
+    static int currentRenderEpoch() {
+        return renderMemoEpoch;
+    }
+
+    /** Drops every memoised lookup without waiting for the next tick. */
+    private static void invalidateRenderMemo() {
+        renderMemoEpoch++;
+    }
+
+    private static String lookupWithMemo(
+            RenderTranslationSession active, String original, TextKind kind) {
+        if (original == null) {
+            // Null reaches here from the render hooks; it is not worth a memo slot.
+            return active.lookup(original, kind);
+        }
+        int slot = (original.hashCode() * 31 + (kind == null ? 0 : kind.ordinal()))
+                & (RENDER_MEMO_SLOTS - 1);
+        int epoch = renderMemoEpoch;
+        if (RENDER_MEMO_EPOCHS[slot] == epoch
+                && RENDER_MEMO_KINDS[slot] == kind
+                && original.equals(RENDER_MEMO_KEYS[slot])) {
+            return RENDER_MEMO_VALUES[slot];
+        }
+        String translated = active.lookup(original, kind);
+        RENDER_MEMO_KEYS[slot] = original;
+        RENDER_MEMO_VALUES[slot] = translated;
+        RENDER_MEMO_KINDS[slot] = kind;
+        // Published last: a reader that matches the epoch must find the matching entry.
+        RENDER_MEMO_EPOCHS[slot] = epoch;
+        return translated;
     }
 
     static synchronized void shutdown() {
         RenderTranslationSession active = session;
         session = null;
+        // Clear the published settings too, not just the session. Leaving them behind made a failed
+        // initialize() permanent: session == null meant "nothing translates", while the HUD read
+        // cachedHome.enabled == true and kept painting the "translation is on" indicator,
+        // diagnostics() reported a provider that no longer exists, and requireActiveConfig() handed
+        // the broken configuration back to the HUD toggles, which then saved it over the file.
+        activeConfig = null;
         activeProvider = null;
+        cachedHome = null;
+        diagnosticsSnapshot = null;
+        diagnosticsSnapshotAt = 0L;
         protectedPlayerNames = Collections.emptyList();
         protectedPlayerNamesExpireAt = 0L;
         RECENT_USER_TEXT.clear();
         outgoingTail = CompletableFuture.completedFuture(null);
+        invalidateRenderMemo();
         if (active != null) {
             active.close();
         }

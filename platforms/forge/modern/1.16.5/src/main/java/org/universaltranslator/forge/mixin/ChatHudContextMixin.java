@@ -9,6 +9,6 @@ import org.universaltranslator.core.TextKind;
 import org.universaltranslator.forge.TranslationRenderContext;
 @Mixin(NewChatGui.class)
 abstract class ChatHudContextMixin {
- @Inject(method="render(Lcom/mojang/blaze3d/matrix/MatrixStack;I)V",at=@At("HEAD")) private void enter(MatrixStack m,int tick,CallbackInfo c){TranslationRenderContext.push(TextKind.CHAT);}
- @Inject(method="render(Lcom/mojang/blaze3d/matrix/MatrixStack;I)V",at=@At("RETURN")) private void leave(MatrixStack m,int tick,CallbackInfo c){TranslationRenderContext.pop();}
+ @Inject(method="render(Lcom/mojang/blaze3d/matrix/MatrixStack;I)V",at=@At("HEAD"),require=1) private void enter(MatrixStack m,int tick,CallbackInfo c){TranslationRenderContext.push(TextKind.CHAT);}
+ @Inject(method="render(Lcom/mojang/blaze3d/matrix/MatrixStack;I)V",at=@At("RETURN"),require=1) private void leave(MatrixStack m,int tick,CallbackInfo c){TranslationRenderContext.pop();}
 }

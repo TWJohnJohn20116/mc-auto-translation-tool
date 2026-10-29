@@ -35,9 +35,14 @@ abstract class UniversalTranslatorConfigScreenSeams extends UniversalTranslatorS
         onBack();
     }
 
+    // UniversalTranslatorSettingsScreen extends Screen directly (it does not inherit
+    // UniversalTranslatorScreenBase), so the settings screen needs its own pause answer; without it
+    // Screen's `return true` takes over and opening the settings pauses the singleplayer world.
+    @Override
     public boolean isPauseScreen() {
         return false;
     }
+
     @Override
     protected void showScreen(Screen screen) {
         if (minecraftClient() != null) {

@@ -1,6 +1,8 @@
 package org.universaltranslator.core.net;
 
 import java.net.URI;
+import java.util.ArrayList;
+import java.util.List;
 
 /** Prevents accidental plaintext transmission to non-local translation services. */
 public final class EndpointPolicy {
@@ -20,9 +22,17 @@ public final class EndpointPolicy {
         }
 
         String scheme = lower(uri.getScheme());
+        if (uri.getUserInfo() != null) {
+            throw new IllegalArgumentException("Translation endpoint must not embed credentials");
+        }
         String host = lower(uri.getHost());
-        if (host == null || uri.getUserInfo() != null) {
-            throw new IllegalArgumentException("Translation endpoint must contain a host and no embedded credentials");
+        if (host == null) {
+            // getHost() returns null for two very different endpoints: one without a host at all,
+            // and one whose host the JDK could not represent (an internationalised name such as
+            // http://群晖.local:5000, or an underscore the strict parser rejects). Only the first
+            // is the user's mistake, so recover the authority before deciding.
+            host = lower(recoverHost(uri));
+            uri = withAsciiHost(uri, host);
         }
         if ("https".equals(scheme)) {
             return uri;
@@ -31,6 +41,85 @@ public final class EndpointPolicy {
             return uri;
         }
         throw new IllegalArgumentException("Remote translation endpoints must use HTTPS; HTTP is allowed only on loopback and private local networks");
+    }
+
+    /**
+     * Recovers the host from the raw authority when {@link URI#getHost()} refused to parse it.
+     *
+     * <p>An internationalised name is converted with {@link java.net.IDN}; a plain ASCII name that
+     * the strict parser rejected (an underscore is the common case) is accepted unchanged. The two
+     * failures stay distinguishable so the diagnostics can say which one happened instead of
+     * claiming the endpoint has no host at all.
+     *
+     * @throws IllegalArgumentException when there is no authority, or the name cannot be expressed
+     *         in ASCII at all
+     */
+    private static String recoverHost(URI uri) {
+        String authority = uri.getRawAuthority();
+        if (authority == null || authority.isEmpty()) {
+            throw new IllegalArgumentException("Translation endpoint must contain a host");
+        }
+        int at = authority.lastIndexOf('@');
+        String hostPort = at < 0 ? authority : authority.substring(at + 1);
+        String host;
+        if (hostPort.startsWith("[")) {
+            int close = hostPort.indexOf(']');
+            if (close < 0) {
+                throw new IllegalArgumentException("Translation endpoint must contain a host");
+            }
+            host = hostPort.substring(0, close + 1);
+        } else {
+            int colon = hostPort.lastIndexOf(':');
+            host = colon > 0 && isDecimal(hostPort.substring(colon + 1))
+                    ? hostPort.substring(0, colon) : hostPort;
+        }
+        if (host.isEmpty()) {
+            throw new IllegalArgumentException("Translation endpoint must contain a host");
+        }
+        if (isAscii(host)) {
+            return host;
+        }
+        try {
+            return java.net.IDN.toASCII(host, java.net.IDN.ALLOW_UNASSIGNED);
+        } catch (IllegalArgumentException unrepresentable) {
+            throw new IllegalArgumentException(
+                    "Translation endpoint host contains characters that cannot be written in "
+                            + "ASCII; use an ASCII host name or an IP address", unrepresentable);
+        }
+    }
+
+    /** Rebuilds the endpoint with the recovered host so the caller receives a usable URI. */
+    private static URI withAsciiHost(URI uri, String host) {
+        try {
+            // The multi-argument constructor re-brackets an IPv6 literal itself, so the host is
+            // passed exactly as recovered.
+            return new URI(uri.getScheme(), uri.getUserInfo(), host, uri.getPort(),
+                    uri.getPath(), uri.getQuery(), uri.getFragment());
+        } catch (java.net.URISyntaxException invalid) {
+            throw new IllegalArgumentException("Translation endpoint is not a valid URI", invalid);
+        }
+    }
+
+    private static boolean isAscii(String value) {
+        for (int index = 0; index < value.length(); index++) {
+            if (value.charAt(index) > 126) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isDecimal(String value) {
+        if (value.isEmpty()) {
+            return false;
+        }
+        for (int index = 0; index < value.length(); index++) {
+            char character = value.charAt(index);
+            if (character < '0' || character > '9') {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean isLocalOrPrivateNetwork(String host) {
@@ -83,9 +172,14 @@ public final class EndpointPolicy {
                 return true;
             }
             if (b0 == 169 && b1 == 254) {
-                // 169.254.0.0/16 stays allowed for link-local LAN services, but the cloud
-                // metadata address (and the whole /32 it sits in) must never be plaintext.
-                return !isCloudMetadataAddress(b0, b1, b2, b3);
+                // The link-local block as a whole, not one /32 inside it. Cloud credential
+                // endpoints live all over it (169.254.169.254 IMDS, 169.254.170.2 ECS task role,
+                // 169.254.170.23 ECS IPv4, 169.254.169.253 VPC DNS, 169.254.169.123 time sync),
+                // and blocking only the first one left every other door open to a plaintext
+                // request that carries the API key and the source text. A link-local host that
+                // genuinely serves HTTP is rare enough that refusing the block is the right
+                // default; loopback or a reverse proxy covers those setups.
+                return false;
             }
         } catch (NumberFormatException exception) {
             return false;
@@ -93,8 +187,73 @@ public final class EndpointPolicy {
         return false;
     }
 
-    private static boolean isCloudMetadataAddress(int b0, int b1, int b2, int b3) {
-        return b0 == 169 && b1 == 254 && b2 == 169 && b3 == 254;
+    /**
+     * True for the IPv6 metadata endpoint that sits inside the unique-local range.
+     *
+     * <p>{@code fd00:ec2::254} is the AWS instance metadata service reached over IPv6. It is a
+     * unique-local address, so the fc00::/7 branch above would otherwise wave it through and the
+     * provider's credentials would travel in plaintext to the one address that hands out
+     * credentials. The range is compared group by group after expanding {@code ::}.
+     */
+    private static boolean isIpv6CloudMetadata(String host) {
+        int[] groups = expandIpv6(host);
+        if (groups == null) {
+            return false;
+        }
+        return groups[0] == 0xfd00 && groups[1] == 0x0ec2
+                && groups[2] == 0 && groups[3] == 0 && groups[4] == 0 && groups[5] == 0
+                && groups[6] == 0 && groups[7] == 0x0254;
+    }
+
+    /** Expands an IPv6 literal into its eight 16-bit groups, or returns null when it is not one. */
+    private static int[] expandIpv6(String host) {
+        String source = host;
+        int zone = source.indexOf('%');
+        if (zone >= 0) {
+            // A scope suffix ("fe80::1%eth0") is not part of the address.
+            source = source.substring(0, zone);
+        }
+        int compressed = source.indexOf("::");
+        String[] head = (compressed < 0 ? source : source.substring(0, compressed)).split(":", -1);
+        String[] tail = compressed < 0
+                ? new String[0] : source.substring(compressed + 2).split(":", -1);
+        List<Integer> values = new ArrayList<Integer>();
+        if (!appendGroups(head, values)) {
+            return null;
+        }
+        int headCount = values.size();
+        if (compressed >= 0) {
+            List<Integer> rest = new ArrayList<Integer>();
+            if (!appendGroups(tail, rest) || headCount + rest.size() > 7) {
+                return null;
+            }
+            while (values.size() + rest.size() < 8) {
+                values.add(Integer.valueOf(0));
+            }
+            values.addAll(rest);
+        }
+        return values.size() == 8 ? toArray(values) : null;
+    }
+
+    private static boolean appendGroups(String[] parts, List<Integer> values) {
+        for (String part : parts) {
+            if (part.isEmpty()) {
+                continue;
+            }
+            if (!part.matches("[0-9a-fA-F]{1,4}")) {
+                return false;
+            }
+            values.add(Integer.valueOf(Integer.parseInt(part, 16)));
+        }
+        return true;
+    }
+
+    private static int[] toArray(List<Integer> values) {
+        int[] result = new int[values.size()];
+        for (int index = 0; index < result.length; index++) {
+            result[index] = values.get(index).intValue();
+        }
+        return result;
     }
 
     private static boolean isPrivateIpv6(String host) {
@@ -116,9 +275,10 @@ public final class EndpointPolicy {
         } catch (NumberFormatException exception) {
             return false;
         }
-        // fc00::/7 unique local addresses (first byte 0xfc or 0xfd).
+        // fc00::/7 unique local addresses (first byte 0xfc or 0xfd), minus the IPv6 metadata
+        // endpoint that sits inside that range.
         if ((group & 0xfe00) == 0xfc00) {
-            return true;
+            return !isIpv6CloudMetadata(host);
         }
         // fe80::/10 link-local addresses.
         return (group & 0xffc0) == 0xfe80;

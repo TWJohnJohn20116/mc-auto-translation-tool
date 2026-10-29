@@ -6,11 +6,13 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
-from pathlib import Path
 from urllib.request import Request, urlopen
 
+from _cache_paths import mirror_dir
+
 BMCL = "https://bmclapi2.bangbang93.com"
-SERVE_DIR = Path(r"D:\Gradle\cache\mc-mirror")
+# 原本硬編 D:\Gradle\cache\mc-mirror；改成 GRADLE_USER_HOME → ~/.gradle 的順序。
+SERVE_DIR = mirror_dir()
 VERSIONS = [
     "1.13",
     "1.13.1",

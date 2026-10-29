@@ -14,7 +14,6 @@ import org.universaltranslator.core.TextKind;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
 
 public final class RenderedTextBridge {
     private RenderedTextBridge() {
@@ -52,52 +51,42 @@ public final class RenderedTextBridge {
         if (text == null) {
             return null;
         }
-        StringBuilder original = new StringBuilder();
-        AtomicReference<Style> firstStyle = new AtomicReference<Style>(Style.EMPTY);
-        final boolean[] multiStyle = new boolean[]{false};
-        text.accept((index, style, codePoint) -> {
-            if (original.length() == 0) {
-                firstStyle.set(style);
-            } else if (!multiStyle[0] && !style.equals(firstStyle.get())) {
-                multiStyle[0] = true;
-            }
-            original.appendCodePoint(codePoint);
-            return true;
-        });
-        if (multiStyle[0]) {
+        // One walk over the code points yields both products: the flattened line (the translation
+        // key) and, only if a second style really appears, the per-run slices. This used to walk the
+        // line twice - once here and once more in rebuildStyledRuns - for every drawn and every
+        // measured line, which is what made chat and the tab list the biggest per-frame allocator.
+        StyleRuns runs = new StyleRuns();
+        text.accept((index, style, codePoint) -> runs.accept(style, codePoint));
+        if (runs.isMultiStyle()) {
             // Flattening would keep only the first segment's colour and drop bold, italic and
             // click events from later segments, so rebuild the line run by run instead.
-            OrderedText rebuilt = rebuildStyledRuns(text);
+            OrderedText rebuilt = rebuildStyledRuns(runs);
             if (rebuilt != null) {
                 return rebuilt;
             }
         }
-        String translated = translateRaw(original.toString());
-        if (original.toString().equals(translated)) {
+        String original = runs.text();
+        String translated = translateRaw(original);
+        if (original.equals(translated)) {
             return text;
         }
-        MutableText replacement = new LiteralText(translated).setStyle(translatedStyle(firstStyle.get()));
+        MutableText replacement = new LiteralText(translated)
+                .setStyle(translatedStyle(runs.firstStyle()));
         return replacement.asOrderedText();
     }
 
-    /** Rebuilds a multi-style ordered line as one child per style run, or null when it cannot. */
-    private static OrderedText rebuildStyledRuns(OrderedText text) {
-        List<String> texts = new ArrayList<String>();
-        List<Object> styleKeys = new ArrayList<Object>();
-        List<Style> styles = new ArrayList<Style>();
-        StringBuilder current = new StringBuilder();
-        AtomicReference<Style> currentStyle = new AtomicReference<Style>();
-        text.accept((index, style, codePoint) -> {
-            if (currentStyle.get() == null || !style.equals(currentStyle.get())) {
-                addRun(texts, styleKeys, styles, current, currentStyle.get());
-                currentStyle.set(style);
-            }
-            current.appendCodePoint(codePoint);
-            return true;
-        });
-        addRun(texts, styleKeys, styles, current, currentStyle.get());
-        List<TranslationStyleRuns.Run> runs = TranslationStyleRuns.mergeAdjacent(texts, styleKeys);
-        if (!TranslationStyleRuns.shouldRebuildRuns(runs)) {
+    /**
+     * Rebuilds a multi-style ordered line as one child per style run, or null when it cannot.
+     *
+     * <p>Works off the {@link StyleRuns} the single walk already produced: no second pass over the
+     * line, and no extra containers when the line carries one style only.
+     */
+    private static OrderedText rebuildStyledRuns(StyleRuns runs) {
+        List<String> texts = runs.runTexts();
+        List<Style> styles = runs.runStyles();
+        List<Object> styleKeys = new ArrayList<Object>(styles);
+        List<TranslationStyleRuns.Run> merged = TranslationStyleRuns.mergeAdjacent(texts, styleKeys);
+        if (!TranslationStyleRuns.shouldRebuildRuns(merged)) {
             return null;
         }
         boolean sourceHasColor = false;
@@ -107,27 +96,83 @@ public final class RenderedTextBridge {
         TranslationTextColor color = TranslationStyleRuns.resolveTranslatedColor(
                 sourceHasColor, FabricTranslationRuntime.translatedTextColor());
         MutableText rebuilt = new LiteralText("");
-        for (TranslationStyleRuns.Run run : runs) {
+        for (TranslationStyleRuns.Run run : merged) {
             rebuilt.append(new LiteralText(translateRaw(run.text()))
                     .setStyle(applyColor(styles.get(run.sourceIndex()), color)));
         }
         return rebuilt.asOrderedText();
     }
 
-    private static void addRun(
-            List<String> texts,
-            List<Object> styleKeys,
-            List<Style> styles,
-            StringBuilder current,
-            Style style
-    ) {
-        if (current.length() == 0) {
-            return;
+    /**
+     * One ordered line collected in a single pass: the flattened text, the first style, and - only
+     * once a second style actually shows up - the run slices.
+     *
+     * <p>The run list is allocated at the first style change, so a plain chat line costs one
+     * {@link StringBuilder} and nothing else. Run boundaries are kept as start offsets into the
+     * same buffer, so no per-run string is copied until a rebuild is really needed.
+     */
+    private static final class StyleRuns {
+        private final StringBuilder text = new StringBuilder();
+        private Style firstStyle = Style.EMPTY;
+        private boolean seenFirstCodePoint;
+        private boolean multiStyle;
+        private Style openRunStyle;
+        private List<Integer> runStarts;
+        private List<Style> runStyles;
+
+        private StyleRuns() {
         }
-        texts.add(current.toString());
-        styleKeys.add(style);
-        styles.add(style);
-        current.setLength(0);
+
+        boolean accept(Style style, int codePoint) {
+            if (!seenFirstCodePoint) {
+                seenFirstCodePoint = true;
+                firstStyle = style;
+                openRunStyle = style;
+            } else if (!style.equals(openRunStyle)) {
+                if (!multiStyle) {
+                    multiStyle = true;
+                    runStarts = new ArrayList<Integer>();
+                    runStyles = new ArrayList<Style>();
+                    runStarts.add(Integer.valueOf(0));
+                    runStyles.add(openRunStyle);
+                }
+                runStarts.add(Integer.valueOf(text.length()));
+                runStyles.add(style);
+                openRunStyle = style;
+            }
+            text.appendCodePoint(codePoint);
+            return true;
+        }
+
+        boolean isMultiStyle() {
+            return multiStyle;
+        }
+
+        String text() {
+            return text.toString();
+        }
+
+        Style firstStyle() {
+            return firstStyle;
+        }
+
+        /** Visible text of each run, in draw order. */
+        List<String> runTexts() {
+            List<String> texts = new ArrayList<String>(runStarts.size());
+            for (int index = 0; index < runStarts.size(); index++) {
+                int start = runStarts.get(index).intValue();
+                int end = index + 1 < runStarts.size()
+                        ? runStarts.get(index + 1).intValue()
+                        : text.length();
+                texts.add(text.substring(start, end));
+            }
+            return texts;
+        }
+
+        /** The style of each run, aligned with {@link #runTexts()}. */
+        List<Style> runStyles() {
+            return runStyles;
+        }
     }
 
     public static StringVisitable translate(StringVisitable text) {
@@ -233,31 +278,36 @@ public final class RenderedTextBridge {
      * reading only the direct children left the caller with the root style alone and dropped the
      * colour the line is actually drawn with. Every leaf keeps its own style here; the caller
      * re-attaches the root style and Minecraft merges the two when it renders the component.</p>
+     *
+     * <p>Children are walked first and each returns the length of its own visible text, so a node
+     * never has to flatten a child a second time to work out where its own literal ends. Its own run
+     * is then inserted at the offset the subtree started at, which keeps the visible order (a node's
+     * text renders before its children).</p>
+     *
+     * @return the visible length of the whole subtree
      */
-    private static void collectStyledLeaves(
+    private static int collectStyledLeaves(
             Text node,
             List<String> texts,
             List<Object> styleKeys,
             List<Style> styles
     ) {
-        List<Text> children = node.getSiblings();
-        String full = node.getString();
+        int start = texts.size();
         int childLength = 0;
-        for (Text child : children) {
-            childLength += child.getString().length();
+        for (Text child : node.getSiblings()) {
+            childLength += collectStyledLeaves(child, texts, styleKeys, styles);
         }
+        String full = node.getString();
         // Text a node renders before its children keeps that node's own style.
         if (full.length() > childLength) {
             String own = full.substring(0, full.length() - childLength);
             if (!own.isEmpty()) {
-                texts.add(own);
-                styleKeys.add(node.getStyle());
-                styles.add(node.getStyle());
+                texts.add(start, own);
+                styleKeys.add(start, node.getStyle());
+                styles.add(start, node.getStyle());
             }
         }
-        for (Text child : children) {
-            collectStyledLeaves(child, texts, styleKeys, styles);
-        }
+        return full.length();
     }
 
     private static Style applyColor(Style original, TranslationTextColor color) {

@@ -8,7 +8,14 @@ import org.universaltranslator.core.TranslationTextStyling;
 
 import java.lang.reflect.Field;
 
-/** Identifies text currently being edited by the local player in the chat box. */
+/**
+ * Identifies text currently being edited by the local player in the chat box.
+ *
+ * <p>Keep in sync with {@code shared/guard-legacy/…/FabricLocalTextGuard.java}: the bodies are the
+ * same and differ only in the client accessors ({@code MinecraftClient.currentScreen} here,
+ * {@code Minecraft.screen} there). Collapsing the pair needs a seam for those two calls plus the
+ * per-version {@code srcDir} wiring, which is audit2 S2-078 and outside this layer.
+ */
 final class FabricLocalTextGuard {
     private static volatile Field chatField;
     /**
@@ -20,6 +27,13 @@ final class FabricLocalTextGuard {
      * different screen class (a version's own chat screen, a modded one) re-runs it.
      */
     private static volatile Class<?> resolvedFor;
+    /** Last text the chat box held, with the two cursor forms the renderer appends to it. */
+    private static volatile String cachedTyped;
+    private static volatile String cachedTypedUnderscore;
+    private static volatile String cachedTypedPipe;
+    /** Last stripped line, kept so the same drawn line is not re-walked for every hook. */
+    private static volatile String strippedSource;
+    private static volatile String strippedValue;
 
     private FabricLocalTextGuard() {
     }
@@ -90,9 +104,41 @@ final class FabricLocalTextGuard {
         if (typed == null || typed.isEmpty()) {
             return false;
         }
-        String visible = TranslationTextStyling.stripLegacyFormatting(rendered);
+        // The candidates were rebuilt from the typed text on every call, so a hundred visible chat
+        // lines cost up to three hundred concatenations per frame while the player was typing.
+        // They only change when the field does, so they are derived once per distinct value; the
+        // two candidate fields are published before the key they belong to.
+        String underscore = cachedTypedUnderscore;
+        String pipe = cachedTypedPipe;
+        if (!typed.equals(cachedTyped)) {
+            underscore = typed + "_";
+            pipe = typed + "|";
+            cachedTypedUnderscore = underscore;
+            cachedTypedPipe = pipe;
+            cachedTyped = typed;
+        }
+        String visible = stripped(rendered);
         return visible.equals(typed)
-                || visible.equals(typed + "_")
-                || visible.equals(typed + "|");
+                || visible.equals(underscore)
+                || visible.equals(pipe);
+    }
+
+    /**
+     * {@code rendered} without its legacy colour codes, memoized for the last line seen.
+     *
+     * <p>Equal-length string comparison exits on the first differing character, while
+     * {@code stripLegacyFormatting} walks the whole line and builds a copy, so the memo is a win
+     * even on a miss-heavy frame. The value is published before the source it belongs to, so a
+     * racing reader either sees the pair or misses and recomputes.
+     */
+    private static String stripped(String rendered) {
+        String source = strippedSource;
+        if (source != null && source.equals(rendered)) {
+            return strippedValue;
+        }
+        String value = TranslationTextStyling.stripLegacyFormatting(rendered);
+        strippedValue = value;
+        strippedSource = rendered;
+        return value;
     }
 }

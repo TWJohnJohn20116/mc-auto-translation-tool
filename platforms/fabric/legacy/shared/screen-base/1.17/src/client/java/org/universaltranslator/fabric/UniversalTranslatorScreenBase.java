@@ -27,6 +27,7 @@ abstract class UniversalTranslatorScreenBase extends Screen {
 
     protected abstract void onBack();
 
+    @Override
     public boolean isPauseScreen() {
         return pausesGame();
     }

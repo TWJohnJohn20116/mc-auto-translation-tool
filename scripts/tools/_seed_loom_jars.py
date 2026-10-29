@@ -8,9 +8,12 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from _cache_paths import gradle_user_home, mirror_dir
+
 BMCL = "https://bmclapi2.bangbang93.com"
-MIRROR = Path(r"D:\Gradle\cache\mc-mirror")
-LOOM = Path(r"D:\Gradle\cache\caches\fabric-loom")
+# 原本硬編 D:\Gradle\cache；改成跟 Gradle 自己一樣的優先序（GRADLE_USER_HOME → ~/.gradle）。
+MIRROR = mirror_dir()
+LOOM = gradle_user_home() / "caches" / "fabric-loom"
 
 
 def log(message: str) -> None:

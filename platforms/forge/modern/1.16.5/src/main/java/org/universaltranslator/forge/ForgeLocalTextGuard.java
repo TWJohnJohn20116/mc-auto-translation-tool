@@ -3,17 +3,32 @@ package org.universaltranslator.forge;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.client.gui.screen.ChatScreen;
-import net.minecraft.client.gui.screen.Screen;
 import org.universaltranslator.core.TranslationTextStyling;
 
-import java.lang.reflect.Field;
-
 /** Identifies text currently being edited by the local player in the chat box. */
-final class ForgeLocalTextGuard {
-    private static volatile Field chatField;
-    private static volatile boolean searched;
+public final class ForgeLocalTextGuard {
+    /**
+     * The chat screen's edit box, reported by
+     * {@link org.universaltranslator.forge.mixin.TextFieldWidgetMixin} while it renders.
+     *
+     * <p>This used to be found by reflection: scan {@code ChatScreen}'s declared fields, take the
+     * first one whose type is {@code TextFieldWidget}, then read it on every rendered string. Two
+     * things were wrong with that. The pick depended on declaration order, so a Forge patch or
+     * another mod adding a second text field could make the guard read the wrong widget and treat
+     * the player's own input as world text. And the lookup was only latched on success, so a single
+     * failure re-walked the whole class hierarchy (with {@code setAccessible}) for every rendered
+     * string, every frame. The mixin already knows the instance, so it reports it instead.
+     */
+    private static volatile TextFieldWidget chatInput;
 
     private ForgeLocalTextGuard() {
+    }
+
+    /** Called from the mixin at the top of the text field's render pass. */
+    public static void trackRenderedInput(TextFieldWidget widget) {
+        if (widget != null && Minecraft.getInstance().screen instanceof ChatScreen) {
+            chatInput = widget;
+        }
     }
 
     static Object currentScreen(Minecraft client) {
@@ -25,53 +40,12 @@ final class ForgeLocalTextGuard {
                 || rendered == null || rendered.isEmpty()) {
             return false;
         }
-        TextFieldWidget field = findChatField(client.screen);
-        return field != null && matches(field.getValue(), rendered);
-    }
-
-    private static TextFieldWidget findChatField(Screen screen) {
-        Field known = chatField;
-        if (!searched) {
-            synchronized (ForgeLocalTextGuard.class) {
-                if (!searched) {
-                    Field found = findTextField(screen.getClass());
-                    // Only latch the cache once the lookup actually succeeded, otherwise a
-                    // transient failure would disable the local-chat guard for the session.
-                    if (found != null) {
-                        chatField = found;
-                        searched = true;
-                    }
-                    known = found;
-                } else {
-                    known = chatField;
-                }
-            }
+        TextFieldWidget input = chatInput;
+        if (input == null) {
+            // The chat box has not drawn yet; nothing can be the player's own input at this point.
+            return false;
         }
-        if (known == null) {
-            return null;
-        }
-        try {
-            Object value = known.get(screen);
-            return value instanceof TextFieldWidget ? (TextFieldWidget) value : null;
-        } catch (ReflectiveOperationException | RuntimeException ignored) {
-            return null;
-        }
-    }
-
-    private static Field findTextField(Class<?> type) {
-        for (Class<?> current = type; current != null; current = current.getSuperclass()) {
-            for (Field field : current.getDeclaredFields()) {
-                if (TextFieldWidget.class.isAssignableFrom(field.getType())) {
-                    try {
-                        field.setAccessible(true);
-                        return field;
-                    } catch (RuntimeException ignored) {
-                        return null;
-                    }
-                }
-            }
-        }
-        return null;
+        return matches(input.getValue(), rendered);
     }
 
     private static boolean matches(String typed, String rendered) {

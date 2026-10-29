@@ -10,7 +10,10 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 要準備的版本；留空則讀 gradle.properties 的 mod_version。
+        description: >-
+          要準備的版本；留空則讀 gradle.properties 的 mod_version。
+          指定的值必須與 mod_version 一致（JAR 檔名由 Gradle 的 mod_version 決定），
+          不一致會在 plan 階段直接失敗。
         required: false
         default: ""
         type: string
@@ -49,12 +52,20 @@ jobs:
           REQUESTED: ${{ github.event.inputs.targets }}
         run: |
           set -euo pipefail
+          # 平台 JAR 的檔名由 Gradle 的 mod_version 決定，但 version 只被當成檔名與目錄名。
+          # 兩者不一致時（例如 version=1.5 而 mod_version=1.4），收集步驟會用
+          # "*-<version>.jar" 找不到任何產物，48 個 build-target 全部建完（10～20 分鐘）才在
+          # 最後一步集體失敗，assemble 也跟著不執行。這裡在幾秒內就擋下來。
+          mod_version="$(sed -n 's/^mod_version=//p' gradle.properties | head -n 1)"
+          if [[ -z "$mod_version" ]]; then
+            echo "::error::gradle.properties 讀不到 mod_version" >&2
+            exit 1
+          fi
           version="${REQUESTED_VERSION:-}"
           if [[ -z "$version" ]]; then
-            version="$(sed -n 's/^mod_version=//p' gradle.properties | head -n 1)"
-          fi
-          if [[ -z "$version" ]]; then
-            echo "gradle.properties 讀不到 mod_version，請用 version 輸入指定" >&2
+            version="$mod_version"
+          elif [[ "$version" != "$mod_version" ]]; then
+            echo "::error::version=$version 與 gradle.properties 的 mod_version=$mod_version 不一致；請先在同一個 commit 改 gradle.properties，或省略 version 讓它讀 mod_version" >&2
             exit 1
           fi
           requested="$(printf '%s' "${REQUESTED:-}" | tr -d '[:space:]')"

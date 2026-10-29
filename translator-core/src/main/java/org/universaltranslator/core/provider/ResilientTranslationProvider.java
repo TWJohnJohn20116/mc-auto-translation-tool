@@ -23,7 +23,8 @@ final class ResilientTranslationProvider implements TranslationProvider, AutoClo
     private final TranslationProvider delegate;
     private final int maximumAttempts;
     private final long minimumIntervalMillis;
-    private long nextRequestAtMillis;
+    /** One request per interval; the same gate {@link TencentHunyuanProvider} uses. */
+    private final RequestGate gate;
 
     ResilientTranslationProvider(
             TranslationProvider delegate,
@@ -33,6 +34,7 @@ final class ResilientTranslationProvider implements TranslationProvider, AutoClo
         this.delegate = delegate;
         this.maximumAttempts = Math.max(1, Math.min(5, maximumAttempts));
         this.minimumIntervalMillis = Math.max(0L, Math.min(60000L, minimumIntervalMillis));
+        this.gate = new RequestGate(this.minimumIntervalMillis);
     }
 
     @Override
@@ -113,23 +115,7 @@ final class ResilientTranslationProvider implements TranslationProvider, AutoClo
     }
 
     private void awaitRateLimit() throws InterruptedException {
-        while (true) {
-            long wait;
-            synchronized (this) {
-                long now = System.currentTimeMillis();
-                if (nextRequestAtMillis <= now) {
-                    // Claim this instant and move the next slot one interval ahead. Claiming is
-                    // atomic, so two callers can never pass the gate for the same slot.
-                    nextRequestAtMillis = now + minimumIntervalMillis;
-                    return;
-                }
-                wait = nextRequestAtMillis - now;
-            }
-            // Sleep outside the lock: a caller that has to wait must not block the other callers
-            // from reserving their own (later) slots. Re-check on wake-up so a late wake still
-            // pushes the following slot, exactly like the previous lock-held implementation.
-            Thread.sleep(wait);
-        }
+        gate.await();
     }
 
     /**

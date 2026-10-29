@@ -11,13 +11,16 @@ import org.universaltranslator.forge.TranslationRenderContext;
 
 @Mixin(ChatComponent.class)
 abstract class ChatHudContextMixin {
-    @Inject(method = "render", at = @At("HEAD"))
+    // Essential: chat is the main surface the mod translates, and the colour/kind decision below
+    // only ever sees TextKind.CHAT if these two hooks exist. require = 1 makes a renamed target a
+    // launch failure instead of a silently untranslated chat box.
+    @Inject(method = "render", at = @At("HEAD"), require = 1)
     private void universalTranslator$enterChat(
             GuiGraphics context, int currentTick, int mouseX, int mouseY, CallbackInfo callback) {
         TranslationRenderContext.push(TextKind.CHAT);
     }
 
-    @Inject(method = "render", at = @At("RETURN"))
+    @Inject(method = "render", at = @At("RETURN"), require = 1)
     private void universalTranslator$leaveChat(
             GuiGraphics context, int currentTick, int mouseX, int mouseY, CallbackInfo callback) {
         TranslationRenderContext.pop();

@@ -13,7 +13,15 @@ import org.lwjgl.glfw.GLFW;
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.LogManager;
 
-/** Fabric bootstrap. Capture mixins are added incrementally after mapping verification. */
+/**
+ * Fabric bootstrap. Capture mixins are added incrementally after mapping verification.
+ *
+ * <p>Keep in sync with {@code shared/client-1.14-1.16.4/…/UniversalTranslatorFabricClient.java}:
+ * the only difference is the {@code KeyBinding} import this generation renamed
+ * ({@code client.option} here, {@code client.options} there), so a change here belongs in both
+ * until the pair collapses into one layer with a seam (audit2 S2-078; that needs the per-version
+ * {@code srcDir} wiring in the tree's own {@code .gradle}).
+ */
 public final class UniversalTranslatorFabricClient implements ClientModInitializer {
     public static final String MOD_ID = "universal_translator";
     private static final Logger LOGGER = LogManager.getLogger(MOD_ID);

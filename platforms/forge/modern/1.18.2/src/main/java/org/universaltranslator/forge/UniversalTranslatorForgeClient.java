@@ -36,10 +36,14 @@ public final class UniversalTranslatorForgeClient {
     }
 
     private static void loadConfig() {
+        // Registered before the configuration is loaded on purpose: the title-screen entry performs
+        // its own configuration read when clicked, so it must not depend on this initialization
+        // succeeding. Registering it after initialize() left the entry a dead button for the whole
+        // session whenever the load threw.
+        ForgeTranslationRuntime.setTitleSettingsOpener(UniversalTranslatorForgeClient::openFromTitle);
         try {
             ForgeConfig config = ForgeConfig.load(FMLPaths.CONFIGDIR.get());
             ForgeTranslationRuntime.initialize(config);
-            ForgeTranslationRuntime.setTitleSettingsOpener(UniversalTranslatorForgeClient::openFromTitle);
             UniversalTranslatorForgeMod.LOGGER.info(
                     "MC Auto Translation Tool initialized; enabled={}", config.enabled);
         } catch (Exception exception) {
@@ -80,6 +84,9 @@ public final class UniversalTranslatorForgeClient {
                 return;
             }
             TranslationRenderContext.beginFrame();
+            // Starts the render memo window: one tick of staleness at most, and a replaced or
+            // shut-down configuration can never leak into a memoised line.
+            ForgeTranslationRuntime.beginRenderFrame();
             Minecraft client = Minecraft.getInstance();
             boolean connected = client.level != null && client.getConnection() != null;
             if (connected && !connectedLastTick) {
@@ -124,12 +131,22 @@ public final class UniversalTranslatorForgeClient {
         if (client == null || parent instanceof UniversalTranslatorConfigScreen) {
             return;
         }
+        ForgeConfig config;
         try {
-            ForgeConfig config = ForgeConfig.load(FMLPaths.CONFIGDIR.get());
-            client.setScreen(new UniversalTranslatorConfigScreen((net.minecraft.client.gui.screens.Screen) parent, config));
+            config = ForgeConfig.load(FMLPaths.CONFIGDIR.get());
         } catch (Exception exception) {
-            UniversalTranslatorForgeMod.LOGGER.error(LogMessages.SETTINGS_OPEN_FAILED, exception);
+            // Still open the screen with whatever the runtime holds so the player can fix the
+            // broken setting from the UI; a silent return here is what made the entry a dead key.
+            config = ForgeTranslationRuntime.diagnosticsConfig();
+            if (config == null) {
+                UniversalTranslatorForgeMod.LOGGER.error(LogMessages.SETTINGS_OPEN_FAILED, exception);
+                return;
+            }
+            UniversalTranslatorForgeMod.LOGGER.warn(
+                    "Translation settings could not be re-read; opening the last loaded copy",
+                    exception);
         }
+        client.setScreen(new UniversalTranslatorConfigScreen((net.minecraft.client.gui.screens.Screen) parent, config));
     }
 
     private static void openSettings(Minecraft client) {
@@ -175,7 +192,9 @@ public final class UniversalTranslatorForgeClient {
             TranslationResult result,
             Throwable error
     ) {
-        if (client.getConnection() == null) {
+        // Both checks, and the same failure message as the other three targets: a connection that is
+        // still open while the local player is gone used to skip the send and stay silent.
+        if (client.getConnection() == null || client.player == null) {
             client.gui.getChat().addMessage(
                     new TranslatableComponent("message.universal_translator.outgoing_disconnected"));
             return;
@@ -188,13 +207,11 @@ public final class UniversalTranslatorForgeClient {
             outgoing = original;
         }
         ForgeTranslationRuntime.protectOutgoingMessage(outgoing);
-        if (client.player != null) {
-            resendingTranslatedMessage = true;
-            try {
-                client.player.chat(outgoing);
-            } finally {
-                resendingTranslatedMessage = false;
-            }
+        resendingTranslatedMessage = true;
+        try {
+            client.player.chat(outgoing);
+        } finally {
+            resendingTranslatedMessage = false;
         }
         if (failed) {
             client.gui.getChat().addMessage(

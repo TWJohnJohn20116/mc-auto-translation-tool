@@ -13,8 +13,58 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
     public static final String MOD_ID = "universal_translator";
     private static final Logger LOGGER = Logger.getLogger(MOD_ID);
     private static final Impl INSTANCE = new Impl();
+    /**
+     * The body {@code FabricClientBootstrapBase} handed to {@link Impl#registerTickHook}.
+     *
+     * <p>These generations have no Fabric API lifecycle events on the classpath (the build depends on
+     * the loader only), so the tick is driven by a {@code Minecraft} mixin calling
+     * {@link #tickFromMixin()} from {@code tick()V}. The hook used to be dropped on the floor, which
+     * silently removed everything the tick body does — the join hint, and anything later added to
+     * {@code onClientTick()} — from 1.8.9 through 1.13.1, while 1.13.2 (which keeps its own copy of
+     * this class) already ran it.
+     */
+    private static volatile Runnable tickHook;
+    /** The {@code FabricTranslationRuntime.shutdown()} runnable, run once on JVM exit. */
+    private static volatile Runnable stopHook;
+    /** Set once the runtime has been shut down, so the JVM hook cannot run the body twice. */
+    private static volatile boolean shutdownRequested;
 
     private UniversalTranslatorFabricClient() {
+    }
+
+    /**
+     * Runs one client tick.
+     *
+     * <p>Called from the {@code Minecraft} tick mixin on the client thread. A failing tick body is
+     * logged and swallowed: an exception thrown out of the vanilla tick loop kills the game.
+     */
+    public static void tickFromMixin() {
+        Runnable hook = tickHook;
+        if (hook == null) {
+            return;
+        }
+        try {
+            hook.run();
+        } catch (RuntimeException failure) {
+            LOGGER.log(Level.SEVERE, "MC Auto Translation Tool tick failed", failure);
+        }
+    }
+
+    /** Runs the runtime's shutdown once; safe to call from both the JVM hook and a manual close. */
+    static void shutdownFromMixin() {
+        if (shutdownRequested) {
+            return;
+        }
+        shutdownRequested = true;
+        Runnable hook = stopHook;
+        if (hook == null) {
+            return;
+        }
+        try {
+            hook.run();
+        } catch (RuntimeException failure) {
+            LOGGER.log(Level.SEVERE, "MC Auto Translation Tool shutdown failed", failure);
+        }
     }
 
     @Override
@@ -127,12 +177,24 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
 
         @Override
         protected void registerTickHook(Runnable onTick) {
-            // The tick is driven by OrnitheClientAccess from the tick mixin.
+            // Kept instead of dropped: the Minecraft tick mixin calls tickFromMixin(), so
+            // onClientTick() — the render-context reset, the join hint and the runtime status — really
+            // runs in these generations. Same shape as the 1.13.2 copy of this class.
+            tickHook = onTick;
         }
 
         @Override
-        protected void registerStopHook(Runnable onStop) {
-            // Ornithe has no client-stopping callback in this generation.
+        protected void registerStopHook(final Runnable onStop) {
+            // The loader is the only dependency here (no Fabric API lifecycle), so there is no
+            // ClientLifecycleEvents.CLIENT_STOPPING. A JVM shutdown hook covers every exit path and
+            // needs no mapping.
+            stopHook = onStop;
+            try {
+                Runtime.getRuntime().addShutdownHook(new Thread(() -> shutdownFromMixin(),
+                        "universal-translator-shutdown"));
+            } catch (IllegalStateException alreadyShuttingDown) {
+                shutdownFromMixin();
+            }
         }
 
         @Override

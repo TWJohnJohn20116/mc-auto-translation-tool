@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "MC 自动翻译工具｜1.4 正式版",
   description:
-    "MC 自动翻译工具 1.4 正式版，下载按 Fabric／Forge／NeoForge 分组；Fabric 覆盖 1.13–1.21.11 与 26.1–26.3（1.16 已涵盖 1.16.0–1.16.4，1.13.2 也支援 HUD 指示器），Forge 覆盖 1.8.9–26.2，NeoForge 覆盖 1.20.1–26.2，每个版本一颗独立 JAR。1.0.0–1.12.2 的 Fabric／Ornithe 目标仍需自行构建。",
+    "MC 自动翻译工具 1.4 正式版，下载按 Fabric／Forge／NeoForge 分组；Fabric 单一 JAR 内含 51 个精确版本实现（1.13–1.13.2、1.14–1.15.2、1.16–1.16.5、1.17–1.18.2、1.19–1.19.4、1.20–1.20.6、1.21–1.21.11、26.1–26.3），要求 Fabric Loader 0.19.3 或更新；Forge 覆盖 1.8.9、1.12.2、1.16.5、1.18.2、1.19.2、1.20.1、1.21／1.21.1／1.21.3–1.21.5、1.21.6–1.21.8、1.21.9–1.21.11、26.1–26.1.2、26.2；NeoForge 为 19 个版本各一颗独立 JAR（1.20.1、1.20.4、1.20.6、1.21–1.21.11、26.1–26.1.2、26.2），没有 1.20.2 与 1.20.3。1.0.0–1.12.2 的 Fabric／Ornithe 目标仍需自行构建。",
 };
 
 const features = [
@@ -30,15 +30,15 @@ const features = [
 ];
 
 const versions = [
-  ["1.3.1–1.8.8、1.8–1.12.2", "Fabric（Legacy／Ornithe bundle）", "源码可构建，未随 1.4 发布", "planned"],
+  ["1.3.1–1.8.8、1.8.9–1.12.2", "Fabric（Legacy／Ornithe bundle）", "源码可构建，未随 1.4 发布", "planned"],
   ["1.8.9、1.12.2", "Forge", "正式版已发布", "ready"],
-  ["1.13–1.15.2", "Fabric 单一 JAR", "正式版已发布", "ready"],
-  ["1.16–1.20.6", "Fabric（按已实现版本）", "正式版已发布", "ready"],
+  ["1.13–1.13.2、1.14–1.15.2", "Fabric 单一 JAR（Loader ≥ 0.19.3）", "正式版已发布", "ready"],
+  ["1.16–1.20.6", "Fabric 单一 JAR（按已实现版本）", "正式版已发布", "ready"],
   ["1.20.1", "Fabric / Forge / NeoForge", "正式版已发布", "ready"],
   ["1.21–1.21.11", "Fabric 单一 JAR", "正式版已发布", "ready"],
-  ["1.21、1.21.1、1.21.3–1.21.11", "Forge 兼容族群 JAR", "正式版已发布", "ready"],
-  ["1.20.1–1.21.11、26.1–26.2", "NeoForge 每版本独立 JAR", "正式版已发布", "ready"],
-  ["26.1–26.2", "Fabric 单一 JAR / Forge 兼容族群", "正式版已发布", "ready"],
+  ["1.21、1.21.1、1.21.3–1.21.5 / 1.21.6–1.21.8 / 1.21.9–1.21.11", "Forge 兼容族群 JAR（1.21.2 无实现）", "正式版已发布", "ready"],
+  ["1.20.1、1.20.4、1.20.6、1.21–1.21.11、26.1–26.1.2、26.2", "NeoForge 每版本独立 JAR（无 1.20.2／1.20.3）", "正式版已发布", "ready"],
+  ["26.1–26.1.2、26.2", "Fabric 单一 JAR / Forge 兼容族群", "正式版已发布", "ready"],
   ["26.3", "Fabric 单一 JAR", "正式版已发布", "ready"],
 ];
 
@@ -52,20 +52,20 @@ const releaseFile = (target: string) =>
 const downloadGroups = [
   {
     title: "Fabric",
-    note: "一个 JAR 覆盖 1.13–1.21.11 与 26.1–26.3，并已含 1.16.0–1.16.4。Loader 按游戏版本选择内嵌实现。1.14–1.14.2 为引导实现。",
+    note: "一个 JAR 内含 51 个精确版本实现：1.13–1.13.2、1.14–1.15.2、1.16–1.16.5、1.17–1.18.2、1.19–1.19.4、1.20–1.20.6、1.21–1.21.11、26.1–26.3。前提是 Fabric Loader ≥ 0.19.3（bundle 的 fabric.mod.json 就是这么声明的）；低于此版本会在加载阶段报依赖错误，整个模组不加载。1.14–1.14.2 为引导实现。",
     featured: true,
     items: [
       {
-        version: "1.13–1.21.11、26.1–26.3",
+        version: "1.13–1.21.11、26.1–26.3（51 个精确版本）",
         loader: "Fabric 全版本单一 JAR",
-        java: "Java 随游戏为 8 / 17 / 21 / 25",
+        java: "Java 随游戏为 8 / 17 / 21 / 25；Fabric Loader ≥ 0.19.3",
         file: `MCAutoTranslationTool-${releaseVersion}-fabric-all.jar`,
       },
     ],
   },
   {
     title: "Forge",
-    note: "只在已验证兼容的相邻版本间共用 JAR。",
+    note: "只在已验证兼容的相邻版本间共用 JAR。族群 JAR 的 mods.toml 用 [1.21,1.21.6) 这种连续区间宣告，比实际适配清单宽：区间里的缺口没有实现（1.21.2 没有对应目标），不要用。",
     featured: false,
     items: [
       { version: "1.8.9", loader: "Forge", java: "Java 8", file: releaseFile("1.8.9-forge") },
@@ -74,23 +74,30 @@ const downloadGroups = [
       { version: "1.18.2", loader: "Forge 40.2.21", java: "Java 17", file: releaseFile("1.18.2-forge") },
       { version: "1.19.2", loader: "Forge", java: "Java 17", file: releaseFile("1.19.2-forge") },
       { version: "1.20.1", loader: "Forge", java: "Java 17", file: releaseFile("1.20.1-forge") },
-      ...["1.21-1.21.5", "1.21.6-1.21.8", "1.21.9-1.21.11"].map((version) => ({
-        version: version.replaceAll("-", "–"),
+      ...[
+        { version: "1.21、1.21.1、1.21.3–1.21.5", key: "1.21-1.21.5" },
+        { version: "1.21.6–1.21.8", key: "1.21.6-1.21.8" },
+        { version: "1.21.9–1.21.11", key: "1.21.9-1.21.11" },
+      ].map(({ version, key }) => ({
+        version,
         loader: "Forge 兼容族群",
         java: "Java 21",
-        file: releaseFile(`${version}-forge`),
+        file: releaseFile(`${key}-forge`),
       })),
-      ...["26.1-26.1.2", "26.2"].map((version) => ({
-        version: version.replaceAll("-", "–"),
+      ...[
+        { version: "26.1–26.1.2", key: "26.1-26.1.2" },
+        { version: "26.2", key: "26.2" },
+      ].map(({ version, key }) => ({
+        version,
         loader: "Forge 兼容族群",
         java: "Java 25",
-        file: releaseFile(`${version}-forge`),
+        file: releaseFile(`${key}-forge`),
       })),
     ],
   },
   {
     title: "NeoForge",
-    note: "无法像 Fabric 那样合成单档：FML 不允许同一 JAR 内嵌多套同 modId 实现，且 1.20.1 与 1.21.1 / 1.21.3 / 1.21.11 的 API 互不兼容。",
+    note: "无法像 Fabric 那样合成单档：FML 不允许同一 JAR 内嵌多套同 modId 实现，且 1.20.1 与 1.21.1 / 1.21.3 / 1.21.11 的 API 互不兼容。只提供下列 19 个版本各一颗：1.20.2 的坐标无法解析、1.20.3 没有对应目标，两者都没有下载。",
     featured: false,
     items: [
       { version: "1.20.1", loader: "NeoForge 47.1.106", java: "Java 17", file: releaseFile("1.20.1-neoforge") },

@@ -25,6 +25,10 @@ import java.util.zip.ZipInputStream;
 public final class SafeArchiveExtractor {
     private static final int MAX_ENTRIES = 10_000;
     private static final long MAX_EXPANDED_BYTES = 1_073_741_824L;
+    /** Always kept free on the destination volume, so extraction cannot fill the partition. */
+    private static final long MINIMUM_FREE_SPACE_BYTES = 64L * 1024L * 1024L;
+    /** One shared copy buffer for the whole extraction instead of one per archive entry. */
+    private static final int COPY_BUFFER_BYTES = 64 * 1024;
     /** Upper bound on how many links may be chained before a link target is treated as broken. */
     private static final int MAX_LINK_HOPS = 16;
 
@@ -34,17 +38,43 @@ public final class SafeArchiveExtractor {
     public static void extract(Path archive, Path destination) throws IOException {
         Files.createDirectories(destination);
         String name = archive.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
+        long expandedLimit = expandedByteLimit(destination);
         if (name.endsWith(".zip")) {
-            extractZip(archive, destination);
+            extractZip(archive, destination, expandedLimit);
         } else if (name.endsWith(".tar.gz") || name.endsWith(".tgz")) {
-            extractTarGz(archive, destination);
+            extractTarGz(archive, destination, expandedLimit);
         } else {
             throw new IOException("Unsupported offline engine archive: " + name);
         }
     }
 
-    private static void extractZip(Path archive, Path root) throws IOException {
-        ExtractionBudget budget = new ExtractionBudget();
+    /**
+     * Budget for this extraction: the fixed ceiling, or what the destination volume can actually
+     * still hold.
+     *
+     * <p>The fixed 1 GiB was the same on a workstation and on a phone whose private cache had
+     * 300 MB left, so the only thing it protected was the address space of a machine that was never
+     * short of disk. Extraction then wrote the partition full and left the cleanup to whoever
+     * noticed. Asking the volume first turns that into a refusal before anything is written.
+     */
+    private static long expandedByteLimit(Path destination) {
+        long usable;
+        try {
+            usable = Files.getFileStore(destination).getUsableSpace();
+        } catch (IOException | RuntimeException unknown) {
+            return MAX_EXPANDED_BYTES;
+        }
+        if (usable <= 0L) {
+            // The platform cannot report free space; the fixed ceiling stays in force.
+            return MAX_EXPANDED_BYTES;
+        }
+        long fromDevice = usable - MINIMUM_FREE_SPACE_BYTES;
+        return fromDevice > 0L ? Math.min(MAX_EXPANDED_BYTES, fromDevice) : 0L;
+    }
+
+    private static void extractZip(Path archive, Path root, long expandedLimit) throws IOException {
+        ExtractionBudget budget = new ExtractionBudget(expandedLimit);
+        byte[] buffer = new byte[COPY_BUFFER_BYTES];
         try (ZipInputStream input = new ZipInputStream(
                 new BufferedInputStream(Files.newInputStream(archive)))) {
             ZipEntry entry;
@@ -55,16 +85,17 @@ public final class SafeArchiveExtractor {
                     Files.createDirectories(output);
                 } else {
                     Files.createDirectories(output.getParent());
-                    copy(input, output, entry.getSize(), budget);
+                    copy(input, output, entry.getSize(), budget, buffer);
                 }
                 input.closeEntry();
             }
         }
     }
 
-    private static void extractTarGz(Path archive, Path root) throws IOException {
+    private static void extractTarGz(Path archive, Path root, long expandedLimit) throws IOException {
         List<PendingLink> links = new ArrayList<PendingLink>();
-        ExtractionBudget budget = new ExtractionBudget();
+        ExtractionBudget budget = new ExtractionBudget(expandedLimit);
+        byte[] buffer = new byte[COPY_BUFFER_BYTES];
         try (InputStream input = new GZIPInputStream(
                 new BufferedInputStream(Files.newInputStream(archive)))) {
             byte[] header = new byte[512];
@@ -92,7 +123,7 @@ public final class SafeArchiveExtractor {
                     skipFully(input, size);
                 } else if (type == 0 || type == '0') {
                     Files.createDirectories(output.getParent());
-                    copyExact(input, output, size);
+                    copyExact(input, output, size, buffer);
                 } else {
                     skipFully(input, size);
                 }
@@ -257,10 +288,13 @@ public final class SafeArchiveExtractor {
     }
 
     private static void copy(
-            InputStream input, Path output, long declaredSize, ExtractionBudget budget)
-            throws IOException {
+            InputStream input,
+            Path output,
+            long declaredSize,
+            ExtractionBudget budget,
+            byte[] buffer
+    ) throws IOException {
         try (OutputStream target = Files.newOutputStream(output)) {
-            byte[] buffer = new byte[64 * 1024];
             long total = 0L;
             int count;
             while ((count = input.read(buffer)) >= 0) {
@@ -274,9 +308,9 @@ public final class SafeArchiveExtractor {
         }
     }
 
-    private static void copyExact(InputStream input, Path output, long size) throws IOException {
+    private static void copyExact(InputStream input, Path output, long size, byte[] buffer)
+            throws IOException {
         try (OutputStream target = Files.newOutputStream(output)) {
-            byte[] buffer = new byte[64 * 1024];
             long remaining = size;
             while (remaining > 0L) {
                 int count = input.read(buffer, 0, (int) Math.min(buffer.length, remaining));
@@ -372,8 +406,13 @@ public final class SafeArchiveExtractor {
     }
 
     private static final class ExtractionBudget {
+        private final long maximumExpandedBytes;
         private int entries;
         private long expandedBytes;
+
+        private ExtractionBudget(long maximumExpandedBytes) {
+            this.maximumExpandedBytes = maximumExpandedBytes;
+        }
 
         private void addEntry() throws IOException {
             entries++;
@@ -383,7 +422,7 @@ public final class SafeArchiveExtractor {
         }
 
         private void reserve(long bytes) throws IOException {
-            if (bytes < 0L || bytes > MAX_EXPANDED_BYTES - expandedBytes) {
+            if (bytes < 0L || bytes > maximumExpandedBytes - expandedBytes) {
                 throw new IOException("Archive exceeds the expanded size limit");
             }
             expandedBytes += bytes;

@@ -1,18 +1,54 @@
-param(
+﻿param(
     [Parameter(Mandatory=$true, Position=0)]
     [string]$Target
 )
 
+# 介面說明用；AGENTS.md 禁止在本機編譯／建置／測試，唯一可信的建置途徑是 GitHub Actions。
 $ErrorActionPreference = "Stop"
-$env:GRADLE_USER_HOME = "D:\Gradle\cache"
+
+# 專案根目錄與快取目錄由腳本自身位置推導（原本硬編 D:\Code\... 與 D:\Gradle\cache）。
+$root = Split-Path -Parent $PSScriptRoot
+if (-not (Test-Path (Join-Path $root "gradlew.bat"))) {
+    throw "找不到 $root\gradlew.bat；請確認這支腳本位於 <repo>\scripts\ 之下。"
+}
+if (-not $env:GRADLE_USER_HOME) {
+    $env:GRADLE_USER_HOME = Join-Path $root "build\gradle-user-home"
+}
 $manifest = "-Ploom_version_manifests=https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
-$root = "D:\Code\mc-auto-translation-tool"
 Set-Location $root
 
-$j25 = "C:\Program Files\Eclipse Adoptium\jdk-25.0.4.7-hotspot"
-$j21 = "C:\Program Files\Eclipse Adoptium\jdk-21.0.12.8-hotspot"
-$j17 = "D:\Gradle\cache\caches\minecraftforge\forgegradle\mavenizer\caches\microsoft-jdk-17.0.20.1-windows-x64"
-$j8 = "C:\Program Files\Eclipse Adoptium\jdk-8.0.502.7-hotspot"
+# JDK 先看 JAVA_HOME_<major>_X64，再從 Adoptium／ForgeGradle 的 Mavenizer 快取找；
+# 不再寫死帶 build 號的目錄名。
+$jdkSearchRoots = @(
+    (Join-Path $env:ProgramFiles "Eclipse Adoptium"),
+    (Join-Path $env:GRADLE_USER_HOME "caches\minecraftforge\forgegradle\mavenizer\caches")
+)
+$jdk = @{}
+foreach ($major in @(25, 21, 17, 8)) {
+    $candidates = @()
+    $fromEnv = [Environment]::GetEnvironmentVariable("JAVA_HOME_${major}_X64")
+    if ($fromEnv) { $candidates += $fromEnv }
+    foreach ($searchRoot in $jdkSearchRoots) {
+        if ($searchRoot -and (Test-Path $searchRoot)) {
+            $candidates += @(Get-ChildItem -Path $searchRoot -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match "(^|-)jdk-?$major[._]" } |
+                Sort-Object Name -Descending |
+                ForEach-Object { $_.FullName })
+        }
+    }
+    $resolved = $candidates |
+        Where-Object { $_ -and (Test-Path (Join-Path $_ "bin\java.exe")) } |
+        Select-Object -First 1
+    if (-not $resolved) {
+        throw "找不到 JDK $major；請設定 JAVA_HOME_${major}_X64，或把它裝在 $($jdkSearchRoots -join ' / ')。"
+    }
+    $jdk[$major] = $resolved
+}
+
+$j25 = $jdk[25]
+$j21 = $jdk[21]
+$j17 = $jdk[17]
+$j8 = $jdk[8]
 
 # Normalize target name
 $cleanTarget = $Target.Trim().ToLower()
@@ -27,7 +63,7 @@ if ($cleanTarget.StartsWith("platform-")) { $cleanTarget = $cleanTarget.Substrin
 if ($cleanTarget -match '^(forge-)?legacy-1\.8\.9$' -or $cleanTarget -eq "1.8.9" -or $cleanTarget -eq "forge-1.8.9") {
     $env:JAVA_HOME = $j8
     Write-Host "Building Legacy Forge 1.8.9 using JDK 8..." -ForegroundColor Cyan
-    Push-Location "$root\platforms\forge\legacy\1.8.9"
+    Push-Location (Join-Path $root "platforms\forge\legacy\1.8.9")
     & ".\gradlew.bat" build
     Pop-Location
     exit $LASTEXITCODE
@@ -35,7 +71,7 @@ if ($cleanTarget -match '^(forge-)?legacy-1\.8\.9$' -or $cleanTarget -eq "1.8.9"
 if ($cleanTarget -match '^(forge-)?legacy-1\.12\.2$' -or $cleanTarget -eq "1.12.2" -or $cleanTarget -eq "forge-1.12.2") {
     $env:JAVA_HOME = $j8
     Write-Host "Building Legacy Forge 1.12.2 using JDK 8..." -ForegroundColor Cyan
-    Push-Location "$root\platforms\forge\legacy\1.12.2"
+    Push-Location (Join-Path $root "platforms\forge\legacy\1.12.2")
     & ".\gradlew.bat" build
     Pop-Location
     exit $LASTEXITCODE

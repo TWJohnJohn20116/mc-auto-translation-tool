@@ -190,6 +190,49 @@ def platformDependencies = [
         // 這是 neoforge-1.20.1 曾經是 PR 裡最慢 job 的主因。
 ]
 
+// 這兩份清單是唯一權威來源，供各 bundle 專案讀取（gradle.ext 對所有專案腳本可見）。
+// 之前「fabric-all 應該包含哪些版本」被手抄到 4 個 bundle 的 verifyPreparedReleaseBundle，
+// 已經漂移成 3 份漏 26.3、1 份漏 1.16–1.16.4；加一個版本不必再改 5 處。
+gradle.ext.platformDependencies = platformDependencies
+
+// MCAutoTranslationTool-<mod_version>-fabric-all.jar 內嵌的版本：也就是會出現在 downloads/
+// 的 Fabric bundle 成員。1.0-1.8.x 與 1.8-1.12.x 刻意不在其中——它們只由 legacy-targets.yml
+// 建置，從來不是發布資產，也不會進到那個合併 jar。清單由上面的 platformDependencies 推導，
+// 不另外手寫。
+def fabricReleaseBundles = [
+        "platform-fabric-1.13.x",
+        "platform-fabric-1.14-1.15.x",
+        "platform-fabric-1.16.x",
+        "platform-fabric-1.17-1.18.x",
+        "platform-fabric-1.19.x",
+        "platform-fabric-1.20.x",
+        "platform-fabric-1.21.x",
+        "platform-fabric-26.x"
+]
+// 專案名 → Minecraft 版本的唯一正規化規則。啟動器把 1.13.0 叫成 "1.13"，所以那個 bundle 的
+// nested JAR 是 universal-translator-1.13.jar；專案名不能直接拿來當版本字串。這條規則原本只存在
+// 於 fabricReleaseVersions 的 collect 裡，現在抽成 helper 讓 bundle 驗證器共用，避免出現第三份。
+def fabricMinecraftVersionOf = { Object platformProjectName ->
+    def projectVersion = platformProjectName.toString() - "platform-fabric-"
+    projectVersion == "1.13.0" ? "1.13" : projectVersion
+}
+gradle.ext.fabricMinecraftVersionOf = fabricMinecraftVersionOf
+
+gradle.ext.fabricReleaseVersions = fabricReleaseBundles
+        .collectMany { platformDependencies.getOrDefault(it, []) }
+        .collect { fabricMinecraftVersionOf(it) }
+        .unique()
+
+// 某個 bundle **自己的**版本清單（CI 修-2）：驗證器只能餵「這個 bundle 的 Fabric Loader 世代」
+// 解析得出的版本。舊的內嵌 jar（1.13–1.24 依賴舊 fabric API／舊 minecraft）在 26.x 的 resolver
+// 裡是 HARD_DEP_NO_CANDIDATE，跨世代餵全域清單不成立，所以 args 一律走這裡；全域清單只留給
+// 共用驗證腳本的缺席警告（logger.warn），兩者不可互換。
+gradle.ext.fabricBundleVersions = { Object platformProjectName ->
+    platformDependencies.getOrDefault(platformProjectName.toString(), [])
+            .collect { fabricMinecraftVersionOf(it) }
+            .unique()
+}
+
 def normalizePlatform = { String value ->
     def target = value.trim()
     if (target == "all" || target == "core" || target == "translator-core") {

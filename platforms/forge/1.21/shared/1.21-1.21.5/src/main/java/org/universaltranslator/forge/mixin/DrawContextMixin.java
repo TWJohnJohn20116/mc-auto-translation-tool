@@ -31,24 +31,8 @@ abstract class DrawContextMixin {
         return RenderedTextBridge.translate(text);
     }
 
-    @ModifyVariable(
-            method = "drawCenteredString(Lnet/minecraft/client/gui/Font;Ljava/lang/String;III)V",
-            at = @At("HEAD"), argsOnly = true)
-    private String universalTranslator$translateCenteredString(String text) {
-        return RenderedTextBridge.translate(text);
-    }
-
-    @ModifyVariable(
-            method = "drawCenteredString(Lnet/minecraft/client/gui/Font;Lnet/minecraft/network/chat/Component;III)V",
-            at = @At("HEAD"), argsOnly = true)
-    private Component universalTranslator$translateCenteredText(Component text) {
-        return RenderedTextBridge.translate(text);
-    }
-
-    @ModifyVariable(
-            method = "drawCenteredString(Lnet/minecraft/client/gui/Font;Lnet/minecraft/util/FormattedCharSequence;III)V",
-            at = @At("HEAD"), argsOnly = true)
-    private FormattedCharSequence universalTranslator$translateCenteredFormattedCharSequence(FormattedCharSequence text) {
-        return RenderedTextBridge.translate(text);
-    }
+    // No drawCenteredString injections on purpose. Every centred overload measures through
+    // Font.width and then draws through drawString, both of which are hooked here and in
+    // TextRendererMixin, so a second hook at this level translated the same line three times per
+    // frame.
 }

@@ -28,6 +28,10 @@ def supportedVersions = ["26.1", "26.1.1", "26.1.2", "26.2", "26.3"]
 supportedVersions.each { gameVersion ->
     evaluationDependsOn(":platform-fabric-${gameVersion}")
 }
+// The members use net.fabricmc.fabric-loom (not the -remap variant 1.21 uses) because Minecraft
+// 26.x ships Mojang mappings directly, so this generation has no remapJar step and `jar` here is
+// already the distributable artifact. The asymmetry with the other bundles is the plugin variant,
+// not a missing remap.
 def implementationJars = supportedVersions.collectEntries { gameVersion ->
     [(gameVersion): project(":platform-fabric-${gameVersion}").tasks.named("jar")]
 }
@@ -73,6 +77,11 @@ tasks.register("verifyLoaderSelection", JavaExec) {
     mainClass = "org.universaltranslator.bundle.BundleResolutionVerifier"
     args([jar.archiveFile.get().asFile.absolutePath] + supportedVersions)
 }
+
+// This bundle had no aggregate coverage at all, so a wrong nested artifact stayed invisible through
+// verifyBundle / verifyLoaderSelection / the release-asset checks. The expected version list is
+// settings.gradle's platformDependencies, shared with every other Fabric bundle.
+apply from: rootProject.file("gradle/fabric-bundle-aggregate-verify.gradle")
 
 test {
     enabled = false

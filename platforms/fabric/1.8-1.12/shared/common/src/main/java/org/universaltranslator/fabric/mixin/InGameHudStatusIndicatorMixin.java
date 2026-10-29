@@ -7,6 +7,7 @@ import net.minecraft.client.render.TextRenderer;
 import net.minecraft.client.render.Window;
 import net.minecraft.client.resource.language.I18n;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -39,13 +40,61 @@ import org.universaltranslator.fabric.TranslationRenderContext;
  * <p>Everything it draws comes from {@code HudIndicatorSettings}: the corner, size, margin, colour,
  * what appears inside the square, and when it is drawn at all.
  *
- * <p>All state lives in locals on purpose: a mixin that declares extra fields or helper methods
- * risks colliding with members of the target class.
+ * <p>State is kept in local variables except for the two {@code @Unique} fields that carry the HUD
+ * size from the one call that receives the {@code Window} to the end-of-frame draw; {@code @Unique}
+ * makes mixin rename them if the target class ever grows a member with the same name.
  */
 @Mixin(GameGui.class)
 abstract class InGameHudStatusIndicatorMixin {
+    /**
+     * The scaled HUD size, cached from the one call that hands out the {@code Window}.
+     *
+     * <p>Kept in {@code @Unique} fields because the size can only be read where the window itself is
+     * available, while the drawing has to happen at the end of the HUD frame (see below).
+     */
+    @Unique
+    private int universalTranslator$windowWidth;
+    @Unique
+    private int universalTranslator$windowHeight;
+
+    /**
+     * Paints the indicator at the end of the HUD frame.
+     *
+     * <p>This is the injection point that decides what the player sees. {@code renderHotbar} runs
+     * before vanilla draws the chat log background, the item name and the potion effects, so an
+     * indicator drawn there was painted over by the chat log whenever the corner was set to the
+     * bottom half — while the settings screen's drag preview promised what-you-see-is-what-you-get.
+     * 1.13 already injected at the HUD tail; this tree was the odd one out.
+     */
+    @Inject(method = {"render(F)V", "renderGameOverlay(F)V"}, at = @At("RETURN"), require = 0)
+    private void universalTranslator$drawAfterHud(float delta, CallbackInfo callback) {
+        universalTranslator$drawIndicator();
+    }
+
+    /**
+     * Caches the HUD size and still draws once, as a fallback.
+     *
+     * <p>The {@code Window} only arrives as a parameter of {@code renderHotbar}, and reading it from
+     * {@code Minecraft} is not portable across 1.8.2-1.12.2 (the member is not visible to a mixin
+     * outside its package). Drawing here as well keeps the indicator visible if the HUD-tail method
+     * above is named differently in one of the mappings this bundle covers — the cost is one extra
+     * pass over a handful of rectangles, and the tail pass paints exactly the same pixels on top.
+     */
     @Inject(method = "renderHotbar(Lnet/minecraft/client/render/Window;F)V", at = @At("RETURN"), require = 0)
     private void universalTranslator$renderStatusIndicator(Window window, float delta, CallbackInfo callback) {
+        // The Window arrives as a parameter of renderHotbar, which every version this bundle is
+        // compiled for (1.8.2-1.12.2) calls with it. Reading the window from Minecraft instead is
+        // not portable: the member is not visible to a mixin outside its package, and the Window
+        // constructor takes different arguments across these versions.
+        if (window != null) {
+            universalTranslator$windowWidth = (int) window.getScaledWidth();
+            universalTranslator$windowHeight = (int) window.getScaledHeight();
+        }
+        universalTranslator$drawIndicator();
+    }
+
+    @Unique
+    private void universalTranslator$drawIndicator() {
         // Read the settings first: a disabled indicator draws nothing at all.
         // One read per frame: the runtime publishes a finished snapshot, and this method needs
         // four different fields off the same one.
@@ -71,16 +120,12 @@ abstract class InGameHudStatusIndicatorMixin {
             default:
                 break;
         }
-        // The Window arrives as a parameter of renderHotbar, which every version this bundle is
-        // compiled for (1.8.2-1.12.2) calls with it. Reading the window from Minecraft instead is
-        // not portable: the member is not visible to a mixin outside its package, and the Window
-        // constructor takes different arguments across these versions.
         Minecraft client = Minecraft.getInstance();
-        if (window == null) {
+        int windowWidth = universalTranslator$windowWidth;
+        int windowHeight = universalTranslator$windowHeight;
+        if (windowWidth <= 0 || windowHeight <= 0) {
             return;
         }
-        int windowWidth = (int) window.getScaledWidth();
-        int windowHeight = (int) window.getScaledHeight();
         HudIndicatorCorner corner = settings.getCorner();
         int margin = settings.getMargin();
         int size = settings.getSize();

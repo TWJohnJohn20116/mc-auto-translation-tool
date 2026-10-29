@@ -34,8 +34,12 @@ tasks.register("validateMixinConfigs") {
                 "JAVA_12", "JAVA_13", "JAVA_14", "JAVA_15", "JAVA_16", "JAVA_17",
                 "JAVA_18", "JAVA_19", "JAVA_20", "JAVA_21"
         ]
+        // Only sources can hold a mixin config; walking the 20k generated files under platforms/**/build
+        // (96.7% of the tree) cost every PR a fixed amount for zero candidates.
         def configs = fileTree("platforms") {
             include "**/src/**/*.mixins.json"
+            exclude "**/build/**"
+            exclude "**/.gradle/**"
         }
 
         configs.each { config ->
@@ -78,6 +82,22 @@ tasks.register("validateMixinConfigs") {
                         "Mixin compatibilityLevel '${level}' is lower than ${minimumLevel} for ${relativeConfigPath}"
                 )
             }
+            // Known, accepted gap: every 26.x tree compiles with options.release = 25 (class file 69)
+            // while Mixin's CompatibilityLevel enum stops at JAVA_21, so its configs can only declare
+            // JAVA_21. Declaring JAVA_25 is not an option — CompatibilityLevel.valueOf() throws
+            // MixinInitialisationError for it (verified against the Mixin sources) — and lowering the
+            // release is unverified against the 26.x Minecraft artifacts. Mixin only logs a WARN when
+            // the class file version is above the declared level, so this stays a warning; failing
+            // here would block nine 26.x targets with no safe fix available.
+            if (relativeConfigPath.contains("/26.x/")) {
+                logger.warn(
+                        "Mixin compatibilityLevel in ${relativeConfigPath} stays at " +
+                                "${level ?: 'its default'} while the 26.x platforms compile with " +
+                                "options.release = 25 (class file version 69). Mixin only prints a WARN " +
+                                "when a class file version is above the declared level; this is a known " +
+                                "gap until the bundled Mixin exposes JAVA_22 or newer."
+                )
+            }
             if ((relativeConfigPath.contains("/forge/modern/1.16.5/") ||
                     relativeConfigPath.contains("/forge/modern/1.18.2/") ||
                     relativeConfigPath.contains("/forge/modern/1.19.2/")) &&
@@ -113,6 +133,9 @@ tasks.register("validateSharedPlatformLayouts") {
             include "neoforge/1.20/versions/*/src/**/assets/**"
             include "neoforge/1.21/versions/*/src/**/assets/**"
             include "neoforge/26.x/versions/*/src/**/assets/**"
+            // Generated trees never hold checked-in sources; skipping them keeps the walk cheap.
+            exclude "**/build/**"
+            exclude "**/.gradle/**"
         }.files.findAll { it.isFile() }
 
         if (!versionOwnedSources.isEmpty()) {
@@ -135,6 +158,12 @@ tasks.register("validateSharedPlatformLayouts") {
                 "platforms/forge/26.x/shared.gradle",
                 "platforms/forge/26.x/shared/common/src/main/resources/pack.mcmeta",
                 "platforms/neoforge/shared.gradle",
+                // 1.20.1 keeps a hand-written source set instead of applying neoforge/shared.gradle,
+                // so nothing else in this file described it; the two files it owns are the only
+                // per-version artefacts allowed on that tree.
+                "platforms/neoforge/1.20.1/build.gradle",
+                "platforms/neoforge/1.20.1/src/main/resources/universal-translator.neoforge.mixins.json",
+                "platforms/neoforge/1.20.1/src/main/resources/META-INF/mods.toml",
                 "platforms/neoforge/shared/metadata/1.20-1.20.4/src/main/resources/universal-translator.neoforge.mixins.json",
                 "platforms/neoforge/shared/metadata/1.20.6/src/main/resources/universal-translator.neoforge.mixins.json",
                 "platforms/neoforge/shared/metadata/1.21/src/main/resources/universal-translator.neoforge.mixins.json",
@@ -238,6 +267,8 @@ tasks.register("validateOpaqueSelectionTextColors") {
             include "**/UniversalTranslatorConfigScreenBase.java"
             include "**/UniversalTranslatorSettingsScreen.java"
             include "**/UniversalTranslatorScreens.java"
+            exclude "**/build/**"
+            exclude "**/.gradle/**"
         }.files.findAll { source ->
             def text = source.getText("UTF-8")
             text.contains("SettingsSelectionList.displayName") && transparentRgb.matcher(text).find()
@@ -263,6 +294,8 @@ tasks.register("validateNonOverlappingSettingsLabels") {
             include "**/UniversalTranslatorSettingsScreen.java"
             include "**/UniversalTranslatorScreens.java"
             include "**/LegacyConfigScreen.java"
+            exclude "**/build/**"
+            exclude "**/.gradle/**"
         }.files.findAll { source ->
             source.getText("UTF-8").contains("SettingsUiAnimation.openProgress")
         }
@@ -306,6 +339,8 @@ tasks.register("validateOpaqueDiagnosticsTextColors") {
         def violations = fileTree("platforms") {
             include "**/*DiagnosticsScreen.java"
             include "**/UniversalTranslatorScreens.java"
+            exclude "**/build/**"
+            exclude "**/.gradle/**"
         }.files.findAll { source ->
             def text = source.getText("UTF-8")
             text.contains("diagnostics.note") && transparentRgb.matcher(text).find()
@@ -328,6 +363,8 @@ tasks.register("validateOutgoingTranslationReentryGuards") {
         def outgoingClients = fileTree("platforms") {
             include "**/UniversalTranslatorForgeClient.java"
             include "**/UniversalTranslatorNeoForgeClient.java"
+            exclude "**/build/**"
+            exclude "**/.gradle/**"
         }.files.findAll { source ->
             def text = source.getText("UTF-8")
             text.contains("shouldTranslateOutgoing(message)") &&
@@ -445,9 +482,14 @@ tasks.register("validateNeoForgeModuleCoordinates") {
                 "neoforgeForgeLayers"
         ]
         def modules = fileTree("platforms/neoforge") {
+            // 1.20.1 does not apply neoforge/shared.gradle (its Mavenizer run would be re-triggered),
+            // but it must still reuse the same Forge layer, so it declares the same coordinates and
+            // is validated here with everything else.
+            include "1.20.1/build.gradle"
             include "1.20/versions/*/build.gradle"
             include "1.21/versions/*/build.gradle"
             include "26.x/versions/*/build.gradle"
+            exclude "**/build/**"
         }.files
 
         if (modules.isEmpty()) {
@@ -595,14 +637,15 @@ tasks.register("validateNeoForgeModuleCoordinates") {
             def directoryVersion = module.parentFile.name
 
             def declaredLayers = quoteList(coordinateValue(text, "neoforgeForgeLayers") ?: "")
-            def declaredLayer = declaredLayers.find { it != "common" }
-            if (declaredLayer == null) {
-                return
-            }
 
             def expected = null
             def source = null
-            if (relative.startsWith("platforms/neoforge/1.21/versions/")) {
+            if (relative.startsWith("platforms/neoforge/1.20.1/")) {
+                // The hand-written 1.20.1 source set names platforms/forge/modern/1.20.1 plus the same
+                // shared layers the Forge tree maps 1.20.1 to.
+                expected = layerByVersionModern["1.20.1"]
+                source = "platforms/forge/modern/shared.gradle sourceLayers"
+            } else if (relative.startsWith("platforms/neoforge/1.21/versions/")) {
                 expected = familyByVersion[directoryVersion]
                 if (expected == null) {
                     expected = familyFromRanges(
@@ -626,10 +669,13 @@ tasks.register("validateNeoForgeModuleCoordinates") {
                 crossCheckProblems.add(
                         "${relative}: cannot resolve the expected Forge layer for " +
                                 "${directoryVersion} from ${source}".toString())
-            } else if (expected != declaredLayer) {
+            } else if (!declaredLayers.contains(expected)) {
+                // A module listing only ["common"] used to short-circuit on the first non-common
+                // layer and was never cross-checked at all; requiring the expected layer by name
+                // makes that omission a failure instead of a silent pass.
                 crossCheckProblems.add(
-                        "${relative}: declares Forge layer '${declaredLayer}' but ${source} " +
-                                "maps ${directoryVersion} to '${expected}'".toString())
+                        "${relative}: neoforgeForgeLayers ${declaredLayers} does not contain " +
+                                "'${expected}' from ${source} for ${directoryVersion}".toString())
             }
         }
 
@@ -658,6 +704,17 @@ tasks.register("verifyPreparedReleaseAssets", Exec) {
     }
 }
 
+// Release-asset verification is a release-only concern, so it is not part of `check`: it needs
+// downloads/<mod_version> to be committed (prepare-release.yml only creates that directory after it
+// has built all targets, so a version bump failed the required check by definition) and it re-scans
+// 48 JARs on every unrelated PR. The verification logic itself is unchanged and still reachable
+// through verifyPreparedReleaseAssets / verifyReleaseJars; release flows call this aggregate.
+tasks.register("verifyPublishedRelease") {
+    group = "verification"
+    description = "Validates downloads/<mod_version> and the reduced release asset set (release flows only)."
+    dependsOn("verifyPreparedReleaseAssets")
+}
+
 tasks.named("check") {
     dependsOn(
             "validateMixinConfigs",
@@ -666,7 +723,6 @@ tasks.named("check") {
             "validateOutgoingTranslationReentryGuards",
             "validateOpaqueDiagnosticsTextColors",
             "validateOpaqueSelectionTextColors",
-            "validateSharedPlatformLayouts",
-            "verifyPreparedReleaseAssets"
+            "validateSharedPlatformLayouts"
     )
 }

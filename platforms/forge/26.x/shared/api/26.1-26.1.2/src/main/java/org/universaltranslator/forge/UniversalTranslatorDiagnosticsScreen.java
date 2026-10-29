@@ -13,6 +13,7 @@ import org.universaltranslator.core.TranslationStats;
 import org.universaltranslator.core.UiTextKeys;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Collections;
 
@@ -22,6 +23,15 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
     private static final int LINE_STEP = 17;
     /** First line's y, just under the title. */
     private static final int LINE_START = 43;
+    /**
+     * How long a rebuilt page of lines is reused.
+     *
+     * <p>Same window the shared runtime uses for its diagnostics snapshot: a reader cannot notice
+     * 250 ms, and one frame is far below it. Without it the counters page ran a full
+     * {@code TranslationStats} snapshot (boxing 512 latency samples, sorting them for the 95th
+     * percentile, rebuilding every provider row) once per drawn frame while the screen stood still.
+     */
+    private static final long LINES_CACHE_MILLIS = 250L;
 
     private final Screen parent;
     private final ForgeConfig config;
@@ -33,6 +43,10 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
     private boolean debugEnabled;
     private String exportStatus = "";
     private boolean exportFailed;
+    /** The current page's lines, rebuilt at most every {@link #LINES_CACHE_MILLIS}. */
+    private List<Component> cachedLines;
+    private long cachedLinesAt;
+    private boolean cachedLinesAreStatistics;
 
     UniversalTranslatorDiagnosticsScreen(Screen parent, ForgeConfig config) {
         super(Component.translatable("screen.universal_translator.diagnostics.title"));
@@ -64,6 +78,8 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
 
         this.pageButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
             statisticsPage = !statisticsPage;
+            // The page just changed, so the cached page of lines cannot be reused.
+            cachedLines = null;
             refreshPageLabels();
         }).bounds(left, this.height - 52, buttonWidth, 20).build());
         this.resetButton = addRenderableWidget(Button.builder(
@@ -149,6 +165,8 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
     /** Clears the process-wide counters and writes the cleared values out. */
     private void resetStatistics() {
         TranslationStats.global().reset();
+        // Show the cleared counters immediately instead of the pre-reset page for one cache window.
+        cachedLines = null;
         exportStatus = tr("screen.universal_translator.stats.reset_done");
         exportFailed = false;
     }
@@ -161,7 +179,7 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
         graphics.centeredText(this.font,
                 statisticsPage ? Component.translatable("screen.universal_translator.stats.title") : this.title,
                 this.width / 2, 18, 0xFFFFFFFF);
-        List<String> lines = displayLines();
+        List<Component> lines = displayLineComponents();
         int left = Math.max(10, (this.width - Math.min(360, this.width - 20)) / 2);
         // Stop before the status line and the button rows. A short window shows fewer lines instead
         // of drawing text on top of a button, and the last visible line says that it was cut.
@@ -169,11 +187,12 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
         int shown = Math.min(lines.size(), limit);
         int y = LINE_START;
         for (int index = 0; index < shown; index++) {
-            String line = lines.get(index);
+            Component line = lines.get(index);
             if (index == shown - 1 && shown < lines.size()) {
-                line = line + " ...";
+                // Only the cut line is rebuilt; every other line is the cached component.
+                line = Component.literal(line.getString() + " ...");
             }
-            graphics.text(this.font, Component.literal(line), left, y, 0xFFD0D0D0);
+            graphics.text(this.font, line, left, y, 0xFFD0D0D0);
             y += LINE_STEP;
         }
         graphics.centeredText(this.font,
@@ -186,6 +205,32 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
                     this.width / 2, this.height - 82, exportFailed ? 0xFFFF5555 : 0xFF55FF88);
         }
         super.extractRenderState(graphics, mouseX, mouseY, delta);
+    }
+
+    /**
+     * The current page's lines as drawable components, rebuilt at most every
+     * {@link #LINES_CACHE_MILLIS}.
+     *
+     * <p>Both pages were rebuilt on every frame, and each lookup builds a line of text, a
+     * {@code Component} and a font measurement; the counters page on top of that takes a whole
+     * statistics snapshot. Reusing the components keeps the screen still cheap when nothing changed.
+     */
+    private List<Component> displayLineComponents() {
+        long now = System.currentTimeMillis();
+        List<Component> cached = cachedLines;
+        if (cached != null && cachedLinesAreStatistics == statisticsPage
+                && now - cachedLinesAt < LINES_CACHE_MILLIS) {
+            return cached;
+        }
+        List<String> strings = displayLines();
+        List<Component> components = new ArrayList<Component>(strings.size());
+        for (String line : strings) {
+            components.add(Component.literal(line));
+        }
+        cachedLines = components;
+        cachedLinesAreStatistics = statisticsPage;
+        cachedLinesAt = now;
+        return components;
     }
 
     /** The lines the current page shows. */

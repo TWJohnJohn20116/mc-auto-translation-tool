@@ -150,6 +150,20 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     private volatile int modelPage;
     private long animationStartedNanos = System.nanoTime();
     private SettingsSelectionList.Kind openSelection = SettingsSelectionList.Kind.NONE;
+    /** Layout for the current window size; see {@link #layout()}. */
+    private Layout layoutCache;
+    private int layoutCacheWidth = -1;
+    private int layoutCacheHeight = -1;
+    /** Localized runtime status, rebuilt only when the raw status string changes. */
+    private String localizedStatusRaw;
+    private String localizedStatus;
+    /** The engine tab's fixed hint lines; their text never depends on the configured values. */
+    private static final Component CONFIG_FILE_HINT =
+            Component.translatable("screen.universal_translator.engine.config_file");
+    private static final Component OFFLINE_HINT =
+            Component.translatable("screen.universal_translator.info.offline");
+    private static final Component API_HINT =
+            Component.translatable("screen.universal_translator.info.api");
 
     /** The preview panel is a miniature of Minecraft's 320x240 minimum logical screen. */
     private static final int HUD_PREVIEW_SCREEN_WIDTH = 320;
@@ -526,11 +540,12 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
      */
     private void applyPromptSettings() {
         refreshQualityLabel();
+        ForgeConfig base = currentConfig();
         try {
             String prompt = customPrompt == null
-                    ? original.customSystemPrompt()
+                    ? base.customSystemPrompt()
                     : TranslationPrompt.fromEditorText(customPrompt.getValue());
-            ForgeConfig updated = original.withPromptSettings(quality, prompt);
+            ForgeConfig updated = base.withPromptSettings(quality, prompt);
             if (updated.enabled) {
                 updated.validateProviderConfiguration();
             }
@@ -623,65 +638,89 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         return Component.literal(active ? "§b§l[ " + label + " ]" : "§7" + label);
     }
 
+    /**
+     * Rebuilds every control's label from the current field values.
+     *
+     * <p>Every label goes through {@link #setMessage} so a control that does not exist yet (a tab
+     * still being built, a screen whose {@code init()} failed halfway) leaves the rest of the page
+     * labelled instead of failing the whole refresh with an NPE. The earlier mix - some controls
+     * guarded, most not - meant nobody could tell which style was the rule.
+     */
     private void refreshLabels() {
-        uiStyleButton.setMessage(Component.translatable("screen.universal_translator.option.ui_style",
+        setMessage(uiStyleButton, Component.translatable("screen.universal_translator.option.ui_style",
                 tr(animatedUi ? "value.universal_translator.ui_animated"
                         : "value.universal_translator.ui_classic")));
-        hudIndicatorButton.setMessage(Component.translatable(
+        setMessage(hudIndicatorButton, Component.translatable(
                 "screen.universal_translator.option.hud_indicator", onOff(hudIndicator)));
-        hudCornerButton.setMessage(Component.translatable(
+        setMessage(hudCornerButton, Component.translatable(
                 "screen.universal_translator.option.hud_corner", hudCornerLabel(hudIndicatorCorner)));
-        hudSizeButton.setMessage(Component.translatable("screen.universal_translator.option.hud_size",
+        setMessage(hudSizeButton, Component.translatable("screen.universal_translator.option.hud_size",
                 Integer.toString(hudIndicatorSize)));
-        hudMarginButton.setMessage(Component.translatable("screen.universal_translator.option.hud_margin",
+        setMessage(hudMarginButton, Component.translatable("screen.universal_translator.option.hud_margin",
                 Integer.toString(hudIndicatorMargin)));
-        hudColorButton.setMessage(Component.translatable("screen.universal_translator.option.hud_color",
+        setMessage(hudColorButton, Component.translatable("screen.universal_translator.option.hud_color",
                 hudColorLabel(hudIndicatorColor)));
-        hudContentButton.setMessage(Component.translatable(
+        setMessage(hudContentButton, Component.translatable(
                 "screen.universal_translator.option.hud_content", hudContentLabel(hudIndicatorContent)));
-        hudVisibilityButton.setMessage(Component.translatable(
+        setMessage(hudVisibilityButton, Component.translatable(
                 "screen.universal_translator.option.hud_visibility", hudVisibilityLabel(hudIndicatorVisibility)));
-        hudCornerButton.active = hudIndicator;
-        hudSizeButton.active = hudIndicator;
-        hudMarginButton.active = hudIndicator;
-        hudColorButton.active = hudIndicator;
-        hudContentButton.active = hudIndicator;
-        hudVisibilityButton.active = hudIndicator;
-        enabledButton.setMessage(Component.translatable("screen.universal_translator.option.automatic", onOff(enabled)));
-        chatButton.setMessage(Component.translatable("screen.universal_translator.option.chat", onOff(translateChat)));
-        otherButton.setMessage(Component.translatable("screen.universal_translator.option.other", onOff(translateOther)));
-        vanillaButton.setMessage(Component.translatable("screen.universal_translator.option.vanilla", onOff(translateVanilla)));
-        playerNamesButton.setMessage(Component.translatable(
+        setActive(hudCornerButton, hudIndicator);
+        setActive(hudSizeButton, hudIndicator);
+        setActive(hudMarginButton, hudIndicator);
+        setActive(hudColorButton, hudIndicator);
+        setActive(hudContentButton, hudIndicator);
+        setActive(hudVisibilityButton, hudIndicator);
+        setMessage(enabledButton, Component.translatable("screen.universal_translator.option.automatic", onOff(enabled)));
+        setMessage(chatButton, Component.translatable("screen.universal_translator.option.chat", onOff(translateChat)));
+        setMessage(otherButton, Component.translatable("screen.universal_translator.option.other", onOff(translateOther)));
+        setMessage(vanillaButton, Component.translatable("screen.universal_translator.option.vanilla", onOff(translateVanilla)));
+        setMessage(playerNamesButton, Component.translatable(
                 "screen.universal_translator.option.player_names", onOff(translatePlayerNames)));
-        cacheButton.setMessage(Component.translatable("screen.universal_translator.option.cache", onOff(diskCache)));
-        providerButton.setMessage(Component.translatable("screen.universal_translator.option.provider", providerLabel()));
+        setMessage(cacheButton, Component.translatable("screen.universal_translator.option.cache", onOff(diskCache)));
+        // providerLabel() already applies the "option.provider" format, so wrapping it again here
+        // produced "Service: Service: OpenAI" in every language.
+        setMessage(providerButton, providerLabel());
         String modelValue = llmModel == null || llmModel.trim().isEmpty()
                 ? tr("screen.universal_translator.engine.key_unset") : llmModel.trim();
-        modelPickButton.setMessage(Component.translatable("screen.universal_translator.engine.model", modelValue));
-        testConnectionButton.setMessage(Component.translatable("screen.universal_translator.engine.test"));
-        checkSettingsButton.setMessage(Component.translatable(LIBRETRANSLATE_PROVIDER.equalsIgnoreCase(provider)
+        setMessage(modelPickButton, Component.translatable("screen.universal_translator.engine.model", modelValue));
+        setMessage(testConnectionButton, Component.translatable("screen.universal_translator.engine.test"));
+        setMessage(checkSettingsButton, Component.translatable(LIBRETRANSLATE_PROVIDER.equalsIgnoreCase(provider)
                 ? "screen.universal_translator.engine.test"
                 : "screen.universal_translator.engine.check"));
-        displayButton.setMessage(Component.translatable("screen.universal_translator.option.display",
+        setMessage(displayButton, Component.translatable("screen.universal_translator.option.display",
                 tr(displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED
                         ? "value.universal_translator.display_bilingual"
                         : "value.universal_translator.display_translated")));
-        mixedTextButton.setMessage(Component.translatable("screen.universal_translator.option.mixed", onOff(translateEnglishOnly)));
-        colorButton.setMessage(Component.translatable("screen.universal_translator.option.color", colorLabel(translatedTextColor)));
-        downloadButton.setMessage(Component.translatable("screen.universal_translator.option.download", onOff(offlineAutoDownload)));
-        modelButton.setMessage(Component.translatable("screen.universal_translator.option.model", offlineModel.displayName()));
-        fallbackButton.setMessage(Component.translatable("screen.universal_translator.option.fallback", onOff(apiFallback)));
+        setMessage(mixedTextButton, Component.translatable("screen.universal_translator.option.mixed", onOff(translateEnglishOnly)));
+        setMessage(colorButton, Component.translatable("screen.universal_translator.option.color", colorLabel(translatedTextColor)));
+        setMessage(downloadButton, Component.translatable("screen.universal_translator.option.download", onOff(offlineAutoDownload)));
+        setMessage(modelButton, Component.translatable("screen.universal_translator.option.model", offlineModel.displayName()));
+        setMessage(fallbackButton, Component.translatable("screen.universal_translator.option.fallback", onOff(apiFallback)));
         refreshQualityLabel();
         refreshWorkersLabel();
         refreshBatchLabel();
-        outgoingButton.setMessage(Component.translatable("screen.universal_translator.option.outgoing", onOff(translateOutgoing)));
-        targetLanguageButton.setMessage(Component.translatable("screen.universal_translator.option.target_preset",
+        setMessage(outgoingButton, Component.translatable("screen.universal_translator.option.outgoing", onOff(translateOutgoing)));
+        setMessage(targetLanguageButton, Component.translatable("screen.universal_translator.option.target_preset",
                 TargetLanguage.displayName(targetLanguage)));
-        outgoingTargetLanguageButton.setMessage(Component.translatable(
+        setMessage(outgoingTargetLanguageButton, Component.translatable(
                 "screen.universal_translator.option.outgoing_target",
                 TargetLanguage.displayName(outgoingTargetLanguage)));
-        outgoingTargetLanguageButton.active = translateOutgoing;
+        setActive(outgoingTargetLanguageButton, translateOutgoing);
         refreshTabButtons();
+    }
+
+    /** Sets a button's label, tolerating the controls a partly built screen has not created yet. */
+    private static void setMessage(Button button, Component message) {
+        if (button != null) {
+            button.setMessage(message);
+        }
+    }
+
+    /** Sets a button's enabled state, with the same tolerance as {@link #setMessage}. */
+    private static void setActive(Button button, boolean active) {
+        if (button != null) {
+            button.active = active;
+        }
     }
 
     private static String onOff(boolean value) {
@@ -692,10 +731,25 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         return TranslationStatusLocalizer.isFailure(value);
     }
 
+    /**
+     * The configuration the runtime is running right now.
+     *
+     * <p>{@code ForgeConfig.load} hands the screen a snapshot, and F8 and the home screen's quick
+     * settings write the same file while a settings screen can stay open. Saving from that snapshot
+     * silently reverted their changes: {@code toProperties()} copies every key the caller does not
+     * claim from the base it is given, so the base has to be the live configuration, not the one the
+     * screen was built with. The fields above still own every key this screen edits.
+     */
+    private ForgeConfig currentConfig() {
+        ForgeConfig live = ForgeTranslationRuntime.diagnosticsConfig();
+        return live == null ? original : live;
+    }
+
     private void saveAndApply() {
+        ForgeConfig base = currentConfig();
         boolean runtimeChanged = false;
         try {
-            ForgeConfig updated = original.withSettings(
+            ForgeConfig updated = base.withSettings(
                     enabled,
                     translateChat,
                     translateOther,
@@ -742,7 +796,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         } catch (Exception exception) {
             if (runtimeChanged) {
                 try {
-                    ForgeTranslationRuntime.initialize(original);
+                    ForgeTranslationRuntime.initialize(base);
                 } catch (Exception restoreFailure) {
                     exception.addSuppressed(restoreFailure);
                 }
@@ -793,8 +847,14 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         graphics.centeredText(this.font, this.title, this.width / 2, 16,
                 animatedUi ? SettingsUiAnimation.pulseColor(now) : 0xFFFFFFFF);
         String rawRuntimeStatus = ForgeTranslationRuntime.status();
-        String runtimeStatus = TranslationStatusLocalizer.localize(rawRuntimeStatus,
-                UniversalTranslatorConfigScreenBase::tr);
+        // The localization is an I18n lookup that ran on every frame even though the status only
+        // changes when a request fails; keep the result until the raw string itself moves.
+        if (localizedStatus == null || !rawRuntimeStatus.equals(localizedStatusRaw)) {
+            localizedStatusRaw = rawRuntimeStatus;
+            localizedStatus = TranslationStatusLocalizer.localize(rawRuntimeStatus,
+                    UniversalTranslatorConfigScreenBase::tr);
+        }
+        String runtimeStatus = localizedStatus;
         int belowSave = layout.saveY + 24;
         int messageY = belowSave <= this.height - 10 ? belowSave : SettingsScreenLayout.COMPACT_STATUS_Y;
         if (!status.isEmpty()) {
@@ -917,8 +977,6 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         if (!hudDragging) {
             return false;
         }
-        // One preview pixel is not one GUI pixel: the panel is a scaled-down screen, so undo the
-        // scale before turning the pointer delta into a real offset.
         // One preview pixel is not one GUI pixel, so undo the scale before turning the pointer
         // delta into a real offset, and bound the offset rather than the drawn position: clamping
         // the drawing while the offset kept growing created a dead zone the user had to drag back
@@ -1164,10 +1222,10 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         int blockHeight = layout.contentRowStep * 5 + 20 + 46;
         int available = layout.saveY - 6 - layout.contentTop;
         // Centring used to clamp at contentTop, so on a short window the whole block - the privacy
-// hint included - ran below the Save row and Save painted over it. Let the block start above
-// the content area instead, but never over the tab bar.
-int centred = layout.contentTop + (available - blockHeight) / 2;
-return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
+        // hint included - ran below the Save row and Save painted over it. Let the block start above
+        // the content area instead, but never over the tab bar.
+        int centred = layout.contentTop + (available - blockHeight) / 2;
+        return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
     }
 
     private int engineRow(int index) {
@@ -1186,13 +1244,10 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
                                     : "screen.universal_translator.engine.key_set")),
                     this.width / 2, y, 0xFFA0A0A0);
         } else if (!isOffline() && !LIBRETRANSLATE_PROVIDER.equalsIgnoreCase(provider)) {
-            graphics.centeredText(this.font,
-                    Component.translatable("screen.universal_translator.engine.config_file"),
-                    this.width / 2, y, 0xFFA0A0A0);
+            // Fixed text, so the component is built once instead of once per frame.
+            graphics.centeredText(this.font, CONFIG_FILE_HINT, this.width / 2, y, 0xFFA0A0A0);
         }
-        graphics.centeredText(this.font, Component.translatable(isOffline()
-                        ? "screen.universal_translator.info.offline"
-                        : "screen.universal_translator.info.api"),
+        graphics.centeredText(this.font, isOffline() ? OFFLINE_HINT : API_HINT,
                 this.width / 2, y + 18, 0xFFFFAA55);
     }
 
@@ -1448,11 +1503,27 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         return Component.translatable(key, arguments).getString();
     }
 
+    /**
+     * The layout for the current window size, computed once per size.
+     *
+     * <p>The layout is a pure function of {@code (width, height)}, but it used to be recomputed by
+     * every caller: the HUD tab ran it about thirteen times per frame because each {@code hud*}
+     * accessor asked for it again, and every call allocated a {@code Geometry} plus a {@code Layout}
+     * of fourteen ints each. Nothing changes while the window size does not, so one instance per size
+     * is enough; {@code init()} warms it, and a resize only changes the size.
+     */
     private Layout layout() {
+        if (layoutCache != null && layoutCacheWidth == width && layoutCacheHeight == height) {
+            return layoutCache;
+        }
         SettingsScreenLayout.Geometry geometry = SettingsScreenLayout.calculate(width, height, 5);
-        return new Layout(geometry.left(), geometry.right(), geometry.totalWidth(), geometry.buttonWidth(),
+        layoutCache = new Layout(geometry.left(), geometry.right(),
+                geometry.totalWidth(), geometry.buttonWidth(),
                 geometry.top(), geometry.rowStep(), geometry.targetY(), geometry.endpointY(), geometry.saveY(),
                 geometry.tabY(), geometry.tabWidth(), geometry.tabGap(), geometry.contentTop(), geometry.contentRowStep());
+        layoutCacheWidth = width;
+        layoutCacheHeight = height;
+        return layoutCache;
     }
 
     private static final class Layout {
