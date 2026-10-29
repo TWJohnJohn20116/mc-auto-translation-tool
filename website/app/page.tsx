@@ -1,9 +1,14 @@
 import type { Metadata } from "next";
 
+// Single source of truth for the released version. Every mention on the page
+// (title, description, buttons) derives from it, so a bump cannot leave one of
+// them behind; the CI version check reads this exact declaration.
+const releaseVersion = "1.4";
+
 export const metadata: Metadata = {
-  title: "MC 自动翻译工具｜1.4 正式版",
+  title: `MC 自动翻译工具｜${releaseVersion} 正式版`,
   description:
-    "MC 自动翻译工具 1.4 正式版，下载按 Fabric／Forge／NeoForge 分组；Fabric 单一 JAR 内含 51 个精确版本实现（1.13–1.13.2、1.14–1.15.2、1.16–1.16.5、1.17–1.18.2、1.19–1.19.4、1.20–1.20.6、1.21–1.21.11、26.1–26.3），要求 Fabric Loader 0.19.3 或更新；Forge 覆盖 1.8.9、1.12.2、1.16.5、1.18.2、1.19.2、1.20.1、1.21／1.21.1／1.21.3–1.21.5、1.21.6–1.21.8、1.21.9–1.21.11、26.1–26.1.2、26.2；NeoForge 为 19 个版本各一颗独立 JAR（1.20.1、1.20.4、1.20.6、1.21–1.21.11、26.1–26.1.2、26.2），没有 1.20.2 与 1.20.3。1.0.0–1.12.2 的 Fabric／Ornithe 目标仍需自行构建。",
+    `MC 自动翻译工具 ${releaseVersion} 正式版，下载按 Fabric／Forge／NeoForge 分组；Fabric 单一 JAR 内含 51 个精确版本实现（1.13–1.13.2、1.14–1.15.2、1.16–1.16.5、1.17–1.18.2、1.19–1.19.4、1.20–1.20.6、1.21–1.21.11、26.1–26.3），要求 Fabric Loader 0.19.3 或更新；Forge 覆盖 1.8.9、1.12.2、1.16.5、1.18.2、1.19.2、1.20.1、1.21／1.21.1／1.21.3–1.21.5、1.21.6–1.21.8、1.21.9–1.21.11、26.1–26.1.2、26.2；NeoForge 为 19 个版本各一颗独立 JAR（1.20.1、1.20.4、1.20.6、1.21–1.21.11、26.1–26.1.2、26.2），没有 1.20.2 与 1.20.3。1.0.0–1.12.2 的 Fabric／Ornithe 目标仍需自行构建。`,
 };
 
 const features = [
@@ -30,7 +35,7 @@ const features = [
 ];
 
 const versions = [
-  ["1.3.1–1.8.8、1.8.9–1.12.2", "Fabric（Legacy／Ornithe bundle）", "源码可构建，未随 1.4 发布", "planned"],
+  ["1.3.1–1.8.8 中的 26 个版本、1.8.9–1.12.2", "Fabric（Legacy／Ornithe bundle）", "源码可构建，未随 1.4 发布", "planned"],
   ["1.8.9、1.12.2", "Forge", "正式版已发布", "ready"],
   ["1.13–1.13.2、1.14–1.15.2", "Fabric 单一 JAR（Loader ≥ 0.19.3）", "正式版已发布", "ready"],
   ["1.16–1.20.6", "Fabric 单一 JAR（按已实现版本）", "正式版已发布", "ready"],
@@ -42,12 +47,13 @@ const versions = [
   ["26.3", "Fabric 单一 JAR", "正式版已发布", "ready"],
 ];
 
-const releaseVersion = "1.4";
 const githubDownloadBase =
   `https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v${releaseVersion}`;
 
-const releaseFile = (target: string) =>
-  `MCAutoTranslationTool-${releaseVersion}-mc${target}.jar`;
+const releaseJar = (name: string) =>
+  `MCAutoTranslationTool-${releaseVersion}-${name}.jar`;
+// Forge and NeoForge artefacts carry an `mc` prefix; the Fabric single JAR does not.
+const releaseFile = (target: string) => releaseJar(`mc${target}`);
 
 const downloadGroups = [
   {
@@ -59,13 +65,13 @@ const downloadGroups = [
         version: "1.13–1.21.11、26.1–26.3（51 个精确版本）",
         loader: "Fabric 全版本单一 JAR",
         java: "Java 随游戏为 8 / 17 / 21 / 25；Fabric Loader ≥ 0.19.3",
-        file: `MCAutoTranslationTool-${releaseVersion}-fabric-all.jar`,
+        file: releaseJar("fabric-all"),
       },
     ],
   },
   {
     title: "Forge",
-    note: "只在已验证兼容的相邻版本间共用 JAR。族群 JAR 的 mods.toml 用 [1.21,1.21.6) 这种连续区间宣告，比实际适配清单宽：区间里的缺口没有实现（1.21.2 没有对应目标），不要用。",
+    note: "只在已验证兼容的相邻版本间共用 JAR。族群 JAR 的 mods.toml 用逗号分隔的精确 restriction 联集宣告（例如 [1.21,1.21],[1.21.1,1.21.1],[1.21.3,1.21.3]），只列真正有实现的版本：1.21.2 不在其中，Forge 会直接以依赖错误拒绝加载，而不是放行后缺失实现。",
     featured: false,
     items: [
       { version: "1.8.9", loader: "Forge", java: "Java 8", file: releaseFile("1.8.9-forge") },
@@ -156,7 +162,7 @@ export default function Home() {
             自动处理聊天、记分板、箱子，以及模组和整合包界面里的英文内容。
           </p>
           <div className="heroActions">
-            <a className="primaryButton" href="#download">下载 1.4 正式版 <span>→</span></a>
+            <a className="primaryButton" href="#download">下载 {releaseVersion} 正式版 <span>→</span></a>
             <a className="textButton" href="#how">查看安装方法</a>
           </div>
           <div className="trustLine">
@@ -274,9 +280,9 @@ export default function Home() {
 
       <section className="downloadSection shell" id="download">
         <div className="downloadIntro">
-          <span className="sectionKicker light">1.4 正式版</span>
+          <span className="sectionKicker light">{releaseVersion} 正式版</span>
           <h2>免费使用，也欢迎一起把它做得更好。</h2>
-          <p>先选加载器，再选 Minecraft 版本。本次提供 31 个经过校验的 JAR。更新前请删除 1.4-beta4 及更早版本，只保留与你的 Minecraft 版本及加载器完全对应的 1.4 文件。</p>
+          <p>先选加载器，再选 Minecraft 版本。本次提供 31 个经过校验的 JAR。更新前请删除 1.4-beta5 及更早版本，只保留与你的 Minecraft 版本及加载器完全对应的 1.4 文件。</p>
         </div>
         <div className="downloadGroups">
           {downloadGroups.map((group) => (
@@ -307,7 +313,7 @@ export default function Home() {
           ))}
         </div>
         <div className="downloadMeta">
-          <a href={`${githubDownloadBase}/SHA256SUMS.txt`}>SHA-256 校验文件</a>
+          <a href={`${githubDownloadBase}/SHA256SUMS.txt`}>SHA-256 校验文件（Release 版，涵盖 31 颗可安装 JAR）</a>
           <a href={`https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/tag/v${releaseVersion}`}>查看正式版说明</a>
           <a href="https://github.com/TWJohnJohn20116/mc-auto-translation-tool">查看 GitHub 源代码</a>
           <a href="https://space.bilibili.com/3546631091783712">原作者：B站「我小张7272635」</a>

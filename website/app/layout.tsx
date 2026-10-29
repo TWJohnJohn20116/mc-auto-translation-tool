@@ -2,18 +2,16 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 // The production domain is not recorded anywhere in this repository, so it is
-// configured through `NEXT_PUBLIC_SITE_URL` (set it in the deploy environment).
-// The fallback is the project's GitHub repository, NOT the real site: it exists
-// only so relative asset URLs never resolve to `http://localhost:3000` in
-// production. Override it before shipping.
-const FALLBACK_SITE_URL =
-  "https://github.com/TWJohnJohn20116/mc-auto-translation-tool";
-
-function resolveMetadataBase(value: string | undefined): URL {
+// configured through `NEXT_PUBLIC_SITE_URL` (set it in the deploy environment;
+// see website/README.md). It deliberately has no fallback origin: a `/`-prefixed
+// asset URL discards the base path, so any repository-shaped fallback would emit
+// `<fallback-host>/og-card.png` — an image that exists on no server.
+function resolveMetadataBase(value: string | undefined): URL | undefined {
+  if (!value) return undefined;
   try {
-    return new URL(value ?? FALLBACK_SITE_URL);
+    return new URL(value);
   } catch {
-    return new URL(FALLBACK_SITE_URL);
+    return undefined;
   }
 }
 
@@ -28,7 +26,7 @@ export const metadata: Metadata = {
     title: "MC 自动翻译工具",
     description: "让语言不再成为一起游戏的门槛。",
     type: "website",
-    images: [{ url: "/og-card.png", width: 1733, height: 907, alt: "MC 自动翻译工具公益项目" }],
+    images: [{ url: "/og-card.png", width: 1200, height: 628, alt: "MC 自动翻译工具公益项目" }],
   },
   twitter: {
     card: "summary_large_image",

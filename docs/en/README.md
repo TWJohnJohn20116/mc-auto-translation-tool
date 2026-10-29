@@ -34,7 +34,7 @@ chat, quest books, mod menus, scoreboards, item descriptions, and signs.
 
 1. Check the **Minecraft version, mod loader, and Java version** used by the game instance.
 2. Open the [latest release](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/latest) and select a JAR from the table below.
-3. Remove 1.4-beta4 and every older copy from that instance's `mods` folder, then add exactly one matching 1.4 JAR. Fabric also requires the matching version of Fabric API.
+3. Remove every older `MCAutoTranslationTool-*` copy (1.4-beta5 and earlier) from that instance's `mods` folder, then add exactly one matching 1.4 JAR. Fabric also requires the matching version of Fabric API.
 4. Start the game. Press `F8` to toggle automatic translation. Open settings from the title-screen “Translation settings” button, by pressing `U`, or from the mods list if Mod Menu is installed.On Fabric 1.0–1.13.2 there is no key-binding API, so both keys are configured in `config/universal-translator.properties` (`settings-key` / `toggle-key`, for example `F7` and `J`).
 5. For a first run, choose **Offline** and **Translated only**. See the [installation and usage guide](USER_GUIDE.md) for details.
 
@@ -76,10 +76,11 @@ that is not listed as included.
 ### Forge: choose by Minecraft version
 
 Forge shares a JAR only between adjacent versions with verified compatibility. It has no Fabric-style
-nested implementation selection. A family JAR declares a continuous version range in `mods.toml`
-(such as `[1.21,1.21.6)`), which is wider than the adapters it actually contains: **the gaps inside
-that range have no implementation** (1.21.2 has no target). Only the versions listed row by row below
-are actually supported.
+nested implementation selection. A family JAR declares a comma-separated union of exact version
+restrictions in `mods.toml` (for example `[1.21,1.21],[1.21.1,1.21.1],[1.21.3,1.21.3]`) and lists only
+the versions that actually have an implementation: **1.21.2 is not in that union, so Forge refuses to
+load the JAR with a dependency error** instead of loading it and missing an implementation. Only the
+versions listed row by row below are actually supported.
 
 | Minecraft | Java | Download |
 | --- | ---: | --- |

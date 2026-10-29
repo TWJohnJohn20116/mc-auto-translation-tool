@@ -39,7 +39,7 @@
 
 1. 確認遊戲使用的 **Minecraft 版本、模組載入器與 Java 版本**。
 2. 開啟[最新 Release](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/latest)，依下表選擇 JAR。
-3. 先從該實例的 `mods` 資料夾移除 1.4-beta4 及更早版本，再放入唯一一個相符的 1.4 JAR。Fabric 還需安裝對應版本的 Fabric API。
+3. 先從該實例的 `mods` 資料夾移除所有 `MCAutoTranslationTool-*` 舊版本（1.4-beta5 及更早），再放入唯一一個相符的 1.4 JAR。Fabric 還需安裝對應版本的 Fabric API。
 4. 啟動遊戲。按 `F8` 開啟或關閉自動翻譯；主畫面右上角「翻譯設定」或按 `U` 開啟設定。若已安裝 Mod Menu，也可在模組清單開啟同一設定頁。（Fabric 1.0–1.13.2 沒有按鍵設定 API，這兩個鍵可在 `config/universal-translator.properties` 用 `settings-key` / `toggle-key` 改，例如 `F7`、`J`。）
 5. 首次使用建議選擇「離線」與「僅譯文」。詳細步驟請見[安裝與使用指南](USER_GUIDE.md)。
 
@@ -69,8 +69,9 @@ Java 隨遊戲為 8、17、21 或 25。1.14–1.14.2 因 Yarn 無法 remap，僅
 ### Forge：依 Minecraft 版本選擇
 
 Forge 只在已驗證相容的相鄰版本間共用 JAR，沒有 Fabric 那種多實作巢狀選版。族群 JAR 的
-`mods.toml` 用連續版本區間（如 `[1.21,1.21.6)`）宣告，比實際轉接清單寬：**區間裡的缺口沒有實作**
-（例如 1.21.2 沒有對應目標），只有下表逐項列出的版本才是實際支援範圍。
+`mods.toml` 以逗號分隔的精確 restriction 聯集宣告（如 `[1.21,1.21],[1.21.1,1.21.1],[1.21.3,1.21.3]`），
+只列真正有實作的版本：**1.21.2 不在其中，Forge 會直接以相依錯誤拒絕載入**，而不是放行後缺失實作。
+只有下表逐項列出的版本才是實際支援範圍。
 
 | Minecraft | Java | 下載 |
 | --- | ---: | --- |

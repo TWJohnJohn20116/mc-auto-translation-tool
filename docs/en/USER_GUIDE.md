@@ -44,9 +44,11 @@ set of 31 directly installable 1.4 JARs: one row per file.
 Place the correct JAR in the game instance's `mods` folder. The server does not need this mod.
 The single Fabric JAR accepts only the versions listed one by one above and requires Fabric Loader
 ≥ 0.19.3 on that instance (the floor the bundle's `fabric.mod.json` declares); on an older Loader it
-fails during load with a dependency error. Forge family JARs declare a continuous range that is wider
-than their adapters, and the gaps in that range (1.21.2) have no implementation. Each NeoForge JAR
-covers exactly one game version, and there is no 1.20.2 or 1.20.3 download.
+fails during load with a dependency error. Forge family JARs declare a comma-separated union of exact
+version restrictions listing only the versions that have an implementation, so 1.21.2 is not in it and
+Forge refuses to load the JAR with a dependency error rather than loading it with a missing
+implementation. Each NeoForge JAR covers exactly one game version, and there is no 1.20.2 or 1.20.3
+download.
 
 ## First-time setup
 

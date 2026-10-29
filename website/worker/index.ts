@@ -18,9 +18,65 @@ interface ExecutionContext {
 // `env.IMAGES` interception here would throw on every request; leave the
 // built-in passthrough in place.
 
+// `app/chatgpt-auth.ts` treats these as a platform-injected identity, which is
+// only true once the edge has stripped whatever the client sent: otherwise a
+// caller can forge a user id and email with two request headers.
+const IDENTITY_HEADER_PREFIX = "oai-authenticated-";
+
+// The site's only interactive element is a download button, so it must not be
+// frameable, and it must not leak the full referrer to the destinations it links.
+const SECURITY_HEADERS: Record<string, string> = {
+  "content-security-policy": "frame-ancestors 'none'",
+  "referrer-policy": "strict-origin-when-cross-origin",
+  "strict-transport-security": "max-age=31536000",
+  "x-content-type-options": "nosniff",
+  "x-frame-options": "DENY",
+};
+
+function withoutIdentityHeaders(request: Request): Request {
+  const forwarded = new Headers();
+  let found = false;
+  for (const [name, value] of request.headers) {
+    if (name.toLowerCase().startsWith(IDENTITY_HEADER_PREFIX)) {
+      found = true;
+      continue;
+    }
+    forwarded.append(name, value);
+  }
+  // Incoming request headers are immutable, so the sanitized copy is a new
+  // Request; browsers never send these headers, so the common path is untouched.
+  return found ? new Request(request, { headers: forwarded }) : request;
+}
+
+function withSecurityHeaders(response: Response): Response {
+  const hardened = new Response(response.body, response);
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+    hardened.headers.set(name, value);
+  }
+  return hardened;
+}
+
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    return handler.fetch(request, env, ctx);
+    // Almost every byte this site serves is static, so a failed render should
+    // degrade to the asset store instead of a Workers 500 page.
+    ctx.passThroughOnException();
+
+    try {
+      const response = await handler.fetch(withoutIdentityHeaders(request), env, ctx);
+      return withSecurityHeaders(response);
+    } catch (error) {
+      console.error("[worker] request failed:", error);
+      if (env.ASSETS) {
+        return withSecurityHeaders(await env.ASSETS.fetch(request));
+      }
+      return withSecurityHeaders(
+        new Response("Service temporarily unavailable", {
+          status: 503,
+          headers: { "content-type": "text/plain; charset=utf-8" },
+        }),
+      );
+    }
   },
 };
 

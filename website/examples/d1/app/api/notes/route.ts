@@ -1,5 +1,5 @@
 import { desc } from "drizzle-orm";
-import { getDb } from "../../../../../db";
+import { D1_BINDING_MISSING, getDb } from "../../../../../db";
 import { notes } from "../../../db/schema";
 
 const MAX_TITLE_LENGTH = 200;
@@ -13,20 +13,42 @@ const NOTES_TABLE_UNAVAILABLE =
   "The notes table is unavailable. Generate the migration locally with `npm run db:generate`, then deploy so the platform can apply the generated SQL to the real D1 database.";
 const GENERIC_SERVER_ERROR = "Internal server error";
 
-function toRouteErrorMessage(error: unknown) {
+function isBindingMissing(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: unknown }).code === D1_BINDING_MISSING
+  );
+}
+
+function toRouteError(error: unknown): { message: string; status: number } {
+  // A missing binding carries the one actionable instruction the operator needs
+  // (`hosting.json` must set `d1` to `DB`) and no query text, so surface it.
+  if (isBindingMissing(error)) {
+    console.error("[notes] database binding is missing:", error);
+    return {
+      message:
+        error instanceof Error ? error.message : GENERIC_SERVER_ERROR,
+      status: 503,
+    };
+  }
+
   const message = error instanceof Error ? error.message : "Unexpected error";
   const detail =
     error instanceof Error && error.cause instanceof Error ? error.cause.message : "";
   const combined = `${message}\n${detail}`;
 
-  if (combined.includes("no such table") || combined.includes('from "notes"')) {
-    return NOTES_TABLE_UNAVAILABLE;
+  // D1 names the missing table (`no such table: notes`). Matching the rendered SQL
+  // (`from "notes"`) instead also catches constraint and parameter errors, which
+  // would report a failed write as "the schema was never deployed".
+  if (combined.includes("no such table: notes")) {
+    return { message: NOTES_TABLE_UNAVAILABLE, status: 500 };
   }
 
   // Log the underlying failure (including the cause chain) for operators while
   // returning a generic message to the caller.
   console.error("[notes] request failed:", error);
-  return GENERIC_SERVER_ERROR;
+  return { message: GENERIC_SERVER_ERROR, status: 500 };
 }
 
 function parseNoteField(
@@ -56,10 +78,8 @@ export async function GET() {
 
     return Response.json({ notes: rows });
   } catch (error) {
-    return Response.json(
-      { error: toRouteErrorMessage(error) },
-      { status: 500 }
-    );
+    const { message, status } = toRouteError(error);
+    return Response.json({ error: message }, { status });
   }
 }
 
@@ -96,9 +116,7 @@ export async function POST(request: Request) {
     const [note] = await db.insert(notes).values({ title, content }).returning();
     return Response.json({ note }, { status: 201 });
   } catch (error) {
-    return Response.json(
-      { error: toRouteErrorMessage(error) },
-      { status: 500 }
-    );
+    const { message, status } = toRouteError(error);
+    return Response.json({ error: message }, { status });
   }
 }

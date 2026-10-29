@@ -9,9 +9,25 @@ async function render() {
 
   return worker.fetch(
     new Request("http://localhost/", { headers: { accept: "text/html" } }),
-    { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
+    { ASSETS: assetStore(), DB: undefined },
     { waitUntil() {}, passThroughOnException() {} },
   );
+}
+
+// Serves `public/` from disk instead of answering 404 to everything, so a missing
+// or renamed asset fails the suite rather than being hidden by the stub.
+function assetStore() {
+  return {
+    async fetch(request) {
+      const { pathname } = new URL(request.url);
+      try {
+        const body = await readFile(new URL(`../public${pathname}`, import.meta.url));
+        return new Response(body, { status: 200 });
+      } catch {
+        return new Response("Not found", { status: 404 });
+      }
+    },
+  };
 }
 
 const escapeRe = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -21,9 +37,19 @@ test("server-renders the public-benefit project home page", async () => {
   // （原本這裡寫死 1.3.10，網站升到 1.3.11 之後這個測試就一直紅著。）
   const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   const releaseVersion = source.match(/const releaseVersion = "([^"]+)"/)?.[1];
-  const pageTitle = source.match(/\btitle: "([^"]+)"/)?.[1];
   assert.ok(releaseVersion, "app/page.tsx 找不到 releaseVersion");
+  // 標題與描述都是模板字串，把 ${releaseVersion} 還原成實際版本號再比對；
+  // 這樣「分頁標題停在舊版」會在這裡紅，而不是等到發布後才被人發現。
+  const resolveVersion = (value) =>
+    (value ?? "").replace(/\$\{releaseVersion\}/g, releaseVersion);
+  const pageTitle = resolveVersion(
+    source.match(/\btitle:\s*[`"]([^`"]+)[`"]/)?.[1],
+  );
   assert.ok(pageTitle, "app/page.tsx 找不到 metadata title");
+  assert.ok(
+    pageTitle.includes(releaseVersion),
+    `metadata title 沒有跟著 releaseVersion 走：${pageTitle}`,
+  );
 
   const response = await render();
   assert.equal(response.status, 200);
@@ -65,7 +91,7 @@ test("server-renders the public-benefit project home page", async () => {
   for (const name of downloadNames.filter((entry) => entry.endsWith(".jar"))) {
     assert.match(
       name,
-      /^MCAutoTranslationTool-[\d.]+-[A-Za-z0-9.-]+\.jar$/,
+      new RegExp(`^MCAutoTranslationTool-${version}-[A-Za-z0-9.-]+\\.jar$`),
       `下載連結的檔名不符合 MCAutoTranslationTool-<版本>-<目標>.jar：${name}`,
     );
     assert.ok(
@@ -89,7 +115,9 @@ test("server-renders the public-benefit project home page", async () => {
     "Fabric 卡片必須寫明 Fabric Loader 的最低版本",
   );
   // metadata.description 會跟著 releaseVersion 走，漏改就是發布時的文案漂移。
-  const pageDescription = source.match(/description:\s*\n?\s*"([^"]+)"/)?.[1];
+  const pageDescription = resolveVersion(
+    source.match(/description:\s*\n?\s*[`"]([\s\S]*?)[`"],?\s*\n\s*\};/)?.[1],
+  );
   assert.ok(pageDescription, "app/page.tsx 找不到 metadata description");
   assert.ok(
     pageDescription.includes(releaseVersion),
@@ -121,15 +149,10 @@ test("server-renders the public-benefit project home page", async () => {
   assert.match(html, /summary_large_image/);
   assert.doesNotMatch(html, /Your site is taking shape|Building your site/);
 
-  // Link previews must not point at the viewer's own machine. Without a
-  // `metadataBase`, vinext falls back to `http://localhost:3000`, which makes
-  // every Discord/Twitter/QQ preview render a broken localhost image.
-  for (const [, content] of html.matchAll(
-    /<meta[^>]+(?:property="og:image"|name="twitter:image")[^>]+content="([^"]+)"/g,
-  )) {
-    assert.doesNotMatch(content, /localhost|127\.0\.0\.1/i);
-    assert.match(content, /^https?:\/\//);
-  }
+  // Link previews must not point at an unrelated origin. `metadataBase` only
+  // comes from `NEXT_PUBLIC_SITE_URL`; a repository-shaped fallback would resolve
+  // `/og-card.png` to `<host>/og-card.png` (the base path is discarded), which is
+  // an image no server hosts.
   const socialImages = [
     ...html.matchAll(
       /<meta[^>]+(?:property="og:image"|name="twitter:image")[^>]+content="([^"]+)"/g,
@@ -137,6 +160,11 @@ test("server-renders the public-benefit project home page", async () => {
   ].map((match) => match[1]);
   assert.ok(socialImages.length > 0, "expected social image meta tags");
   for (const content of socialImages) {
+    assert.doesNotMatch(
+      content,
+      /^https?:\/\/(?:[a-z0-9-]+\.)*github\.com\//i,
+      `社交預覽圖不能解析到 GitHub 根目錄：${content}`,
+    );
     assert.match(content, /\/og-card\.png$/, content);
   }
 });
@@ -157,4 +185,33 @@ test("keeps privacy and public-benefit claims in source", async () => {
   assert.match(css, /prefers-reduced-motion:\s*reduce/);
   assert.match(css, /@media \(max-width:\s*560px\)/);
   assert.doesNotMatch(page, /SkeletonPreview|codex-preview/);
+});
+
+// The page and its metadata reference absolute asset paths; nothing else checks
+// that those files exist, so a deleted `public/` entry would ship silently.
+test("every absolute asset the page references exists in public/", async () => {
+  const html = await (await render()).text();
+  const referenced = new Set();
+  for (const [, href] of html.matchAll(
+    /(?:href|src|content)="(\/[A-Za-z0-9._/-]+\.(?:png|svg|ico|webp|avif|jpe?g))"/g,
+  )) {
+    referenced.add(href);
+  }
+  assert.ok(
+    referenced.size > 0,
+    "expected the rendered page to reference at least one absolute asset path",
+  );
+  for (const href of referenced) {
+    const file = new URL(`../public${href}`, import.meta.url);
+    let missing = false;
+    try {
+      await readFile(file);
+    } catch {
+      missing = true;
+    }
+    assert.ok(
+      !missing,
+      `public${href} is referenced by the rendered page but does not exist`,
+    );
+  }
 });
