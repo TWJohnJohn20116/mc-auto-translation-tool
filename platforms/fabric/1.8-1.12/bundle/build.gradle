@@ -43,18 +43,11 @@ tasks.register("verifyBundle") {
     doLast {
         def archive = jar.archiveFile.get().asFile
         def required = ['fabric.mod.json'] + supportedVersions.collect { "META-INF/jars/universal-translator-${it}.jar" }
-        // One walk for the whole list; zipTree inside the loop re-expanded the aggregate jar once per
-        // required entry.
-        def present = new java.util.zip.ZipFile(archive).withCloseable { zip ->
-            def names = new HashSet()
-            def entries = zip.entries()
-            while (entries.hasMoreElements()) {
-                names.add(entries.nextElement().name)
+        required.each { path ->
+            if (!zipTree(archive).matching { include path }.files) {
+                throw new GradleException("Missing bundle entry: ${path}")
             }
-            names as Set
         }
-        def absent = required.findAll { !present.contains(it) }
-        if (!absent.isEmpty()) throw new GradleException("Missing bundle entry: ${absent.join(', ')}")
         println "Verified ${archive.name}: all ${supportedVersions.size()} Minecraft 1.8.9-1.12.2 implementations present"
     }
 }

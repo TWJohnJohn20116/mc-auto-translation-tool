@@ -133,26 +133,9 @@ jobs:
 
           # -PtargetPlatform 吃的是平台名稱（forge-1.21.7、fabric-1.13.x），不是發布資產名稱
           # （mc1.21.7-forge）。這裡從目標名稱推導；推錯會在 settings 評估階段就失敗。
-          TARGETS_JSON="$(printf '%s' "$TARGETS_JSON" | python3 -c '
-          import json, re, sys
-          targets = json.load(sys.stdin)
-          for entry in targets:
-              # standalone 的兩筆沒有 platform／project 這兩個鍵，先前只靠 `matrix.standalone && …`
-              # 的短路才沒展開成 -PtargetPlatform=；這裡給它們明確的空字串。
-              if entry.get("standalone"):
-                  entry.setdefault("platform", "")
-                  entry.setdefault("project", "")
-                  continue
-              name = entry["target"]
-              match = re.match(r"mc(.+)-(forge|neoforge|fabric)\Z", name)
-              if match is None:
-                  # 先前這裡是 .groups()，名稱不符格式就丟 AttributeError，整段以 Python
-                  # traceback 結束，訊息裡完全沒有目標名。
-                  raise SystemExit("目標名稱不符 mc<game>-<loader>：" + name)
-              game, loader = match.groups()
-              entry["platform"] = f"{loader}-{game}"
-          print(json.dumps(targets))
-          ')"
+          # 推導邏輯在 scripts/ci/derive-prepare-targets.py：寫在 run 內的 Python 需要單引號
+          # heredoc，會觸發 shellcheck SC2016，而那段程式碼也要能被單獨測試。
+          TARGETS_JSON="$(python3 scripts/ci/derive-prepare-targets.py "$TARGETS_JSON")"
           export TARGETS_JSON
 
           if [[ -z "$requested" ]]; then

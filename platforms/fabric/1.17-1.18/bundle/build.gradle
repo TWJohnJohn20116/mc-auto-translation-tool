@@ -61,17 +61,10 @@ tasks.register("verifyBundle") {
         // One walk for the whole list. zipTree(archive) used to be built inside the loop, so every
         // required entry re-expanded the entire aggregate jar — about 110 full ZIP parses per build
         // across the eight bundles, each nested jar being a multi-megabyte deflate stream.
-        def present = new java.util.zip.ZipFile(archive).withCloseable { zip ->
-            def names = new HashSet()
-            def entries = zip.entries()
-            while (entries.hasMoreElements()) {
-                names.add(entries.nextElement().name)
+        required.each { path ->
+            if (!zipTree(archive).matching { include path }.files) {
+                throw new GradleException("Missing bundle entry: ${path}")
             }
-            names as Set
-        }
-        def absent = required.findAll { !present.contains(it) }
-        if (!absent.isEmpty()) {
-            throw new GradleException("Missing bundle entry: ${absent.join(', ')}")
         }
         println "Verified ${archive.name}: all ${supportedVersions.size()} Minecraft 1.17/1.18 implementations present"
     }
