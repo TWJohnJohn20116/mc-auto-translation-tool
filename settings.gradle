@@ -209,15 +209,29 @@ def fabricReleaseBundles = [
         "platform-fabric-1.21.x",
         "platform-fabric-26.x"
 ]
+// 專案名 → Minecraft 版本的唯一正規化規則。啟動器把 1.13.0 叫成 "1.13"，所以那個 bundle 的
+// nested JAR 是 universal-translator-1.13.jar；專案名不能直接拿來當版本字串。這條規則原本只存在
+// 於 fabricReleaseVersions 的 collect 裡，現在抽成 helper 讓 bundle 驗證器共用，避免出現第三份。
+def fabricMinecraftVersionOf = { Object platformProjectName ->
+    def projectVersion = platformProjectName.toString() - "platform-fabric-"
+    projectVersion == "1.13.0" ? "1.13" : projectVersion
+}
+gradle.ext.fabricMinecraftVersionOf = fabricMinecraftVersionOf
+
 gradle.ext.fabricReleaseVersions = fabricReleaseBundles
         .collectMany { platformDependencies.getOrDefault(it, []) }
-        .collect {
-            def projectVersion = it - "platform-fabric-"
-            // Launchers call Minecraft 1.13.0 simply "1.13", so that bundle names its nested JAR
-            // universal-translator-1.13.jar; the project name cannot be used verbatim.
-            projectVersion == "1.13.0" ? "1.13" : projectVersion
-        }
+        .collect { fabricMinecraftVersionOf(it) }
         .unique()
+
+// 某個 bundle **自己的**版本清單（CI 修-2）：驗證器只能餵「這個 bundle 的 Fabric Loader 世代」
+// 解析得出的版本。舊的內嵌 jar（1.13–1.24 依賴舊 fabric API／舊 minecraft）在 26.x 的 resolver
+// 裡是 HARD_DEP_NO_CANDIDATE，跨世代餵全域清單不成立，所以 args 一律走這裡；全域清單只留給
+// 共用驗證腳本的缺席警告（logger.warn），兩者不可互換。
+gradle.ext.fabricBundleVersions = { Object platformProjectName ->
+    platformDependencies.getOrDefault(platformProjectName.toString(), [])
+            .collect { fabricMinecraftVersionOf(it) }
+            .unique()
+}
 
 def normalizePlatform = { String value ->
     def target = value.trim()

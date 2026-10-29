@@ -354,6 +354,17 @@ public final class RenderTranslationSession implements AutoCloseable {
         if (closed) {
             return false;
         }
+        if (error != null && isSessionClosed(error)) {
+            // The coordinator settles a request it can no longer answer with a
+            // SessionClosedException when its session is torn down (a settings reload replaces the
+            // whole session, so this session's own close() is not always what ran first). That is
+            // not a provider failure: recording it below would put the key into the retry table
+            // for FAILURE_RETRY_MILLIS and re-submit the same line into a session that no longer
+            // exists, and it would publish a misleading "翻译失败" line into latest.log. The pending
+            // entry is already released above, so the slot is not lost.
+            retryAfter.remove(key);
+            return false;
+        }
         // The filter can be replaced while an older request is still completing.
         // Never publish a result that is blocked by the current configuration.
         if (blockedKeywords.matches(original)) {
@@ -740,6 +751,22 @@ public final class RenderTranslationSession implements AutoCloseable {
     /** Latest render-time failure, cleared after the next successful request. */
     public String lastFailureStatus() {
         return lastFailureStatus;
+    }
+
+    /**
+     * Whether {@code error} is the coordinator's terminal "this session was closed" signal rather
+     * than a provider failure, looking through the stage wrappers a chained future adds.
+     */
+    private static boolean isSessionClosed(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof TranslationCoordinator.SessionClosedException) {
+                return true;
+            }
+            Throwable cause = current.getCause();
+            current = cause == current ? null : cause;
+        }
+        return false;
     }
 
     private static String safeFailureStatus(Throwable error, TranslationResult result) {

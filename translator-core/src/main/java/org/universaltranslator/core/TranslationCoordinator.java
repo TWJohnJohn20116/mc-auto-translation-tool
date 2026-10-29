@@ -2,9 +2,9 @@ package org.universaltranslator.core;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
@@ -503,13 +503,22 @@ public final class TranslationCoordinator implements AutoCloseable {
         }
         // Complete callers before interrupting workers. Otherwise an interrupted
         // provider can win the race and publish an ordinary failure result even
-        // though the whole translation session is being cancelled.
-        for (CompletableFuture<TranslationResult> future : inFlight.values()) {
-            future.completeExceptionally(
-                    new CancellationException("Translation session was closed"));
-        }
-        inFlight.clear();
+        // though the whole translation session is being closed.
+        //
+        // The exception deliberately is a SessionClosedException and not a
+        // CancellationException. A CompletableFuture that was handed a CancellationException
+        // reports isCancelled() == true, and get(...) then rethrows that exception as itself
+        // instead of wrapping it in an ExecutionException -- so a caller could not tell a
+        // closed session apart from a cancelled request, and a queued or running request that
+        // the session abandoned looked like a cancellation rather than a failure.
+        settleOpenRequests();
         executor.shutdownNow();
+        // Requests that were registered while the sweep above was running are not covered by
+        // its weakly consistent iteration, and the queue drained by shutdownNow never runs the
+        // worker that would have settled them. Settling again is safe: the first completion of
+        // a future is the one that counts, every later call is a no-op, so no request is
+        // settled twice even though both sweeps can see the same entry.
+        settleOpenRequests();
         // Wait for interrupted workers to leave provider.translate(...) before the provider
         // is torn down. Otherwise a worker can loop back into a retrying provider (for
         // example ResilientTranslationProvider retrying an IOException) against an
@@ -536,6 +545,45 @@ public final class TranslationCoordinator implements AutoCloseable {
             } catch (Exception ignored) {
                 // Minecraft is shutting down or applying a replacement configuration.
             }
+        }
+    }
+
+    /**
+     * Fails every request this session still owns with a {@link SessionClosedException} and
+     * forgets it, so {@code get(...)} on a queued or running request throws
+     * {@link java.util.concurrent.ExecutionException} instead of blocking until its timeout or
+     * reporting a cancellation.
+     *
+     * <p>An entry is removed only when it still maps to the same future, so a request that was
+     * registered for the same key after the sweep started keeps its own future. Nothing here
+     * blocks: it runs on the caller's thread, on the futures' own lock-free completion path.
+     */
+    private void settleOpenRequests() {
+        for (Map.Entry<String, CompletableFuture<TranslationResult>> entry : inFlight.entrySet()) {
+            CompletableFuture<TranslationResult> future = entry.getValue();
+            future.completeExceptionally(
+                    new SessionClosedException("Translation session was closed"));
+            inFlight.remove(entry.getKey(), future);
+        }
+    }
+
+    /**
+     * Terminal signal for a request that the closed session can never answer.
+     *
+     * <p>An {@link IllegalStateException}, and specifically <em>not</em> a
+     * {@link java.util.concurrent.CancellationException}: {@code CompletableFuture} treats a
+     * future completed with a cancellation exception as cancelled, so {@code get(...)} rethrows
+     * the cancellation itself and the caller cannot separate "shut down under me" from
+     * "somebody cancelled this". It is a distinct type rather than a bare
+     * {@code IllegalStateException} because the render path has to recognise exactly this
+     * outcome: a session that is going away must not be recorded as a retryable provider
+     * failure.
+     */
+    public static final class SessionClosedException extends IllegalStateException {
+        private static final long serialVersionUID = 1L;
+
+        public SessionClosedException(String message) {
+            super(message);
         }
     }
 
