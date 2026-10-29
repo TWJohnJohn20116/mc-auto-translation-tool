@@ -33,7 +33,16 @@ runs:
         # 狀態判斷。要驗證時必須用 `bash -e script.sh` 模擬 runner，否則測不出來。
         set +e
         set -uo pipefail
-        read -r -a gradle_args <<< "$GRADLE_ARGS"
+        # 用 shlex 切詞而不是 `read -a`：`read` 只依 IFS 切空白，不做引號處理，任何需要
+        # 空白的參數（-Pfoo="a b"、--project-dir "two words"）都會被拆成多個 token，而
+        # 這是唯一的建置入口，呼叫端很容易拼出那種值。
+        mapfile -t gradle_args < <(
+          printf '%s' "$GRADLE_ARGS" | python3 -c 'import shlex, sys; print("\n".join(shlex.split(sys.stdin.read())))'
+        )
+        if [[ "${#gradle_args[@]}" -eq 0 ]]; then
+          echo "::error::gradle-build 的 args 是空的，沒有東西可以執行"
+          exit 1
+        fi
         log="$(mktemp)"
         attempt=1
         while true; do

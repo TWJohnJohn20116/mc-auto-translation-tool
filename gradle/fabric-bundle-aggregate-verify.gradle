@@ -44,12 +44,22 @@ if (!project.gradle.ext.has("fabricBundleVersions") || !project.gradle.ext.has("
 }
 
 tasks.register("verifyPreparedReleaseBundle", JavaExec) {
-    dependsOn rootProject.tasks.named("verifyPreparedReleaseAssets"), testClasses
+    // Only the aggregate jar is needed, so depend on the task that builds it. Depending on
+    // verifyPreparedReleaseAssets also pulled testJarVerifier, testReleaseAssetPreparer and
+    // verifyReleaseJars in, plus a requirement that downloads/<mod_version>/SHA256SUMS.txt already
+    // exists — which is the same "a version bump fails the required check by definition" interlock
+    // that check/ had removed, only moved onto bundle verification.
+    dependsOn rootProject.tasks.named("prepareReleaseAssets"), testClasses
     classpath = sourceSets.test.runtimeClasspath
     mainClass = "org.universaltranslator.bundle.BundleResolutionVerifier"
-    // The bundle test harness runs against a Loader generation that needs a Java 25 launcher.
+    // The launcher has to match this bundle's own toolchain: only the 26.x projects are given Java 25
+    // by the root build (their names carry the platform-fabric-26. prefix); everything else compiles
+    // and runs on 21, and settings.gradle installs no toolchain resolver that could provision a 25
+    // for them. Requesting 25 unconditionally failed with "No matching toolchains found" in any job
+    // that only had the JDK the project declares.
     javaLauncher = javaToolchains.launcherFor {
-        languageVersion = JavaLanguageVersion.of(25)
+        languageVersion = JavaLanguageVersion.of(
+                platformProjectName.startsWith("platform-fabric-26.") ? 25 : 21)
     }
 
     def aggregateJar = rootProject.layout.buildDirectory.file(
@@ -87,11 +97,19 @@ tasks.register("verifyPreparedReleaseBundle", JavaExec) {
         }
         println "Verifying Fabric Loader resolution for ${bundleVersions.size()} Minecraft versions of " +
                 "${platformProjectName}: ${bundleVersions.join(', ')}"
-        // One walk of the archive: the names of the nested implementation JARs it really carries.
-        // This is a warning only — the args above stay this bundle's list.
-        def carried = project.zipTree(aggregateJar)
-                .matching { include "META-INF/jars/universal-translator-*.jar" }
-                .files.collect { it.name }
+        // One pass over the archive's central directory: only the entry names are wanted, and
+        // zipTree(...).files would extract every matching nested jar (51 of them across the eight
+        // generations) to disk just to read its name back off the temp file.
+        def carried = []
+        new java.util.zip.ZipFile(aggregateJar).withCloseable { zip ->
+            zip.entries().each { entry ->
+                def name = entry.name
+                if (name.startsWith("META-INF/jars/universal-translator-")
+                        && name.endsWith(".jar")) {
+                    carried.add(name.substring(name.lastIndexOf('/') + 1))
+                }
+            }
+        }
         def absent = foreignVersions.findAll {
             !carried.contains("universal-translator-${it}.jar")
         }

@@ -21,12 +21,25 @@ echo =======================================================
 echo Adding Windows Defender Exclusions...
 echo =======================================================
 
-powershell -NoProfile -Command "& { Add-MpPreference -ExclusionPath '%PROJECT_DIR%', '%GRADLE_USER_HOME%'; Add-MpPreference -ExclusionProcess 'java.exe'; Write-Host 'Successfully added exclusions!' -ForegroundColor Green }"
+echo WARNING: these exclusions lower this machine's malware protection. Use them only on a
+echo          dedicated build machine. Only two folders are excluded - never the java.exe process,
+echo          which would switch off real-time scanning for every Java program on this machine.
+echo.
+
+:: 目錄路徑由 .ps1 自己用 $PSScriptRoot 推導，批次檔不把路徑插進 PowerShell 字串，
+:: 否則路徑含 ' 或 & 時整條 -Command 會解析失敗（且失敗不會被偵測）。
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0ci\set-defender-exclusions.ps1"
+if errorlevel 1 (
+    echo.
+    echo FAILED: Windows Defender exclusions were NOT applied.
+    echo         Run this script from an elevated prompt on a machine whose Defender policy
+    echo         (or Tamper Protection) allows Add-MpPreference.
+    exit /b 1
+)
 
 echo.
 echo Windows Defender exclusions successfully configured:
 echo   - Folder: %PROJECT_DIR%
 echo   - Folder: %GRADLE_USER_HOME%
-echo   - Process: java.exe
 echo.
 pause

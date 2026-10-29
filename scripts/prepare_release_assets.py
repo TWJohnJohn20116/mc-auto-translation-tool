@@ -115,7 +115,10 @@ def discover_jars(release_dir: Path) -> dict[str, tuple[Path, bytes]]:
         if not match:
             raise PreparationError(f"invalid split JAR part name: {part.name}")
         logical.add((part.parent / match.group("jar")).resolve())
-    result = {path.name: (path, _read_jar(path)) for path in logical}
+    # 用排序後的順序而不是 set 的迭代序：Path 的雜湊取決於字串雜湊（每個進程隨機），於是
+    # _fabric_implementations 遇到重複版本時丟哪一顆、unmerged_forge_groups 印 NOTE 的順序、
+    # forge_by_version 被同名覆蓋時保留哪一顆都會隨 PYTHONHASHSEED 變動。
+    result = {path.name: (path, _read_jar(path)) for path in sorted(logical)}
     if not result:
         raise PreparationError(f"no release JARs found in {release_dir}")
     return result
@@ -354,10 +357,32 @@ def _is_within(path: Path, parent: Path) -> bool:
     """Return True when `path` is `parent` itself or nested inside it.
 
     Uses `Path.parents` rather than `Path.is_relative_to` so the guard also holds on
-    interpreters older than 3.9; both operands are already resolved, so a cross-drive
-    comparison can never occur here.
+    interpreters older than 3.9. Both operands are resolved by the caller, so a relative
+    `..` cannot escape the comparison. A path on another drive (or another root) shares no
+    parents with `parent` and therefore compares as "not inside": this function alone
+    cannot prove a directory is safe, which is why `_validate_output_dir` also requires an
+    explicitly allowed location.
     """
     return path == parent or parent in path.parents
+
+
+def _validate_output_dir(output_dir: Path) -> None:
+    """Refuse an output directory that a mistyped argument could point at repository content.
+
+    The three release-directory guards below only describe how `output_dir` relates to
+    `downloads/<version>`, so `--output-dir scripts`, `--output-dir docs`, `--output-dir .`
+    and `--output-dir ..` all passed them and were then deleted by `shutil.rmtree` and
+    refilled with the generated JARs.
+    """
+    if _is_within(output_dir, Path.cwd().resolve() / "build"):
+        return
+    # build/ 之外只接受「還不存在的新目錄」（CI 傳 $RUNNER_TEMP/release-assets）或上一次執行
+    # 留下的資產集——後者以 SHA256SUMS.txt 認身分，那是這個工具唯一的產物簽名。
+    if output_dir.exists() and not (output_dir / "SHA256SUMS.txt").is_file():
+        raise PreparationError(
+            "output directory exists and is not a previous asset set "
+            f"(no SHA256SUMS.txt): {output_dir}"
+        )
 
 
 def prepare_release(
@@ -379,6 +404,7 @@ def prepare_release(
             "output directory must not be inside the release directory: "
             f"{output_dir} is inside {release_dir}"
         )
+    _validate_output_dir(output_dir)
     jars = discover_jars(release_dir)
     expected_prefix = f"MCAutoTranslationTool-{version}-"
     mismatched = sorted(name for name in jars if not name.startswith(expected_prefix))
@@ -401,6 +427,13 @@ def prepare_release(
     for name, (_, data) in jars.items():
         forge_version = _forge_version_from_name(name, version)
         if forge_version:
+            if forge_version in forge_by_version:
+                # 同名覆蓋會讓「這一版的 Forge JAR 是哪一顆」取決於迭代序；兩個檔名指向同一個
+                # Minecraft 版本必須是顯性錯誤（例如同時存在單版本與 bundle 產物）。
+                raise PreparationError(
+                    f"duplicate Forge JAR for {forge_version}: "
+                    f"{forge_by_version[forge_version][0]} and {name}"
+                )
             forge_by_version[forge_version] = (name, data)
 
     generated: dict[str, bytes] = {

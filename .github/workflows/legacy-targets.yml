@@ -58,10 +58,10 @@ jobs:
           cat > "$RUNNER_TEMP/targets.json" <<'JSON'
           {
             "fabric": [
-              {"target": "fabric-1.0-1.8.x"},
-              {"target": "fabric-1.8-1.12.x"},
-              {"target": "fabric-1.13.x"},
-              {"target": "fabric-1.14-1.15.x"}
+              {"target": "fabric-1.0-1.8.x", "java": "21"},
+              {"target": "fabric-1.8-1.12.x", "java": "21"},
+              {"target": "fabric-1.13.x", "java": "21"},
+              {"target": "fabric-1.14-1.15.x", "java": "21"}
             ],
             "forge": [
               {"target": "forge-legacy-1.8.9", "dir": "platforms/forge/legacy/1.8.9"},
@@ -110,7 +110,14 @@ jobs:
           for name, entries in groups.items():
               selected = [e for e in entries if not requested or e["target"] in requested]
               total += len(selected)
-              lines.append(f"{name}_matrix=" + json.dumps({"include": selected}))
+              # 空矩陣（{"include": []}）會被 GitHub 以 "does not contain any values" 拒絕，而
+              # job 層 if 與 matrix 展開的先後順序沒有保證。永遠輸出至少一筆哨兵，讓 job 照常
+              # 執行、由建置步驟自己的 if（matrix.target != 'none'）略過。
+              if selected:
+                  matrix_entries = selected
+              else:
+                  matrix_entries = [{"target": "none", "java": "21", "dir": "."}]
+              lines.append(f"{name}_matrix=" + json.dumps({"include": matrix_entries}))
               lines.append(f"{name}_count={len(selected)}")
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
               out.write("\n".join(lines) + "\n")
@@ -121,7 +128,6 @@ jobs:
   legacy-fabric:
     name: 建置舊版 Fabric ${{ matrix.target }}
     needs: plan
-    if: needs.plan.outputs.fabric_count != '0'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     # fabric-1.0-1.8.x 曾經長期紅燈（feather 版本對應錯誤），2026-10-04 已修好：12 個上游 mappings
@@ -134,11 +140,14 @@ jobs:
       - name: 取出原始碼
         uses: actions/checkout@v7
 
-      - name: 設定 Java 21
+      - name: 設定 Java
         uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: "21"
+          # 這個工作流的 NeoForge 也用 matrix.java；legacy Fabric 的四個 bundle 目前都是 21
+          # （Ornithe／ploceus 需要的是 Gradle 端的 toolchain，不是更新的 JDK），值放在 plan 的
+          # JSON 裡，要為單一 bundle 換 JDK 時不必改 job。
+          java-version: ${{ matrix.java }}
 
       - name: 設定 Gradle
         uses: gradle/actions/setup-gradle@v6
@@ -152,13 +161,14 @@ jobs:
 
       - name: 建置舊版 Fabric 整合包
         id: build
+        if: matrix.target != 'none'
         uses: ./.github/actions/gradle-build
         with:
           args: --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
 
       - name: 上傳舊版 Fabric JAR
         # Artifact policy: never from a pull_request run (this workflow has none today).
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && matrix.target != 'none'
         uses: actions/upload-artifact@v7
         with:
           name: legacy-fabric-${{ matrix.target }}
@@ -178,7 +188,6 @@ jobs:
   legacy-forge:
     name: 建置舊版 Forge ${{ matrix.target }}
     needs: plan
-    if: needs.plan.outputs.forge_count != '0'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
@@ -198,6 +207,7 @@ jobs:
 
       - name: 建置舊版 Forge
         id: build
+        if: matrix.target != 'none'
         uses: ./.github/actions/gradle-build
         with:
           args: --no-daemon build
@@ -205,7 +215,7 @@ jobs:
 
       - name: 上傳舊版 Forge JAR
         # Artifact policy: never from a pull_request run (this workflow has none today).
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && matrix.target != 'none'
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target }}
@@ -228,7 +238,6 @@ jobs:
   neoforge-targets:
     name: 建置 NeoForge ${{ matrix.target }}
     needs: plan
-    if: needs.plan.outputs.neoforge_count != '0'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
@@ -252,13 +261,14 @@ jobs:
 
       - name: 建置 NeoForge 平台
         id: build
+        if: matrix.target != 'none'
         uses: ./.github/actions/gradle-build
         with:
           args: --no-daemon --max-workers=2 -PtargetPlatform=${{ matrix.target }} :platform-${{ matrix.target }}:build
 
       - name: 上傳 NeoForge JAR
         # Artifact policy: never from a pull_request run (this workflow has none today).
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && matrix.target != 'none'
         uses: actions/upload-artifact@v7
         with:
           name: platform-${{ matrix.target }}

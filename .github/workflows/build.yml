@@ -20,9 +20,13 @@ on:
 permissions:
   contents: read
 
+# group 只含 workflow 與 ref 時，同一個 ref 上的 push 與 workflow_dispatch 共用一組，於是
+# 連續兩個 commit 推上 main（或 push 後立刻手動 dispatch）會取消前一個執行：被取消的 run 不會
+# 上傳 release-assets 產物，ci-status 的結果是 cancelled（不是 success／skipped），
+# 在 main 與 PR 上都留下一筆查不到原因的失敗紀錄。只有 PR 才互相取消。
 concurrency:
-  group: build-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: build-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
@@ -86,6 +90,25 @@ jobs:
           }
           check "UserAgent.VALUE" "$agent"
           check "website 的 releaseVersion" "$web"
+          # website/app/page.tsx 的版本號必須由 `const releaseVersion` 推導：metadata.title／
+          # metadata.description／hero 按鈕／下載區 kicker 先前各自寫死，於是 bump 只改
+          # releaseVersion 就全綠，而分頁標題、og:title 與首頁文案停在舊版。
+          hardcoded="$(grep -nE '^  (title|description):' website/app/page.tsx \
+            | grep -v 'releaseVersion' | grep -E '[0-9]+[.][0-9]+' || true)"
+          if [[ -n "$hardcoded" ]]; then
+            echo "::error::website/app/page.tsx 的 metadata 寫死了版本號，必須用 \${releaseVersion}：${hardcoded}"
+            failed=1
+          fi
+          for derived in '^  title:' '^  description:' 'primaryButton' 'sectionKicker'; do
+            # -A2：description 的值寫在下一行（模板字串），只看那一行會誤判。
+            # 用 grep -c 而不是 grep -q：pipefail 下 grep -q 提早結束會讓上游收到 SIGPIPE，
+            # 管線狀態變成 141，這個判斷就永遠成立。
+            hits="$(grep -A2 -E "$derived" website/app/page.tsx | grep -c 'releaseVersion' || true)"
+            if [[ "${hits:-0}" -eq 0 ]]; then
+              echo "::error::website/app/page.tsx 的 ${derived} 沒有用 releaseVersion 推導版本號"
+              failed=1
+            fi
+          done
           for readme in README.md docs/Zh-cn/README.md docs/Zh-tw/README.md docs/en/README.md; do
             # 必須「唯一」，不是「取第一個」。`head -n 1` 只看每份文件的第一個下載連結，於是
             # 其餘 15 個 Forge／NeoForge 連結即使整批留在舊版本號，這一步照樣輸出「版本號一致」
@@ -167,19 +190,32 @@ jobs:
       - name: 檢查 composite action
         run: |
           set -euo pipefail
-          # 明確把檔案路徑傳給 actionlint。若這一版的 actionlint 還不認得 action metadata
-          # （會以 workflow-only 的語法錯誤擋下），只忽略那一類訊息，其餘一律視為失敗——
-          # 下面的契約斷言才是實際生效的守門員，兩者都不吞掉真正的錯誤。
-          if actionlint -color .github/actions/gradle-build/action.yml > /tmp/actionlint-action.log 2>&1; then
-            cat /tmp/actionlint-action.log
+          # 這一版的 actionlint 支不支援 action metadata，先用一個最小合法的 fixture 探測，不要
+          # 事後猜訊息：`unexpected key` 同時是「不支援 metadata」與「真的打錯 key」的訊息，用樣式
+          # 判斷會把後者降級成 ::notice::，於是寫壞的 composite action 在 PR 上完全不會紅。
+          probe="$RUNNER_TEMP/action-metadata-probe"
+          mkdir -p "$probe"
+          cat > "$probe/action.yml" <<'YAML'
+          name: probe
+          description: probe
+          runs:
+            using: composite
+            steps:
+              - shell: bash
+                run: echo probe
+          YAML
+          if actionlint -color "$probe/action.yml" >/dev/null 2>&1; then
+            actionlint -color .github/actions/gradle-build/action.yml
             echo "actionlint 已檢查 composite action"
           else
-            if grep -qE 'unexpected key|is not defined for "workflow"|"jobs" section|missing .*workflow' /tmp/actionlint-action.log; then
-              echo "::notice::這一版 actionlint 不支援 action metadata，改用下列契約斷言檢查 composite action"
-            else
-              cat /tmp/actionlint-action.log
-              exit 1
-            fi
+            actionlint -color .github/actions/gradle-build/action.yml > "$RUNNER_TEMP/actionlint-action.log" 2>&1 || true
+            echo "::notice::這一版 actionlint 不支援 action metadata，改用下列契約斷言檢查 composite action"
+            {
+              echo "## actionlint 對 composite action 的原始輸出（不支援 metadata，僅供人工複核）"
+              echo '```'
+              cat "$RUNNER_TEMP/actionlint-action.log" || true
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
           action="${GITHUB_WORKSPACE:-.}/.github/actions/gradle-build/action.yml"
           # AGENTS.md 的兩條硬契約只存在於註解裡，這裡讓它們在 PR 上就紅：
@@ -215,7 +251,6 @@ jobs:
     outputs:
       targets: ${{ steps.resolve.outputs.targets }}
       forge_changed: ${{ steps.forge.outputs.changed }}
-      release_changed: ${{ steps.release.outputs.changed }}
     steps:
       - name: 取出原始碼
         uses: actions/checkout@v7
@@ -236,6 +271,36 @@ jobs:
           else
             echo "targets=,$requested," >> "$GITHUB_OUTPUT"
           fi
+          if [[ "${EVENT_NAME:-}" == "workflow_dispatch" && -n "$requested" ]]; then
+            # 名稱打錯時兩群 job 的建置步驟全部被 if 略過，每個 job 仍回報 success、CI 總結 綠燈
+            # ——這正是 AGENTS.md 記載的假綠燈。legacy-targets.yml 與 prepare-release.yml 已經用
+            # ::error:: 擋掉未知名稱，這裡補上同一道關卡。清單直接從本檔的 matrix 取，所以
+            # 「驗證清單」與「matrix 名稱」不可能分叉。
+            python3 - "$requested" <<'PY'
+          import re, sys
+          from pathlib import Path
+
+          requested = [name for name in sys.argv[1].split(",") if name]
+          keywords = {"legacy", "release"}
+          if not requested:
+              print("::error::targets 只給了逗號或空白，沒有任何目標名稱", file=sys.stderr)
+              sys.exit(1)
+          section = None
+          known = set()
+          for line in Path(".github/workflows/build.yml").read_text(encoding="utf-8").splitlines():
+              header = re.match(r"^  ([A-Za-z][A-Za-z0-9_-]*):\s*$", line)
+              if header:
+                  section = header.group(1)
+              entry = re.match(r"^\s+- target:\s*(\S+)\s*$", line)
+              if entry and section in ("platform-build", "legacy-build"):
+                  known.add(entry.group(1))
+          unknown = [name for name in requested if name not in known and name not in keywords]
+          if unknown:
+              print("::error::不存在的目標：" + "、".join(unknown), file=sys.stderr)
+              print("可用目標：" + "、".join(sorted(known | keywords)), file=sys.stderr)
+              sys.exit(1)
+          PY
+          fi
 
       # Forge／NeoForge 的建置要跑 Minecraft Mavenizer 與 ForgeGradle 的 decompile，
       # 單一目標就要 3～5 分鐘。只動到文件、網站或 Fabric 的 PR 不可能影響它們，
@@ -255,7 +320,15 @@ jobs:
           git fetch --no-tags --depth=1 origin "$BASE_REF"
           # 保守策略：只有「所有變更都落在與 Forge 無關的路徑」時才略過。
           # 文件、網站、下載資產與 Fabric 平台都是獨立專案，改動它們不會影響 Forge。
-          if git diff --name-only FETCH_HEAD HEAD | grep -qvE '^(docs/|website/|downloads/|platforms/fabric/)|\.md$|^LICENSE$|^\.gitignore$'; then
+          # 但 LICENSE 與 docs/en/THIRD_PARTY_OFFLINE.md 會被 gradle/jar-contents.gradle 打包進
+          # 每一顆 JAR（含 19 個 Forge 與 19 個 NeoForge），改到它們就是改到產物；`from(...)` 在
+          # 檔案被刪或改名時甚至會讓 configuration 失敗。這兩個路徑不能用「文件」的名義略過。
+          paths="$(git diff --name-only FETCH_HEAD HEAD)"
+          unrelated='^(docs/|website/|downloads/|platforms/fabric/)|\.md$|^\.gitignore$'
+          jar_contents='^(LICENSE.*|docs/en/THIRD_PARTY_OFFLINE\.md)$'
+          relevant="$(printf '%s\n' "$paths" | grep -vE "$unrelated" || true)"
+          jar_changed="$(printf '%s\n' "$paths" | grep -E "$jar_contents" || true)"
+          if [[ -n "$relevant" || -n "$jar_changed" ]]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "這個 PR 有動到 Forge／NeoForge 相關路徑"
           else
@@ -263,33 +336,11 @@ jobs:
             echo "這個 PR 只動到文件、網站、下載資產或 Fabric，略過 Forge／NeoForge 建置"
           fi
 
-      # 發布資產驗證要讀 downloads/<version> 的 74 個檔案（31.7 MB）、把 8 組分片在記憶體
-      # 串接、對 48 顆邏輯 JAR 逐 entry 做 ZIP 解析與 SHA-256。純文件、網站或平台程式的 PR
-      # 不可能改變它的結論，所以照 forge_changed 的同一個機制做路徑閘門。
-      # 一樣只略過「步驟」，job 仍會執行並回報成功，CI 總結 才不會卡在 waiting。
-      - name: 判斷有沒有動到發布資產
-        id: release
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          BASE_REF: ${{ github.base_ref }}
-        run: |
-          set -euo pipefail
-          if [[ "$EVENT_NAME" != "pull_request" || -z "$BASE_REF" ]]; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "非 PR 觸發，一律驗證發布資產"
-            exit 0
-          fi
-          git fetch --no-tags --depth=1 origin "$BASE_REF"
-          # 保守策略：只有「所有變更都落在與發布資產無關的路徑」時才略過。
-          if git diff --name-only FETCH_HEAD HEAD | grep -qE \
-            '^(downloads/|LICENSE$|docs/en/THIRD_PARTY_OFFLINE\.md$|gradle\.properties$|CHANGELOG\.md$|scripts/prepare_release_assets\.py$|scripts/verify_release_jars\.py$|scripts/release_layout\.py$|\.github/workflows/publish-release\.yml$)'; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "這個 PR 有動到發布資產相關路徑"
-          else
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "這個 PR 沒有動到發布資產相關路徑，略過發布資產驗證"
-          fi
-
+      # 發布資產驗證不再由 PR 的路徑 diff 決定要不要跑（第二輪審計 C2-163 的互鎖會被裝回去）：
+      # 只改 gradle.properties（升版）或只改 scripts/verify_release_jars.py 的 PR 都會被要求先
+      # 產生 downloads/<新版本> 才能合併，而那個目錄是 10～20 分鐘的 prepare-release 才會產生的。
+      # 現在它只由「非 PR 觸發」或 workflow_dispatch 的 release 關鍵字驅動；發布流程本身由
+      # prepare-release.yml 的「用專案的驗證器檢查」負責。
   platform-build:
     name: 建置 ${{ matrix.target }}
     needs: plan
@@ -301,18 +352,24 @@ jobs:
         include:
           - target: fabric-1.16.x
             java: "21"
+            bundle: true
           - target: fabric-1.17-1.18.x
             java: "21"
+            bundle: true
           - target: fabric-1.19.x
             java: "21"
+            bundle: true
           - target: fabric-1.20.x
             java: "21"
+            bundle: true
           - target: fabric-1.21.x
             java: "21"
+            bundle: true
           - target: fabric-1.21.4-1.21.5
             java: "21"
           - target: fabric-26.x
             java: "25"
+            bundle: true
           - target: neoforge-1.20.1
             java: "21"
           - target: forge-1.21.1
@@ -375,7 +432,11 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: platform-${{ matrix.target }}
-          path: platforms/**/build/libs/*.jar
+          # bundle 目標的 build 會連帶建置旗下的單版本子專案，它們的
+          # platforms/<線>/versions/<版本>/build/libs/*.jar 也符合 platforms/** → 產物會從 1 顆
+          # 變成整包（AGENTS.md 警告過的「舊 JAR 混進產物」就是這個形狀）。bundle 專案的輸出
+          # 固定在 platforms/<線>/bundle/，所以只上傳那一個目錄。
+          path: ${{ matrix.bundle && 'platforms/*/*/bundle/build/libs/*.jar' || 'platforms/**/build/libs/*.jar' }}
           if-no-files-found: warn
           retention-days: 3
 
@@ -483,7 +544,7 @@ jobs:
       - name: 設定 Java 25
         if: >-
           contains(needs.plan.outputs.targets, ',release,') ||
-          (needs.plan.outputs.targets == '' && needs.plan.outputs.release_changed == 'true')
+          (needs.plan.outputs.targets == '' && github.event_name != 'pull_request')
         uses: actions/setup-java@v6
         with:
           distribution: temurin
@@ -492,7 +553,7 @@ jobs:
       - name: 設定 Python
         if: >-
           contains(needs.plan.outputs.targets, ',release,') ||
-          (needs.plan.outputs.targets == '' && needs.plan.outputs.release_changed == 'true')
+          (needs.plan.outputs.targets == '' && github.event_name != 'pull_request')
         uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -500,7 +561,7 @@ jobs:
       - name: 設定 Gradle
         if: >-
           contains(needs.plan.outputs.targets, ',release,') ||
-          (needs.plan.outputs.targets == '' && needs.plan.outputs.release_changed == 'true')
+          (needs.plan.outputs.targets == '' && github.event_name != 'pull_request')
         uses: gradle/actions/setup-gradle@v6
         with:
           # v6 的預設快取是 Gradle 的商業服務（gradle-actions-caching），這裡明確
@@ -518,7 +579,7 @@ jobs:
         id: build
         if: >-
           contains(needs.plan.outputs.targets, ',release,') ||
-          (needs.plan.outputs.targets == '' && needs.plan.outputs.release_changed == 'true')
+          (needs.plan.outputs.targets == '' && github.event_name != 'pull_request')
         uses: ./.github/actions/gradle-build
         with:
           # 逐一呼叫要驗的 fabric bundle：驗證器本體收斂在 gradle/fabric-bundle-aggregate-verify.gradle，
@@ -526,10 +587,15 @@ jobs:
           # 26.x 之前完全沒有 aggregate 覆蓋，是這次補上的重點。
           # -PtargetPlatform 必須同時列出這些 bundle，settings.gradle 才會把它們 include 進來
           # （只列 fabric-1.21.x 時 :platform-fabric-26.x 會直接「專案不存在」）。
+          # 先前只叫了 1.21.x 與 26.x，於是 1.17、1.17.1、1.18、1.18.1、1.18.2、1.19–1.19.4、
+          # 1.20–1.20.6 這 17 個版本的選版正確性從來沒有被驗過（任務不在任務圖裡，連「略過」都算不上）。
           args: >-
             --no-daemon --max-workers=2
-            -PtargetPlatform=fabric-1.21.x,fabric-26.x
+            -PtargetPlatform=fabric-1.17-1.18.x,fabric-1.19.x,fabric-1.20.x,fabric-1.21.x,fabric-26.x
             verifyPublishedRelease
+            :platform-fabric-1.17-1.18.x:verifyPreparedReleaseBundle
+            :platform-fabric-1.19.x:verifyPreparedReleaseBundle
+            :platform-fabric-1.20.x:verifyPreparedReleaseBundle
             :platform-fabric-1.21.x:verifyPreparedReleaseBundle
             :platform-fabric-26.x:verifyPreparedReleaseBundle
 
@@ -627,15 +693,23 @@ jobs:
     if: always()
     runs-on: ubuntu-24.04
     steps:
-      - name: 確認每個 job 都成功或被刻意略過
+      # 讀 .github/workflows/build.yml 自己的 jobs 清單，用來比對 needs 有沒有漏掉 job。新增 job
+      # 而忘記加進 needs 時，那個 job 失敗不會讓 CI 總結 變紅、分支保護照樣放行，而 AGENTS.md 只把
+      # 「必須加進 needs」寫成規則，沒有任何程式檢查。
+      - name: 取出原始碼
+        uses: actions/checkout@v7
+
+      - name: 確認每個 job 都成功，且 needs 涵蓋所有 job
         shell: bash
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: |
           set -euo pipefail
           echo "$NEEDS"
-          printf '%s' "$NEEDS" | python3 -c '
-          import json, os, sys
+          python3 - <<'PY'
+          import json, os, re, sys
+          from pathlib import Path
+
           labels = {
               "check": "核心檢查",
               "lint": "Workflow 與腳本檢查",
@@ -646,15 +720,36 @@ jobs:
               "website": "網站檢查",
           }
           results = {"success": "成功", "failure": "失敗", "skipped": "略過", "cancelled": "已取消"}
-          needs = json.load(sys.stdin)
+          needs = json.loads(os.environ["NEEDS"])
+          jobs_block = Path(".github/workflows/build.yml").read_text(encoding="utf-8").split("\njobs:\n", 1)[1]
+          # jobs: 底下縮排兩格的 key 才是 job 名稱（其餘層級都更深），ci-status 自己不算在 needs 裡。
+          declared = []
+          for line in jobs_block.splitlines():
+              match = re.match(r"^  ([A-Za-z][A-Za-z0-9_-]*):\s*$", line)
+              if match and match.group(1) != "ci-status":
+                  declared.append(match.group(1))
           lines = ["## CI 總結", "", "| Job | 結果 |", "| --- | --- |"]
           for name, info in needs.items():
               lines.append("| %s | %s |" % (labels.get(name, name), results.get(info["result"], info["result"])))
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
               handle.write("\n".join(lines) + "\n")
-          bad = {k: v["result"] for k, v in needs.items() if v["result"] not in ("success", "skipped")}
+          failed = False
+          missing = [name for name in declared if name not in needs]
+          if missing:
+              print("::error::ci-status 的 needs 漏掉這些 job，它們失敗不會讓 CI 總結 變紅：" + "、".join(missing))
+              failed = True
+          extra = [name for name in needs if name not in declared]
+          if extra:
+              print("::error::ci-status 的 needs 列了 workflow 裡不存在的 job：" + "、".join(extra))
+              failed = True
+          # 只接受 success。這個 workflow 沒有任何 job 層級的 if，需要省成本的地方一律用「步驟略過、
+          # job 成功」表達，所以 skipped 不該出現；把它當通過會讓「job 什麼都沒驗」與「job 真的過了」
+          # 在彙總表上長得一樣。
+          bad = {k: v["result"] for k, v in needs.items() if v["result"] != "success"}
           if bad:
               print("::error::以下 job 沒有成功：" + "、".join("%s=%s" % (k, v) for k, v in bad.items()))
+              failed = True
+          if failed:
               sys.exit(1)
-          print("所有 job 都成功；被略過的目標視為正常。")
-          '
+          print("所有 job 都成功，needs 涵蓋全部 %d 個 job。" % len(declared))
+          PY

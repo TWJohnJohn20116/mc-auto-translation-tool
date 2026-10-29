@@ -11,6 +11,7 @@ import re
 import struct
 import sys
 import zipfile
+import zlib
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -197,12 +198,23 @@ def _validate_archive_paths(archive: zipfile.ZipFile) -> None:
             raise VerificationError(f"unsafe ZIP entry: {name}")
 
 
+LICENSE_NAME = re.compile(r"^LICENSE(_[A-Za-z0-9_]+)?$")
+THIRD_PARTY_NOTICE = "THIRD_PARTY_OFFLINE.md"
+
+
 def _validate_legal_files(archive: zipfile.ZipFile) -> None:
     names = archive.namelist()
-    if not any(PurePosixPath(name).name.startswith("LICENSE") for name in names):
-        raise VerificationError("missing bundled license")
-    if not any(name.endswith("THIRD_PARTY_OFFLINE.md") for name in names):
-        raise VerificationError("missing third-party offline notice")
+    licenses = [name for name in names if "/" not in name and LICENSE_NAME.match(name)]
+    if not licenses:
+        raise VerificationError("missing bundled license at the JAR root")
+    if not any(archive.read(name).strip() for name in licenses):
+        raise VerificationError(
+            f"bundled license is empty: {', '.join(sorted(licenses))}"
+        )
+    if THIRD_PARTY_NOTICE not in names:
+        raise VerificationError(f"missing {THIRD_PARTY_NOTICE} at the JAR root")
+    if not archive.read(THIRD_PARTY_NOTICE).strip():
+        raise VerificationError(f"bundled {THIRD_PARTY_NOTICE} is empty")
 
 
 def _manifest_attributes(archive: zipfile.ZipFile) -> dict[str, str]:
@@ -325,16 +337,16 @@ def _validate_fabric(
         nested_match = re.fullmatch(
             r"META-INF/jars/universal-translator-(.+)\.jar", nested_name
         )
-        nested_major = (
-            _class_major_for_minecraft(nested_match.group(1))
-            if nested_match
-            else expected_class_major
-        )
+        if nested_match is None:
+            # 名稱解析失敗時先前退回外層的 expected_class_major（對 -fabric-all 是 None），
+            # 於是 verify_jar_bytes 又自己算一次、最後整段 class 閘門被靜默跳過——那正是第一輪
+            # 審計 BUG-M-017 修掉的「None 即跳過」模式，只是換成從 nested 名稱復活。
+            raise VerificationError(f"unrecognized nested Fabric JAR name: {nested_name}")
         verify_jar_bytes(
             archive.read(nested_name),
             f"{label}!/{nested_name}",
             expected_version,
-            nested_major,
+            _class_major_for_minecraft(nested_match.group(1)),
         )
         nested_count += 1
     return JarResult(label, "fabric", mixin_count, nested_count)
@@ -409,7 +421,21 @@ def _validate_forge(
         if required not in metadata:
             raise VerificationError(f"missing Forge metadata field: {required}")
     _validate_legal_files(archive)
-    version_match = re.search(r'^\s*version\s*=\s*"([^"]+)"', metadata, re.MULTILINE)
+    # 只認 `[[mods]]` 區塊裡的 version。原本取檔案中第一個以 `version =` 開頭的行，而
+    # `[[dependencies.<modid>]]` 區塊同樣可以有 `version=`，那就會拿 dependency 的版本字串去和
+    # mod_version 比對（目前 48 顆都通過，所以沒有實際誤報，但這是唯一的交叉檢查）。
+    mods_section = re.search(
+        r"^\[\[mods]][ \t]*$(.*?)(?=^\[\[|\Z)", metadata, re.MULTILINE | re.DOTALL
+    )
+    version_match = (
+        re.search(
+            r'^[ \t]*version[ \t]*=[ \t]*"([^"]+)"',
+            mods_section.group(1),
+            re.MULTILINE,
+        )
+        if mods_section
+        else None
+    )
     _validate_mod_version(
         version_match.group(1) if version_match else None,
         expected_version,
@@ -485,8 +511,13 @@ def verify_jar_bytes(
             if "mcmod.info" in names:
                 return _validate_classic_forge(archive, label, expected_version)
             raise VerificationError("unrecognized mod metadata")
-    except zipfile.BadZipFile as error:
-        raise VerificationError(f"invalid ZIP/JAR: {error}") from error
+    except VerificationError:
+        raise
+    except (zipfile.BadZipFile, zlib.error, NotImplementedError, RuntimeError) as error:
+        # zipfile 對「加密的 entry」「不支援的壓縮方法」「CRC 錯誤」丟的是 RuntimeError／
+        # zlib.error／NotImplementedError。只捕捉 BadZipFile 會讓這些情況以 Python traceback 結束，
+        # 而 48 顆 × 數千個 entry 的驗證最需要的正是「哪一顆的哪個 entry」。
+        raise VerificationError(f"invalid ZIP/JAR {label}: {error}") from error
 
 
 def _split_parts(path: Path) -> list[Path]:
@@ -510,17 +541,20 @@ def _split_parts(path: Path) -> list[Path]:
             raise VerificationError(f"split JAR part is not a file: {part}")
     # The 600 KiB threshold in AGENTS.md had no check behind it: only the names were verified, so a
     # threshold typo produced hundreds of tiny parts that still assembled to the right SHA-256.
-    # A logical JAR above PART_SIZE must therefore be cut into full-size leading parts. A fixture that
-    # splits a small file (the unit tests do exactly that) is not describing this layout and is left
-    # alone.
+    # A logical JAR is split only when it is larger than PART_SIZE, and then every leading part must
+    # be full-size. Checking the size gate itself is what makes "a 500 KB JAR cut into 500 one-KB
+    # parts" fail instead of silently bloating downloads/ with hundreds of files.
     total_size = sum(part.stat().st_size for part in parts)
-    if total_size > PART_SIZE:
-        for part in parts[:-1]:
-            size = part.stat().st_size
-            if size != PART_SIZE:
-                raise VerificationError(
-                    f"split JAR part has an unexpected size: {part.name} ({size} != {PART_SIZE})"
-                )
+    if total_size <= PART_SIZE:
+        raise VerificationError(
+            f"split JAR is not larger than {PART_SIZE} bytes, it must not be split: {path}"
+        )
+    for part in parts[:-1]:
+        size = part.stat().st_size
+        if size != PART_SIZE:
+            raise VerificationError(
+                f"split JAR part has an unexpected size: {part.name} ({size} != {PART_SIZE})"
+            )
     return parts
 
 
@@ -570,7 +604,18 @@ def verify_checksums(checksum_file: Path, require_complete: bool) -> int:
             jars.add((part.parent / match.group("jar")).resolve())
         for jar in jars:
             _split_parts(jar)
-        checked_jars = {path for path in expected if path.suffix.lower() == ".jar"}
+        # 每一行「不是分片」的 manifest 項目都必須對應一顆邏輯 JAR。只認 suffix == ".jar" 會讓
+        # manifest 同時記錄 x.jar 與 x.jar.part-aa 時靜默通過（x.jar.part-aa 那行被丟掉、兩邊
+        # 剛好相等），而 SHA256SUMS.txt 是 publish-release 與使用者驗證下載的唯一依據。
+        split_lines = sorted(
+            path.name for path in expected if PART_PATTERN.match(path.name)
+        )
+        if split_lines:
+            raise VerificationError(
+                "checksum manifest records split parts instead of logical JARs: "
+                + ", ".join(split_lines)
+            )
+        checked_jars = {path for path in expected if PART_PATTERN.match(path.name) is None}
         if jars != checked_jars:
             missing = sorted(path.name for path in jars - checked_jars)
             extra = sorted(path.name for path in checked_jars - jars)

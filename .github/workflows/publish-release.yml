@@ -24,6 +24,10 @@ jobs:
   publish:
     name: 發布 GitHub Release
     runs-on: ubuntu-24.04
+    # 48 顆 JAR 的驗證、prepare_release_assets.py（解 48 顆 zip）與兩次 gh 上傳都可能卡在網路或
+    # API 上；沒有上限時會吃滿預設 360 分鐘並佔住 concurrency: publish-release（不取消），
+    # 把後面所有發布排隊卡死。
+    timeout-minutes: 30
     steps:
       - name: 取出原始碼
         uses: actions/checkout@v7
@@ -44,15 +48,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="$(sed -n 's/^mod_version=//p' gradle.properties | head -n 1)"
-          if [[ -z "$version" || ! "$version" =~ ^[0-9]+([.][0-9]+)*([_-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Invalid or missing mod_version in gradle.properties" >&2
+          # workflow_dispatch 可以在任何分支上觸發，而下面的 --target 就是那個 ref 的 HEAD：
+          # 從一個落後的分支手動觸發會把 v<version> 建立或移動到那個 commit，並把全部資產掛上去、
+          # 再用 --latest 設成最新版。發布只在 main（或明確的 tag）上成立。
+          if [[ "$GITHUB_REF" != "refs/heads/main" && "$GITHUB_REF" != refs/tags/* ]]; then
+            echo "::error::發布只能從 main 或 tag 觸發，目前是 $GITHUB_REF" >&2
             exit 1
           fi
+          # 讀取與字元白名單與 prepare-release.yml 共用同一份（先前 prepare-release 只驗「非空」）。
+          version="$(bash scripts/ci/read-mod-version.sh)"
           release_dir="downloads/$version"
           if [[ ! -d "$release_dir" ]]; then
-            echo "Missing release directory: $release_dir" >&2
-            exit 1
+            # 升版（只改 gradle.properties 的 mod_version）必然先於 downloads/<version> 產生：
+            # 那個目錄是 prepare-release 建完所有目標之後才寫的。把它當失敗會讓文件記載的發布流程
+            # 第 1 步一合併就讓 main 紅燈，而且唯一的出路是無視分支保護直接推 main。
+            echo "::notice::$release_dir 還不存在（版本已升、資產還沒準備）；跳過發布，不建立任何 tag"
+            {
+              echo "### 發布已跳過"
+              echo ""
+              echo "\`$release_dir\` 不存在：先執行 \`gh workflow run prepare-release.yml\`，並合併它開的 PR。"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           shopt -s nullglob
           for first_part in "$release_dir"/*.jar.part-aa; do
@@ -69,59 +86,22 @@ jobs:
             cat "${parts[@]}" > "$jar"
             rm -f -- "${parts[@]}"
           done
-          expected=(
-            "MCAutoTranslationTool-1.4-mc1.12.2-forge.jar"
-            "MCAutoTranslationTool-1.4-mc1.13.x-fabric.jar"
-            "MCAutoTranslationTool-1.4-mc1.14-1.15.x-fabric.jar"
-            "MCAutoTranslationTool-1.4-mc1.16.5-forge.jar"
-            "MCAutoTranslationTool-1.4-mc1.16.x-fabric.jar"
-            "MCAutoTranslationTool-1.4-mc1.17-1.18.x-fabric.jar"
-            "MCAutoTranslationTool-1.4-mc1.18.2-forge.jar"
-            "MCAutoTranslationTool-1.4-mc1.19.2-forge.jar"
-            "MCAutoTranslationTool-1.4-mc1.19.x-fabric.jar"
-            "MCAutoTranslationTool-1.4-mc1.20.1-forge.jar"
-            "MCAutoTranslationTool-1.4-mc1.20.1-neoforge.jar"
-            "MCAutoTranslationTool-1.4-mc1.20.4-neoforge.jar"
-            "MCAutoTranslationTool-1.4-mc1.20.6-neoforge.jar"
-            "MCAutoTranslationTool-1.4-mc1.20.x-fabric.jar"
-            "MCAutoTranslationTool-1.4-mc1.21.10-forge.jar"
-            "MCAutoTranslationTool-1.4-mc1.21.10-neoforge.jar"
-            "MCAutoTranslationTool-1.4-mc1.21.11-forge.jar"
-            "MCAutoTranslationTool-1.4-mc1.21.11-neoforge.jar"
-            "MCAutoTranslationTool-1.4-mc1.21.1-forge.jar"
-            "MCAutoTranslationTool-1.4-mc1.21.1-neoforge.jar"
-            "MCAutoTranslationTool-1.4-mc1.21.2-neoforge.jar"
-            "MCAutoTranslationTool-1.4-mc1.21.3-forge.jar"
-            "MCAutoTranslationTool-1.4-mc1.21.3-neoforge.jar"
-            "MCAutoTranslationTool-1.4-mc1.21.4-forge.jar"
-            "MCAutoTranslationTool-1.4-mc1.21.4-neoforge.jar"
-            "MCAutoTranslationTool-1.4-mc1.21.5-forge.jar"
-            "MCAutoTranslationTool-1.4-mc1.21.5-neoforge.jar"
-            "MCAutoTranslationTool-1.4-mc1.21.6-forge.jar"
-            "MCAutoTranslationTool-1.4-mc1.21.6-neoforge.jar"
-            "MCAutoTranslationTool-1.4-mc1.21.7-forge.jar"
-            "MCAutoTranslationTool-1.4-mc1.21.7-neoforge.jar"
-            "MCAutoTranslationTool-1.4-mc1.21.8-forge.jar"
-            "MCAutoTranslationTool-1.4-mc1.21.8-neoforge.jar"
-            "MCAutoTranslationTool-1.4-mc1.21.9-forge.jar"
-            "MCAutoTranslationTool-1.4-mc1.21.9-neoforge.jar"
-            "MCAutoTranslationTool-1.4-mc1.21.x-fabric.jar"
-            "MCAutoTranslationTool-1.4-mc1.21-forge.jar"
-            "MCAutoTranslationTool-1.4-mc1.21-neoforge.jar"
-            "MCAutoTranslationTool-1.4-mc1.8.9-forge.jar"
-            "MCAutoTranslationTool-1.4-mc26.1.1-forge.jar"
-            "MCAutoTranslationTool-1.4-mc26.1.1-neoforge.jar"
-            "MCAutoTranslationTool-1.4-mc26.1.2-forge.jar"
-            "MCAutoTranslationTool-1.4-mc26.1.2-neoforge.jar"
-            "MCAutoTranslationTool-1.4-mc26.1-forge.jar"
-            "MCAutoTranslationTool-1.4-mc26.1-neoforge.jar"
-            "MCAutoTranslationTool-1.4-mc26.2-forge.jar"
-            "MCAutoTranslationTool-1.4-mc26.2-neoforge.jar"
-            "MCAutoTranslationTool-1.4-mc26.x-fabric.jar"
-          )
+          # 預期清單直接從 SHA256SUMS.txt 推導：那份 manifest 是「這個版本有哪些目標 JAR」的權威
+          # 來源。手寫 48 個檔名是第二份真相，而且每個版本都得人工改一次——prepare-release 開的 PR
+          # 只 git add -A downloads，永遠不會動這裡，於是 bump 之後第一次 push 到 main 必定以
+          # 「Missing release target: …1.4…」失敗，訊息還指向完全無關的方向。
+          expected=()
+          while IFS= read -r checksum_line; do
+            [[ -n "${checksum_line// }" ]] || continue
+            expected+=("${checksum_line#*  }")
+          done < "$release_dir/SHA256SUMS.txt"
+          if [[ "${#expected[@]}" -eq 0 ]]; then
+            echo "$release_dir/SHA256SUMS.txt 沒有任何項目" >&2
+            exit 1
+          fi
           mapfile -t jars < <(find "$release_dir" -maxdepth 1 -type f -name '*.jar' -print | sort)
-          if [[ "${#jars[@]}" -ne "${#expected[@]}" || ! -f "$release_dir/SHA256SUMS.txt" ]]; then
-            echo "Release must contain exactly ${#expected[@]} target JARs and SHA256SUMS.txt" >&2
+          if [[ "${#jars[@]}" -ne "${#expected[@]}" ]]; then
+            echo "Release must contain exactly ${#expected[@]} target JARs (from SHA256SUMS.txt), found ${#jars[@]}" >&2
             exit 1
           fi
           for file in "${expected[@]}"; do
@@ -130,8 +110,10 @@ jobs:
               exit 1
             fi
           done
+          # 白名單的第二段分隔符是 [_-]，所以 1.5_rc1 也是合法版本；只認 `-` 會把它標成正式版
+          # 並搶走 latest（同一支腳本對 1.5-rc1 的處理是正確的，兩者只差一個字元）。
           prerelease=false
-          if [[ "$version" == *-* ]]; then
+          if [[ "$version" == *-* || "$version" == *_* ]]; then
             prerelease=true
           fi
           {
@@ -139,9 +121,11 @@ jobs:
             echo "tag=v$version"
             echo "release_dir=$release_dir"
             echo "prerelease=$prerelease"
+            echo "target_count=${#expected[@]}"
           } >> "$GITHUB_OUTPUT"
 
       - name: 驗證發布 JAR 與 checksum
+        if: steps.version.outputs.skip != 'true'
         shell: bash
         env:
           RELEASE_DIR: ${{ steps.version.outputs.release_dir }}
@@ -154,6 +138,7 @@ jobs:
             "${jars[@]}"
 
       - name: 產生並驗證可直接安裝的 JAR
+        if: steps.version.outputs.skip != 'true'
         shell: bash
         env:
           RELEASE_DIR: ${{ steps.version.outputs.release_dir }}
@@ -172,6 +157,7 @@ jobs:
             "${jars[@]}"
 
       - name: 建立或更新 GitHub Release
+        if: steps.version.outputs.skip != 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -181,8 +167,14 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t assets < <(find "$ASSET_DIR" -maxdepth 1 -type f \( -name '*.jar' -o -name 'SHA256SUMS.txt' \) -print | sort)
-          if [[ "${#assets[@]}" -ne 32 ]]; then
-            echo "Expected thirty-one compatible JARs and SHA256SUMS.txt" >&2
+          # 可安裝 JAR 數不再寫死（31／32 是第三份真相）：它由 prepare_release_assets.py 的
+          # FORGE_FAMILIES 與 -fabric-all 推出，任何家族增減成員都會讓常數失效，而錯誤訊息只會說
+          # 「預期 31 顆」，維護者得自己反推。改成檢查兩個自我一致的關係：assets == jars + 1（
+          # SHA256SUMS.txt），且 SHA256SUMS.txt 的行數 == jars。
+          installed_jars="$(find "$ASSET_DIR" -maxdepth 1 -type f -name '*.jar' -print | wc -l)"
+          checksum_lines="$(grep -c . "$ASSET_DIR/SHA256SUMS.txt")"
+          if [[ "${#assets[@]}" -ne "$((installed_jars + 1))" || "$checksum_lines" -ne "$installed_jars" ]]; then
+            echo "資產數（${#assets[@]}）、可安裝 JAR 數（$installed_jars）與 SHA256SUMS.txt 行數（$checksum_lines）不一致" >&2
             exit 1
           fi
           notes="$RUNNER_TEMP/release-notes.md"
@@ -197,13 +189,33 @@ jobs:
           fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "${assets[@]}" --clobber
-            mapfile -t old_jars < <(gh release view "$TAG" --json assets --jq '.assets[].name | select(endswith(".jar"))')
+            # 不能用 mapfile < <(...)：`set -e` 不管 process substitution 裡的離開碼，`gh release
+            # view` 因為 API 錯誤或 rate limit 失敗時 old_jars 是空的、迴圈零次迭代，job 照樣成功，
+            # Release 上就永久留著上一版多出來的 JAR。命令替換的失敗會被 set -e 抓到。
+            old_json="$(gh release view "$TAG" --json assets --jq '.assets[].name | select(endswith(".jar"))')"
+            mapfile -t old_jars <<< "$old_json"
             for asset in "${old_jars[@]}"; do
+              [[ -n "$asset" ]] || continue
               if [[ ! -f "$ASSET_DIR/$asset" ]]; then
                 gh release delete-asset "$TAG" "$asset" --yes
               fi
             done
+            # 既有 Release 也要更新標題與說明：CHANGELOG 修正是 docs 類變更，push 到 main 時
+            # `paths` 含 CHANGELOG.md，但先前只上傳資產，Release 頁面永遠停在第一次發布的說明。
+            gh release edit "$TAG" --title "MC 自动翻译工具 $VERSION" --notes-file "$notes"
           else
+            # tag 已存在時 gh release create 會忽略 --target，把新資產掛到舊 commit 的 tag 上，
+            # 而 gh release view 看起來一切正常。先確認 tag 指的 commit 就是本次的 $GITHUB_SHA。
+            # 用 ls-remote 取（annotated tag 要用 ^{} peel 成 commit），不需要抓完整歷史。
+            tag_refs="$(git ls-remote origin "refs/tags/$TAG" "refs/tags/$TAG^{}" || true)"
+            tag_commit="$(printf '%s\n' "$tag_refs" | awk '/\^\{\}$/ {print $1}' | head -n 1)"
+            if [[ -z "$tag_commit" ]]; then
+              tag_commit="$(printf '%s\n' "$tag_refs" | awk 'NF {print $1}' | head -n 1)"
+            fi
+            if [[ -n "$tag_commit" && "$tag_commit" != "$GITHUB_SHA" ]]; then
+              echo "::error::$TAG 已指向 $tag_commit，不是本次的 $GITHUB_SHA；請先刪除該 tag 或改用新版本號" >&2
+              exit 1
+            fi
             release_flags=(
               --target "$GITHUB_SHA"
               --title "MC 自动翻译工具 $VERSION"
@@ -216,6 +228,10 @@ jobs:
             fi
             gh release create "$TAG" "${assets[@]}" "${release_flags[@]}"
           fi
-          if [[ "${{ steps.version.outputs.prerelease }}" == "false" ]]; then
+          # prerelease 狀態可能隨版本號改變，兩邊都要同步，否則一個 1.5_rc1 之後的正式版會被
+          # 舊的 --prerelease 標記黏住（或反過來，rc 搶走 latest）。
+          if [[ "${{ steps.version.outputs.prerelease }}" == "true" ]]; then
+            gh release edit "$TAG" --prerelease --latest=false
+          else
             gh release edit "$TAG" --latest
           fi

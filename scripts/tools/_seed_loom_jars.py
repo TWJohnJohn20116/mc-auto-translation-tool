@@ -56,12 +56,25 @@ def seed(version: str) -> None:
         put(dest, fetch(f"{BMCL}/v1/objects/{sha1}/{kind}.jar"), sha1)
     for name in ("minecraft-details.json", "ornithe-gen1_minecraft_info.json"):
         path = base / name
-        if path.exists():
-            text = path.read_text(encoding="utf-8")
-            text = text.replace("https://launcher.mojang.com", BMCL)
-            text = text.replace("https://launchermeta.mojang.com", BMCL)
-            path.write_text(text, encoding="utf-8")
-            log(f"patched {path}")
+        if not path.exists():
+            continue
+        original = path.read_text(encoding="utf-8")
+        if BMCL in original:
+            log(f"already patched {path}")
+            continue
+        patched = original.replace("https://launcher.mojang.com", BMCL)
+        patched = patched.replace("https://launchermeta.mojang.com", BMCL)
+        # 這是 Gradle 的共用快取，改寫是不可逆的：先留一份 .orig 備份，改完再讀回來比對，
+        # 否則一旦 Loom 之後要修復或別的專案要驗證來源，就沒有原檔可以還原。
+        backup = path.with_suffix(path.suffix + ".orig")
+        if not backup.exists():
+            backup.write_text(original, encoding="utf-8")
+        path.write_text(patched, encoding="utf-8")
+        if hashlib.sha256(path.read_text(encoding="utf-8").encode("utf-8")).hexdigest() != (
+            hashlib.sha256(patched.encode("utf-8")).hexdigest()
+        ):
+            raise RuntimeError(f"patch did not land as written: {path}")
+        log(f"patched {path} (original kept at {backup.name})")
 
 
 if __name__ == "__main__":

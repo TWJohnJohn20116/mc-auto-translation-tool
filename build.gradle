@@ -50,6 +50,37 @@ tasks.register("validateMixinConfigs") {
                 throw new GradleException("Invalid Mixin JSON: ${relativePath(config)}", error)
             }
 
+            def relativeConfigPath = relativePath(config).replace('\\', '/')
+            // Declared keys Mixin understands. Anything else is ignored with a single WARN line, so a
+            // mistyped "clients"/"Client" quietly registers no hooks at all while every check stays green.
+            def knownKeys = [
+                    "required", "minVersion", "package", "refmap", "compatibilityLevel", "client",
+                    "server", "mixins", "injectors", "plugin", "verbose", "setSourceFile", "priority"
+            ] as Set
+            def unknownKeys = parsed.keySet().findAll { !knownKeys.contains(it.toString()) }
+            if (!unknownKeys.isEmpty()) {
+                throw new GradleException(
+                        "Unknown Mixin config key(s) ${unknownKeys.sort()} in ${relativeConfigPath}; " +
+                                "Mixin ignores unrecognised keys, so those sections would silently register " +
+                                "nothing. Known keys: ${knownKeys.sort()}"
+                )
+            }
+            ["client", "server", "mixins"].each { listKey ->
+                def value = parsed[listKey]
+                if (value != null && !(value instanceof List)) {
+                    throw new GradleException(
+                            "Mixin config key '${listKey}' must be a JSON array in ${relativeConfigPath}, got " +
+                                    "${value.getClass().simpleName}"
+                    )
+                }
+            }
+            if (parsed.required != null && !(parsed.required instanceof Boolean)) {
+                throw new GradleException(
+                        "Mixin config key 'required' must be a JSON boolean in ${relativeConfigPath}, got " +
+                                "${parsed.required.getClass().simpleName}"
+                )
+            }
+
             def level = parsed.compatibilityLevel
             if (level != null && !compatibilityLevels.contains(level)) {
                 throw new GradleException(
@@ -58,26 +89,54 @@ tasks.register("validateMixinConfigs") {
                 )
             }
 
-            def relativeConfigPath = relativePath(config).replace('\\', '/')
-            // Fabric's 1.20 family is shared by 1.20.5 and 1.20.6, which are compiled for Java 21, so
-            // its config carries JAVA_21; the Forge 1.20.1 tree still tops out at 17.
-            def maximumLevel = relativeConfigPath.contains("/1.16.5/") ? "JAVA_8" :
-                    (relativeConfigPath.contains("/1.18.2/") || relativeConfigPath.contains("/1.19.2/")
-                            || relativeConfigPath.contains("/1.20.1/")) ?
-                            (relativeConfigPath.contains("/fabric/1.20/shared/family/1.20.1/") ? "JAVA_21" : "JAVA_17") :
-                            "JAVA_21"
+            // Each tree is compiled for exactly one release, so the bounds are read from an explicit
+            // table instead of being inferred from a version substring in the path. The previous
+            // heuristic matched none of the four NeoForge metadata layers (their paths carry no
+            // "/1.20.1/"-style component) and let every one of them through as JAVA_21, so the upper
+            // bound was vacuously true there while the lower bound only existed for two fabric paths.
+            // First match wins; a config that matches no entry fails instead of falling back to a
+            // default, because a silent default is how both gaps appeared.
+            def levelBounds = [
+                    // path prefix                                          maximum     minimum
+                    ["platforms/fabric/1.0-1.8/",                          "JAVA_8",   "JAVA_8"],
+                    ["platforms/fabric/1.8-1.12/",                         "JAVA_8",   "JAVA_8"],
+                    ["platforms/fabric/1.13/",                             "JAVA_8",   "JAVA_8"],
+                    ["platforms/fabric/1.14-1.15/",                        "JAVA_8",   "JAVA_8"],
+                    ["platforms/fabric/1.16/",                             "JAVA_8",   "JAVA_8"],
+                    ["platforms/fabric/1.17-1.18/",                        "JAVA_17",  "JAVA_17"],
+                    ["platforms/fabric/1.19/",                             "JAVA_17",  "JAVA_17"],
+                    // The 1.20 family is shared by 1.20.5/1.20.6 (Java 21) and 1.20-1.20.4 (Java 17).
+                    ["platforms/fabric/1.20/",                             "JAVA_21",  "JAVA_17"],
+                    ["platforms/fabric/1.21/",                             "JAVA_21",  "JAVA_21"],
+                    // 26.x compiles with options.release = 25 but Mixin's enum stops at JAVA_21.
+                    ["platforms/fabric/26.x/",                             "JAVA_21",  "JAVA_21"],
+                    ["platforms/forge/modern/1.16.5/",                     "JAVA_8",   "JAVA_8"],
+                    ["platforms/forge/modern/1.18.2/",                     "JAVA_17",  "JAVA_17"],
+                    ["platforms/forge/modern/1.19.2/",                     "JAVA_17",  "JAVA_17"],
+                    ["platforms/forge/modern/1.20.1/",                     "JAVA_17",  "JAVA_17"],
+                    ["platforms/forge/1.21/",                              "JAVA_21",  "JAVA_21"],
+                    ["platforms/forge/26.x/",                              "JAVA_21",  "JAVA_21"],
+                    ["platforms/neoforge/1.20.1/",                         "JAVA_17",  "JAVA_17"],
+                    ["platforms/neoforge/shared/metadata/1.20-1.20.4/",    "JAVA_17",  "JAVA_17"],
+                    ["platforms/neoforge/shared/metadata/1.20.6/",         "JAVA_21",  "JAVA_21"],
+                    ["platforms/neoforge/shared/metadata/1.21/",           "JAVA_21",  "JAVA_21"],
+                    ["platforms/neoforge/shared/metadata/26.x/",           "JAVA_21",  "JAVA_21"]
+            ]
+            def bounds = levelBounds.find { relativeConfigPath.startsWith(it[0].toString()) }
+            if (bounds == null) {
+                throw new GradleException(
+                        "No Mixin compatibilityLevel bounds are registered for ${relativeConfigPath}; add the " +
+                                "tree to levelBounds in build.gradle with the release it is compiled for"
+                )
+            }
+            def maximumLevel = bounds[1]
+            def minimumLevel = bounds[2]
             if (level != null && compatibilityLevels.indexOf(level) > compatibilityLevels.indexOf(maximumLevel)) {
                 throw new GradleException(
                         "Mixin compatibilityLevel '${level}' exceeds ${maximumLevel} for ${relativeConfigPath}"
                 )
             }
-            // Lower bound: a config declaring less than the class file version its platforms are compiled
-            // to makes Mixin refuse the target classes at runtime ("class file version 61 not supported"),
-            // and that only shows up when someone starts the game. 1.17-1.18 is compiled for Java 17.
-            def minimumLevel = (relativeConfigPath.contains("/fabric/1.17-1.18/")
-                    || relativeConfigPath.contains("/fabric/1.20/")) ? "JAVA_17" : null
-            if (minimumLevel != null && level != null
-                    && compatibilityLevels.indexOf(level) < compatibilityLevels.indexOf(minimumLevel)) {
+            if (level != null && compatibilityLevels.indexOf(level) < compatibilityLevels.indexOf(minimumLevel)) {
                 throw new GradleException(
                         "Mixin compatibilityLevel '${level}' is lower than ${minimumLevel} for ${relativeConfigPath}"
                 )
@@ -98,9 +157,11 @@ tasks.register("validateMixinConfigs") {
                                 "gap until the bundled Mixin exposes JAVA_22 or newer."
                 )
             }
-            if ((relativeConfigPath.contains("/forge/modern/1.16.5/") ||
-                    relativeConfigPath.contains("/forge/modern/1.18.2/") ||
-                    relativeConfigPath.contains("/forge/modern/1.19.2/")) &&
+            // Every forge/modern target shares one mixin dialect, so 1.20.1 belongs in this rule too:
+            // it is the most-used tree of the four and the source layer three NeoForge targets reuse,
+            // and leaving it out meant a single edited value could turn four published JARs from
+            // "skip a missing target" into "fail to load".
+            if (relativeConfigPath.contains("/forge/modern/") &&
                     parsed.injectors?.defaultRequire != 0) {
                 throw new GradleException(
                         "Legacy Forge Mixin hooks must remain tolerant (defaultRequire 0): ${relativeConfigPath}"
@@ -147,14 +208,31 @@ tasks.register("validateSharedPlatformLayouts") {
         }
 
         def requiredSharedFiles = [
+                // Every script that several trees apply, or that a whole tree is written around. They
+                // were the only files nobody checked: deleting or renaming one failed much later as
+                // "Could not find method" inside whichever project applied it next.
+                "gradle/jar-contents.gradle",
+                "gradle/fabric-bundle-aggregate-verify.gradle",
                 "platforms/fabric/legacy/shared.gradle",
                 "platforms/fabric/legacy/shared/common/src/main/resources/fabric.mod.json",
+                "platforms/fabric/1.0-1.8/shared.gradle",
+                "platforms/fabric/1.8-1.12/shared.gradle",
+                "platforms/fabric/1.13/ornithe.gradle",
+                "platforms/fabric/1.13/legacy.gradle",
+                "platforms/fabric/1.21/shared.gradle",
+                "platforms/fabric/modmenu/modmenu.gradle",
                 "platforms/fabric/26.x/shared.gradle",
                 "platforms/fabric/26.x/shared/common/src/main/resources/fabric.mod.json",
                 "platforms/forge/modern/shared.gradle",
                 "platforms/forge/modern/shared/common/src/main/resources/META-INF/mods.toml",
+                // One resource root per Forge tree; the 1.21 and modern entries were missing, so the
+                // already-published pack.mcmeta and mixin config of the 12 1.21 targets had no guard.
+                "platforms/forge/modern/shared/common/src/main/resources/pack.mcmeta",
                 "platforms/forge/shared.gradle",
                 "platforms/forge/shared/common/src/main/resources/META-INF/mods.toml",
+                "platforms/forge/1.21/shared.gradle",
+                "platforms/forge/1.21/shared/common/src/main/resources/pack.mcmeta",
+                "platforms/forge/1.21/shared/common/src/main/resources/universal-translator.forge.mixins.json",
                 "platforms/forge/26.x/shared.gradle",
                 "platforms/forge/26.x/shared/common/src/main/resources/pack.mcmeta",
                 "platforms/neoforge/shared.gradle",
@@ -299,14 +377,15 @@ tasks.register("validateNonOverlappingSettingsLabels") {
         }.files.findAll { source ->
             source.getText("UTF-8").contains("SettingsUiAnimation.openProgress")
         }
-        def overlappingPositions = [
-                "layout.targetY - 11",
-                "layout.endpointY - 11",
-                "layout.saveY - 14"
-        ]
+        // The forbidden offsets stay a small constant set, but the spacing around them must not be
+        // part of the contract: the previous three exact spellings missed "targetY -11",
+        // "targetY - (11)" and every case where the offset was hoisted into a local — which is what a
+        // formatter or an extract-constant pass produces.
+        def forbiddenLabelOffsets = [11, 14]
+        def overlappingOffset = ~("layout\\.(?:targetY|endpointY|saveY)\\s*-\\s*\\(?\\s*(?:"
+                + forbiddenLabelOffsets.join("|") + ")\\b")
         def violations = settingsScreens.findAll { source ->
-            def text = source.getText("UTF-8")
-            overlappingPositions.any { text.contains(it) }
+            overlappingOffset.matcher(source.getText("UTF-8")).find()
         }
 
         if (!violations.isEmpty()) {
@@ -370,10 +449,11 @@ tasks.register("validateOutgoingTranslationReentryGuards") {
             text.contains("shouldTranslateOutgoing(message)") &&
                     text.contains("sendCompletedMessage(")
         }
+        def resendGuard = ~/if\s*\(\s*resendingTranslatedMessage\b/
         def violations = outgoingClients.findAll { source ->
             def text = source.getText("UTF-8")
             !text.contains("private static boolean resendingTranslatedMessage;") ||
-                    !text.contains("if (resendingTranslatedMessage\n") ||
+                    !resendGuard.matcher(text).find() ||
                     !text.contains("resendingTranslatedMessage = true;") ||
                     !text.contains("} finally {") ||
                     !text.contains("resendingTranslatedMessage = false;")
@@ -393,7 +473,12 @@ def releaseArtifacts = fileTree(releaseDirectory) {
     include "*.jar", "*.jar.part-*"
 }
 
-def pythonCmd = System.getProperty("os.name").toLowerCase().contains("windows") ? "python" : "python3"
+// Resolved lazily instead of during configuration: reading os.name at configuration time is both a
+// configuration-cache blocker and an input Gradle cannot see, and the value only matters when the
+// interpreter is actually forked.
+def pythonCmd = providers.systemProperty("os.name").map { String name ->
+    name.toLowerCase().contains("windows") ? "python" : "python3"
+}
 
 tasks.register("testJarVerifier", Exec) {
     group = "verification"
@@ -403,7 +488,9 @@ tasks.register("testJarVerifier", Exec) {
             file("scripts/release_layout.py"),
             file("scripts/test_verify_release_jars.py")
     )
-    commandLine pythonCmd, file("scripts/test_verify_release_jars.py")
+    doFirst {
+        commandLine pythonCmd.get(), file("scripts/test_verify_release_jars.py")
+    }
 }
 
 tasks.register("testReleaseAssetPreparer", Exec) {
@@ -414,7 +501,9 @@ tasks.register("testReleaseAssetPreparer", Exec) {
             file("scripts/release_layout.py"),
             file("scripts/test_prepare_release_assets.py")
     )
-    commandLine pythonCmd, file("scripts/test_prepare_release_assets.py")
+    doFirst {
+        commandLine pythonCmd.get(), file("scripts/test_prepare_release_assets.py")
+    }
 }
 
 tasks.register("verifyReleaseJars", Exec) {
@@ -435,7 +524,7 @@ tasks.register("verifyReleaseJars", Exec) {
         jars = (jars + splitJars).unique { it.absolutePath }
                 .sort { left, right -> left.name <=> right.name }
         commandLine(
-                [pythonCmd, file("scripts/verify_release_jars.py"),
+                [pythonCmd.get(), file("scripts/verify_release_jars.py"),
                  "--checksum-file", new File(releaseDirectory, "SHA256SUMS.txt"),
                  "--require-complete-checksums"] + jars
         )
@@ -454,9 +543,13 @@ tasks.register("prepareReleaseAssets", Exec) {
             file("docs/en/THIRD_PARTY_OFFLINE.md")
     )
     inputs.files(releaseArtifacts)
+    // --version reaches the script but was not declared, so a version bump that had not produced
+    // downloads/<new version> yet left the input set unchanged (both directories empty) and Gradle
+    // reused the previous build/release-assets output while the checksum verifier ran against it.
+    inputs.property("version", project.mod_version)
     outputs.dir(preparedReleaseDirectory)
     commandLine(
-            pythonCmd, file("scripts/prepare_release_assets.py"),
+            pythonCmd.get(), file("scripts/prepare_release_assets.py"),
             "--release-dir", releaseDirectory,
             "--output-dir", preparedReleaseDirectory.get().asFile,
             "--version", project.mod_version
@@ -545,6 +638,15 @@ tasks.register("validateNeoForgeModuleCoordinates") {
                 if (names.isEmpty()) {
                     problems.add("${relative}: neoforgeForgeLayers lists no layers".toString())
                 }
+                // shared.gradle reads neoforgeForgeLayers.last() to pick the runtime/draw-context
+                // variant, so a third entry silently changes which one .last() returns while the
+                // layer itself still resolves. Exactly [common, <one family>] is the only shape the
+                // rest of the wiring understands.
+                if (!names.isEmpty() && (names.size() != 2 || names[0] != "common")) {
+                    problems.add(
+                            "${relative}: neoforgeForgeLayers must be [\"common\", <one family layer>], " +
+                                    "got ${names}".toString())
+                }
                 names.each { name ->
                     if (forgeRoot != null && !file("${unquote(forgeRoot)}/${name}").isDirectory()) {
                         problems.add("${relative}: Forge layer '${name}' does not resolve".toString())
@@ -558,6 +660,48 @@ tasks.register("validateNeoForgeModuleCoordinates") {
                     if (!file(extra).isDirectory()) {
                         problems.add("${relative}: extra root '${extra}' does not resolve".toString())
                     }
+                }
+            }
+
+            // A mixin config that sits in the jar but is not registered by the loader metadata loads
+            // no hooks at all — the game starts, the mod is "loaded", and nothing is translated with
+            // not one error in the log. The registration line is hand-written in 19 toml files, so it
+            // is cross-checked here instead of being trusted.
+            def declaredMetadataLayerName = metadataLayer == null ? null : unquote(metadataLayer)
+            fileTree(module.parentFile) {
+                include "src/main/resources/META-INF/*.toml"
+            }.files.each { toml ->
+                def registeredConfigs = (toml.getText("UTF-8") =~
+                        /(?m)^\s*config\s*=\s*"([^"]+)"\s*$/).collect { it[1] }
+                registeredConfigs.each { configName ->
+                    def shipped = declaredMetadataLayerName == null ? null : file(
+                            "platforms/neoforge/shared/metadata/${declaredMetadataLayerName}" +
+                                    "/src/main/resources/${configName}")
+                    if (shipped == null || !shipped.isFile()) {
+                        problems.add(
+                                ("${relative}: " + relativePath(toml) + " registers '${configName}' but the " +
+                                        "'${declaredMetadataLayerName}' metadata layer does not ship that file")
+                                        .toString())
+                    }
+                }
+            }
+            // 1.20.1 registers through the jar manifest instead of a [[mixins]] block, and keeps its
+            // config in its own resources directory.
+            def manifestConfigs = (text =~ /MixinConfigs"\s*:\s*"([^"]+)"/).collect { it[1] }
+            def mixinTaskConfigs = (text =~ /(?m)^\s*config\s+"([^"]+)"\s*$/).collect { it[1] }
+            if (!manifestConfigs.isEmpty()) {
+                manifestConfigs.each { configName ->
+                    if (!new File(module.parentFile, "src/main/resources/${configName}").isFile()) {
+                        problems.add(
+                                "${relative}: manifest MixinConfigs names '${configName}' but the module " +
+                                        "does not ship it".toString())
+                    }
+                }
+                if (!mixinTaskConfigs.isEmpty()
+                        && !mixinTaskConfigs.every { manifestConfigs.contains(it) }) {
+                    problems.add(
+                            "${relative}: mixin { config } ${mixinTaskConfigs} disagrees with the manifest " +
+                                    "MixinConfigs ${manifestConfigs}".toString())
                 }
             }
         }
@@ -697,7 +841,7 @@ tasks.register("verifyPreparedReleaseAssets", Exec) {
         def jars = fileTree(directory).matching { include "*.jar" }.files
                 .sort { left, right -> left.name <=> right.name }
         commandLine(
-                [pythonCmd, file("scripts/verify_release_jars.py"),
+                [pythonCmd.get(), file("scripts/verify_release_jars.py"),
                  "--checksum-file", new File(directory, "SHA256SUMS.txt"),
                  "--require-complete-checksums"] + jars
         )

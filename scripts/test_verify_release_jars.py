@@ -8,6 +8,7 @@ import unittest
 import zipfile
 from pathlib import Path
 
+from release_layout import PART_SIZE
 from verify_release_jars import (
     VerificationError,
     _class_major_for_minecraft,
@@ -161,19 +162,78 @@ versionRange="[1.21.1,1.21.2)"
             "version": "1.0",
             "depends": {"minecraft": "1.20.1"},
         }
-        data = make_jar({"fabric.mod.json": json.dumps(metadata)})
+        # 必須用 PART_SIZE 為基準的資料：小檔被切片本身就是要被擋下的佈局（見
+        # test_small_jar_must_not_be_split），所以這裡不能再用一個 200 bytes 的 JAR 切成兩片。
+        data = make_jar(
+            {
+                "fabric.mod.json": json.dumps(metadata),
+                "padding.bin": b"x" * (PART_SIZE + 10),
+            }
+        )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             jar = root / "sample.jar"
-            midpoint = len(data) // 2
-            (root / "sample.jar.part-aa").write_bytes(data[:midpoint])
-            (root / "sample.jar.part-ab").write_bytes(data[midpoint:])
+            (root / "sample.jar.part-aa").write_bytes(data[:PART_SIZE])
+            (root / "sample.jar.part-ab").write_bytes(data[PART_SIZE:])
             digest = hashlib.sha256(data).hexdigest()
             checksum = root / "SHA256SUMS.txt"
             checksum.write_text(f"{digest}  {jar.name}\n", encoding="utf-8")
 
             self.assertEqual(1, verify_checksums(checksum, True))
             self.assertEqual("fabric", verify_jar(jar).loader)
+
+    def test_small_jar_must_not_be_split(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            jar = root / "sample.jar"
+            (root / "sample.jar.part-aa").write_bytes(b"x" * 300)
+            (root / "sample.jar.part-ab").write_bytes(b"y" * 300)
+            checksum = root / "SHA256SUMS.txt"
+            checksum.write_text(f"{'0' * 64}  {jar.name}\n", encoding="utf-8")
+            with self.assertRaisesRegex(VerificationError, "must not be split"):
+                verify_checksums(checksum, True)
+
+    def test_manifest_listing_an_unexpected_jar_is_rejected(self) -> None:
+        # 「磁碟上多一顆」是 48 顆完整性唯一的守門員，而這個分支先前沒有任何測試。
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            jar = root / "sample.jar"
+            jar.write_bytes(b"sample")
+            (root / "extra.jar").write_bytes(b"extra")
+            digest = hashlib.sha256(jar.read_bytes()).hexdigest()
+            checksum = root / "SHA256SUMS.txt"
+            checksum.write_text(f"{digest}  {jar.name}\n", encoding="utf-8")
+            with self.assertRaisesRegex(VerificationError, "extra="):
+                verify_checksums(checksum, True)
+
+    def test_manifest_missing_a_jar_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            jar = root / "sample.jar"
+            jar.write_bytes(b"sample")
+            checksum = root / "SHA256SUMS.txt"
+            checksum.write_text(
+                f"{hashlib.sha256(b'sample').hexdigest()}  {jar.name}\n"
+                f"{hashlib.sha256(b'gone').hexdigest()}  gone.jar\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(VerificationError, "checksum target is missing"):
+                verify_checksums(checksum, True)
+
+    def test_manifest_recording_split_parts_is_rejected(self) -> None:
+        data = b"x" * (PART_SIZE + 4)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "sample.jar.part-aa").write_bytes(data[:PART_SIZE])
+            (root / "sample.jar.part-ab").write_bytes(data[PART_SIZE:])
+            checksum = root / "SHA256SUMS.txt"
+            checksum.write_text(
+                f"{hashlib.sha256(data).hexdigest()}  sample.jar\n"
+                f"{hashlib.sha256(data[:PART_SIZE]).hexdigest()}  sample.jar.part-aa\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(VerificationError, "split parts"):
+                verify_checksums(checksum, True)
 
     def test_split_jar_gap_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
