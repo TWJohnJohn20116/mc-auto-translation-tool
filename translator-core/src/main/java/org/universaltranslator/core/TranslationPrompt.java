@@ -1,5 +1,7 @@
 package org.universaltranslator.core;
 
+import java.util.Locale;
+
 /**
  * Builds the system prompt every chat-completion provider sends.
  *
@@ -25,17 +27,33 @@ public final class TranslationPrompt {
     // --- The historical single-text prompt, split exactly where the original concatenation split ---
     private static final String IDENTITY =
             "You are a professional Minecraft game-localization translator. ";
-    private static final String SINGLE_TRANSLATE = "Translate the user text to ";
+    /**
+     * The phrases the built-in prompts are assembled from.
+     *
+     * <p>They are constants of their own because {@link #echoMarkers()} hands exactly these strings to
+     * {@link TranslationOutputValidator}: the check for "the model echoed its instructions" has to
+     * follow the wording of the prompts, and it used to carry a second, hand-synchronised copy of it.
+     * Splitting them out does not change a byte of any prompt.
+     */
+    private static final String TRANSLATE_USER_TEXT = "Translate the user text to";
+    private static final String TRANSLATE_USER_JSON =
+            "Translate every value of the user JSON object to";
+    private static final String ONLY_TRANSLATION = "Reply with only the translation";
+    private static final String REPLY_JSON_OBJECT = "Reply with one JSON object";
+    private static final String PRESERVE_BASE =
+            "Preserve punctuation, whitespace, URLs, usernames, placeholders";
+    private static final String FORMATTING_MARKERS = "Minecraft formatting markers";
+
+    private static final String SINGLE_TRANSLATE = TRANSLATE_USER_TEXT + " ";
     private static final String SINGLE_ONLY =
-            ". Reply with only the translation, without quotes, labels, notes, or explanations. ";
+            ". " + ONLY_TRANSLATION + ", without quotes, labels, notes, or explanations. ";
     private static final String SINGLE_PRESERVE =
-            "Preserve punctuation, whitespace, URLs, usernames, placeholders, and Minecraft "
-                    + "formatting markers.";
+            PRESERVE_BASE + ", and " + FORMATTING_MARKERS + ".";
     private static final String KEEP_LINE_ORDER =
             " Keep exactly the same number and order of lines.";
 
     // --- The batch prompt: the model answers with one JSON object keyed by input line number ---
-    private static final String BATCH_TRANSLATE = "Translate every value of the user JSON object to ";
+    private static final String BATCH_TRANSLATE = TRANSLATE_USER_JSON + " ";
     /**
      * The batch output contract.
      *
@@ -45,15 +63,15 @@ public final class TranslationPrompt {
      * number closes both, which is also what finally lets a multi-line text take part in a batch.
      */
     private static final String BATCH_JSON_SHAPE =
-            ". Reply with one JSON object, for example {\"1\": \"translation of value 1\", "
+            ". " + REPLY_JSON_OBJECT + ", for example {\"1\": \"translation of value 1\", "
                     + "\"2\": \"translation of value 2\"}: each key is the same line number as the "
                     + "user object, written as a string, and each value is the translation of that "
                     + "line. Every key of the user object must appear exactly once, with no extra "
                     + "keys and no missing keys. Write a line break inside a translation as \\n. ";
     private static final String BATCH_PRESERVE =
-            "Preserve punctuation, whitespace, URLs, usernames, placeholders and Minecraft "
-                    + "formatting markers. Reply with only the JSON object, without quotes around it, "
-                    + "labels, notes or explanations.";
+            PRESERVE_BASE + " and " + FORMATTING_MARKERS
+                    + ". Reply with only the JSON object, without quotes around it, labels, notes "
+                    + "or explanations.";
 
     /** Strictness added by {@link TranslationQuality#HIGH}; shared by both paths. */
     private static final String HIGH_STRICTNESS =
@@ -66,18 +84,37 @@ public final class TranslationPrompt {
      * user-written prompt can change the wording but never the protocol.
      */
     static final String GUARDRAIL_SINGLE =
-            " Reply with only the translation, without quotes, labels, notes, or explanations. "
-                    + "Preserve punctuation, whitespace, URLs, usernames, placeholders, and Minecraft "
-                    + "formatting markers.";
+            " " + ONLY_TRANSLATION + ", without quotes, labels, notes, or explanations. "
+                    + PRESERVE_BASE + ", and " + FORMATTING_MARKERS + ".";
     static final String GUARDRAIL_BATCH =
-            " Reply with one JSON object: each key is an input line number written as a string and "
+            " " + REPLY_JSON_OBJECT + ": each key is an input line number written as a string and "
                     + "each value is that line's translation. Every input line number must appear "
                     + "exactly once as a key, with no extra keys and no missing keys; write a line "
-                    + "break inside a translation as \\n. Preserve punctuation, whitespace, URLs, "
-                    + "usernames, placeholders and Minecraft formatting markers. Reply with only the "
-                    + "JSON object, without quotes around it, labels, notes or explanations.";
+                    + "break inside a translation as \\n. " + PRESERVE_BASE + " and "
+                    + FORMATTING_MARKERS + ". Reply with only the JSON object, without quotes around "
+                    + "it, labels, notes or explanations.";
 
     private TranslationPrompt() {
+    }
+
+    /**
+     * The phrases a model repeats when it answers with its instructions instead of the translation.
+     *
+     * <p>Every entry is the very constant the prompts are built from, lower-cased, so the detector in
+     * {@link TranslationOutputValidator} cannot drift away from the wording it is watching for. The
+     * validator adds the phrasing of older prompt versions on top; this list is the live one.
+     *
+     * @return lower-cased markers, one per prompt phrase
+     */
+    static String[] echoMarkers() {
+        return new String[] {
+                TRANSLATE_USER_TEXT.toLowerCase(Locale.ROOT),
+                TRANSLATE_USER_JSON.toLowerCase(Locale.ROOT),
+                ONLY_TRANSLATION.toLowerCase(Locale.ROOT),
+                REPLY_JSON_OBJECT.toLowerCase(Locale.ROOT),
+                PRESERVE_BASE.toLowerCase(Locale.ROOT),
+                FORMATTING_MARKERS.toLowerCase(Locale.ROOT)
+        };
     }
 
     /** The prompt configuration one provider instance was built with. */
@@ -191,11 +228,50 @@ public final class TranslationPrompt {
      */
     static String expand(String template, TranslationRequest request, TranslationQuality quality) {
         String mode = quality == null ? TranslationQuality.DEFAULT.configName() : quality.configName();
-        return template
-                .replace("{target}", describe(request.getTargetLanguage(), false))
-                .replace("{source}", describe(request.getSourceLanguage(), true))
-                .replace("{kind}", String.valueOf(request.getKind()))
-                .replace("{mode}", mode);
+        // One pass instead of four chained replace() calls: each of those scanned and copied the whole
+        // prompt whether it matched or not, so a 2 KB custom prompt was copied four times per request.
+        StringBuilder output = new StringBuilder(template.length() + 32);
+        int cursor = 0;
+        while (cursor < template.length()) {
+            int open = template.indexOf('{', cursor);
+            if (open < 0) {
+                break;
+            }
+            int close = template.indexOf('}', open + 1);
+            if (close < 0) {
+                break;
+            }
+            output.append(template, cursor, open);
+            String placeholder = template.substring(open, close + 1);
+            String value = placeholderValue(placeholder, request, mode);
+            if (value == null) {
+                // A brace group of the user's own is not a placeholder; it stays exactly as written.
+                output.append(placeholder);
+            } else {
+                output.append(value);
+            }
+            cursor = close + 1;
+        }
+        output.append(template, cursor, template.length());
+        return output.toString();
+    }
+
+    /** The value of one {@code {name}} placeholder, or {@code null} when the name is not ours. */
+    private static String placeholderValue(
+            String placeholder, TranslationRequest request, String mode) {
+        if ("{target}".equals(placeholder)) {
+            return describe(request.getTargetLanguage(), false);
+        }
+        if ("{source}".equals(placeholder)) {
+            return describe(request.getSourceLanguage(), true);
+        }
+        if ("{kind}".equals(placeholder)) {
+            return String.valueOf(request.getKind());
+        }
+        if ("{mode}".equals(placeholder)) {
+            return mode;
+        }
+        return null;
     }
 
     /**

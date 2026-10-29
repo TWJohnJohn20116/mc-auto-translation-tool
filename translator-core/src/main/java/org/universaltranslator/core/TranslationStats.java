@@ -43,6 +43,8 @@ public final class TranslationStats {
     private static final long FLUSH_INTERVAL_MILLIS = 60_000L;
     /** Bound on the provider ids read back from the file, so a corrupt file cannot grow memory. */
     private static final int MAXIMUM_STORED_PROVIDERS = 64;
+    /** Bucket that takes every provider id arriving after {@link #MAXIMUM_STORED_PROVIDERS}. */
+    private static final String PROVIDER_OVERFLOW = "other";
     private static final String PROVIDER_PREFIX = "provider.";
     private static final String FAILURE_PREFIX = "failure.";
 
@@ -79,6 +81,13 @@ public final class TranslationStats {
     private long revision;
     private Snapshot cachedSnapshot;
     private long cachedRevision = -1L;
+    /**
+     * The localized lines and the revision they were built from. The diagnostics screens ask for
+     * them from {@code render()}, so resolving the language keys and formatting the numbers again
+     * for an unchanged view was the same per-frame cost {@link #snapshot()} already avoids.
+     */
+    private List<String> cachedLines;
+    private long cachedLinesRevision = -1L;
     private volatile Path file;
     private volatile boolean flusherStarted;
 
@@ -116,10 +125,21 @@ public final class TranslationStats {
             return;
         }
         synchronized (lock) {
-            if (file != null) {
+            if (file != null && file.equals(statisticsFile)) {
                 return;
             }
+        }
+        // A second attach with a different file used to be dropped silently, so every later total
+        // went to the first path while the platform displayed the second. Writing the old file
+        // before the switch keeps what was counted under it instead of abandoning it.
+        flush();
+        boolean replaced;
+        synchronized (lock) {
+            replaced = file != null;
             file = statisticsFile;
+        }
+        if (replaced) {
+            DebugLog.global().log("stats-attach", "result", "replaced");
         }
         load(statisticsFile);
         startFlusher();
@@ -182,6 +202,10 @@ public final class TranslationStats {
      */
     public void recordRejected() {
         synchronized (lock) {
+            // Counted as a request: a rejected translation was asked for, and every path that
+            // settles a request has to contribute exactly one entry here or the identity the
+            // report prints (requests == successes + failures + rejected) can never hold.
+            requests++;
             rejected++;
             revision++;
         }
@@ -283,6 +307,33 @@ public final class TranslationStats {
         }
     }
 
+    /**
+     * Adds token counts a provider has already read out of its own response.
+     *
+     * <p>Every LLM provider parses the body into a map before it can take the translation out of
+     * it, so handing the same string back to this class made each request pay for a second full
+     * parse of a multi-kilobyte batch response at the end of its critical path.
+     *
+     * @param providerId provider id, or {@code null} for the unknown bucket
+     * @param promptTokens prompt tokens the provider reported; negative values count as zero
+     * @param completionTokens completion tokens the provider reported; negative values count as zero
+     */
+    public void recordUsage(String providerId, long promptTokens, long completionTokens) {
+        if (promptTokens <= 0L && completionTokens <= 0L) {
+            return;
+        }
+        long reportedPrompt = Math.max(0L, promptTokens);
+        long reportedCompletion = Math.max(0L, completionTokens);
+        synchronized (lock) {
+            this.promptTokens += reportedPrompt;
+            this.completionTokens += reportedCompletion;
+            ProviderCounters counters = counters(providerId);
+            counters.promptTokens += reportedPrompt;
+            counters.completionTokens += reportedCompletion;
+            revision++;
+        }
+    }
+
     /** Clears every counter, including the persisted totals. */
     public void reset() {
         synchronized (lock) {
@@ -360,9 +411,10 @@ public final class TranslationStats {
     /** The monitor that serializes every writer of {@code target}, process-wide. */
     private static Object lockFor(Path target) {
         String key = target.toAbsolutePath().normalize().toString();
-        Object fresh = new Object();
-        Object existing = PATH_LOCKS.putIfAbsent(key, fresh);
-        return existing == null ? fresh : existing;
+        // computeIfAbsent rather than putIfAbsent: the eager construction allocated a monitor on
+        // every flush that was then thrown away. Entries are never removed, which is what keeps the
+        // returned monitor stable for the life of the process.
+        return PATH_LOCKS.computeIfAbsent(key, ignored -> new Object());
     }
 
     /**
@@ -370,29 +422,59 @@ public final class TranslationStats {
      *
      * <p>The diagnostics screens ask for this from {@code render()}, i.e. sixty times a second while
      * they are open, but the counters only change when a provider call settles. The view is
-     * therefore reused until a counter update bumps {@link #revision}; building it under the same
-     * lock the workers use is then a one-integer test on an idle screen instead of 512 boxings and a
-     * sort every frame.
+     * therefore reused until a counter update bumps {@link #revision}; an idle screen then costs one
+     * integer test under the workers' lock, and a rebuild copies no more than the primitives it
+     * needs before leaving that lock.
      */
     public Snapshot snapshot() {
+        long builtRevision;
+        long requestTotal;
+        long successTotal;
+        long failureTotal;
+        long hitTotal;
+        long missTotal;
+        long rejectedTotal;
+        long promptTotal;
+        long completionTotal;
+        long[] samples;
+        List<ProviderLine> lines;
+        Map<String, Long> reasons;
         synchronized (lock) {
             Snapshot cached = cachedSnapshot;
             if (cached != null && cachedRevision == revision) {
                 return cached;
             }
-            Snapshot built = buildSnapshot();
-            cachedSnapshot = built;
-            cachedRevision = revision;
-            return built;
+            // Only the state the workers own is read here. The view itself is assembled below,
+            // outside the monitor, so a diagnostics screen that asks while translations are running
+            // no longer stops every worker for the length of the boxing and map building.
+            builtRevision = revision;
+            requestTotal = requests;
+            successTotal = successes;
+            failureTotal = failures;
+            hitTotal = cacheHits;
+            missTotal = cacheMisses;
+            rejectedTotal = rejected;
+            promptTotal = promptTokens;
+            completionTotal = completionTokens;
+            reasons = new LinkedHashMap<String, Long>(failuresByReason);
+            lines = buildProviderLines();
+            samples = Arrays.copyOf(latencySamples, latencyCount);
         }
+        Snapshot built = new Snapshot(requestTotal, successTotal, failureTotal, hitTotal, missTotal,
+                rejectedTotal, promptTotal, completionTotal, reasons, lines, samples);
+        synchronized (lock) {
+            // Two threads may build the same view; the newer revision wins so a slow builder cannot
+            // replace a fresher view with an older one.
+            if (cachedRevision < builtRevision) {
+                cachedSnapshot = built;
+                cachedRevision = builtRevision;
+            }
+        }
+        return built;
     }
 
-    /** Builds a fresh view; must be called with {@link #lock} held. */
-    private Snapshot buildSnapshot() {
-        List<Long> samples = new ArrayList<Long>(latencyCount);
-        for (int index = 0; index < latencyCount; index++) {
-            samples.add(Long.valueOf(latencySamples[index]));
-        }
+    /** One immutable line per provider; must be called with {@link #lock} held. */
+    private List<ProviderLine> buildProviderLines() {
         List<ProviderLine> lines = new ArrayList<ProviderLine>(providers.size());
         for (Map.Entry<String, ProviderCounters> entry : providers.entrySet()) {
             ProviderCounters counters = entry.getValue();
@@ -400,9 +482,7 @@ public final class TranslationStats {
                     counters.failures, counters.latencySum, counters.latencyCount,
                     counters.promptTokens, counters.completionTokens));
         }
-        return new Snapshot(requests, successes, failures, cacheHits, cacheMisses, rejected,
-                promptTokens, completionTokens,
-                new LinkedHashMap<String, Long>(failuresByReason), lines, samples);
+        return lines;
     }
 
     /**
@@ -413,6 +493,13 @@ public final class TranslationStats {
      */
     public List<String> localizedLines(UiTranslator translator) {
         UiTranslator ui = translator == null ? (key, arguments) -> key : translator;
+        long buildRevision;
+        synchronized (lock) {
+            if (cachedLines != null && cachedLinesRevision == revision) {
+                return cachedLines;
+            }
+            buildRevision = revision;
+        }
         Snapshot snapshot = snapshot();
         List<String> lines = new ArrayList<String>(6);
         lines.add(ui.translate("screen.universal_translator.stats.totals",
@@ -438,7 +525,14 @@ public final class TranslationStats {
             }
             lines.add(ui.translate("screen.universal_translator.stats.reasons", reasons.toString()));
         }
-        return Collections.unmodifiableList(lines);
+        lines = Collections.unmodifiableList(lines);
+        synchronized (lock) {
+            if (buildRevision >= cachedLinesRevision) {
+                cachedLines = lines;
+                cachedLinesRevision = buildRevision;
+            }
+        }
+        return lines;
     }
 
     /** The statistics as plain lines, for the exported diagnostics report. */
@@ -478,11 +572,18 @@ public final class TranslationStats {
     static String safeProviderId(String providerId) {
         String value = providerId == null ? "unknown" : providerId.trim();
         int scheme = value.indexOf("://");
-        if (scheme < 0) {
-            return value;
+        if (scheme >= 0) {
+            int path = value.indexOf('/', scheme + 3);
+            if (path >= 0) {
+                value = value.substring(0, path) + "/...";
+            }
         }
-        int path = value.indexOf('/', scheme + 3);
-        return path < 0 ? value : value.substring(0, path) + "/...";
+        // Cache keys end with the model digest and an optional prompt signature. Neither helps a
+        // support request, and the digest is still a fingerprint of what the player was sending.
+        int digest = value.indexOf('@');
+        int signature = value.indexOf('#');
+        int cut = digest < 0 ? signature : (signature < 0 ? digest : Math.min(digest, signature));
+        return cut < 0 ? value : value.substring(0, cut);
     }
 
     /**
@@ -520,13 +621,36 @@ public final class TranslationStats {
         return REASON_OTHER;
     }
 
+    /** Whether {@code reason} is one of the buckets {@link #reasonOf} can produce. */
+    private static boolean isKnownReason(String reason) {
+        return REASON_AUTH.equals(reason)
+                || REASON_RATE_LIMIT.equals(reason)
+                || REASON_SERVER.equals(reason)
+                || REASON_CLIENT.equals(reason)
+                || REASON_TIMEOUT.equals(reason)
+                || REASON_NETWORK.equals(reason)
+                || REASON_INVALID_OUTPUT.equals(reason)
+                || REASON_OTHER.equals(reason);
+    }
+
     private ProviderCounters counters(String providerId) {
         String key = providerId == null || providerId.trim().isEmpty() ? "unknown" : providerId.trim();
         ProviderCounters counters = providers.get(key);
-        if (counters == null) {
-            counters = new ProviderCounters();
-            providers.put(key, counters);
+        if (counters != null) {
+            return counters;
         }
+        if (providers.size() >= MAXIMUM_STORED_PROVIDERS) {
+            // Runtime ids carry the endpoint and the model name, so every settings change invents a
+            // new key. Overflow shares one bucket instead of growing the map and the statistics file
+            // without bound; the same bound already guards the keys read back from that file.
+            key = PROVIDER_OVERFLOW;
+            counters = providers.get(key);
+            if (counters != null) {
+                return counters;
+            }
+        }
+        counters = new ProviderCounters();
+        providers.put(key, counters);
         return counters;
     }
 
@@ -588,7 +712,13 @@ public final class TranslationStats {
                     continue;
                 }
                 if (key.startsWith(FAILURE_PREFIX) && key.length() > FAILURE_PREFIX.length()) {
-                    failuresByReason.put(key.substring(FAILURE_PREFIX.length()), Long.valueOf(value));
+                    String reason = key.substring(FAILURE_PREFIX.length());
+                    // Only the buckets this class can produce are adopted. Unlike the provider table
+                    // this map had no bound at all, so a corrupted file could grow it and then have
+                    // the whole thing written back on every flush.
+                    if (isKnownReason(reason)) {
+                        failuresByReason.put(reason, Long.valueOf(value));
+                    }
                     continue;
                 }
                 if (key.startsWith(PROVIDER_PREFIX) && key.length() > PROVIDER_PREFIX.length()
@@ -761,7 +891,12 @@ public final class TranslationStats {
         private final long completionTokens;
         private final Map<String, Long> failuresByReason;
         private final List<ProviderLine> providers;
-        private final List<Long> latencySamples;
+        /**
+         * The retained samples, owned by this view. A primitive array rather than a list of boxed
+         * longs: this is rebuilt whenever a counter moves, and one {@code Long} per sample was the
+         * bulk of that cost.
+         */
+        private final long[] latencySamples;
         /** Sum of {@link #latencySamples}, computed once so a panel can ask for the average freely. */
         private final long latencyTotal;
         /**
@@ -781,7 +916,7 @@ public final class TranslationStats {
                 long completionTokens,
                 Map<String, Long> failuresByReason,
                 List<ProviderLine> providers,
-                List<Long> latencySamples
+                long[] latencySamples
         ) {
             this.requests = requests;
             this.successes = successes;
@@ -793,10 +928,10 @@ public final class TranslationStats {
             this.completionTokens = completionTokens;
             this.failuresByReason = Collections.unmodifiableMap(failuresByReason);
             this.providers = Collections.unmodifiableList(providers);
-            this.latencySamples = Collections.unmodifiableList(latencySamples);
+            this.latencySamples = latencySamples;
             long total = 0L;
-            for (Long sample : this.latencySamples) {
-                total += sample.longValue();
+            for (long sample : latencySamples) {
+                total += sample;
             }
             this.latencyTotal = total;
         }
@@ -854,7 +989,7 @@ public final class TranslationStats {
 
         /** Average request latency over the retained samples, or {@code 0} when none were kept. */
         public long averageLatencyMillis() {
-            int count = latencySamples.size();
+            int count = latencySamples.length;
             return count <= 0 ? 0L : latencyTotal / count;
         }
 
@@ -874,7 +1009,9 @@ public final class TranslationStats {
                 return 0L;
             }
             int bounded = Math.max(0, Math.min(100, percentile));
-            int position = (int) Math.ceil(bounded / 100.0d * sorted.length) - 1;
+            // Integer arithmetic: the floating point form landed on the neighbouring index for
+            // combinations whose product is an exact integer but not representable in binary.
+            int position = (bounded * sorted.length + 99) / 100 - 1;
             return sorted[Math.max(0, Math.min(sorted.length - 1, position))];
         }
 
@@ -889,10 +1026,7 @@ public final class TranslationStats {
         private long[] sortedSamples() {
             long[] local = sortedSamples;
             if (local == null) {
-                local = new long[latencySamples.size()];
-                for (int index = 0; index < local.length; index++) {
-                    local[index] = latencySamples.get(index).longValue();
-                }
+                local = latencySamples.clone();
                 Arrays.sort(local);
                 sortedSamples = local;
             }
@@ -901,7 +1035,7 @@ public final class TranslationStats {
 
         /** The retained latency sample count, for a panel that wants to say how it was measured. */
         public int latencySampleCount() {
-            return latencySamples.size();
+            return latencySamples.length;
         }
 
         @Override

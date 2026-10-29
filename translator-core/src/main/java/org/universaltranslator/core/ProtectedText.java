@@ -1,8 +1,11 @@
 package org.universaltranslator.core;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.Comparator;
@@ -90,17 +93,28 @@ public final class ProtectedText {
             Pattern.compile("(?:" + PROTECTED_SOURCE + "|" + HAN_SOURCE + ")", Pattern.MULTILINE);
     private static final Pattern INTERNAL_TOKEN = Pattern.compile("__UT_\\d+__");
     /**
-     * How many distinct literal sets keep their compiled pattern alive. The platform publishes a
-     * fresh player-name snapshot every few seconds, so a handful of slots is enough to serve every
-     * worker between two snapshots while keeping the cache bounded.
+     * Sessions that can translate at the same time: a second game window (or the self test) may run
+     * while a settings change retires the first one, and both keep publishing literal snapshots.
      */
-    private static final int PATTERN_CACHE_CAPACITY = 4;
+    private static final int CONCURRENT_SESSIONS = 2;
+    /** Literal sets one session holds: the one with and the one without Han protection. */
+    private static final int LITERAL_SETS_PER_SESSION = 2;
     /**
-     * How many published literal snapshots keep their prepared form. Two sessions can coexist while
-     * a settings change retires the old one, so a single slot would be overwritten by the other
-     * session on every request.
+     * How many published literal snapshots keep their prepared form. It is the session count times
+     * the sets per session, so retiring one session cannot evict the set a live request still uses;
+     * a single slot would be overwritten by the other session on every request.
      */
-    private static final int PREPARED_CAPACITY = 4;
+    private static final int PREPARED_CAPACITY = CONCURRENT_SESSIONS * LITERAL_SETS_PER_SESSION;
+    /**
+     * How many distinct literal sets keep their compiled pattern alive. The platform publishes a
+     * fresh player-name snapshot every few seconds, so this many slots is enough to serve every
+     * worker between two publications while keeping the cache bounded.
+     */
+    private static final int PATTERN_CACHE_CAPACITY = CONCURRENT_SESSIONS * LITERAL_SETS_PER_SESSION;
+    /** Longest literal kept; a server MOTD or a long title is still an exact string to preserve. */
+    private static final int MAXIMUM_LITERAL_LENGTH = 1024;
+    /** Most literals kept from one snapshot; the alternation has to stay a bounded size. */
+    private static final int MAXIMUM_LITERALS = 1000;
     private static final long FNV_OFFSET_BASIS = 0xcbf29ce484222325L;
     private static final long FNV_PRIME = 0x100000001b3L;
     /** Longest literal first, so the alternation tries the longest form before any of its prefixes. */
@@ -140,6 +154,8 @@ public final class ProtectedText {
     private final String original;
     private final String template;
     private final List<String> values;
+    /** The single token scan of {@link #template}; see {@link #splice()}. */
+    private volatile Splice splice;
 
     private ProtectedText(String original, String template, List<String> values) {
         this.original = original;
@@ -189,6 +205,12 @@ public final class ProtectedText {
      * Identity is safe in the same way it is for the coordinator's request key: the platform hands out
      * a snapshot that keeps its contents until it is replaced.
      *
+     * <p><strong>The snapshot must not be mutated.</strong> Publishing a new list is the only
+     * supported way to change the set: an in-place update keeps the same identity, so the remembered
+     * form would still describe the old contents (new names unprotected, removed names protected).
+     * The entry count is compared on every hit so the common in-place update — clearing the list and
+     * refilling it — is caught and rebuilt instead of silently served stale.
+     *
      * @param protectedLiterals published snapshot, possibly {@code null}
      * @param preserveHanText whether Han text is protected as well
      * @return the prepared form; {@code literals} is empty when nothing is protected
@@ -197,8 +219,7 @@ public final class ProtectedText {
         PreparedLiterals[] current = preparedLiterals;
         for (int index = 0; index < current.length; index++) {
             PreparedLiterals entry = current[index];
-            if (entry != null && entry.source == protectedLiterals
-                    && entry.preserveHanText == preserveHanText) {
+            if (entry != null && entry.matches(protectedLiterals, preserveHanText)) {
                 return entry;
             }
         }
@@ -214,14 +235,22 @@ public final class ProtectedText {
         return built;
     }
 
-    /** Filters, deduplicates and orders the raw literals; bounded so one snapshot cannot blow up. */
+    /**
+     * Filters, deduplicates and orders the raw literals.
+     *
+     * <p>Both bounds are part of the contract rather than an implementation detail: an entry longer
+     * than {@link #MAXIMUM_LITERAL_LENGTH} or one past {@link #MAXIMUM_LITERALS} is <em>not</em>
+     * protected, so it is sent to the provider and may come back rewritten. The bounds are named and
+     * sized so the platform can decide, instead of depending on numbers buried in the loop.
+     */
     private static List<String> adaptLiterals(Iterable<String> protectedLiterals) {
         List<String> literals = new ArrayList<String>();
         Set<String> seenLiterals = new HashSet<String>();
         if (protectedLiterals != null) {
             for (String literal : protectedLiterals) {
-                if (literal != null && !literal.isEmpty() && literal.length() <= 255
-                        && literals.size() < 1000 && seenLiterals.add(literal)) {
+                if (literal != null && !literal.isEmpty()
+                        && literal.length() <= MAXIMUM_LITERAL_LENGTH
+                        && literals.size() < MAXIMUM_LITERALS && seenLiterals.add(literal)) {
                     literals.add(literal);
                 }
             }
@@ -238,13 +267,8 @@ public final class ProtectedText {
      */
     private static Pattern compilePattern(List<String> literals, boolean preserveHanText) {
         StringBuilder source = new StringBuilder(
-                "(?:" + NOT_AFTER_FORMAT_CODE + "(?<![A-Za-z0-9_])(?:" + FORMAT_CODE + ")*(?:");
-        for (int index = 0; index < literals.size(); index++) {
-            if (index > 0) {
-                source.append('|');
-            }
-            source.append(Pattern.quote(literals.get(index)));
-        }
+                "(?:" + NOT_AFTER_FORMAT_CODE + "(?<![A-Za-z0-9_])(?:" + FORMAT_CODE + ")*(?iu:");
+        appendLiteralAlternation(source, literals);
         source.append(")(?![A-Za-z0-9_])|").append(PROTECTED_SOURCE);
         if (preserveHanText) {
             source.append('|').append(HAN_SOURCE);
@@ -254,9 +278,69 @@ public final class ProtectedText {
         // and without MULTILINE that anchor only matches the start of the whole text, so every
         // bullet on the second and later lines of a scoreboard or lore block would be sent for
         // translation as soon as the literal list is non-empty (which is always true in multiplayer).
-        return Pattern.compile(
-                source.toString(),
-                Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE | Pattern.MULTILINE);
+        //
+        // Case folding is scoped to the literal branch. Applying it to the whole pattern also folded
+        // the inlined PROTECTED_SOURCE, so a unit suffix ("100MS"), a scheme ("HTTPS://"), "localhost"
+        // or a "%Token%" was protected on a server and translated in single player: the same text got
+        // two different segmentations from the same settings.
+        return Pattern.compile(source.toString(), Pattern.MULTILINE);
+    }
+
+    /**
+     * Writes the literal alternation grouped by first character.
+     *
+     * <p>{@code (?:alice|bob|carol)} makes the regex engine compare every literal in order at every
+     * position of the text, so one line of scoreboard text cost the whole list at each character.
+     * With one branch per distinct first character the engine rejects a position after a single
+     * character comparison and only the literals sharing that character are tried in full.
+     *
+     * <p>Every literal keeps its own quoted spelling, so the grouping is a hint for the engine and
+     * never decides what matches; case variants simply land in different branches, which the
+     * case-insensitive literal branch accepts either way.
+     */
+    private static void appendLiteralAlternation(StringBuilder source, List<String> literals) {
+        Map<Character, StringBuilder> tailsByHead = new LinkedHashMap<Character, StringBuilder>();
+        Set<Character> bareHeads = new HashSet<Character>();
+        for (int index = 0; index < literals.size(); index++) {
+            String literal = literals.get(index);
+            Character head = Character.valueOf(literal.charAt(0));
+            if (literal.length() == 1) {
+                // A one-character literal is the head on its own; an empty remainder alternative
+                // would let the whole branch match zero characters.
+                bareHeads.add(head);
+                if (!tailsByHead.containsKey(head)) {
+                    tailsByHead.put(head, new StringBuilder());
+                }
+                continue;
+            }
+            StringBuilder tails = tailsByHead.get(head);
+            if (tails == null) {
+                tails = new StringBuilder();
+                tailsByHead.put(head, tails);
+            }
+            if (tails.length() > 0) {
+                tails.append('|');
+            }
+            // Longest first, so the engine tries the longer form before any of its prefixes.
+            tails.append(Pattern.quote(literal.substring(1)));
+        }
+        boolean first = true;
+        for (Map.Entry<Character, StringBuilder> entry : tailsByHead.entrySet()) {
+            if (!first) {
+                source.append('|');
+            }
+            first = false;
+            source.append(Pattern.quote(String.valueOf(entry.getKey().charValue())));
+            StringBuilder tails = entry.getValue();
+            if (tails.length() == 0) {
+                continue;
+            }
+            source.append("(?:").append(tails);
+            if (bareHeads.contains(entry.getKey())) {
+                source.append('|');
+            }
+            source.append(')');
+        }
     }
 
     /**
@@ -360,6 +444,11 @@ public final class ProtectedText {
         private final boolean preserveHanText;
         private final List<String> literals;
         private final long signature;
+        /**
+         * Entry count of {@code source} when it was prepared, or {@code -1} when the iterable cannot
+         * report one; used to notice an in-place update of the published snapshot.
+         */
+        private final int sourceSize;
 
         private PreparedLiterals(
                 Iterable<String> source,
@@ -370,19 +459,47 @@ public final class ProtectedText {
             this.preserveHanText = preserveHanText;
             this.literals = Collections.unmodifiableList(literals);
             this.signature = signature(this.literals, preserveHanText);
+            this.sourceSize = sizeOf(source);
         }
+
+        /**
+         * Whether this prepared form still describes {@code candidate}.
+         *
+         * <p>Identity alone is not enough: the platform promises not to mutate a published snapshot,
+         * and this check turns a violation into a rebuild for the shape such a violation takes in
+         * practice (clear the list, refill it). An iterable that cannot report its size is trusted.
+         */
+        private boolean matches(Iterable<String> candidate, boolean candidateHan) {
+            if (source != candidate || preserveHanText != candidateHan) {
+                return false;
+            }
+            int candidateSize = sizeOf(candidate);
+            return sourceSize < 0 || candidateSize < 0 || sourceSize == candidateSize;
+        }
+    }
+
+    /** Entry count of an iterable, or {@code -1} when it cannot be asked without iterating it. */
+    private static int sizeOf(Iterable<String> values) {
+        return values instanceof Collection
+                ? ((Collection<String>) values).size() : -1;
     }
 
     private static ProtectedText parseWithPattern(String text, Pattern pattern) {
         Matcher matcher = pattern.matcher(text);
-        StringBuffer output = new StringBuffer();
+        // Appending by hand keeps the scan on a plain StringBuilder: appendReplacement only exists
+        // with a synchronized StringBuffer, and it also re-scans every token for '$' and '\' that a
+        // token generated right here cannot contain.
+        StringBuilder output = new StringBuilder(text.length() + 16);
         List<String> values = new ArrayList<String>();
+        int cursor = 0;
         while (matcher.find()) {
             int index = values.size();
             values.add(matcher.group());
-            matcher.appendReplacement(output, Matcher.quoteReplacement(token(index)));
+            output.append(text, cursor, matcher.start());
+            appendToken(output, index);
+            cursor = matcher.end();
         }
-        matcher.appendTail(output);
+        output.append(text, cursor, text.length());
         return new ProtectedText(text, output.toString(), values);
     }
 
@@ -399,17 +516,46 @@ public final class ProtectedText {
     }
 
     String getUnprotectedTemplateText() {
-        return INTERNAL_TOKEN.matcher(template).replaceAll("");
+        return splice().unprotectedText;
     }
 
     /** Returns exact protected values and translatable text as separate ordered parts. */
     List<Segment> getSegments() {
+        return splice().segments;
+    }
+
+    /**
+     * Runs the token scan once and keeps both views of its result.
+     *
+     * <p>The template used to be matched twice per request: once to build a token-free copy of the
+     * whole text for a language heuristic, and once more to split the same template into segments.
+     * This instance lives for one request, so the scan belongs to it.
+     */
+    private Splice splice() {
+        Splice ready = splice;
+        if (ready != null) {
+            return ready;
+        }
+        synchronized (this) {
+            ready = splice;
+            if (ready == null) {
+                ready = buildSplice();
+                splice = ready;
+            }
+            return ready;
+        }
+    }
+
+    private Splice buildSplice() {
         List<Segment> segments = new ArrayList<Segment>();
+        StringBuilder unprotectedText = new StringBuilder(template.length());
         Matcher matcher = INTERNAL_TOKEN.matcher(template);
         int cursor = 0;
         while (matcher.find()) {
             if (matcher.start() > cursor) {
-                segments.add(new Segment(template.substring(cursor, matcher.start()), false));
+                String literal = template.substring(cursor, matcher.start());
+                segments.add(new Segment(literal, false));
+                unprotectedText.append(literal);
             }
             int index = tokenIndex(matcher.group());
             if (index >= 0 && index < values.size()) {
@@ -420,12 +566,25 @@ public final class ProtectedText {
             cursor = matcher.end();
         }
         if (cursor < template.length()) {
-            segments.add(new Segment(template.substring(cursor), false));
+            String tail = template.substring(cursor);
+            segments.add(new Segment(tail, false));
+            unprotectedText.append(tail);
         }
         if (segments.isEmpty()) {
             segments.add(new Segment(original, false));
         }
-        return Collections.unmodifiableList(segments);
+        return new Splice(Collections.unmodifiableList(segments), unprotectedText.toString());
+    }
+
+    /** One token scan's two views: the ordered segments and the token-free copy of the template. */
+    private static final class Splice {
+        private final List<Segment> segments;
+        private final String unprotectedText;
+
+        private Splice(List<Segment> segments, String unprotectedText) {
+            this.segments = segments;
+            this.unprotectedText = unprotectedText;
+        }
     }
 
     public String restore(String translatedTemplate) {
@@ -448,8 +607,9 @@ public final class ProtectedText {
         return output.toString();
     }
 
-    private static String token(int index) {
-        return "__UT_" + index + "__";
+    /** Writes {@code __UT_<index>__} without building the token as a separate {@code String}. */
+    private static void appendToken(StringBuilder output, int index) {
+        output.append("__UT_").append(index).append("__");
     }
 
     /**

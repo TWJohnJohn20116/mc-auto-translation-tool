@@ -279,7 +279,10 @@ public final class CoreSelfTest {
         assertEquals("zh", TargetLanguage.libreTranslateCode("zh-CN"));
         assertTrue(TargetLanguage.translationInstruction("zh-TW")
                 .contains("Traditional Chinese characters"));
-        assertFalse(LanguageHeuristics.shouldTranslate("金幣：123", "zh-TW"));
+        // A Traditional Chinese target must still translate Simplified input: the Han shortcut only
+        // applies when the target itself is Simplified, otherwise Simplified-to-Traditional never happens.
+        assertTrue(LanguageHeuristics.shouldTranslate("金幣：123", "zh-TW"));
+        assertFalse(LanguageHeuristics.shouldTranslate("金幣：123", "zh-CN"));
         assertTrue(LanguageHeuristics.shouldTranslate("Coins: 123", "zh-TW"));
     }
 

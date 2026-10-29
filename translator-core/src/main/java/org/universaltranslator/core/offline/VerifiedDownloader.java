@@ -13,6 +13,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Collections;
 import org.universaltranslator.core.UserAgent;
+import org.universaltranslator.core.net.CryptoSupport;
 
 /** HTTPS downloader with resume support, a pinned size and a mandatory SHA-256 check. */
 public final class VerifiedDownloader {
@@ -63,8 +64,14 @@ public final class VerifiedDownloader {
             String expectedSha256,
             ProgressListener progress
     ) throws IOException {
-        if (expectedSize < 1L || expectedSha256 == null || expectedSha256.length() != 64) {
+        if (expectedSize < 1L) {
             throw new IllegalArgumentException("A pinned size and SHA-256 are required");
+        }
+        if (!ModelVerificationCache.isSha256(expectedSha256)) {
+            // A 64-character value that is not hex (a display form with dashes, a full-width
+            // character copied from a page) used to pass this check and only surfaced as a hash
+            // mismatch after a gigabyte had been transferred.
+            throw new IllegalArgumentException("A pinned size and a hex SHA-256 are required");
         }
         if (sources == null) {
             throw new IllegalArgumentException("At least one download source is required");
@@ -327,11 +334,7 @@ public final class VerifiedDownloader {
                 digest.update(buffer, 0, count);
             }
         }
-        StringBuilder hex = new StringBuilder(64);
-        for (byte value : digest.digest()) {
-            hex.append(String.format("%02x", value & 0xff));
-        }
-        return hex.toString();
+        return CryptoSupport.hex(digest.digest());
     }
 
     private static HttpURLConnection open(URI uri, long offset, int redirects) throws IOException {

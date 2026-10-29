@@ -9,16 +9,23 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.ConnectException;
+import java.net.NoRouteToHostException;
 import java.net.URI;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.Map;
 import java.util.zip.GZIPInputStream;
+import javax.net.ssl.SSLException;
 import org.universaltranslator.core.UserAgent;
 
 /** Bounded Java 8 HTTP client used to avoid shipping a large networking dependency. */
 public final class HttpJsonClient {
     private static final int MAX_RESPONSE_BYTES = 1024 * 1024;
+    /** How much of an error body is read for the provider's own message. */
+    private static final int MAXIMUM_ERROR_BYTES = 64 * 1024;
+    /** Longest server supplied redirect target that may reach an exception message. */
+    private static final int MAXIMUM_REDIRECT_CHARS = 200;
     /**
      * Lowest total budget the client will work with.
      *
@@ -124,16 +131,14 @@ public final class HttpJsonClient {
             }
 
             int status = connection.getResponseCode();
-            InputStream stream = status >= 200 && status < 300
-                    ? connection.getInputStream()
-                    : connection.getErrorStream();
-            String response = stream == null ? "" : readBounded(decoded(stream), deadlineNanos);
+            // The status decides what the failure means, so it is thrown before the error body is
+            // read: a body over the cap used to replace a 401 with a size IOException, which the
+            // retry and fallback policies both treat as worth another paid attempt.
             if (status < 200 || status >= 300) {
-                String providerError = providerErrorText(response);
-                throw new HttpStatusException(status, "Translation service returned HTTP " + status
-                        + (providerError == null ? "" : ": " + providerError),
-                        parseRetryAfterSeconds(connection.getHeaderField("Retry-After")));
+                throw statusFailure(connection, status, deadlineNanos);
             }
+            InputStream stream = connection.getInputStream();
+            String response = stream == null ? "" : readBounded(decoded(stream), deadlineNanos);
             // The body was read to the end and closed, so the connection may be pooled. Any other
             // exit (non-2xx status, exception, unread body) still disconnects below.
             if (stream != null) {
@@ -142,11 +147,67 @@ public final class HttpJsonClient {
             return response;
         } catch (ConnectException refused) {
             throw TranslationEndpointUnavailableException.connectionRefused(endpoint, refused);
+        } catch (UnknownHostException unresolved) {
+            throw TranslationEndpointUnavailableException.unknownHost(endpoint, unresolved);
+        } catch (NoRouteToHostException unreachable) {
+            throw TranslationEndpointUnavailableException.unknownHost(endpoint, unreachable);
+        } catch (SSLException tls) {
+            throw TranslationEndpointUnavailableException.tlsFailure(endpoint, tls);
         } finally {
             if (!connectionReusable) {
                 connection.disconnect();
             }
         }
+    }
+
+    /**
+     * Builds the failure for a non-2xx status without ever letting the body decide the status.
+     *
+     * @param deadlineNanos absolute {@link System#nanoTime()} value to stop reading the body at
+     */
+    private static HttpStatusException statusFailure(
+            HttpURLConnection connection,
+            int status,
+            long deadlineNanos
+    ) {
+        Long retryAfterSeconds = parseRetryAfterSeconds(connection.getHeaderField("Retry-After"));
+        if (status >= 300 && status < 400) {
+            // Redirects are deliberately not followed, so a 3xx has to name the address the service
+            // moved to; otherwise every line fails with a status that reads like a server refusal.
+            String location = connection.getHeaderField("Location");
+            String target = location == null || location.trim().isEmpty()
+                    ? null : displayText(location.trim());
+            return new HttpStatusException(status, "Translation endpoint was redirected (HTTP "
+                    + status
+                    + (target == null
+                            ? "); update the endpoint to the address the service uses now"
+                            : ") to " + target + "; update the endpoint to that address"),
+                    retryAfterSeconds);
+        }
+        String response;
+        try {
+            InputStream error = connection.getErrorStream();
+            response = error == null ? ""
+                    : readBounded(decoded(error), deadlineNanos, MAXIMUM_ERROR_BYTES, true);
+        } catch (IOException unreadable) {
+            return new HttpStatusException(status,
+                    "Translation service returned HTTP " + status
+                            + " (its error body could not be read)",
+                    retryAfterSeconds, unreadable);
+        }
+        String providerError = providerErrorText(response);
+        return new HttpStatusException(status, "Translation service returned HTTP " + status
+                + (providerError == null ? "" : ": " + providerError), retryAfterSeconds);
+    }
+
+    /** One-line, bounded rendering of a server supplied header value. */
+    private static String displayText(String value) {
+        StringBuilder safe = new StringBuilder(Math.min(value.length(), MAXIMUM_REDIRECT_CHARS));
+        for (int index = 0; index < value.length() && safe.length() < MAXIMUM_REDIRECT_CHARS; index++) {
+            char character = value.charAt(index);
+            safe.append(character < 0x20 ? ' ' : character);
+        }
+        return safe.toString();
     }
 
     /**
@@ -273,12 +334,7 @@ public final class HttpJsonClient {
 
             int status = connection.getResponseCode();
             if (status < 200 || status >= 300) {
-                InputStream error = connection.getErrorStream();
-                String response = error == null ? "" : readBounded(error, deadlineNanos);
-                String providerError = providerErrorText(response);
-                throw new HttpStatusException(status, "Translation service returned HTTP " + status
-                        + (providerError == null ? "" : ": " + providerError),
-                        parseRetryAfterSeconds(connection.getHeaderField("Retry-After")));
+                throw statusFailure(connection, status, deadlineNanos);
             }
             InputStream stream = connection.getInputStream();
             StreamedResponse response = new StreamedResponse(
@@ -290,6 +346,12 @@ public final class HttpJsonClient {
             return response;
         } catch (ConnectException refused) {
             throw TranslationEndpointUnavailableException.connectionRefused(endpoint, refused);
+        } catch (UnknownHostException unresolved) {
+            throw TranslationEndpointUnavailableException.unknownHost(endpoint, unresolved);
+        } catch (NoRouteToHostException unreachable) {
+            throw TranslationEndpointUnavailableException.unknownHost(endpoint, unreachable);
+        } catch (SSLException tls) {
+            throw TranslationEndpointUnavailableException.tlsFailure(endpoint, tls);
         } finally {
             // The connection stays open only while the caller still holds the response stream.
             if (!handedOver) {
@@ -335,12 +397,9 @@ public final class HttpJsonClient {
             throw new IllegalArgumentException("HTTP header name is required");
         }
         for (int index = 0; index < name.length(); index++) {
-            char character = name.charAt(index);
-            boolean token = (character >= 'a' && character <= 'z')
-                    || (character >= 'A' && character <= 'Z')
-                    || (character >= '0' && character <= '9') || character == '-';
-            if (!token) {
-                throw new IllegalArgumentException("HTTP header name contains an unsupported character");
+            if (!isTokenCharacter(name.charAt(index))) {
+                throw new IllegalArgumentException(
+                        "HTTP header name contains an unsupported character: " + name);
             }
         }
         if (RESERVED_HEADERS.contains(name.toLowerCase(java.util.Locale.ROOT))) {
@@ -353,6 +412,22 @@ public final class HttpJsonClient {
                 throw new IllegalArgumentException("HTTP header value contains a line break: " + name);
             }
         }
+    }
+
+    /**
+     * True for the RFC 7230 {@code tchar} set, which is exactly what {@code setRequestProperty}
+     * accepts in a name.
+     *
+     * <p>Accepting less than the settings loader did moved the failure to the hot path: a legal
+     * name such as {@code X_API_Key} was saved and then rejected on every request.
+     */
+    private static boolean isTokenCharacter(char character) {
+        if ((character >= 'a' && character <= 'z')
+                || (character >= 'A' && character <= 'Z')
+                || (character >= '0' && character <= '9')) {
+            return true;
+        }
+        return "!#$%&'*+.^_`|~-".indexOf(character) >= 0;
     }
 
     /** A response whose body is still open, so a server-sent event stream can be read as it arrives. */
@@ -503,14 +578,33 @@ public final class HttpJsonClient {
      * @param deadlineNanos absolute {@link System#nanoTime()} value to stop at
      */
     private static String readBounded(InputStream input, long deadlineNanos) throws IOException {
+        return readBounded(input, deadlineNanos, MAX_RESPONSE_BYTES, false);
+    }
+
+    /**
+     * Reads a body up to {@code limit} bytes and no further than {@code deadlineNanos}.
+     *
+     * @param truncate {@code true} to keep what arrived at {@code limit} instead of failing on size,
+     *         which is what an error body needs: the status matters more than its tail
+     */
+    private static String readBounded(
+            InputStream input,
+            long deadlineNanos,
+            int limit,
+            boolean truncate
+    ) throws IOException {
         try (InputStream source = input; ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[8192];
             int total = 0;
             int count;
             while ((count = source.read(buffer)) >= 0) {
                 total += count;
-                if (total > MAX_RESPONSE_BYTES) {
-                    throw new IOException("Translation response exceeded 1 MiB");
+                if (total > limit) {
+                    if (!truncate) {
+                        throw new IOException("Translation response exceeded 1 MiB");
+                    }
+                    output.write(buffer, 0, count - (total - limit));
+                    break;
                 }
                 if (System.nanoTime() - deadlineNanos > 0L) {
                     throw new java.net.SocketTimeoutException(

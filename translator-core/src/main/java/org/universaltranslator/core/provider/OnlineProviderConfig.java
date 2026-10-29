@@ -1,5 +1,6 @@
 package org.universaltranslator.core.provider;
 
+import org.universaltranslator.core.DebugLog;
 import org.universaltranslator.core.TranslationPrompt;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationProviderCatalog;
@@ -24,6 +25,13 @@ import java.util.Set;
 /** Immutable, whitelisted online-provider settings shared by every loader/version. */
 public final class OnlineProviderConfig {
     private static final String CUSTOM_HEADER_PREFIX = "custom-api-header.";
+    /**
+     * Range of {@code api-read-timeout-ms}, which also decides how long a stream may deliver nothing:
+     * a user who raises it for a slow endpoint must not keep losing the stream at a fixed 180 s.
+     */
+    private static final int DEFAULT_READ_TIMEOUT_MILLIS = 120000;
+    private static final int MINIMUM_READ_TIMEOUT_MILLIS = 1000;
+    private static final int MAXIMUM_READ_TIMEOUT_MILLIS = 300000;
     /**
      * The quality key, as a constant the platform configuration classes reuse.
      *
@@ -150,7 +158,8 @@ public final class OnlineProviderConfig {
         // Off by default: the trace records text previews, so it is only written when asked for.
         putDefault(properties, DEBUG_LOG_KEY, "false");
         putDefault(properties, "api-connect-timeout-ms", "5000");
-        putDefault(properties, "api-read-timeout-ms", "120000");
+        putDefault(properties, "api-read-timeout-ms",
+                Integer.toString(DEFAULT_READ_TIMEOUT_MILLIS));
         putDefault(properties, "api-max-attempts", "3");
         putDefault(properties, "api-min-request-interval-ms", "60");
         // Throughput settings. They are clamped rather than rejected, so a hand-edited typo falls
@@ -507,9 +516,13 @@ public final class OnlineProviderConfig {
             stored.load(reader);
         } catch (IOException unreadable) {
             // A file that cannot be read is not a reason to fail a save; the snapshot is written as
-            // it stands, exactly as it was before this method existed.
+            // it stands, exactly as it was before this method existed. Leaving no trace was the
+            // problem: a value the diagnostics panel had just written was silently overwritten by the
+            // stale snapshot and nothing said why.
+            logUnreadable(configFile, unreadable);
             return;
         } catch (RuntimeException malformed) {
+            logUnreadable(configFile, malformed);
             return;
         }
         for (String key : PROMPT_KEYS) {
@@ -520,6 +533,18 @@ public final class OnlineProviderConfig {
                 target.setProperty(key, stored.getProperty(key, ""));
             }
         }
+    }
+
+    /**
+     * Leaves one trace line when a save could not re-read the keys this method protects.
+     *
+     * <p>Without it the protection disappears exactly when it is needed — a locked or truncated file —
+     * and the user only sees that a value they just changed came back.
+     */
+    private static void logUnreadable(Path configFile, Throwable cause) {
+        DebugLog.global().log("prompt-keys-not-refreshed",
+                "file", String.valueOf(configFile.getFileName()),
+                "cause", cause.getClass().getSimpleName());
     }
 
     /**
@@ -551,9 +576,11 @@ public final class OnlineProviderConfig {
 
     public TranslationProvider create(String provider) {
         String selected = provider == null ? "" : provider.trim().toLowerCase(java.util.Locale.ROOT);
+        int readTimeoutMillis = integer("api-read-timeout-ms", DEFAULT_READ_TIMEOUT_MILLIS,
+                MINIMUM_READ_TIMEOUT_MILLIS, MAXIMUM_READ_TIMEOUT_MILLIS);
         HttpJsonClient http = new HttpJsonClient(
                 integer("api-connect-timeout-ms", 5000, 250, 60000),
-                integer("api-read-timeout-ms", 120000, 1000, 300000));
+                readTimeoutMillis);
         TranslationProvider raw;
         if ("libretranslate".equals(selected)) {
             raw = new LibreTranslateProvider(value("libretranslate-endpoint"), value("api-key"), http);
@@ -612,8 +639,12 @@ public final class OnlineProviderConfig {
             throw new IllegalArgumentException("Unsupported online translation provider: " + provider);
         }
         return new ResilientTranslationProvider(raw,
-                integer("api-max-attempts", 3, 1, 5),
-                integer("api-min-request-interval-ms", 60, 0, 60000));
+                integer("api-max-attempts", TranslationTuning.DEFAULT_ATTEMPTS,
+                        TranslationTuning.MINIMUM_ATTEMPTS, TranslationTuning.MAXIMUM_ATTEMPTS),
+                integer("api-min-request-interval-ms",
+                        TranslationTuning.DEFAULT_REQUEST_INTERVAL_MILLIS,
+                        TranslationTuning.MINIMUM_REQUEST_INTERVAL_MILLIS,
+                        TranslationTuning.MAXIMUM_REQUEST_INTERVAL_MILLIS));
     }
 
     private TranslationProvider openAi(
@@ -626,6 +657,13 @@ public final class OnlineProviderConfig {
         String apiKey = value(apiKeyKey);
         if (!"openai-compatible".equals(providerId)) {
             ProviderSupport.requireCredential(providerId + " API key", apiKey);
+        }
+        if ("volcengine-ark".equals(providerId) && value(modelKey).isEmpty()) {
+            // Ark's model field is an inference-endpoint id that only the account owner can create,
+            // so there is no default to ship; saying "model is required" would send the user looking
+            // for a model name that does not exist in this API.
+            throw new IllegalArgumentException("Volcengine Ark 需要在火山方舟控制台建立推理接入点，"
+                    + "并把该接入点的 ID 填入 volcengine-ark-model（它不是模型名称）");
         }
         return new OpenAiChatTranslationProvider(
                 value(endpointKey), apiKey, value(modelKey), providerId, http, promptSettings(),

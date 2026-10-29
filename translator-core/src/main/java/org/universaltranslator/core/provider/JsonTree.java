@@ -51,6 +51,22 @@ final class JsonTree {
      * @return the string at that path, or {@code null} when it is missing or not a string
      */
     static String stringAt(Object root, String path) {
+        Object value = valueAt(root, path);
+        return value instanceof String ? (String) value : null;
+    }
+
+    /**
+     * Reads any value through a small JSON path such as {@code choices[0].message.content}.
+     *
+     * <p>{@link #joinField} needs the array itself rather than one string of it, and reading it
+     * through {@link #stringAt} meant one path string was built per fragment
+     * ({@code "parts[0].text"}, {@code "parts[1].text"}, ...) on every stream delta.
+     *
+     * @param root parsed document
+     * @param path dotted path with optional {@code [index]} segments
+     * @return the value at that path, or {@code null} when it is missing
+     */
+    static Object valueAt(Object root, String path) {
         if (root == null || path == null || path.isEmpty()) {
             return null;
         }
@@ -97,11 +113,15 @@ final class JsonTree {
                 cursor++;
             }
         }
-        return current instanceof String ? (String) current : null;
+        return current;
     }
 
     /**
      * Joins one field of every element of an array that starts at {@code arrayPath}.
+     *
+     * <p>An element without the field is skipped, not treated as the end of the array: a reply that
+     * split its answer over three parts, only the middle one carrying text, used to lose everything
+     * after the empty part — and the shortened result still passed validation and was cached.
      *
      * @param root parsed document
      * @param arrayPath path of the array, without an index
@@ -113,13 +133,18 @@ final class JsonTree {
         if (root == null) {
             return null;
         }
+        Object array = valueAt(root, arrayPath);
+        if (!(array instanceof List)) {
+            return null;
+        }
+        List<?> items = (List<?>) array;
+        int limit = Math.min(items.size(), maximumFragments);
         StringBuilder joined = new StringBuilder();
-        for (int index = 0; index < maximumFragments; index++) {
-            String fragment = stringAt(root, arrayPath + "[" + index + "]." + field);
-            if (fragment == null) {
-                break;
+        for (int index = 0; index < limit; index++) {
+            String fragment = stringAt(items.get(index), field);
+            if (fragment != null) {
+                joined.append(fragment);
             }
-            joined.append(fragment);
         }
         return joined.length() == 0 ? null : joined.toString();
     }

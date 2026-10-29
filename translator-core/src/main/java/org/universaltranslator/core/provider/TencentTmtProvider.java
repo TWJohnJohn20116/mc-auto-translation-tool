@@ -1,5 +1,6 @@
 package org.universaltranslator.core.provider;
 
+import org.universaltranslator.core.TranslationOutputValidator;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationRequest;
 import org.universaltranslator.core.net.EndpointPolicy;
@@ -66,11 +67,29 @@ public final class TencentTmtProvider implements TranslationProvider {
                 SERVICE, host, ACTION, VERSION, secretId, secretKey,
                 payload, System.currentTimeMillis() / 1000L);
         String response = http.post(endpoint, payload, headers);
-        String translated = JsonStrings.readStringField(response, "TargetText");
-        if (translated == null || translated.trim().isEmpty()) {
+        // The error object is read first. "TargetText is absent" has two very different meanings —
+        // the request failed, or there was nothing to translate — and only Response.Error separates
+        // them; the shared fault also hid which of the two had happened.
+        if (hasResponseError(response)) {
             throw BaiduTranslationProvider.providerError(
                     "Tencent TMT", response, "Code", "Message");
         }
-        return translated;
+        String translated = JsonStrings.readStringField(response, "TargetText");
+        if (translated == null || translated.trim().isEmpty()) {
+            // No error, no text: a source of pure symbols or spaces has nothing to translate, which
+            // is not a failure and must not be reported as one.
+            return request.getText();
+        }
+        return TranslationOutputValidator.requireValid(request.getText(), translated);
+    }
+
+    /** Whether the reply carries {@code Response.Error}. */
+    private static boolean hasResponseError(String response) {
+        Object root = JsonTree.parseOrNull(response);
+        if (!(root instanceof Map)) {
+            return false;
+        }
+        Object inner = ((Map<?, ?>) root).get("Response");
+        return inner instanceof Map && ((Map<?, ?>) inner).get("Error") != null;
     }
 }

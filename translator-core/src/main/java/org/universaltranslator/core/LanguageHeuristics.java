@@ -26,7 +26,8 @@ public final class LanguageHeuristics {
     }
 
     public static boolean shouldTranslate(String text, String targetLanguage) {
-        return shouldTranslateToTarget(text, isChineseTarget(targetLanguage));
+        return shouldTranslateToTarget(text, isChineseTarget(targetLanguage),
+                TargetLanguage.isTraditionalChinese(targetLanguage));
     }
 
     /**
@@ -39,6 +40,26 @@ public final class LanguageHeuristics {
      * @param chineseTarget whether {@code targetLanguage} names a Chinese variant
      */
     public static boolean shouldTranslateToTarget(String text, boolean chineseTarget) {
+        return shouldTranslateToTarget(text, chineseTarget, false);
+    }
+
+    /**
+     * The same check with both resolved properties of the target language.
+     *
+     * <p>A Chinese target only gets to skip Han text when the target asks for the same script the
+     * text is already written in. Simplified and Traditional are two different presets and a
+     * {@code zh-TW} target has to convert Simplified input, which is the only reason that preset
+     * exists at all; treating "every letter is Han" as "already translated" made the conversion
+     * never happen.
+     *
+     * @param chineseTarget whether {@code targetLanguage} names a Chinese variant
+     * @param traditionalTarget whether the target asks for Traditional Chinese characters
+     */
+    public static boolean shouldTranslateToTarget(
+            String text,
+            boolean chineseTarget,
+            boolean traditionalTarget
+    ) {
         if (text == null || text.trim().isEmpty()) {
             return false;
         }
@@ -72,8 +93,9 @@ public final class LanguageHeuristics {
             return false;
         }
         // Mixed Chinese/Latin labels still need their Latin portion translated. Existing Han
-        // runs are protected later, so skip only when every detected letter is already Han.
-        if (chineseTarget && han == letters) {
+        // runs are protected later, so skip only when every detected letter is already Han and the
+        // target does not have to convert it to the other script.
+        if (chineseTarget && !traditionalTarget && han == letters) {
             return false;
         }
         return true;
@@ -83,14 +105,45 @@ public final class LanguageHeuristics {
      * True when the text is one of the mod's own messages. Locale independent in the sense that
      * it never depends on the brackets or the separator a language file chose, only on the mod's
      * display name being present. Kept allocation free because it runs on the render thread.
+     *
+     * <p>The name has to open the line and be followed by the separator every such message carries.
+     * A bare substring test also swallowed every server line that merely mentioned the name — an
+     * announcement, another plugin's chat line, a player quoting the tool — and those were then
+     * never translated, with nothing in the log to explain it.
      */
     private static boolean containsSelfName(String text) {
+        int start = 0;
+        while (start < text.length()) {
+            char character = text.charAt(start);
+            if (character == '\u00a7' && start + 1 < text.length()) {
+                start += 2;
+                continue;
+            }
+            if (character == '[' || character == '\u3010') {
+                start++;
+                continue;
+            }
+            break;
+        }
         for (String selfName : SELF_NAMES) {
-            if (text.contains(selfName)) {
+            if (startsWithSelfMessage(text, start, selfName)) {
                 return true;
             }
         }
         return false;
+    }
+
+    private static boolean startsWithSelfMessage(String text, int start, String selfName) {
+        if (!text.regionMatches(start, selfName, 0, selfName.length())) {
+            return false;
+        }
+        int next = start + selfName.length();
+        if (next >= text.length()) {
+            return false;
+        }
+        char separator = text.charAt(next);
+        return separator == ':' || separator == '\uff1a'
+                || separator == ']' || separator == '\u3011';
     }
 
     /**

@@ -57,10 +57,10 @@ final class ProviderJson {
      * @return a message naming what the provider reported
      */
     static String describeMissingContent(String provider, String json) {
-        String message = JsonStrings.readStringField(json, "message");
-        if (message == null || message.trim().isEmpty()) {
-            message = nestedMessage(json);
-        }
+        // One parse for the whole message: reading "message" through JsonStrings rebuilt the tree
+        // once per candidate field, and this runs on every failed line, which is exactly when the
+        // endpoint is rate-limiting.
+        String message = messageOf(JsonTree.parseOrNull(json));
         if (message != null && !message.trim().isEmpty()) {
             return provider + " reported: " + message.trim();
         }
@@ -68,33 +68,34 @@ final class ProviderJson {
                 + JsonStrings.bodyPreview(json);
     }
 
-    /** Reads {@code error.message}, which is how Anthropic and Gemini report failures. */
-    private static String nestedMessage(String json) {
-        Object root;
-        try {
-            root = JsonStrings.parse(json);
-        } catch (RuntimeException malformed) {
-            return null;
-        }
+    /**
+     * The provider's own explanation, if the body carries one.
+     *
+     * <p>Covers the three shapes these APIs use: a bare {@code message}, Anthropic's and Gemini's
+     * {@code error.message} (or a plain string {@code error}), and Gemini's
+     * {@code promptFeedback.blockReason}.
+     */
+    private static String messageOf(Object root) {
         if (!(root instanceof Map)) {
             return null;
         }
+        String message = JsonTree.stringAt(root, "message");
+        if (message != null) {
+            return message;
+        }
         Object error = ((Map<?, ?>) root).get("error");
         if (error instanceof Map) {
-            Object message = ((Map<?, ?>) error).get("message");
-            if (message instanceof String) {
-                return (String) message;
+            String nested = JsonTree.stringAt(error, "message");
+            if (nested != null) {
+                return nested;
             }
         }
         if (error instanceof String) {
             return (String) error;
         }
-        Object feedback = ((Map<?, ?>) root).get("promptFeedback");
-        if (feedback instanceof Map) {
-            Object blocked = ((Map<?, ?>) feedback).get("blockReason");
-            if (blocked instanceof String) {
-                return "prompt blocked (" + blocked + ")";
-            }
+        String blocked = JsonTree.stringAt(root, "promptFeedback.blockReason");
+        if (blocked != null) {
+            return "prompt blocked (" + blocked + ")";
         }
         return null;
     }

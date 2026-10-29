@@ -144,44 +144,63 @@ public final class EndpointPolicy {
     }
 
     private static boolean isPrivateIpv4(String host) {
-        String[] parts = host.split("\\.", -1);
-        if (parts.length != 4) {
+        // Parsed by hand instead of split() + matches(): both compile a Pattern on every call, and
+        // this runs again for every request an HTTP endpoint makes.
+        int[] octets = new int[4];
+        int count = 0;
+        int index = 0;
+        while (count < 4) {
+            int start = index;
+            int value = 0;
+            while (index < host.length() && host.charAt(index) != '.') {
+                char character = host.charAt(index);
+                // Only plain decimal octets are accepted; this rejects "+10", "-10", " 10", "0x0a", "1e2" ...
+                if (character < '0' || character > '9' || index - start >= 3) {
+                    return false;
+                }
+                value = value * 10 + (character - '0');
+                index++;
+            }
+            if (index == start) {
+                return false;
+            }
+            octets[count++] = value;
+            if (index >= host.length()) {
+                break;
+            }
+            index++;
+            if (index >= host.length()) {
+                // A trailing dot leaves an empty final octet, which is not a dotted quad.
+                return false;
+            }
+        }
+        if (count != 4 || index != host.length()) {
             return false;
         }
-        for (int index = 0; index < parts.length; index++) {
-            // Only plain decimal octets are accepted; this rejects "+10", "-10", " 10", "0x0a", "1e2" ...
-            if (!parts[index].matches("[0-9]{1,3}")) {
-                return false;
-            }
+        int b0 = octets[0];
+        int b1 = octets[1];
+        int b2 = octets[2];
+        int b3 = octets[3];
+        if (b0 < 0 || b0 > 255 || b1 < 0 || b1 > 255 || b2 < 0 || b2 > 255 || b3 < 0 || b3 > 255) {
+            return false;
         }
-        try {
-            int b0 = Integer.parseInt(parts[0]);
-            int b1 = Integer.parseInt(parts[1]);
-            int b2 = Integer.parseInt(parts[2]);
-            int b3 = Integer.parseInt(parts[3]);
-            if (b0 < 0 || b0 > 255 || b1 < 0 || b1 > 255 || b2 < 0 || b2 > 255 || b3 < 0 || b3 > 255) {
-                return false;
-            }
-            if (b0 == 10) {
-                return true;
-            }
-            if (b0 == 172 && b1 >= 16 && b1 <= 31) {
-                return true;
-            }
-            if (b0 == 192 && b1 == 168) {
-                return true;
-            }
-            if (b0 == 169 && b1 == 254) {
-                // The link-local block as a whole, not one /32 inside it. Cloud credential
-                // endpoints live all over it (169.254.169.254 IMDS, 169.254.170.2 ECS task role,
-                // 169.254.170.23 ECS IPv4, 169.254.169.253 VPC DNS, 169.254.169.123 time sync),
-                // and blocking only the first one left every other door open to a plaintext
-                // request that carries the API key and the source text. A link-local host that
-                // genuinely serves HTTP is rare enough that refusing the block is the right
-                // default; loopback or a reverse proxy covers those setups.
-                return false;
-            }
-        } catch (NumberFormatException exception) {
+        if (b0 == 10) {
+            return true;
+        }
+        if (b0 == 172 && b1 >= 16 && b1 <= 31) {
+            return true;
+        }
+        if (b0 == 192 && b1 == 168) {
+            return true;
+        }
+        if (b0 == 169 && b1 == 254) {
+            // The link-local block as a whole, not one /32 inside it. Cloud credential
+            // endpoints live all over it (169.254.169.254 IMDS, 169.254.170.2 ECS task role,
+            // 169.254.170.23 ECS IPv4, 169.254.169.253 VPC DNS, 169.254.169.123 time sync),
+            // and blocking only the first one left every other door open to a plaintext
+            // request that carries the API key and the source text. A link-local host that
+            // genuinely serves HTTP is rare enough that refusing the block is the right
+            // default; loopback or a reverse proxy covers those setups.
             return false;
         }
         return false;

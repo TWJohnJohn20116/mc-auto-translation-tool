@@ -1,5 +1,6 @@
 package org.universaltranslator.core.provider;
 
+import org.universaltranslator.core.TranslationOutputValidator;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationRequest;
 import org.universaltranslator.core.TargetLanguage;
@@ -8,7 +9,6 @@ import org.universaltranslator.core.net.JsonStrings;
 import org.universaltranslator.core.net.TencentCloudV3Signer;
 
 import java.net.URI;
-import java.util.Locale;
 import java.util.Map;
 
 /** Tencent Hunyuan ChatTranslations provider using the maintained API 3.0 endpoint. */
@@ -26,7 +26,13 @@ public final class TencentHunyuanProvider implements TranslationProvider {
     private final HttpJsonClient http;
     /** The value {@link #id()} reports; see {@link ProviderCacheKey}. */
     private final String id;
-    /** One request per interval, shared with {@link ResilientTranslationProvider}'s gate. */
+    /**
+     * One request per interval for this provider's own burst protection.
+     *
+     * <p>It is <em>not</em> the gate {@link ResilientTranslationProvider} holds: that one is a
+     * separate instance built from {@code api-min-request-interval-ms}, so when both apply the
+     * effective interval is the sum, not the larger of the two.
+     */
     private final RequestGate gate = new RequestGate(MIN_REQUEST_INTERVAL_MILLIS);
 
     public TencentHunyuanProvider(String secretId, String secretKey, String model) {
@@ -82,7 +88,7 @@ public final class TencentHunyuanProvider implements TranslationProvider {
                     + (code == null ? "" : " (" + code + ")")
                     + (message == null ? "" : ": " + message));
         }
-        return translated;
+        return TranslationOutputValidator.requireValid(request.getText(), translated);
     }
 
     private void awaitRateLimit() throws InterruptedException {
@@ -93,26 +99,14 @@ public final class TencentHunyuanProvider implements TranslationProvider {
         if (language == null || language.trim().isEmpty() || TargetLanguage.isAuto(language)) {
             return null;
         }
-        return normalizeLanguage(language);
+        return ProviderLanguageCodes.hunyuan(language, true);
     }
 
     private static String normalizeTarget(String language) {
         if (language == null || language.trim().isEmpty()) {
             throw new IllegalArgumentException("Target language is required");
         }
-        return normalizeLanguage(language);
-    }
-
-    private static String normalizeLanguage(String language) {
-        if (TargetLanguage.isSimplifiedChinese(language)) {
-            return "zh";
-        }
-        if (TargetLanguage.isTraditionalChinese(language)) {
-            return "zh-TR";
-        }
-        String normalized = language.trim().toLowerCase(Locale.ROOT).replace('_', '-');
-        int separator = normalized.indexOf('-');
-        return separator < 0 ? normalized : normalized.substring(0, separator);
+        return ProviderLanguageCodes.hunyuan(language, false);
     }
 
     private static String normalizeModel(String model) {

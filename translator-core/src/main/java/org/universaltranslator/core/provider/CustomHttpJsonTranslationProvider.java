@@ -15,7 +15,16 @@ import java.util.regex.Pattern;
 
 /** User-configurable HTTPS/loopback JSON translation endpoint without arbitrary code execution. */
 public final class CustomHttpJsonTranslationProvider implements TranslationProvider {
-    private static final Pattern HEADER_NAME = Pattern.compile("[A-Za-z0-9!#$%&'*+.^_`|~-]{1,128}");
+    /**
+     * Characters a header name may use.
+     *
+     * <p>This is deliberately the transport's set and not RFC 7230's full {@code tchar}: the check
+     * here runs while the setting is edited, while the transport checks every request, so a wider set
+     * let a legal-looking name ({@code X_API_Key}, {@code X.Trace}) pass construction and throw
+     * {@code IllegalArgumentException} on every translation afterwards — which is neither retried nor
+     * handed to the fallback, so that provider was permanently unusable.
+     */
+    private static final Pattern HEADER_NAME = Pattern.compile("[A-Za-z0-9-]{1,128}");
 
     private final URI endpoint;
     private final String method;
@@ -106,7 +115,7 @@ public final class CustomHttpJsonTranslationProvider implements TranslationProvi
             }
         }
         String response = http.request(method, endpoint, body, contentType, headers);
-        String translated = JsonStrings.readStringPath(response, responsePath);
+        String translated = ProviderErrors.pathOrNull("Custom API", response, responsePath);
         if (translated == null || translated.trim().isEmpty()) {
             throw new IllegalStateException(
                     "Custom API response path did not resolve to a non-empty string: " + responsePath);
@@ -114,32 +123,58 @@ public final class CustomHttpJsonTranslationProvider implements TranslationProvi
         return translated;
     }
 
+    /** Placeholders a template may use, longest first so {@code ${textJson}} cannot match {@code ${text}}. */
+    private static final String[] PLACEHOLDERS = {
+            "${textJson}", "${sourceJson}", "${targetJson}", "${apiKeyJson}",
+            "${text}", "${source}", "${target}", "${apiKey}", "${apiKeyRaw}"
+    };
+
     static String expand(String template, String text, String source, String target, String apiKey) {
-        String[] names = {
-                "${textJson}", "${sourceJson}", "${targetJson}", "${apiKeyJson}",
-                "${text}", "${source}", "${target}", "${apiKey}", "${apiKeyRaw}"
-        };
-        String[] replacements = {
-                JsonStrings.quote(text), JsonStrings.quote(source), JsonStrings.quote(target),
-                JsonStrings.quote(apiKey), jsonStringContent(text), jsonStringContent(source),
-                jsonStringContent(target), jsonStringContent(apiKey), apiKey
-        };
         StringBuilder expanded = new StringBuilder(template.length() + text.length() + 32);
-        for (int cursor = 0; cursor < template.length();) {
-            boolean replaced = false;
-            for (int index = 0; index < names.length; index++) {
-                if (template.startsWith(names[index], cursor)) {
-                    expanded.append(replacements[index]);
-                    cursor += names[index].length();
-                    replaced = true;
-                    break;
-                }
+        int cursor = 0;
+        // Scans for the next "${" instead of trying all nine placeholders at every character, and
+        // quotes a value only when its placeholder actually occurs: a template with one placeholder
+        // paid nine quotes and nine character-by-character comparisons per call before.
+        while (cursor < template.length()) {
+            int dollar = template.indexOf('$', cursor);
+            if (dollar < 0) {
+                expanded.append(template, cursor, template.length());
+                break;
             }
-            if (!replaced) {
-                expanded.append(template.charAt(cursor++));
+            expanded.append(template, cursor, dollar);
+            int placeholder = placeholderAt(template, dollar);
+            if (placeholder < 0) {
+                expanded.append(template.charAt(dollar));
+                cursor = dollar + 1;
+                continue;
             }
+            expanded.append(replacement(placeholder, text, source, target, apiKey));
+            cursor = dollar + PLACEHOLDERS[placeholder].length();
         }
         return expanded.toString();
+    }
+
+    /** Index into {@link #PLACEHOLDERS} of the placeholder starting at {@code offset}, or {@code -1}. */
+    private static int placeholderAt(String template, int offset) {
+        for (int index = 0; index < PLACEHOLDERS.length; index++) {
+            if (template.startsWith(PLACEHOLDERS[index], offset)) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    private static String replacement(int placeholder, String text, String source, String target,
+            String apiKey) {
+        if (placeholder == 0) return JsonStrings.quote(text);
+        if (placeholder == 1) return JsonStrings.quote(source);
+        if (placeholder == 2) return JsonStrings.quote(target);
+        if (placeholder == 3) return JsonStrings.quote(apiKey);
+        if (placeholder == 4) return jsonStringContent(text);
+        if (placeholder == 5) return jsonStringContent(source);
+        if (placeholder == 6) return jsonStringContent(target);
+        if (placeholder == 7) return jsonStringContent(apiKey);
+        return apiKey;
     }
 
     private static String jsonStringContent(String value) {
@@ -169,11 +204,25 @@ public final class CustomHttpJsonTranslationProvider implements TranslationProvi
         for (Map.Entry<String, String> header : source.entrySet()) {
             String name = header.getKey() == null ? "" : header.getKey().trim();
             if (!HEADER_NAME.matcher(name).matches() || isForbiddenHeader(name)) {
-                throw new IllegalArgumentException("Unsafe custom API header: " + name);
+                throw new IllegalArgumentException("Unsafe custom API header: " + name
+                        + " (a header name may use letters, digits and '-')");
+            }
+            // A header value is one line. Expanding ${text} into it here would pass the check below
+            // and then throw on the first multi-line source, which is neither retried nor handed to
+            // the fallback, so that line failed for good with a message naming no header.
+            if (containsTextPlaceholder(header.getValue())) {
+                throw new IllegalArgumentException("Custom API header " + name
+                        + " must not contain ${text} or ${textJson}: a header value cannot hold"
+                        + " multi-line text");
             }
             result.put(name, safeLine("Custom API header value", header.getValue()));
         }
         return result;
+    }
+
+    private static boolean containsTextPlaceholder(String template) {
+        return template != null
+                && (template.contains("${text}") || template.contains("${textJson}"));
     }
 
     private static boolean isForbiddenHeader(String name) {

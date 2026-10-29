@@ -10,6 +10,7 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
 /**
  * Sidecar that records "this exact file state was hashed to this digest".
@@ -35,6 +36,7 @@ public final class ModelVerificationCache {
     private static final String HEADER = "universal-translator model verification v2";
     private static final int MARKER_LINES = 5;
     private static final long MAX_MARKER_BYTES = 4096L;
+    private static final Pattern SHA256_PATTERN = Pattern.compile("(?i)[0-9a-f]{64}");
 
     private ModelVerificationCache() {
     }
@@ -171,7 +173,14 @@ public final class ModelVerificationCache {
         return safe.toString();
     }
 
-    private static boolean isSha256(String value) {
-        return value != null && value.matches("(?i)[0-9a-f]{64}");
+    /**
+     * The one definition of "a pinned digest" the offline package uses.
+     *
+     * <p>Package-private on purpose: the downloader, the alias copy and this cache used to decide
+     * the question three different ways, and a value that passed one of them (64 characters, but
+     * not hex) travelled all the way to a failed hash comparison.
+     */
+    static boolean isSha256(String value) {
+        return value != null && SHA256_PATTERN.matcher(value).matches();
     }
 }

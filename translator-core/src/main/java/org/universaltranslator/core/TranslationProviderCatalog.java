@@ -66,7 +66,11 @@ public final class TranslationProviderCatalog {
                 return IDS[(index + 1) % IDS.length];
             }
         }
-        return "offline";
+        // An id that is not in the table — left over from an older version, hand-edited into the
+        // config, or removed from the product — used to be answered with "offline", so one press of
+        // the switch button silently replaced the user's configured service while its key and
+        // endpoint stayed in the config file, unused. The value is now left alone.
+        return current;
     }
 
     public static String displayName(String provider) {

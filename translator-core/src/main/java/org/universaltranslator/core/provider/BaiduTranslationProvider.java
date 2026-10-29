@@ -1,5 +1,6 @@
 package org.universaltranslator.core.provider;
 
+import org.universaltranslator.core.TranslationOutputValidator;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationRequest;
 import org.universaltranslator.core.net.CryptoSupport;
@@ -50,51 +51,88 @@ public final class BaiduTranslationProvider implements TranslationProvider {
         if (translated == null || translated.trim().isEmpty()) {
             throw providerError("Baidu", response, "error_code", "error_msg");
         }
-        return translated;
+        // trans_result[] answers one entry per requested line, so a different count means a line was
+        // dropped or invented; joining with '\n' alone hid both behind a plausible-looking answer.
+        requireSameLineCount(request.getText(), translated);
+        return TranslationOutputValidator.requireValid(request.getText(), translated);
+    }
+
+    /** Rejects a reply whose line count differs from the request's. */
+    private static void requireSameLineCount(String source, String translated) {
+        int expected = countLines(source);
+        int actual = countLines(translated);
+        if (expected != actual) {
+            throw new IllegalStateException("Baidu returned " + actual
+                    + " line(s) for " + expected + " line(s) of source text");
+        }
+    }
+
+    private static int countLines(String value) {
+        int lines = 1;
+        for (int index = 0; index < value.length(); index++) {
+            if (value.charAt(index) == '\n') {
+                lines++;
+            }
+        }
+        return lines;
     }
 
     static String parseTranslatedText(String response) {
         if (response == null || response.trim().isEmpty()) {
             return null;
         }
+        Object parsed;
         try {
-            Object parsed = JsonStrings.parse(response);
-            if (parsed instanceof Map) {
-                Object transResult = ((Map<?, ?>) parsed).get("trans_result");
-                if (transResult instanceof List) {
-                    StringBuilder joined = new StringBuilder();
-                    for (Object item : (List<?>) transResult) {
-                        if (item instanceof Map) {
-                            Object dst = ((Map<?, ?>) item).get("dst");
-                            if (dst instanceof String) {
-                                if (joined.length() > 0) {
-                                    joined.append('\n');
-                                }
-                                joined.append((String) dst);
+            parsed = JsonStrings.parse(response);
+        } catch (RuntimeException malformed) {
+            // Fall back to reading single field if JSON structure is unexpected
+            return JsonStrings.readStringField(response, "dst");
+        }
+        if (parsed instanceof Map) {
+            Object transResult = ((Map<?, ?>) parsed).get("trans_result");
+            if (transResult instanceof List) {
+                List<?> items = (List<?>) transResult;
+                StringBuilder joined = new StringBuilder();
+                int appended = 0;
+                for (Object item : items) {
+                    if (item instanceof Map) {
+                        Object dst = ((Map<?, ?>) item).get("dst");
+                        if (dst instanceof String) {
+                            if (joined.length() > 0) {
+                                joined.append('\n');
                             }
+                            joined.append((String) dst);
+                            appended++;
                         }
                     }
-                    if (joined.length() > 0) {
-                        return joined.toString();
-                    }
+                }
+                if (appended != items.size()) {
+                    // An entry without a usable dst used to be skipped silently, which dropped that
+                    // line from the answer with nothing reported anywhere.
+                    throw new IllegalStateException("Baidu returned " + items.size()
+                            + " result entries but only " + appended + " carried text");
+                }
+                if (joined.length() > 0) {
+                    return joined.toString();
                 }
             }
-        } catch (RuntimeException ignored) {
-            // Fall back to reading single field if JSON structure is unexpected
         }
         return JsonStrings.readStringField(response, "dst");
     }
 
-    static IllegalStateException providerError(
+    /**
+     * The exception a vendor-reported error becomes.
+     *
+     * <p>Kept as the call site the other six cloud providers use; the classification itself lives in
+     * {@link ProviderErrors}, because it used to live here and every change to Baidu reached six
+     * unrelated providers.
+     */
+    static Exception providerError(
             String provider,
             String response,
             String codeField,
             String messageField
     ) {
-        String code = JsonStrings.readStringField(response, codeField);
-        String message = JsonStrings.readStringField(response, messageField);
-        return new IllegalStateException(provider + " response did not contain translated text"
-                + (code == null ? "" : " (" + code + ")")
-                + (message == null ? "" : ": " + message));
+        return ProviderErrors.unreadableOr(provider, response, codeField, messageField);
     }
 }

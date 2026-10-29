@@ -1,5 +1,6 @@
 package org.universaltranslator.core.provider;
 
+import org.universaltranslator.core.TranslationOutputValidator;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationRequest;
 import org.universaltranslator.core.TargetLanguage;
@@ -45,10 +46,15 @@ public final class LibreTranslateProvider implements TranslationProvider {
 
         String response = http.post(endpoint, body.toString(), (String) null);
         String translated = JsonStrings.readStringField(response, "translatedText");
-        if (translated == null) {
-            throw new IllegalStateException("LibreTranslate response did not contain translatedText");
+        // An empty translatedText is not a translation: this API answers one for "no language
+        // detected", "format codes only" and "source equals target", and accepting it cached a
+        // blank line that could never be requested again. The body excerpt names the provider's own
+        // "error" field, which was the one clue the message used to drop.
+        if (translated == null || translated.trim().isEmpty()) {
+            throw new IllegalStateException(
+                    ProviderJson.describeMissingContent("LibreTranslate", response));
         }
-        return translated;
+        return TranslationOutputValidator.requireValid(request.getText(), translated);
     }
 
     private static String normalizeSource(String language) {

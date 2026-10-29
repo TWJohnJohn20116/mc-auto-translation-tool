@@ -65,6 +65,20 @@ public final class LlamaCppOfflineProvider
      * a single unlucky race from costing five minutes, without turning a broken engine into a loop.
      */
     private static final int MAXIMUM_PORT_ATTEMPTS = 2;
+    /**
+     * Budget for proving that the healthy port really serves this provider's model.
+     *
+     * <p>It is a budget of its own rather than the rest of the startup deadline: a slow
+     * {@code /v1/models} answer — a large model still loading its metadata, or a loaded machine —
+     * used to exhaust the shared deadline and be reported as "another program owns that port".
+     */
+    private static final long OWN_MODEL_VERIFY_TIMEOUT_MILLIS = 30000L;
+    /**
+     * Longest a second worker waits for the startup another worker already owns. Installing the
+     * engine takes minutes, which is exactly the case where the other lines of the first screen had
+     * nothing to show.
+     */
+    private static final long STARTUP_WAIT_MILLIS = 5L * 60L * 1000L;
 
     /**
      * Header line of the sidecar that records the last completed full-file verification
@@ -213,6 +227,12 @@ public final class LlamaCppOfflineProvider
         if (isRunning()) {
             return;
         }
+        if (awaitStartupInProgress()) {
+            // Another worker's startup finished and the engine it started is serving, so this line
+            // uses it. Failing here is what made three of four translations of the first screen
+            // report an error while the first one was still installing the engine.
+            return;
+        }
         final long token;
         Process stale;
         synchronized (lifecycleLock) {
@@ -268,6 +288,29 @@ public final class LlamaCppOfflineProvider
             Process child = process;
             return child != null && child.isAlive() && localApi != null;
         }
+    }
+
+    /**
+     * Waits out a startup another worker is already running.
+     *
+     * <p>Never holds {@link #lifecycleLock}: the startup owns it for short sections only, and waiting
+     * under it would deadlock both.
+     *
+     * @return {@code true} when that startup left the engine serving
+     * @throws InterruptedException when this worker was cancelled while waiting
+     */
+    private boolean awaitStartupInProgress() throws InterruptedException {
+        long deadline = System.currentTimeMillis() + STARTUP_WAIT_MILLIS;
+        while (activeStartupToken.get() >= 0L) {
+            if (System.currentTimeMillis() >= deadline) {
+                return false;
+            }
+            Thread.sleep(100L);
+            if (isRunning()) {
+                return true;
+            }
+        }
+        return isRunning();
     }
 
     /** Starts the server once. Never holds {@link #lifecycleLock} across a blocking wait. */
@@ -699,6 +742,7 @@ public final class LlamaCppOfflineProvider
     ) throws Exception {
         long deadline = System.currentTimeMillis() + timeoutMillis;
         IOException lastFailure = null;
+        long pollDelayMillis = 250L;
         while (System.currentTimeMillis() < deadline) {
             // A close() or a replaced startup interrupts this poll so the wait can
             // never hold a closing render thread hostage for the full timeout.
@@ -727,10 +771,13 @@ public final class LlamaCppOfflineProvider
             if (healthy) {
                 // Deliberately outside the catch above: "the port belongs to someone else" has to
                 // reach startServer as its own outcome, not be mistaken for another failed probe.
-                waitForOwnModel(port, token, deadline);
+                waitForOwnModel(port, token, System.currentTimeMillis() + OWN_MODEL_VERIFY_TIMEOUT_MILLIS);
                 return;
             }
-            Thread.sleep(250L);
+            // Every poll opens a new TCP connection, so a fixed 250 ms interval spent hundreds of
+            // sockets on one 90-second startup. The interval backs off once the first seconds pass.
+            Thread.sleep(pollDelayMillis);
+            pollDelayMillis = Math.min(1000L, pollDelayMillis * 2L);
         }
         String detail = OfflineProcessSupport.readNewLogTail(log, logStart);
         throw new IOException(OfflineProcessSupport.describeStartupTimeout(detail), lastFailure);
@@ -742,6 +789,7 @@ public final class LlamaCppOfflineProvider
      * @throws LoopbackPortNotOursException when the alias never appears before the deadline
      */
     private void waitForOwnModel(int port, long token, long deadline) throws Exception {
+        long pollDelayMillis = 100L;
         while (System.currentTimeMillis() <= deadline) {
             if (Thread.interrupted() || !isCurrentStartup(token)) {
                 throw new InterruptedException("Offline model startup was cancelled");
@@ -749,7 +797,9 @@ public final class LlamaCppOfflineProvider
             if (servesOwnModel(port)) {
                 return;
             }
-            Thread.sleep(100L);
+            Thread.sleep(pollDelayMillis);
+            // Same reason as the health poll: one connection per attempt, so the interval grows.
+            pollDelayMillis = Math.min(1000L, pollDelayMillis + 100L);
         }
         throw new LoopbackPortNotOursException("127.0.0.1:" + port
                 + " answers /health but does not report the model "

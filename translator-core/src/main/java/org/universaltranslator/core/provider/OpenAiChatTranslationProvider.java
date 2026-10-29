@@ -13,17 +13,18 @@ import org.universaltranslator.core.net.HttpStatusException;
 import org.universaltranslator.core.net.JsonStrings;
 import org.universaltranslator.core.net.ServerSentEvents;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 /** Small OpenAI-compatible chat provider used by local llama.cpp and optional hosted APIs. */
 public final class OpenAiChatTranslationProvider implements TranslationProvider {
-    /** Matches the loopback llama.cpp server's {@code --ctx-size} argument. */
-    private static final int OFFLINE_CONTEXT_TOKENS = LoopbackContext.TOKENS;
     /**
      * Smallest completion budget worth sending to the loopback server. Below this the model answers
      * with a character or two, and that fragment is still long enough to pass
@@ -44,6 +45,26 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
      * that stops early, because {@code max_tokens} is an upper bound rather than a reservation.
      */
     private static final int REASONING_COMPLETION_TOKENS = 16384;
+    /**
+     * Declared ceiling for one batch reply.
+     *
+     * <p>A JSON reply repeats the whole translation plus a key and a separator per line, so sixteen
+     * long lines need well over the 16384 a thinking model gets. Clamping there truncated the reply
+     * at {@code finish_reason=length}, and the truncated JSON then failed to parse — one request plus
+     * sixteen single-line repairs for every batch, deterministically, at {@code batch-size=16}. An
+     * endpoint with a smaller output cap answers 400 and is retried once at half (see
+     * {@link #postBatchWithinBudget}); the value stays an upper bound rather than a reservation.
+     */
+    private static final int MAXIMUM_BATCH_COMPLETION_TOKENS = REASONING_COMPLETION_TOKENS * 2;
+    /**
+     * How long this endpoint is left off the streaming path after one stream failed inside its
+     * budget.
+     *
+     * <p>Two dropped connections during a network handover were enough to lose the early preview for
+     * the rest of the session, and the flag that did it had no way back. A cooldown keeps the cost of
+     * rediscovery amortised while letting an endpoint recover on its own.
+     */
+    private static final long STREAM_COOLDOWN_NANOS = TimeUnit.MINUTES.toNanos(10);
 
     private final URI endpoint;
     private final String apiKey;
@@ -101,6 +122,13 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
      * ignores the request.
      */
     private volatile boolean jsonOutputRejected;
+    /**
+     * Earliest {@link System#nanoTime()} instant at which an event stream may be attempted again
+     * after one failed inside its budget, or {@code 0} when nothing is cooling down.
+     */
+    private volatile long streamingRetryAtNanos;
+    /** The escaped model-and-system-prompt half of a request body, built once per distinct prompt. */
+    private volatile PromptBody promptBody;
 
     /**
      * How one group of texts is translated, handed to the gatherer.
@@ -245,7 +273,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         this.jsonOutput = jsonOutput == null ? JsonOutputMode.NONE : jsonOutput;
         TranslationTuning effectiveTuning = tuning == null ? TranslationTuning.DEFAULTS : tuning;
         this.gatherer = new BatchGatherer(effectiveTuning.batchSize(),
-                effectiveTuning.batchWindowMillis());
+                effectiveTuning.batchWindowMillis(), effectiveTuning.maximumConcurrentBatches());
         // The cache key has to name the endpoint and the header the credential travels in, not just
         // the model: two hosts that serve the same model name are not the same engine, and before
         // this the second one was never asked. Only the address and the header *name* are hashed, so
@@ -280,19 +308,37 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
      *
      * <p>{@code https://host/v1} is what those services print as their API address, and posting a
      * chat request to it answers with the relay's HTML page while {@code /v1/models} still works —
-     * a service that looks healthy and never translates. Only that exact trailing form is
-     * rewritten; custom paths such as Azure deployments with an api-version query pass through.
+     * a service that looks healthy and never translates.
+     *
+     * <p>The path is compared, not the whole string: matching only the exact {@code …/v1} and
+     * {@code …/v1/} tails left every other spelling of the same address broken. A trailing slash
+     * after the chat path
+     * ({@code https://host/v1/chat/completions/}, which much of the documentation writes) answered
+     * 404, and a query string made the tail test fail, so
+     * {@code https://host/v1?api-version=…} was sent to {@code /v1} and answered the relay's HTML
+     * page again — the same symptom this method exists to remove, reported against an address the
+     * user copied from the provider.
      *
      * @param endpoint configured chat-completions endpoint
      * @return the endpoint to request, with the chat path filled in when only a base URL was given
      */
     static String normalizeEndpoint(String endpoint) {
         String value = endpoint == null ? "" : endpoint.trim();
-        if (value.endsWith("/v1")) {
-            return value + "/chat/completions";
+        String path = value;
+        String query = "";
+        int queryStart = value.indexOf('?');
+        if (queryStart >= 0) {
+            path = value.substring(0, queryStart);
+            query = value.substring(queryStart);
         }
-        if (value.endsWith("/v1/")) {
-            return value + "chat/completions";
+        while (path.endsWith("/")) {
+            path = path.substring(0, path.length() - 1);
+        }
+        if (path.endsWith("/chat/completions")) {
+            return path + query;
+        }
+        if (path.endsWith("/v1")) {
+            return path + "/chat/completions" + query;
         }
         return value;
     }
@@ -353,7 +399,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         Object root = JsonTree.parseOrNull(response);
         String translated = extractContent(root, response);
         if ((translated == null || translated.trim().isEmpty()) && !offline
-                && JsonStrings.readStringField(response, "reasoning_content") != null) {
+                && reasoningContent(root, "message") != null) {
             // The model thought until the budget ran out and never wrote the translation; the
             // answer only appears once the completion is allowed to finish. Remember the endpoint
             // reasons, so the next line does not repeat the smaller first attempt.
@@ -374,11 +420,49 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             }
         }
         if (translated == null || translated.trim().isEmpty()) {
-            throw new IllegalStateException(describeMissingContent(response));
+            throw missingContent(root, response);
         }
+        // Usage and the trace describe a translation, so they are recorded for one that passed the
+        // output validator: a rejected answer used to be counted as tokens spent and as an answer.
+        String validated = TranslationOutputValidator.requireValid(request.getText(), translated);
         recordUsage(response);
         DebugLog.global().logResponse(providerId, request.getKind().name(), translated);
-        return TranslationOutputValidator.requireValid(request.getText(), translated);
+        return validated;
+    }
+
+    /**
+     * Reads one reasoning field of a chat-completion document.
+     *
+     * <p>Only the two paths a chat completion can put it on are consulted. Scanning the whole body for
+     * the string was wrong twice: a relay that echoes the request carries the field on the request
+     * side, so every line looked like "only reasoning content" and paid for a second request with the
+     * larger budget, and the scan itself walked the whole body per line.
+     *
+     * @param root parsed document, or {@code null}
+     * @param container {@code message} for a complete reply, {@code delta} for one stream event
+     * @return the reasoning text, or {@code null} when the document carries none
+     */
+    private static String reasoningContent(Object root, String container) {
+        return JsonTree.stringAt(root, "choices[0]." + container + ".reasoning_content");
+    }
+
+    /**
+     * The failure for an answer that carried no translation.
+     *
+     * <p>A body that is not JSON at all is a transport-level surprise — an HTML error page from a
+     * captive portal or an intercepting proxy, a truncated reply — so it is reported as an
+     * {@link IOException} that the retry and fallback layers may act on. {@code IllegalArgumentException}
+     * and {@code IllegalStateException} mean "this request cannot succeed here", which is the wrong
+     * verdict for a body the endpoint mangled once.
+     *
+     * @param root parsed reply, or {@code null} when the body was not JSON
+     * @param response raw response body
+     * @return the failure to throw
+     */
+    private static Exception missingContent(Object root, String response) {
+        String description = describeMissingContent(root, response);
+        return root == null ? (Exception) new IOException(description)
+                : new IllegalStateException(description);
     }
 
     /**
@@ -423,6 +507,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             return translate(request);
         }
         if (streamingUnsupported
+                || streamingCoolingDown()
                 || providerId.startsWith("offline-loopback")
                 || request.getText().indexOf('\n') >= 0) {
             return TranslationProvider.super.translateStreaming(request, listener);
@@ -445,26 +530,41 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             reasoningModel = true;
             return TranslationProvider.super.translateStreaming(request, listener);
         }
-        if (attempt.content == null) {
-            // The stream stopped early, carried a relay error object, or was empty. A partial text is
-            // never shown as the answer: only a stream that reached its own end marker becomes
-            // attempt.content, so a connection that died mid-answer is refused here instead of
-            // being cached as a finished translation. The plain path is the one that recovers from
-            // all of those, and its result is what callers have always received.
+        if (attempt.content == null && !attempt.complete) {
+            // The stream stopped early, hit one of the watchdog's budgets, or carried a relay error
+            // object. A partial text is never shown as the answer: only a stream that reached its own
+            // end marker becomes attempt.content, so a connection that died mid-answer is refused
+            // here instead of being cached as a finished translation. The plain path is the one that
+            // recovers from all of those, and its result is what callers have always received.
             //
             // The trace matters because that recovery is a second, complete request: an endpoint
             // that never declares its own end turns every line into two paid calls. Recording it is
-            // not enough, though, so a streak of these disables streaming for this endpoint — that
-            // is what stops the doubling from repeating for the rest of the session.
+            // not enough, though, so a streak of these takes this endpoint off the streaming path for
+            // a while — that is what stops the doubling from repeating for the rest of the session,
+            // and the cooldown is what lets the endpoint come back.
             DebugLog.global().logStreamEvent(providerId, "incomplete", 0);
             if (streamMemory.rememberIncomplete()) {
-                streamingUnsupported = true;
+                streamingRetryAtNanos = System.nanoTime() + STREAM_COOLDOWN_NANOS;
                 DebugLog.global().logStreamEvent(providerId, "streaming-abandoned", 0);
             }
             return TranslationProvider.super.translateStreaming(request, listener);
         }
+        if (attempt.content == null) {
+            // The stream declared its own end and carried no text at all. That is a legal, empty
+            // answer — a block reason, a refused prompt — and {@link StreamCompletionMemory} says an
+            // empty answer must never be counted as an incomplete stream: counting it disabled
+            // streaming on an endpoint that merely answered "nothing to translate".
+            DebugLog.global().logStreamEvent(providerId, "empty", 0);
+            return TranslationProvider.super.translateStreaming(request, listener);
+        }
         streamMemory.rememberComplete();
         return TranslationOutputValidator.requireValid(text, attempt.content);
+    }
+
+    /** Whether a recent stream failure still keeps this endpoint off the streaming path. */
+    private boolean streamingCoolingDown() {
+        long retryAt = streamingRetryAtNanos;
+        return retryAt != 0L && System.nanoTime() - retryAt < 0L;
     }
 
     /** What one streaming request produced, and whether the endpoint can stream at all. */
@@ -505,11 +605,35 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
                 attempt.unsupported = true;
                 return attempt;
             }
-            // A keep-alive-only stream, or a session that is being closed, has to be able to end the
-            // read: the parser stops for the endpoint, the payload bound or an exception, and only
-            // this wrapper can supply the last two while nothing is arriving.
-            ServerSentEvents.read(StreamWatchdog.arm(response.getBody()), payload ->
-                    readEvent(providerId, payload, accumulated, listener, attempt));
+            InputStream streamBody = response.getBody();
+            if (streamBody == null) {
+                // Nothing to read, and the parser would throw a NullPointerException on its first
+                // read; the plain path is the one that explains a bodyless response.
+                attempt.unsupported = true;
+                return attempt;
+            }
+            try {
+                // One budget for one stream: the instant {@code HttpJsonClient} already computed for
+                // this response, which {@code api-read-timeout-ms} decides. A second constant here
+                // overrode that setting — a user who raised it for a slow endpoint still lost the
+                // stream at 180 s, and a user who lowered it was still tolerated for 180 s.
+                long deadlineNanos = response.getDeadlineNanos();
+                long progressBudgetMillis = Math.max(1L,
+                        (deadlineNanos - System.nanoTime()) / 1000000L);
+                // A keep-alive-only stream, or a session that is being closed, has to be able to end
+                // the read: the parser stops for silence and for its payload bounds, and only this
+                // wrapper can turn an interrupt into a failure while nothing is arriving.
+                ServerSentEvents.read(
+                        StreamWatchdog.arm(streamBody, progressBudgetMillis),
+                        payload -> readEvent(providerId, payload, accumulated, listener, attempt),
+                        deadlineNanos);
+            } catch (IOException streamFailure) {
+                // A body that stopped arriving, or one that exceeded a byte bound, is not a rejection
+                // of the request: escaping here skipped the memory below, so every later line paid the
+                // same three attempts again. Reading whatever arrived and reporting "incomplete" is
+                // what the retry and cooldown decisions are made from.
+                DebugLog.global().logStreamEvent(providerId, "stream-abandoned", 0);
+            }
         } catch (HttpStatusException rejected) {
             if (rejected.isRetryable()) {
                 // A rate limit or a server error is transient. Retrying it is the resilient
@@ -564,15 +688,18 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             // A relay may put the finish reason on the very chunk that carries the last text, so the
             // completion test runs here as well instead of only on the events that follow.
             markFinished(attempt, root);
-            return true;
+            // A finished answer must not keep the read — and the worker — alive until a sentinel this
+            // relay never sends. Returning true here let the watchdog throw away a complete
+            // translation at the end of its budget.
+            return !attempt.complete;
         }
-        if (JsonStrings.readStringField(payload, "reasoning_content") != null) {
+        if (reasoningContent(root, "delta") != null) {
             attempt.sawReasoning = true;
             DebugLog.global().logStreamEvent(provider, "reasoning", 0);
             return true;
         }
         markFinished(attempt, root);
-        if (isRelayError(root, payload)) {
+        if (isRelayError(root)) {
             // Relays report a failure as an ordinary event behind HTTP 200. Stop reading and let the
             // plain path produce the message the user has always seen.
             DebugLog.global().logStreamEvent(provider, "error-event", 0);
@@ -614,19 +741,18 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
      * <p>The test has to name the event an error explicitly. Treating any event that carries a
      * {@code message} field as a failure stopped the read on endpoints that send progress events
      * such as {@code {"type":"ping","message":"keep-alive"}}, which clipped a perfectly healthy
-     * stream at the first keep-alive. {@link JsonStrings#readStringField} only matches a string
-     * value, so the nested {@code {"error":{"message":...}}} shape OpenAI itself sends is looked up
-     * through its own path.
+     * stream at the first keep-alive. Every field is read from the one parsed event: rescanning the
+     * raw payload for a field name cost a second and third walk over the same text on every delta,
+     * and it matched request-side fields a relay echoes back.
      *
      * @param root one parsed event payload
-     * @param payload the same payload as text, for the field scan a non-JSON event needs
      * @return {@code true} when the payload is a relay-side error object
      */
-    private static boolean isRelayError(Object root, String payload) {
+    private static boolean isRelayError(Object root) {
         if ("error".equals(JsonTree.stringAt(root, "type"))) {
             return true;
         }
-        if (JsonStrings.readStringField(payload, "error") != null) {
+        if (JsonTree.stringAt(root, "error") != null) {
             return true;
         }
         return JsonTree.stringAt(root, "error.message") != null
@@ -658,16 +784,18 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             // between prompt and completion. Cap the completion to what is left after a
             // conservative prompt estimate, with no floor that could overflow the context.
             int promptTokens = ChatBudget.estimatePromptTokens(text);
-            int remaining = ChatBudget.remainingContext(OFFLINE_CONTEXT_TOKENS, text);
+            int remaining = ChatBudget.remainingContext(LoopbackContext.TOKENS, text);
             if (remaining < MINIMUM_OFFLINE_COMPLETION_TOKENS) {
                 // Sending the remainder anyway asked for one or two tokens, the model answered with a
                 // character or two, and that fragment passed the output validator and was cached
                 // permanently as the translation of the whole text. A text that does not fit the
                 // context window has no answer here, so it is reported instead of half-translated.
+                // The window is a constant of the loopback server, so the message offers an action
+                // the user actually has instead of one that needs a rebuild.
                 throw new IllegalArgumentException("Text needs about " + promptTokens
-                        + " prompt tokens of the " + OFFLINE_CONTEXT_TOKENS
+                        + " prompt tokens of the " + LoopbackContext.TOKENS
                         + "-token offline context, which leaves " + Math.max(0, remaining)
-                        + " for the translation; shorten the text or raise the server context size");
+                        + " for the translation; shorten this text, or use an online provider for it");
             }
             return Math.min(Math.max(MINIMUM_OFFLINE_COMPLETION_TOKENS, requestedTokens), remaining);
         }
@@ -714,27 +842,45 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             maximumTokens = Math.max(maximumTokens,
                     Math.min(REASONING_COMPLETION_TOKENS, acceptedReasoningTokens));
         }
-        DebugLog.global().logRequest(providerId, model, endpoint.toString(),
-                group.get(0).getKind().name(),
-                user.length() + " chars in " + group.size() + " entries");
-        String response = postBatch(system, user.toString(), maximumTokens);
-        List<String> parsed = parseBatch(response, group.size());
+        // The trace carries the texts, not just their size: a batch is the only path where the model
+        // can answer the wrong line, and the eight previews are what makes that diagnosable. The
+        // preview is bounded by the log itself, so the privacy cost is the one already paid.
+        if (DebugLog.global().isEnabled()) {
+            DebugLog.global().logRequest(providerId, model, endpoint.toString(),
+                    group.get(0).getKind().name(), batchPreview(group));
+        }
+        String response = postBatchWithinBudget(system, user.toString(), maximumTokens);
+        Object root = JsonTree.parseOrNull(response);
+        List<String> parsed = parseBatch(root, response, group.size());
         if (parsed == null && maximumTokens < REASONING_COMPLETION_TOKENS
-                && JsonStrings.readStringField(response, "reasoning_content") != null) {
+                && reasoningContent(root, "message") != null) {
             reasoningModel = true;
             int reasoningBudget = Math.min(REASONING_COMPLETION_TOKENS, acceptedReasoningTokens);
             if (reasoningBudget > maximumTokens) {
                 response = postBatchWithAcceptedBudget(system, user.toString(), reasoningBudget);
-                parsed = parseBatch(response, group.size());
+                root = JsonTree.parseOrNull(response);
+                parsed = parseBatch(root, response, group.size());
             }
         }
         if (parsed == null) {
-            throw new IllegalStateException(describeMissingContent(response));
+            throw missingContent(root, response);
         }
         recordUsage(response);
         DebugLog.global().logResponse(providerId, group.get(0).getKind().name(),
                 parsed.size() + " entries");
         return parsed;
+    }
+
+    /** The texts one batch carries, joined for the trace; {@code DebugLog} bounds the length. */
+    private static String batchPreview(List<TranslationRequest> group) {
+        StringBuilder preview = new StringBuilder(96);
+        for (int index = 0; index < group.size(); index++) {
+            if (index > 0) {
+                preview.append(" | ");
+            }
+            preview.append(group.get(index).getText());
+        }
+        return preview.toString();
     }
 
     /**
@@ -754,7 +900,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         int escaping = requestLength / 4;
         int keys = JSON_REPLY_ENTRY_TOKENS * entries;
         return Math.max(MINIMUM_COMPLETION_TOKENS,
-                Math.min(requestLength * 2 + escaping + keys + 32, REASONING_COMPLETION_TOKENS));
+                Math.min(requestLength * 2 + escaping + keys + 32, MAXIMUM_BATCH_COMPLETION_TOKENS));
     }
 
     /**
@@ -764,13 +910,14 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
      * numbered list the protocol used before JSON, which is what an endpoint that ignores the
      * instruction produces — the small local models above all.
      *
+     * @param root the same body, already parsed
      * @param response raw response body
      * @param expected number of texts in the batch
      * @return one entry per expected line with {@code null} where the reply had nothing usable, or
      *         {@code null} when the reply carries no batch at all
      */
-    private List<String> parseBatch(String response, int expected) {
-        String content = extractContent(response);
+    private List<String> parseBatch(Object root, String response, int expected) {
+        String content = extractContent(root, response);
         if (content == null || content.trim().isEmpty()) {
             return null;
         }
@@ -944,8 +1091,14 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
      * Posts one batch, asking for a JSON object when this endpoint supports it.
      *
      * <p>An endpoint that answers "I do not know {@code response_format}" is retried once without it
-     * and never asked again: every later batch would otherwise pay for the same rejection, and the
-     * numbered fallback already reads a reply that ignores the request.
+     * and then never asked again: every later batch would otherwise pay for the same rejection, and
+     * the numbered fallback already reads a reply that ignores the request.
+     *
+     * <p>Forgetting the format for good takes an answer that names the field. A non-retryable 400 also
+     * covers "this text is too long", an unsupported {@code temperature} and an unknown deployment,
+     * and treating any of those as "no JSON mode here" removed the format hint for the rest of the
+     * session — the small local models, the ones that need to be told the shape, then answered prose
+     * and every batch fell back to one repair request per line.
      */
     private String postBatch(String system, String text, int maximumTokens) throws Exception {
         if (jsonOutput != JsonOutputMode.RESPONSE_FORMAT || jsonOutputRejected) {
@@ -957,21 +1110,52 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             if (!mayBeAboutJsonOutput(rejected)) {
                 throw rejected;
             }
-            jsonOutputRejected = true;
+            if (mentionsJsonOutput(rejected)) {
+                jsonOutputRejected = true;
+            }
             return post(system, text, maximumTokens, false);
+        }
+    }
+
+    /** Whether the endpoint's own message names the output-format field it was sent. */
+    private static boolean mentionsJsonOutput(HttpStatusException failure) {
+        String message = failure.getMessage() == null
+                ? "" : failure.getMessage().toLowerCase(Locale.ROOT);
+        return message.contains("response_format") || message.contains("response format")
+                || message.contains("json_object") || message.contains("json mode");
+    }
+
+    /**
+     * Posts one batch, retrying once at half the budget when the endpoint refuses that budget.
+     *
+     * <p>A batch of long lines needs more output tokens than a single line, and every endpoint caps
+     * what it will accept. Without this, a batch that asks for too much failed, and the per-line
+     * repair then turned one batch into one request per line.
+     */
+    private String postBatchWithinBudget(String system, String text, int budget) throws Exception {
+        try {
+            return postBatch(system, text, budget);
+        } catch (HttpStatusException rejected) {
+            if (!rejectsCompletionBudget(rejected)) {
+                throw rejected;
+            }
+            int reduced = halvedBudget(budget);
+            if (reduced >= budget) {
+                throw rejected;
+            }
+            return postBatch(system, text, reduced);
         }
     }
 
     /**
      * Whether a failure is worth one retry without {@code response_format}.
      *
-     * <p>{@code 400} is what OpenAI uses for an unknown request argument, and its error body is a
-     * nested object that the shared HTTP layer does not surface, so the field cannot be named from
-     * here. A non-retryable 400 is therefore treated as "this request may have been rejected because
-     * of the format field": the retry costs one request on a failure that had to be reported anyway,
-     * and every later batch stops asking. A retryable status belongs to the resilient provider above,
-     * and any other client status (401, 403, 404, 422) says the request itself is wrong, so a second
-     * request would only repeat it.
+     * <p>{@code 400} is what OpenAI uses for an unknown request argument. The retry is unconditional
+     * for that status because it costs one request on a failure that had to be reported anyway, but
+     * only an answer that names the field makes the provider stop asking for good — see
+     * {@link #mentionsJsonOutput}. A retryable status belongs to the resilient provider above, and any
+     * other client status (401, 403, 404, 422) says the request itself is wrong, so a second request
+     * would only repeat it.
      */
     private static boolean mayBeAboutJsonOutput(HttpStatusException failure) {
         return !failure.isRetryable() && failure.getStatusCode() == 400;
@@ -990,7 +1174,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             if (!rejectsCompletionBudget(rejected)) {
                 throw rejected;
             }
-            int reduced = shrinkBudget(budget);
+            int reduced = halvedBudget(budget);
             if (reduced >= budget) {
                 throw rejected;
             }
@@ -1020,15 +1204,46 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
     ) {
         return new StringBuilder(text.length() + 320)
                 .append('{')
-                .append("\"model\":").append(JsonStrings.quote(model)).append(',')
-                .append("\"messages\":[")
-                .append("{\"role\":\"system\",\"content\":").append(JsonStrings.quote(system)).append("},")
+                .append(promptPrefix(system))
                 .append("{\"role\":\"user\",\"content\":").append(JsonStrings.quote(text)).append("}],")
                 .append("\"temperature\":0,\"max_tokens\":").append(maximumTokens).append(',')
                 .append(jsonObject ? "\"response_format\":{\"type\":\"json_object\"}," : "")
                 .append(offline ? "\"repeat_penalty\":1.12," : "")
                 .append(streaming ? "\"stream\":true}" : "\"stream\":false}")
                 .toString();
+    }
+
+    /** The model and system-prompt half of one request body, escaped once per distinct prompt. */
+    private static final class PromptBody {
+        private final String system;
+        private final String prefix;
+
+        private PromptBody(String system, String prefix) {
+            this.system = system;
+            this.prefix = prefix;
+        }
+    }
+
+    /**
+     * The escaped {@code "model":…,"messages":[{"role":"system"…}} half of a request body.
+     *
+     * <p>The model never changes and the system prompt changes only with the target language or the
+     * prompt settings, so re-escaping both on every request was a few kilobytes of pure repetition per
+     * translation — the custom prompt makes that several kilobytes. The cached value is per instance,
+     * so two providers can never see each other's prompt.
+     *
+     * @param system system prompt of this request
+     * @return the escaped prefix, ending with the separator before the user message
+     */
+    private String promptPrefix(String system) {
+        PromptBody cached = promptBody;
+        if (cached != null && cached.system.equals(system)) {
+            return cached.prefix;
+        }
+        String prefix = "\"model\":" + JsonStrings.quote(model) + ",\"messages\":[{\"role\":\"system\","
+                + "\"content\":" + JsonStrings.quote(system) + "},";
+        promptBody = new PromptBody(system, prefix);
+        return prefix;
     }
 
     /**
@@ -1040,9 +1255,12 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
      * rejection again. Dropping straight to {@link #MAXIMUM_TOKENS_LIMIT} was wrong, though — that
      * is a plain model's estimate, and a thinking model cannot finish inside it, so the endpoint was
      * left permanently unable to translate anything after a single rejection. Half of the refused
-     * value is a guess the model may well fit in, and the retry is what makes it observable: if it
-     * succeeds the value is remembered, and if it is refused again the smaller value is remembered
-     * and {@link #translateOne} reports why the endpoint cannot be used with this model.
+     * value is a guess the model may well fit in, and the retry is what makes it observable.
+     *
+     * <p>Only a budget the endpoint actually accepted is recorded. Recording half of the refused value
+     * before the retry ran meant one refused request — including one refusing the <em>input</em> for
+     * being too long — narrowed every later request of the session, down to the floor, and the session
+     * could not get the larger budget back.
      */
     private String postWithAcceptedBudget(String system, String text, int budget, boolean offline)
             throws Exception {
@@ -1052,31 +1270,35 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             if (!rejectsCompletionBudget(rejected)) {
                 throw rejected;
             }
-            int reduced = shrinkBudget(budget);
+            int reduced = halvedBudget(budget);
             if (reduced >= budget) {
                 // Already at the floor, so there is nothing smaller worth sending.
                 throw rejected;
             }
-            return post(system, text, reduced, offline);
+            String accepted = post(system, text, reduced, offline);
+            acceptedReasoningTokens = reduced;
+            return accepted;
         }
     }
 
     /**
-     * Records the largest budget this endpoint is known to accept after one refusal.
+     * Half of a refused budget, never below {@link #MINIMUM_COMPLETION_TOKENS}.
      *
      * @param budget the refused budget
-     * @return half of it, never below {@link #MINIMUM_COMPLETION_TOKENS}
+     * @return half of it
      */
-    private int shrinkBudget(int budget) {
-        int reduced = Math.max(MINIMUM_COMPLETION_TOKENS, budget / 2);
-        acceptedReasoningTokens = reduced;
-        return reduced;
+    private static int halvedBudget(int budget) {
+        return Math.max(MINIMUM_COMPLETION_TOKENS, budget / 2);
     }
 
     /**
-     * Whether a failure looks like "the completion budget you asked for is not allowed". Only
-     * client errors whose message names the token limit qualify, so an authentication or quota
-     * failure is never mistaken for a budget problem and silently retried with a smaller budget.
+     * Whether a failure looks like "the completion budget you asked for is not allowed".
+     *
+     * <p>Only client errors whose message names the output-token limit qualify, so an authentication
+     * or quota failure is never mistaken for a budget problem and silently retried with a smaller
+     * budget. A message about the <em>input</em> being too long mentions "too long" and "exceed" as
+     * well, and treating it as an output-budget refusal cut the thinking model's budget in half for a
+     * request that had nothing to do with it.
      */
     private static boolean rejectsCompletionBudget(HttpStatusException failure) {
         if (failure.getStatusCode() < 400 || failure.getStatusCode() >= 500) {
@@ -1084,9 +1306,12 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         }
         String message = failure.getMessage() == null
                 ? "" : failure.getMessage().toLowerCase(Locale.ROOT);
+        if (message.contains("context_length") || message.contains("context length")
+                || message.contains("prompt") || message.contains("input")) {
+            return false;
+        }
         return message.contains("max_tokens") || message.contains("max_completion_tokens")
-                || message.contains("max output") || message.contains("too large")
-                || message.contains("too long") || message.contains("exceed");
+                || message.contains("max output");
     }
 
     /**
@@ -1100,14 +1325,33 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
      * @return the provider's own message when it sent one, otherwise a bounded body excerpt
      */
     static String describeMissingContent(String response) {
-        String providerError = JsonStrings.readStringField(response, "message");
+        return describeMissingContent(JsonTree.parseOrNull(response), response);
+    }
+
+    /**
+     * The same explanation, reusing a body that was already parsed.
+     *
+     * <p>Every field is read from the parsed document instead of rescanning the text: the scan cost a
+     * second full walk of the body per line, and a scan for {@code reasoning_content} also matched the
+     * request a relay echoes back, which put the provider's own error text behind a misleading
+     * "returned only reasoning content".
+     *
+     * @param root parsed body, or {@code null} when it was not JSON
+     * @param response the same body as text
+     * @return the provider's own message when it sent one, otherwise a bounded body excerpt
+     */
+    static String describeMissingContent(Object root, String response) {
+        String providerError = JsonTree.stringAt(root, "error.message");
         if (providerError == null) {
-            providerError = JsonStrings.readStringField(response, "error");
+            providerError = JsonTree.stringAt(root, "message");
+        }
+        if (providerError == null) {
+            providerError = JsonTree.stringAt(root, "error");
         }
         if (providerError != null && !providerError.trim().isEmpty()) {
             return "OpenAI-compatible endpoint reported: " + providerError.trim();
         }
-        if (JsonStrings.readStringField(response, "reasoning_content") != null) {
+        if (reasoningContent(root, "message") != null || reasoningContent(root, "delta") != null) {
             return "OpenAI-compatible model returned only reasoning content; "
                     + "pick a non-reasoning model or raise the completion budget";
         }
@@ -1177,6 +1421,11 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         String translated = JsonTree.stringAt(root, "choices[0].message.content");
         if (translated != null && !translated.trim().isEmpty()) {
             return translated;
+        }
+        if (root != null) {
+            // A relay that answers a bare {@code {"content": "..."}} document keeps working, without a
+            // second full walk of the body: the field is read from the tree that is already built.
+            return JsonTree.stringAt(root, "content");
         }
         return JsonStrings.readStringField(response, "content");
     }

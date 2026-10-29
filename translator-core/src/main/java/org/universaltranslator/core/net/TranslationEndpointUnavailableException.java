@@ -28,6 +28,22 @@ public final class TranslationEndpointUnavailableException extends IOException {
         return new TranslationEndpointUnavailableException(message, cause);
     }
 
+    /** A host name that never resolved: a typo in the endpoint, or DNS itself is down. */
+    public static TranslationEndpointUnavailableException unknownHost(URI endpoint, IOException cause) {
+        String address = displayAddress(endpoint == null ? null : endpoint.getHost(),
+                effectivePort(endpoint));
+        return new TranslationEndpointUnavailableException("找不到翻译服务主机（" + address
+                + "）；请检查服务地址与 DNS 设置", cause);
+    }
+
+    /** The TLS handshake failed: an expired or untrusted certificate, or an intercepting proxy. */
+    public static TranslationEndpointUnavailableException tlsFailure(URI endpoint, IOException cause) {
+        String address = displayAddress(endpoint == null ? null : endpoint.getHost(),
+                effectivePort(endpoint));
+        return new TranslationEndpointUnavailableException("无法与翻译服务建立 TLS 连接（" + address
+                + "）；请检查证书与系统代理设置", cause);
+    }
+
     private static int effectivePort(URI endpoint) {
         if (endpoint == null) {
             return -1;

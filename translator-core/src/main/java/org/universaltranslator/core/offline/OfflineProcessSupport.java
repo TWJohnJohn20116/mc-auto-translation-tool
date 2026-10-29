@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import org.universaltranslator.core.net.CryptoSupport;
 
 /** Platform-specific process setup and compact diagnostics for the local llama.cpp server. */
 public final class OfflineProcessSupport {
@@ -353,11 +354,7 @@ public final class OfflineProcessSupport {
                 output.write(buffer, 0, count);
             }
         }
-        StringBuilder hex = new StringBuilder(64);
-        for (byte value : digest.digest()) {
-            hex.append(String.format("%02x", value & 0xff));
-        }
-        return hex.toString();
+        return CryptoSupport.hex(digest.digest());
     }
 
     private static void requireNotCancelled(CancellationCheck cancellation)
@@ -578,7 +575,7 @@ public final class OfflineProcessSupport {
     }
 
     private static boolean isSha256(String value) {
-        return value != null && value.matches("(?i)[0-9a-f]{64}");
+        return ModelVerificationCache.isSha256(value);
     }
 
     private static String requireAsciiFileName(String value) {

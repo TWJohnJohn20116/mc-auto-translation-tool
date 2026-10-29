@@ -14,11 +14,20 @@ import java.util.Arrays;
  * value would also be wrong, because two independently produced tooltips can be equal.
  *
  * <p>The implementation is a fixed ring of {@link WeakReference}s compared by identity, so a
- * caller never leaks a retained list even if it forgets to clear anything. Capacity only has to
- * cover the lists handled between two collections: a handful of tooltips per frame.
+ * caller never leaks a retained list even if it forgets to clear anything. Capacity has to cover the
+ * lists handled between two collections and, more importantly, the lists the render path revisits
+ * across a few frames -- see {@link #CAPACITY}.
  */
 public final class WeakIdentitySet {
-    private static final int CAPACITY = 8;
+    /**
+     * How many recently handled instances are remembered.
+     *
+     * <p>Eight was not enough to survive a normal inventory: stepping across the slots of one chest, or
+     * an item tooltip plus a container tooltip in the same frame, pushed the list a mark was made for
+     * out of the ring, and the evicted "already translated" list was translated a second time on the
+     * next frame -- a second request for text that had just been paid for.
+     */
+    private static final int CAPACITY = 64;
 
     private final WeakReference<?>[] slots = new WeakReference<?>[CAPACITY];
     private int cursor;

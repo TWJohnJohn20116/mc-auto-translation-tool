@@ -1,5 +1,6 @@
 package org.universaltranslator.core.provider;
 
+import org.universaltranslator.core.TranslationOutputValidator;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationRequest;
 import org.universaltranslator.core.net.EndpointPolicy;
@@ -18,6 +19,18 @@ import java.util.TimeZone;
 public final class VolcengineMachineTranslationProvider implements TranslationProvider {
     private static final String QUERY = "Action=TranslateText&Version=2020-06-01";
     private static final String SERVICE = "translate";
+    /**
+     * The request timestamp format this API signs. A fresh formatter used to be built for every
+     * line; {@link SimpleDateFormat} is not thread-safe, so the instance is per thread.
+     */
+    private static final ThreadLocal<SimpleDateFormat> FORMAT = new ThreadLocal<SimpleDateFormat>() {
+        @Override
+        protected SimpleDateFormat initialValue() {
+            SimpleDateFormat format = new SimpleDateFormat("yyyyMMdd'T'HHmmss'Z'", Locale.US);
+            format.setTimeZone(TimeZone.getTimeZone("UTC"));
+            return format;
+        }
+    };
 
     private final URI endpoint;
     private final String accessKey;
@@ -65,17 +78,19 @@ public final class VolcengineMachineTranslationProvider implements TranslationPr
         Map<String, String> headers = VolcengineV4Signer.headers(
                 accessKey, secretKey, endpoint.getHost(), region, SERVICE, QUERY, payload, requestDate);
         String response = http.post(endpoint, payload, headers);
-        String translated = JsonStrings.readStringPath(response, "TranslationList[0].Translation");
+        String translated = ProviderErrors.pathOrNull(
+                "Volcengine MT", response, "TranslationList[0].Translation");
         if (translated == null || translated.trim().isEmpty()) {
             throw BaiduTranslationProvider.providerError(
                     "Volcengine MT", response, "Code", "Message");
         }
-        return translated;
+        return TranslationOutputValidator.requireValid(request.getText(), translated);
     }
 
+    /**
+     * The request timestamp, in the format this API signs.
+     */
     private static String requestDate(Date value) {
-        SimpleDateFormat format = new SimpleDateFormat("yyyyMMdd'T'HHmmss'Z'", Locale.US);
-        format.setTimeZone(TimeZone.getTimeZone("UTC"));
-        return format.format(value);
+        return FORMAT.get().format(value);
     }
 }

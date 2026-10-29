@@ -2,7 +2,9 @@ package org.universaltranslator.core;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Plans per-run styling for translated Minecraft text components.
@@ -63,7 +65,11 @@ public final class TranslationStyleRuns {
         if (texts == null || styleKeys == null || texts.isEmpty()) {
             return Collections.emptyList();
         }
-        int count = Math.min(texts.size(), styleKeys.size());
+        // The longer of the two lists decides: the bridges build both from the same siblings, so a
+        // shorter one means one of them lost an entry, and truncating to it silently removed the
+        // tail of the line from the screen. A missing text contributes nothing and a missing style
+        // key compares unequal to every other key, which keeps the remaining text in place.
+        int count = Math.max(texts.size(), styleKeys.size());
         List<Run> runs = new ArrayList<Run>(count);
         // Accumulate the text of the open run in a builder: a scoreboard side bar arrives as one
         // component with 40 same-styled siblings, and previous.text + text would copy the growing
@@ -73,8 +79,8 @@ public final class TranslationStyleRuns {
         Object openStyle = null;
         int openSourceIndex = -1;
         for (int index = 0; index < count; index++) {
-            String text = texts.get(index) == null ? "" : texts.get(index);
-            Object styleKey = styleKeys.get(index);
+            String text = index >= texts.size() || texts.get(index) == null ? "" : texts.get(index);
+            Object styleKey = index >= styleKeys.size() ? null : styleKeys.get(index);
             if (hasOpen && equalKeys(openStyle, styleKey)) {
                 open.append(text);
                 continue;
@@ -97,24 +103,18 @@ public final class TranslationStyleRuns {
     /**
      * Number of distinct styles among the runs.
      *
-     * <p>Diagnostic helper only. It is quadratic in the run count because the style keys are
-     * opaque and compared by {@link Object#equals(Object)}, which for a Minecraft {@code Style}
-     * compares every field. Do not call it on the render path; {@link #shouldRebuildRuns(List)}
-     * does not need it.
+     * <p>Diagnostic helper only, and package-private for that reason: the counting scan is linear
+     * now, but it still builds a set and compares opaque style keys, which for a Minecraft
+     * {@code Style} compares every field. {@link #shouldRebuildRuns(List)} answers the question the
+     * render path actually asks without touching a key.
      */
-    public static int distinctStyleCount(List<Run> runs) {
+    static int distinctStyleCount(List<Run> runs) {
         if (runs == null || runs.isEmpty()) {
             return 0;
         }
-        List<Object> seen = new ArrayList<Object>(runs.size());
+        Set<Object> seen = new HashSet<Object>(runs.size() * 2);
         for (Run run : runs) {
-            boolean known = false;
-            for (int index = 0; index < seen.size() && !known; index++) {
-                known = equalKeys(seen.get(index), run.styleKey());
-            }
-            if (!known) {
-                seen.add(run.styleKey());
-            }
+            seen.add(run.styleKey());
         }
         return seen.size();
     }

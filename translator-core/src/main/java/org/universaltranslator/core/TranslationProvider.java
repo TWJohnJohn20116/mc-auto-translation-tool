@@ -19,7 +19,8 @@ public interface TranslationProvider {
      * the plain path applies.
      *
      * @param request text to translate
-     * @param listener receives the accumulated translation as it grows, never {@code null}
+     * @param listener receives the accumulated translation as it grows, or {@code null} when the
+     *                 caller only wants the finished text
      * @return the completed translation
      * @throws Exception when the request fails; a caller that has already shown a partial text must
      *                   discard it and show the failure instead
@@ -27,7 +28,9 @@ public interface TranslationProvider {
     default String translateStreaming(TranslationRequest request, TranslationStreamListener listener)
             throws Exception {
         String translated = translate(request);
-        if (translated != null) {
+        // The two providers that override this already answered a null listener with the plain
+        // result; the default one threw a NullPointerException instead of translating at all.
+        if (translated != null && listener != null) {
             listener.onPartialText(translated);
         }
         return translated;

@@ -72,10 +72,21 @@ public final class TencentCloudV3Signer {
     }
 
     private static String utcDate(long timestampSeconds) {
-        SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd", Locale.ROOT);
-        format.setTimeZone(TimeZone.getTimeZone("UTC"));
-        return format.format(new Date(timestampSeconds * 1000L));
+        return UTC_DATE.get().format(new Date(timestampSeconds * 1000L));
     }
+
+    /**
+     * One formatter per thread: the signer stamps every translated line, and constructing a
+     * {@code SimpleDateFormat} costs more than formatting with it. Not thread safe, hence not static.
+     */
+    private static final ThreadLocal<SimpleDateFormat> UTC_DATE = new ThreadLocal<SimpleDateFormat>() {
+        @Override
+        protected SimpleDateFormat initialValue() {
+            SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd", Locale.ROOT);
+            format.setTimeZone(TimeZone.getTimeZone("UTC"));
+            return format;
+        }
+    };
 
     private static void requireValue(String name, String value) {
         if (value == null || value.trim().isEmpty()) {

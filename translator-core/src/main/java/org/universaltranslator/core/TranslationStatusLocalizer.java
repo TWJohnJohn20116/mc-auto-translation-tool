@@ -34,6 +34,16 @@ public final class TranslationStatusLocalizer {
         if ("离线模型已停止".equals(value)) {
             return translator.translate("status.universal_translator.offline_stopped");
         }
+        // The engine's own start failures. They are progress messages rather than end states, and
+        // before this they fell through to the raw literal, so an English or Japanese interface
+        // showed Simplified Chinese in the HUD.
+        if ("离线引擎启动失败，正在使用兼容模式重试".equals(value)
+                || "离线引擎端口被占用，正在换端口重试".equals(value)) {
+            return translator.translate("status.universal_translator.offline_starting");
+        }
+        if ("离线引擎启动失败，正在自动修复".equals(value)) {
+            return translator.translate("status.universal_translator.engine_installing");
+        }
         if ("主翻译服务运行中".equals(value)) {
             return translator.translate("status.universal_translator.primary_running");
         }
@@ -73,9 +83,11 @@ public final class TranslationStatusLocalizer {
 
     public static boolean isFailure(String status) {
         String value = status == null ? "" : status.trim();
-        return value.startsWith("翻译失败：")
-                || value.startsWith("离线翻译失败：")
-                || value.contains("均失败");
+        // "失败" covers the translation failures, the "both failed" status and the engine's own start
+        // failures, which used to be classified as success: the HUD drew them in the healthy colour
+        // and raised no failure notice while the offline engine could not start at all.
+        // "端口被占用" is a start failure that reports itself as occupied rather than failed.
+        return value.contains("失败") || value.contains("端口被占用");
     }
 
     private static String normalizeMetrics(String value) {
@@ -107,6 +119,8 @@ public final class TranslationStatusLocalizer {
         if ("离线模型已停止".equals(trimmed)) {
             return translator.translate("status.universal_translator.offline_stopped");
         }
-        return reason;
+        // The five known reasons are compared trimmed, so the fallback must be trimmed too: an
+        // untrimmed or null reason reached the message as a padding-filled string or as "null".
+        return trimmed;
     }
 }

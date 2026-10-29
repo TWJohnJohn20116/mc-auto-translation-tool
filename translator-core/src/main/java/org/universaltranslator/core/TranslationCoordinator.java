@@ -7,6 +7,8 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -22,11 +24,26 @@ import java.util.Collections;
 public final class TranslationCoordinator implements AutoCloseable {
     private static final int MAX_QUEUED_TRANSLATIONS = 128;
     private static final long WORKER_SHUTDOWN_TIMEOUT_MILLIS = 5_000L;
+    /**
+     * Prefix of every key written to the store. Bumping it invalidates the stored translations, and
+     * only that: the in-flight de-duplication key has its own version, because it only has to stay
+     * stable inside one session. Sharing one constant meant that a disk format change silently
+     * disabled de-duplication too, so the same request was sent twice and billed twice.
+     */
     private static final String CACHE_FORMAT_VERSION = "translation-v6";
+    /** Prefix of the in-flight de-duplication key; never written to the store. */
+    private static final String REQUEST_KEY_VERSION = "request-v1";
 
     private final TranslationProvider provider;
     private final TranslationStore cache;
     private final ThreadPoolExecutor executor;
+    /**
+     * Runs the completions that cannot be run where they are produced. A future completed on the
+     * caller's thread runs its {@code whenComplete} callbacks there, and the caller of
+     * {@link #settle} is the render thread; the busy and fatal exits therefore hand the completion
+     * to this executor. It is a single daemon thread that only exists once it has work to do.
+     */
+    private final ExecutorService completions;
     private final ConcurrentHashMap<String, CompletableFuture<TranslationResult>> inFlight =
             new ConcurrentHashMap<String, CompletableFuture<TranslationResult>>();
     // Content signature of the protected-literal snapshot that was seen last. The platform
@@ -54,6 +71,7 @@ public final class TranslationCoordinator implements AutoCloseable {
                 new ArrayBlockingQueue<Runnable>(MAX_QUEUED_TRANSLATIONS),
                 new TranslationThreadFactory(),
                 new ThreadPoolExecutor.AbortPolicy());
+        this.completions = Executors.newSingleThreadExecutor(new TranslationThreadFactory());
     }
 
     public CompletableFuture<TranslationResult> translate(
@@ -200,15 +218,42 @@ public final class TranslationCoordinator implements AutoCloseable {
             executor.execute(() -> runWorker(submission, created));
         } catch (RejectedExecutionException busy) {
             inFlight.remove(submission.requestKey, created);
-            created.complete(TranslationResult.failure(
+            // Not completed here: a CompletableFuture completes its callbacks on the thread that
+            // completes it, so the session would run its whole settlement -- session monitor,
+            // eviction passes, status report -- on the render thread at the exact moment the queue
+            // is full, which is the worst moment to make that thread wait.
+            completeOutsideCaller(created, TranslationResult.failure(
                     submission.text, "Translation queue is busy; retrying later"));
         } catch (Throwable fatal) {
             // begin() already ran; without this the count would never come back down and the
             // HUD indicator would be stuck showing "translating" for the rest of the session.
             TranslationActivity.end();
+            // The future has to be settled as well: ThreadPoolExecutor.execute can fail with an
+            // OutOfMemoryError while it creates the worker thread, and an entry left in inFlight
+            // would answer every later request for the same text with a future that never completes.
+            inFlight.remove(submission.requestKey, created);
+            completeOutsideCaller(created,
+                    TranslationResult.failure(submission.text, failureMessage(fatal)));
             throw fatal;
         }
         return created;
+    }
+
+    /**
+     * Completes {@code result} on this coordinator's own thread, so the caller's thread does not run
+     * the completion callbacks. Used by the exits of {@link #settle} that can be reached from the
+     * render thread.
+     */
+    private void completeOutsideCaller(
+            final CompletableFuture<TranslationResult> future,
+            final TranslationResult result
+    ) {
+        try {
+            completions.execute(() -> future.complete(result));
+        } catch (RejectedExecutionException shuttingDown) {
+            // close() already swept every registered request; settling inline is the last resort.
+            future.complete(result);
+        }
     }
 
     /**
@@ -235,9 +280,7 @@ public final class TranslationCoordinator implements AutoCloseable {
             String restored;
             try {
                 restored = TranslationOutputValidator.requireDisplaySafe(
-                        text, translateSegments(protectedText, submission.sourceLanguage,
-                                submission.targetLanguage, submission.chineseTarget, submission.kind,
-                                submission.listener, pendingCommit));
+                        text, translateSegments(protectedText, submission, pendingCommit));
             } catch (RuntimeException rejected) {
                 // Undo everything this request stored or reused: the next request for the same line
                 // has to reach the provider again instead of being served a value that can never be
@@ -298,6 +341,14 @@ public final class TranslationCoordinator implements AutoCloseable {
         private final boolean chineseTarget;
         private final TranslationStreamListener listener;
         private final String requestKey;
+        /**
+         * The provider identifier, resolved once per request. Asking the provider again for every
+         * segment was one interface call per segment on the worker, and every segment still built
+         * its key from the same four constants.
+         */
+        private final String providerId;
+        /** {@link #CACHE_FORMAT_VERSION} key prefix shared by every segment of this request. */
+        private final String cacheKeyPrefix;
 
         private Submission(
                 String text,
@@ -319,9 +370,20 @@ public final class TranslationCoordinator implements AutoCloseable {
             this.preserveHanText = preserveHanText;
             this.chineseTarget = chineseTarget;
             this.listener = listener;
-            this.requestKey = CACHE_FORMAT_VERSION + "\n" + providerId + "\n" + sourceLanguage + "\n"
-                    + targetLanguage + "\n" + kind + "\n" + preserveHanText + "\n"
-                    + literalsSignature + "\n" + text;
+            this.providerId = providerId;
+            // One builder each instead of eight string concatenations: this runs on the caller's
+            // thread, which on the render path is the render thread, and the text is copied once.
+            StringBuilder prefix = new StringBuilder(text.length() + 96);
+            prefix.append(CACHE_FORMAT_VERSION).append('\n').append(providerId)
+                    .append('\n').append(sourceLanguage).append('\n').append(targetLanguage)
+                    .append('\n').append(kind).append('\n');
+            this.cacheKeyPrefix = prefix.toString();
+            StringBuilder key = new StringBuilder(prefix.length() + text.length() + 64);
+            key.append(REQUEST_KEY_VERSION).append('\n').append(providerId).append('\n')
+                    .append(sourceLanguage).append('\n').append(targetLanguage).append('\n')
+                    .append(kind).append('\n').append(preserveHanText).append('\n')
+                    .append(literalsSignature).append('\n').append(text);
+            this.requestKey = key.toString();
         }
     }
 
@@ -388,11 +450,7 @@ public final class TranslationCoordinator implements AutoCloseable {
      */
     private String translateSegments(
             ProtectedText protectedText,
-            String sourceLanguage,
-            String targetLanguage,
-            boolean chineseTarget,
-            TextKind kind,
-            TranslationStreamListener listener,
+            Submission submission,
             PendingCommit pendingCommit
     ) throws Exception {
         StringBuilder output = new StringBuilder(protectedText.getOriginal().length() + 16);
@@ -400,12 +458,12 @@ public final class TranslationCoordinator implements AutoCloseable {
             if (segment.isProtectedValue()) {
                 output.append(segment.text());
             } else {
-                // Only built when a preview is being published: the render path runs through this
-                // method for every line the game draws and must not start allocating per segment.
-                String alreadyBuilt = listener == null ? null : output.toString();
-                output.append(translateSegment(
-                        segment.text(), sourceLanguage, targetLanguage, chineseTarget, kind, listener,
-                        alreadyBuilt, pendingCommit));
+                // The text built so far is handed over as the builder itself; the snapshot is only
+                // materialized inside translateSegment, and only when the segment really streams.
+                // Copying it here meant every unprotected segment copied the whole prefix, even for
+                // the cache hits that never publish a preview.
+                String translated = translateSegment(segment.text(), submission, output, pendingCommit);
+                output.append(translated);
             }
         }
         return output.toString();
@@ -413,12 +471,8 @@ public final class TranslationCoordinator implements AutoCloseable {
 
     private String translateSegment(
             String segment,
-            String sourceLanguage,
-            String targetLanguage,
-            boolean chineseTarget,
-            TextKind kind,
-            TranslationStreamListener listener,
-            String alreadyBuilt,
+            Submission submission,
+            StringBuilder alreadyBuilt,
             PendingCommit pendingCommit
     ) throws Exception {
         int start = 0;
@@ -430,12 +484,11 @@ public final class TranslationCoordinator implements AutoCloseable {
             end--;
         }
         String core = segment.substring(start, end);
-        if (!LanguageHeuristics.shouldTranslateToTarget(core, chineseTarget)) {
+        if (!LanguageHeuristics.shouldTranslateToTarget(core, submission.chineseTarget)) {
             return segment;
         }
-        String providerId = provider.id();
-        String cacheKey = CACHE_FORMAT_VERSION + "\n" + providerId
-                + "\n" + sourceLanguage + "\n" + targetLanguage + "\n" + kind + "\n" + core;
+        String providerId = submission.providerId;
+        String cacheKey = submission.cacheKeyPrefix + core;
         // Cache hits and cache misses are booked on the per-request PendingCommit rather than here.
         // They used to be counted (and logged) the moment a segment was looked up, while the provider
         // successes were held back until the restored text passed the display check, so a request that
@@ -453,13 +506,16 @@ public final class TranslationCoordinator implements AutoCloseable {
         if (translated == null) {
             pendingCommit.recordMiss(providerId);
             TranslationRequest request = new TranslationRequest(
-                    core, sourceLanguage, targetLanguage, kind);
+                    core, submission.sourceLanguage, submission.targetLanguage, submission.kind);
             TranslationStreamListener segmentListener = null;
-            if (listener != null) {
+            if (submission.listener != null) {
                 // Leading whitespace of this segment is not part of what the provider sees, so it is
                 // prepended to the preview instead of being lost from it.
-                final String prefix = alreadyBuilt + segment.substring(0, start);
-                segmentListener = partialText -> listener.onPartialText(prefix + partialText);
+                StringBuilder prefix = new StringBuilder(alreadyBuilt.length() + start);
+                prefix.append(alreadyBuilt, 0, alreadyBuilt.length()).append(segment, 0, start);
+                final String previewPrefix = prefix.toString();
+                segmentListener =
+                        partialText -> submission.listener.onPartialText(previewPrefix + partialText);
             }
             long startedAt = System.nanoTime();
             try {
@@ -473,20 +529,20 @@ public final class TranslationCoordinator implements AutoCloseable {
             } catch (Exception failure) {
                 stats.recordFailure(providerId, TranslationStats.reasonOf(failure),
                         elapsedMillis(startedAt));
+                pendingCommit.recordFailure();
                 DebugLog.global().logFailure(providerId, failure);
                 throw failure;
             }
             pendingCommit.recordSuccess(providerId, elapsedMillis(startedAt));
             // The key is journalled before the write because a store may accept the entry and only
             // then fail while persisting it; removing a key that was never stored is a no-op.
-            pendingCommit.recordKey(cacheKey);
+            pendingCommit.recordStored(cacheKey, translated);
             cache.put(cacheKey, translated);
         } else {
             pendingCommit.recordHit(providerId);
-            // The value is adopted, so this request becomes answerable for it. A key whose value
-            // passed the per-segment check but whose assembled text is rejected must disappear,
-            // otherwise a cache written by a version with laxer checks keeps failing every retry.
-            pendingCommit.recordKey(cacheKey);
+            // The value is adopted, not written, so this request only becomes answerable for it when
+            // it is the entry that the assembled text was rejected for; see PendingCommit.rollback.
+            pendingCommit.recordAdopted(cacheKey, translated);
         }
         return segment.substring(0, start) + translated + segment.substring(end);
     }
@@ -526,8 +582,11 @@ public final class TranslationCoordinator implements AutoCloseable {
         // live loopback call, and a replacement session races this one on the same
         // cache .tmp file. Proceed after the bounded wait so a stuck provider cannot
         // hang Minecraft shutdown.
+        boolean workersStopped = false;
         try {
-            if (!executor.awaitTermination(WORKER_SHUTDOWN_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
+            workersStopped = executor.awaitTermination(
+                    WORKER_SHUTDOWN_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
+            if (!workersStopped) {
                 // The debug log instead of stderr: this used to be the only core path that wrote to
                 // stdout regardless of the debug-log switch, so it printed with no level and no
                 // timestamp and could not be turned off.
@@ -537,8 +596,17 @@ public final class TranslationCoordinator implements AutoCloseable {
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
         }
-        // The store may coalesce writes, so the last burst is only durable once this runs.
-        cache.flush();
+        // The store may coalesce writes, so the last burst is only durable once this runs -- but only
+        // once no worker can still put into it. A worker that outlived the timeout keeps writing while
+        // this flushes, and an entry it writes after the snapshot taken here is lost for good because
+        // the session is being discarded; leaving the flush to the store's own background flush keeps
+        // that last burst reachable instead.
+        if (workersStopped) {
+            cache.flush();
+        }
+        // Graceful, so a completion that is already queued still settles its future; no new request
+        // can be registered after close(), and the sweep above has settled everything still in flight.
+        completions.shutdown();
         if (provider instanceof AutoCloseable) {
             try {
                 ((AutoCloseable) provider).close();
@@ -601,8 +669,8 @@ public final class TranslationCoordinator implements AutoCloseable {
     }
 
     /**
-     * The cache writes, the adopted cache hits and the success counters of one request, released
-     * only once the whole text is known to be displayable.
+     * What one request did to the cache -- the keys it wrote, the keys it adopted and the counters of
+     * its segments -- settled only once the whole text is known to be displayable.
      *
      * <p>The segment layer validates every translation on its own, but the assembled text has three
      * requirements no single segment can be held to, and {@code requireDisplaySafe} rejects it as
@@ -617,22 +685,31 @@ public final class TranslationCoordinator implements AutoCloseable {
      * placeholder-shaped player name is not a rejection reason and never will be.
      *
      * <p>Writing first and undoing afterwards, rather than writing only after the check, is
-     * deliberate: a cache hit cannot be protected by reordering anything because the value is
-     * already stored by the time it is read, and a multi-segment request has written the keys of
-     * its earlier segments long before the whole text exists. A removal after the fact is therefore
-     * the only way to keep a rejected line out of the cache for good; without it the same key is
-     * served to every later round, fails the same check again, and keeps its line broken for the
-     * rest of the session while filling a slot in the platform's retry table that can never succeed.
+     * deliberate: a multi-segment request has written the keys of its earlier segments long before
+     * the whole text exists, and a value adopted from the store is already stored by the time it is
+     * read. A removal after the fact is therefore the only way to keep a rejected line's own writes
+     * out of the cache for good; without it the same key is served to every later round, fails the
+     * same check again, and keeps its line broken for the rest of the session while filling a slot in
+     * the platform's retry table that can never succeed. What is removed is deliberately narrowed to
+     * what this request wrote, plus the single adopted entry of a one-entry request, because the
+     * assembled text of a longer request says nothing about its individual entries.
      *
      * <p>One instance per request. The coordinator is called by every worker thread at once, so this
      * state must never live in a field of the coordinator.
      */
     private static final class PendingCommit {
         /**
-         * Keys this request is answerable for: the ones it stored and the ones it adopted from the
-         * cache. Every one of them is dropped if the restored text is rejected.
+         * Keys this request wrote itself, with the value it wrote. Only these are dropped when the
+         * restored text is rejected: they are this request's own doing.
          */
-        private final List<String> touchedKeys = new ArrayList<String>();
+        private final List<CacheWrite> storedKeys = new ArrayList<CacheWrite>();
+        /**
+         * Keys this request only read, with the value it read. Kept apart from {@link #storedKeys}
+         * because a rejected multi-line request used to delete every key it had merely adopted, so a
+         * forty-line tooltip with one bad line lost the thirty-nine good entries and was billed again
+         * from scratch on the next round.
+         */
+        private final List<CacheWrite> adoptedKeys = new ArrayList<CacheWrite>();
         /** Provider calls that succeeded, counted only once the request itself has succeeded. */
         private final List<ProviderSuccess> successes = new ArrayList<ProviderSuccess>();
         /**
@@ -643,11 +720,25 @@ public final class TranslationCoordinator implements AutoCloseable {
          */
         private int cacheHits;
         private int cacheMisses;
+        /**
+         * Whether a provider call of this request is already counted as a failure. A request that
+         * fails is settled once, as a failure; counting a rejection on top of it made
+         * {@code requests} exceed {@code successes + failures + rejected}.
+         */
+        private boolean failureRecorded;
         /** Provider of the first looked-up segment, used for the one log line this request writes. */
         private String providerId;
 
-        private void recordKey(String cacheKey) {
-            touchedKeys.add(cacheKey);
+        private void recordStored(String cacheKey, String value) {
+            storedKeys.add(new CacheWrite(cacheKey, value));
+        }
+
+        private void recordAdopted(String cacheKey, String value) {
+            adoptedKeys.add(new CacheWrite(cacheKey, value));
+        }
+
+        private void recordFailure() {
+            failureRecorded = true;
         }
 
         private void recordSuccess(String providerId, long elapsedMillis) {
@@ -682,24 +773,45 @@ public final class TranslationCoordinator implements AutoCloseable {
         }
 
         /**
-         * Drops every key this request stored or adopted, so a rejected value cannot occupy its key.
+         * Drops what this request wrote, so a rejected value cannot occupy its key.
          *
-         * <p>Adopted keys matter here: a value that a previous version accepted and stored can
-         * still be served from disk after the checks around it changed, and dropping it on the
-         * first rejection is the only thing that lets that line be translated again. Even a value
-         * that is valid on its own is worth dropping in that situation, because a line that is
-         * rejected as a whole can never be served from it: re-translating costs one provider call
-         * and is the only path that can produce a displayable result.
+         * <p>An adopted key is dropped only when this request consisted of that single entry: then
+         * the value itself is what the display check rejected, which is the case the removal exists
+         * for (a value stored by a version with laxer checks would otherwise be served, rejected and
+         * re-served forever). A request with several entries never takes its other, still valid
+         * entries down with it.
          */
         private void rollback(TranslationStore store) {
-            for (String key : touchedKeys) {
-                store.remove(key);
+            for (CacheWrite write : storedKeys) {
+                removeIfUnchanged(store, write);
+            }
+            if (storedKeys.size() + adoptedKeys.size() <= 1) {
+                for (CacheWrite write : adoptedKeys) {
+                    removeIfUnchanged(store, write);
+                }
             }
             // The request produced nothing usable, so its cache answers stay out of the hit rate and
             // the request itself is counted once, as rejected, instead of leaving orphaned misses.
-            TranslationStats.global().recordRejected();
+            // A provider failure already counted this request, so counting a rejection as well would
+            // break requests == successes + failures + rejected.
+            if (!failureRecorded) {
+                TranslationStats.global().recordRejected();
+            }
             // Still one line: a rejection is exactly what support needs to see in the log.
             logSummary("cache-rejected");
+        }
+
+        /**
+         * Removes {@code write} only while the store still holds the value this request saw.
+         *
+         * <p>The cache key is shared by every line whose segment text happens to be equal, so a
+         * concurrent request can have written the same key since. Removing that value would discard a
+         * translation another line is displaying right now.
+         */
+        private static void removeIfUnchanged(TranslationStore store, CacheWrite write) {
+            if (write.value.equals(store.get(write.key))) {
+                store.remove(write.key);
+            }
         }
 
         /**
@@ -722,6 +834,17 @@ public final class TranslationCoordinator implements AutoCloseable {
                     "hits", Integer.toString(cacheHits),
                     "misses", Integer.toString(cacheMisses),
                     "provider-calls", Integer.toString(successes.size()));
+        }
+    }
+
+    /** One cache entry this request wrote or read, with the value, so a removal can check it. */
+    private static final class CacheWrite {
+        private final String key;
+        private final String value;
+
+        private CacheWrite(String key, String value) {
+            this.key = key;
+            this.value = value;
         }
     }
 

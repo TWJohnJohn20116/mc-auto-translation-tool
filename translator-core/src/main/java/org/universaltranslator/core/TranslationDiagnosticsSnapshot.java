@@ -121,7 +121,15 @@ public final class TranslationDiagnosticsSnapshot {
         if (activeProviderId.startsWith("offline-llama:")) {
             return translator.translate("value.universal_translator.provider_offline_model");
         }
-        return localizedProvider(configuredProvider, translator);
+        // Derived from the id that is actually running: the configured provider is a different
+        // field, and showing it here answered "离线" while an API provider was doing the work.
+        return localizedProvider(activeProviderCategory(), translator);
+    }
+
+    /** The provider category of {@link #activeProviderId}, which is everything before its colon. */
+    private String activeProviderCategory() {
+        int separator = activeProviderId.indexOf(':');
+        return separator < 0 ? activeProviderId : activeProviderId.substring(0, separator);
     }
 
     private static String localizedProvider(String provider, UiTranslator translator) {
@@ -174,7 +182,7 @@ public final class TranslationDiagnosticsSnapshot {
         if (activeProviderId.startsWith("offline-llama:")) {
             return "离线模型";
         }
-        return providerLabel(configuredProvider);
+        return providerLabel(activeProviderCategory());
     }
 
     private static String providerLabel(String provider) {
@@ -196,15 +204,34 @@ public final class TranslationDiagnosticsSnapshot {
 
     private static String formatBytes(long bytes) {
         if (bytes >= 1_000_000_000L) {
-            return String.format(LocaleHolder.ROOT, "%.2f GB", bytes / 1_000_000_000.0d);
+            return fixedPoint(bytes, 1_000_000_000L, 100L) + " GB";
         }
         if (bytes >= 1_000_000L) {
-            return String.format(LocaleHolder.ROOT, "%.1f MB", bytes / 1_000_000.0d);
+            return fixedPoint(bytes, 1_000_000L, 10L) + " MB";
         }
         if (bytes >= 1_000L) {
-            return String.format(LocaleHolder.ROOT, "%.1f KB", bytes / 1_000.0d);
+            return fixedPoint(bytes, 1_000L, 10L) + " KB";
         }
         return bytes + " B";
+    }
+
+    /**
+     * {@code bytes / unit} with the last digit rounding half up, using integer arithmetic only.
+     *
+     * <p>This runs for every size line of a panel that redraws at the frame rate, and
+     * {@code String.format} parsed a format string and built a {@code Formatter} per call.
+     *
+     * @param scale ten for one decimal place, one hundred for two
+     */
+    private static String fixedPoint(long bytes, long unit, long scale) {
+        long scaled = (bytes * scale + unit / 2L) / unit;
+        StringBuilder text = new StringBuilder(8);
+        text.append(scaled / scale).append('.');
+        long fraction = scaled % scale;
+        if (scale == 100L && fraction < 10L) {
+            text.append('0');
+        }
+        return text.append(fraction).toString();
     }
 
     private static String clean(String value) {
@@ -215,9 +242,5 @@ public final class TranslationDiagnosticsSnapshot {
         // Delegate to the shared exporter logic so the two redaction implementations cannot
         // drift apart again. The placeholders stay localized for the in-game screen.
         return DiagnosticsLogExporter.sanitize(clean(value), "[地址已隐藏]", "[已隐藏]", "[密钥已隐藏]");
-    }
-
-    private static final class LocaleHolder {
-        private static final java.util.Locale ROOT = java.util.Locale.ROOT;
     }
 }

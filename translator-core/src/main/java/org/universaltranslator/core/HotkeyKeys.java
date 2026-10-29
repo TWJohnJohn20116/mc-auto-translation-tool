@@ -23,27 +23,20 @@ public final class HotkeyKeys {
     /** {@code GLFW_KEY_F8}. */
     public static final int DEFAULT_TOGGLE = 297;
 
-    /** Highest key code accepted from a settings file; anything above it is a typo, not a key. */
+    /** Highest key code this class can name; anything above it is a typo, not a key. */
     private static final int MAXIMUM_CODE = 400;
     /** Longest decimal key code accepted; every code this class knows has three digits. */
     private static final int MAXIMUM_NUMERIC_CHARS = 3;
 
-    private static volatile int settings = DEFAULT_SETTINGS;
-    private static volatile int toggle = DEFAULT_TOGGLE;
-
     /**
-     * The configured text exactly as the settings file held it.
+     * The installed pair, published as one reference.
      *
-     * <p>{@link #nameOf(int)} used to be the only thing {@link #settingsName()} could return, and it
-     * did not cover every code {@link #codeOf(String, int)} accepts: a player who set
-     * {@code settings-key=RIGHT} had {@code settings-key=262} written back on the next save, and
-     * {@code "262"} was not a name the old {@code codeOf} could read, so the hotkey silently reverted
-     * to U on the following start. Remembering the text the file contained removes that round trip
-     * for every current and future spelling, and the numeric form is now readable as well so entries
-     * an older build already wrote keep working.
+     * <p>The two codes and the two configured names used to be four separate volatile fields, so a
+     * reader could see the new code beside the old name while {@link #install} was halfway through;
+     * the settings screen then saved that pair and the hotkey reverted on the next start.
      */
-    private static volatile String settingsSource;
-    private static volatile String toggleSource;
+    private static volatile Bindings bindings = new Bindings(
+            DEFAULT_SETTINGS, DEFAULT_TOGGLE, null, null);
 
     private HotkeyKeys() {
     }
@@ -55,32 +48,35 @@ public final class HotkeyKeys {
      * back what the player typed (including a numeric code) instead of a re-derived name.
      */
     public static void install(String settingsName, String toggleName) {
-        settings = codeOf(settingsName, DEFAULT_SETTINGS);
-        toggle = codeOf(toggleName, DEFAULT_TOGGLE);
-        settingsSource = sourceNameOf(settingsName, settings);
-        toggleSource = sourceNameOf(toggleName, toggle);
+        int settingsCode = codeOf(settingsName, DEFAULT_SETTINGS);
+        int toggleCode = codeOf(toggleName, DEFAULT_TOGGLE);
+        bindings = new Bindings(settingsCode, toggleCode,
+                sourceNameOf(settingsName, settingsCode),
+                sourceNameOf(toggleName, toggleCode));
     }
 
     /** Code the settings screen opens on. */
     public static int settingsCode() {
-        return settings;
+        return bindings.settings;
     }
 
     /** Code that toggles translation. */
     public static int toggleCode() {
-        return toggle;
+        return bindings.toggle;
     }
 
     /** Configured name of the settings key, for the diagnostics screen and for saving. */
     public static String settingsName() {
-        String source = settingsSource;
-        return source != null ? source : nameOf(settings);
+        Bindings installed = bindings;
+        return installed.settingsSource != null
+                ? installed.settingsSource : nameOf(installed.settings);
     }
 
     /** Configured name of the toggle key, for the diagnostics screen and for saving. */
     public static String toggleName() {
-        String source = toggleSource;
-        return source != null ? source : nameOf(toggle);
+        Bindings installed = bindings;
+        return installed.toggleSource != null
+                ? installed.toggleSource : nameOf(installed.toggle);
     }
 
     /**
@@ -229,6 +225,11 @@ public final class HotkeyKeys {
     /**
      * A key code a settings file stored as a number.
      *
+     * <p>Only a code this class can name is a key. Accepting every number up to
+     * {@link #MAXIMUM_CODE} let a typo such as {@code settings-key=150} install a code no keyboard
+     * sends: the key never fired, {@link #nameOf(int)} reported "150" as if it were a name, and the
+     * bad value was written back instead of healing.
+     *
      * @param value upper-case value with the {@code KEY_} prefixes already removed
      * @return the code, or {@code 0} when the value is not a plausible key code
      */
@@ -244,7 +245,11 @@ public final class HotkeyKeys {
         }
         try {
             int code = Integer.parseInt(value);
-            return code > 0 && code <= MAXIMUM_CODE ? code : 0;
+            if (code <= 0 || code > MAXIMUM_CODE) {
+                return 0;
+            }
+            // nameOf returns the decimal form exactly when it has no name for the code.
+            return String.valueOf(code).equals(nameOf(code)) ? 0 : code;
         } catch (NumberFormatException tooLarge) {
             return 0;
         }
@@ -261,12 +266,12 @@ public final class HotkeyKeys {
 
     /** Settings key in LWJGL2 numbering; negative when the configured key has no LWJGL2 equivalent. */
     public static int settingsLwjgl2Code() {
-        return lwjgl2CodeOf(settings);
+        return lwjgl2CodeOf(bindings.settings);
     }
 
     /** Toggle key in LWJGL2 numbering; negative when the configured key has no LWJGL2 equivalent. */
     public static int toggleLwjgl2Code() {
-        return lwjgl2CodeOf(toggle);
+        return lwjgl2CodeOf(bindings.toggle);
     }
 
     private static int lwjgl2CodeOf(int glfwCode) {
@@ -283,6 +288,33 @@ public final class HotkeyKeys {
         if (glfwCode == 257) return 28;  // Keyboard.KEY_RETURN
         if (glfwCode == 258) return 15;  // Keyboard.KEY_TAB
         if (glfwCode == 256) return 1;   // Keyboard.KEY_ESCAPE
+        // The navigation keys exist in LWJGL2 as well, so leaving them out made a configured DELETE or
+        // PAGE_DOWN a hotkey that silently never fired on the Ornithe trees.
+        if (glfwCode == 260) return 210; // Keyboard.KEY_INSERT
+        if (glfwCode == 261) return 211; // Keyboard.KEY_DELETE
+        if (glfwCode == 268) return 199; // Keyboard.KEY_HOME
+        if (glfwCode == 269) return 207; // Keyboard.KEY_END
+        if (glfwCode == 266) return 201; // Keyboard.KEY_PRIOR (page up)
+        if (glfwCode == 267) return 209; // Keyboard.KEY_NEXT (page down)
+        if (glfwCode == 265) return 200; // Keyboard.KEY_UP
+        if (glfwCode == 264) return 208; // Keyboard.KEY_DOWN
+        if (glfwCode == 263) return 203; // Keyboard.KEY_LEFT
+        if (glfwCode == 262) return 205; // Keyboard.KEY_RIGHT
         return -1;
+    }
+
+    /** One installed pair of hotkeys: the two codes and the text the settings file held for them. */
+    private static final class Bindings {
+        private final int settings;
+        private final int toggle;
+        private final String settingsSource;
+        private final String toggleSource;
+
+        private Bindings(int settings, int toggle, String settingsSource, String toggleSource) {
+            this.settings = settings;
+            this.toggle = toggle;
+            this.settingsSource = settingsSource;
+            this.toggleSource = toggleSource;
+        }
     }
 }

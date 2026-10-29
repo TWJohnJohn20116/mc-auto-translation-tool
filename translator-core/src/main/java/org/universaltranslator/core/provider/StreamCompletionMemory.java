@@ -12,7 +12,9 @@ package org.universaltranslator.core.provider;
  * the doubling visible only to whoever read the trace.
  *
  * <p>Two incomplete streams in a row are enough to conclude that this endpoint does not declare its
- * end, and the existing flag then routes every later line straight to the plain path. One complete
+ * end. What the caller does with that answer is a cooldown rather than a permanent switch: a relay
+ * that dropped two connections during a network handover must not lose the early preview for the
+ * rest of the session, so the provider stops asking for a while and tries again later. One complete
  * stream resets the count, so a single dropped connection never disables streaming on an endpoint
  * that does declare its end.
  */

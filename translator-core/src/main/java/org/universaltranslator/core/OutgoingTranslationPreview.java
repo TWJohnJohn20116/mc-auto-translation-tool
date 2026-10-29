@@ -165,8 +165,13 @@ public final class OutgoingTranslationPreview {
         if (partialText == null) {
             return "";
         }
-        StringBuilder sanitized = new StringBuilder(Math.min(partialText.length(), MAXIMUM_PREVIEW_CHARS));
-        for (int index = 0; index < partialText.length(); index++) {
+        // Stops as soon as the head is longer than anything that can be shown. The caller passes the
+        // whole accumulated translation on every fragment, so walking all of it copied the entire text
+        // once per fragment and made one reply quadratic in its own length; nothing past the cut can
+        // change what this returns.
+        int keep = MAXIMUM_PREVIEW_CHARS + TRUNCATION_SUFFIX.length();
+        StringBuilder sanitized = new StringBuilder(keep + 1);
+        for (int index = 0; index < partialText.length() && sanitized.length() <= keep; index++) {
             char character = partialText.charAt(index);
             if (character == '\u00a7') {
                 index++;

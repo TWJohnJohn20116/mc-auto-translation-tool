@@ -56,8 +56,10 @@ public final class TranslationBlocklist {
         if (bounded.length() > MAX_CONFIG_LENGTH) {
             // Cut at a separator so the entry that straddles the limit is never turned into a shorter
             // keyword. Cutting mid-word used to make the pattern *broader* (a truncated "creditcard"
-            // became "credit") and started blocking text the player had allowed through.
-            int boundary = bounded.lastIndexOf(',', MAX_CONFIG_LENGTH);
+            // became "credit") and started blocking text the player had allowed through. Every
+            // separator the split below accepts has to be recognised here too, or a value separated by
+            // semicolons, line breaks or full-width punctuation was cut mid-entry anyway.
+            int boundary = lastSeparatorBefore(bounded, MAX_CONFIG_LENGTH);
             int cut = boundary > 0 ? boundary : MAX_CONFIG_LENGTH;
             droppedForLength = countKeywords(bounded, cut);
             bounded = bounded.substring(0, cut);
@@ -72,8 +74,12 @@ public final class TranslationBlocklist {
                 continue;
             }
             if (keyword.length() > MAX_KEYWORD_LENGTH) {
-                keyword = keyword.substring(0, MAX_KEYWORD_LENGTH);
+                // Dropped, not cut. The match is a substring test, so a keyword cut down to its first
+                // MAX_KEYWORD_LENGTH characters matched every text that merely started with them --
+                // broader than what the player configured, for a filter whose whole purpose is "this
+                // text must not leave my machine".
                 truncated++;
+                continue;
             }
             String folded = keyword.toLowerCase(Locale.ROOT);
             if (unique.size() >= MAX_KEYWORDS) {
@@ -119,6 +125,23 @@ public final class TranslationBlocklist {
         return lost;
     }
 
+    /**
+     * Index of the last separator at or before {@code limit}, or -1 when there is none.
+     *
+     * <p>Shared by the length cut so that the boundary and the split below agree on what a separator
+     * is; looking only for the ASCII comma made the cut land inside an entry for any value separated
+     * by semicolons, line breaks or full-width punctuation.
+     */
+    private static int lastSeparatorBefore(String text, int limit) {
+        int bounded = Math.min(limit, text.length() - 1);
+        for (int index = bounded; index >= 0; index--) {
+            if (isSeparator(text.charAt(index))) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
     private static boolean isSeparator(char character) {
         return character == ',' || character == ';' || character == '\r' || character == '\n'
                 || character == '\uff0c' || character == '\uff1b';
@@ -147,7 +170,12 @@ public final class TranslationBlocklist {
             return dropped;
         }
 
-        /** Keywords cut short at {@link #MAX_KEYWORD_LENGTH}. */
+        /**
+         * Keywords discarded because they were longer than {@link #MAX_KEYWORD_LENGTH}.
+         *
+         * <p>They used to be cut down and used as their own prefix, which blocked more text than the
+         * player configured; they are now ignored, and counted here so the screen can say so.
+         */
         public int truncated() {
             return truncated;
         }

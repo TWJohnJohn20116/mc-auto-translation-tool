@@ -67,10 +67,10 @@ public final class HudIndicatorSettings {
         // as a crash inside a render hook.
         this.content = content == null ? HudIndicatorContent.DOT : content;
         this.visibility = visibility == null ? HudIndicatorVisibility.ALWAYS : visibility;
-        this.size = clamp(size, MIN_SIZE, MAX_SIZE, DEFAULT_SIZE);
-        this.margin = clamp(margin, MIN_MARGIN, MAX_MARGIN, DEFAULT_MARGIN);
-        this.offsetX = clamp(offsetX, MIN_OFFSET, MAX_OFFSET, DEFAULT_OFFSET);
-        this.offsetY = clamp(offsetY, MIN_OFFSET, MAX_OFFSET, DEFAULT_OFFSET);
+        this.size = bounded(size, MIN_SIZE, MAX_SIZE);
+        this.margin = bounded(margin, MIN_MARGIN, MAX_MARGIN);
+        this.offsetX = bounded(offsetX, MIN_OFFSET, MAX_OFFSET);
+        this.offsetY = bounded(offsetY, MIN_OFFSET, MAX_OFFSET);
     }
 
     /**
@@ -113,11 +113,16 @@ public final class HudIndicatorSettings {
                 DEFAULT_SIZE, DEFAULT_MARGIN, HudIndicatorColor.GREEN);
     }
 
-    private static int clamp(int value, int min, int max, int fallback) {
-        if (value < min || value > max) {
-            return fallback;
-        }
-        return value;
+    /**
+     * Keeps a hand-edited value inside its bounds.
+     *
+     * <p>Substituting the default, as this used to, made an out-of-range value come back as
+     * something unrelated: a stored size of 20 was drawn as 6 (smaller than the player asked for)
+     * and an offset pushed past the edge snapped to the corner. Clamping stays predictable and is
+     * what the method name promises; the mixins still bound the final position on screen.
+     */
+    private static int bounded(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     public boolean isIndicator() {

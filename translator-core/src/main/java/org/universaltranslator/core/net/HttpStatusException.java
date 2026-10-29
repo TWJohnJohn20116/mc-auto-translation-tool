@@ -19,7 +19,20 @@ public final class HttpStatusException extends IOException {
      *                          absent or not usable
      */
     public HttpStatusException(int statusCode, String message, Long retryAfterSeconds) {
-        super(message);
+        this(statusCode, message, retryAfterSeconds, null);
+    }
+
+    /**
+     * Creates a failure that keeps its status even when the error body could not be read.
+     *
+     * <p>The status is the only fact a caller can act on — 401 and 403 are permanent, 429 and 5xx
+     * are worth another attempt — so an unreadable (or oversized) error body must never turn the
+     * failure into a plain transport error whose classification is decided elsewhere.
+     *
+     * @param cause why the error body could not be read, or {@code null} when it was read
+     */
+    public HttpStatusException(int statusCode, String message, Long retryAfterSeconds, Throwable cause) {
+        super(message, cause);
         this.statusCode = statusCode;
         this.retryAfterSeconds = retryAfterSeconds;
     }

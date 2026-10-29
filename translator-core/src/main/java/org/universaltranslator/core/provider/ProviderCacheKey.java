@@ -122,11 +122,36 @@ final class ProviderCacheKey {
         }
     }
 
+    /**
+     * Whether one query parameter carries a credential and its value must not reach the key.
+     *
+     * <p>Only a name that <em>is</em> a credential counts: the whole name, or the last
+     * {@code _}/{@code -}/{@code .} separated segment of it. Substring matching was wrong in the
+     * direction that matters here — {@code ?key=route-a} and {@code ?key=route-b} on two self-hosted
+     * gateways, and any parameter whose name merely contains {@code sig} ({@code design},
+     * {@code assign}, {@code signal}), were all replaced by {@code {credential}}, so two different
+     * endpoints produced the same id and one server's cached translation was replayed for the other.
+     * The name stays in the key either way, which is what distinguishes a routing key from a
+     * credential.
+     */
     private static boolean isCredentialParameter(String name) {
         String lower = name.toLowerCase(Locale.ROOT);
-        return lower.contains("key") || lower.contains("token") || lower.contains("secret")
-                || lower.contains("password") || lower.contains("credential")
-                || lower.contains("signature") || lower.contains("sig");
+        if (isCredentialWord(lower)) {
+            return true;
+        }
+        for (int index = lower.length() - 1; index >= 0; index--) {
+            char character = lower.charAt(index);
+            if (character == '_' || character == '-' || character == '.') {
+                return isCredentialWord(lower.substring(index + 1));
+            }
+        }
+        return false;
+    }
+
+    private static boolean isCredentialWord(String word) {
+        return "key".equals(word) || "apikey".equals(word) || "token".equals(word)
+                || "secret".equals(word) || "password".equals(word) || "credential".equals(word)
+                || "credentials".equals(word) || "sig".equals(word) || "signature".equals(word);
     }
 
     private static String nullToEmpty(String value) {

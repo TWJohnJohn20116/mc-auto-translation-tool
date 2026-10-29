@@ -32,6 +32,22 @@ public final class TranslationTuning {
     public static final int MINIMUM_BATCH_WINDOW_MILLIS = 0;
     public static final int MAXIMUM_BATCH_WINDOW_MILLIS = 500;
 
+    /**
+     * Attempts one request may make, and the smallest spacing between two requests to the same
+     * endpoint.
+     *
+     * <p>Both ranges are enforced here only. They used to be written out twice — once in
+     * {@code OnlineProviderConfig.integer(...)} and once inside
+     * {@link ResilientTranslationProvider}'s constructor — so changing one of them made the other
+     * clamp the value silently.
+     */
+    public static final int DEFAULT_ATTEMPTS = 3;
+    public static final int MINIMUM_ATTEMPTS = 1;
+    public static final int MAXIMUM_ATTEMPTS = 5;
+    public static final int DEFAULT_REQUEST_INTERVAL_MILLIS = 60;
+    public static final int MINIMUM_REQUEST_INTERVAL_MILLIS = 0;
+    public static final int MAXIMUM_REQUEST_INTERVAL_MILLIS = 60000;
+
     /** The historical hardcoded behaviour, used by every constructor that is not told otherwise. */
     public static final TranslationTuning DEFAULTS = new TranslationTuning(
             DEFAULT_WORKERS, DEFAULT_BATCH_SIZE, DEFAULT_BATCH_WINDOW_MILLIS);
@@ -69,6 +85,20 @@ public final class TranslationTuning {
     /** Largest number of texts one request may carry. */
     public int batchSize() {
         return batchSize;
+    }
+
+    /**
+     * How many groups of one job may be in request at the same time.
+     *
+     * <p>The batch gatherer used to allow exactly one leader per job, and a session's texts share
+     * one job (one target language, one text kind), so every worker waited behind the same leader
+     * and the worker count bought no parallelism at all. The worker count is the natural cap: more
+     * groups in flight than threads to send them cannot happen.
+     *
+     * @return the worker count, already inside its range
+     */
+    public int maximumConcurrentBatches() {
+        return clamp(workers, MINIMUM_WORKERS, MAXIMUM_WORKERS);
     }
 
     /** How long a request waits for siblings, in milliseconds; 0 does not wait at all. */

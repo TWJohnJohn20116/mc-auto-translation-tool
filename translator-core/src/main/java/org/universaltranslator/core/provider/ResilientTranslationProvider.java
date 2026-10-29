@@ -8,6 +8,9 @@ import org.universaltranslator.core.net.HttpStatusException;
 import org.universaltranslator.core.net.TranslationEndpointUnavailableException;
 
 import java.io.IOException;
+import java.io.InterruptedIOException;
+import java.net.SocketTimeoutException;
+import java.util.concurrent.ThreadLocalRandom;
 
 /** Adds a configurable global request interval and bounded transient-error retries. */
 final class ResilientTranslationProvider implements TranslationProvider, AutoCloseable {
@@ -19,6 +22,12 @@ final class ResilientTranslationProvider implements TranslationProvider, AutoClo
      * adopting {@code Retry-After} can only ever lengthen a wait, never shorten one.
      */
     private static final long MAX_RETRY_AFTER_MILLIS = 30000L;
+    /**
+     * Shortest wait after a {@code 429} the server did not put a {@code Retry-After} on. The generic
+     * backoff floor (200 ms) is far below any real rate-limit window, so all attempts of one window
+     * landed inside it.
+     */
+    private static final long RATE_LIMIT_FLOOR_MILLIS = 1000L;
 
     private final TranslationProvider delegate;
     private final int maximumAttempts;
@@ -56,7 +65,7 @@ final class ResilientTranslationProvider implements TranslationProvider, AutoClo
                 }
                 long delay = retryDelayMillis(exception, attempt);
                 DebugLog.global().logRetry(delegate.id(), attempt, delay, exception);
-                Thread.sleep(delay);
+                sleepBeforeRetry(delay);
             }
         }
         throw last == null ? new IllegalStateException("Translation failed") : last;
@@ -88,7 +97,7 @@ final class ResilientTranslationProvider implements TranslationProvider, AutoClo
                 }
                 long delay = retryDelayMillis(exception, attempt);
                 DebugLog.global().logRetry(delegate.id(), attempt, delay, exception);
-                Thread.sleep(delay);
+                sleepBeforeRetry(delay);
             }
         }
         throw last == null ? new IllegalStateException("Translation failed") : last;
@@ -119,31 +128,67 @@ final class ResilientTranslationProvider implements TranslationProvider, AutoClo
     }
 
     /**
+     * Waits before the next attempt, keeping the cancellation visible.
+     *
+     * <p>{@link Thread#sleep(long)} clears the interrupt flag while it throws, so a session closed
+     * during the wait looked like a normal wake-up and the loop went on to send the remaining
+     * attempts to a paid endpoint. The flag is restored and the interruption rethrown instead.
+     */
+    private static void sleepBeforeRetry(long delay) throws InterruptedException {
+        try {
+            Thread.sleep(delay);
+        } catch (InterruptedException cancelled) {
+            Thread.currentThread().interrupt();
+            throw cancelled;
+        }
+    }
+
+    /**
      * Delay before the next attempt: the exponential backoff, extended to the {@code Retry-After}
      * delay the server asked for when the failure carries one.
      *
-     * <p>Rule: {@code wait = min(max(backoff, retryAfter), MAX_RETRY_AFTER_MILLIS)}, where
-     * {@code backoff = min(2000 ms, 200 ms << (attempt - 1))}. {@code max} keeps the plain backoff
-     * as the floor so a small advertised value cannot make retries faster than before, and the
-     * clamp bounds a hostile or misconfigured header. Because the header is untrusted input, the
-     * seconds-to-milliseconds conversion is clamped before multiplying so it cannot overflow.
-     * Anything that is not an {@link HttpStatusException} without a usable header keeps exactly
-     * the previous backoff.
+     * <p>Rule: {@code wait = min(max(backoff, retryAfter), MAX_RETRY_AFTER_MILLIS)} plus a jitter of
+     * up to a quarter, where {@code backoff = min(2000 ms, 200 ms << (attempt - 1))} and a
+     * {@code 429} without a header raises the floor to {@link #RATE_LIMIT_FLOOR_MILLIS}. {@code max}
+     * keeps the plain backoff as the floor so a small advertised value cannot make retries faster
+     * than before, and the clamp bounds a hostile or misconfigured header. Because the header is
+     * untrusted input, the seconds-to-milliseconds conversion is clamped before multiplying so it
+     * cannot overflow.
      */
     private static long retryDelayMillis(Exception exception, int attempt) {
         long backoffMillis = Math.min(2000L, 200L << (attempt - 1));
         if (!(exception instanceof HttpStatusException)) {
-            return backoffMillis;
+            return jitter(backoffMillis);
         }
-        Long retryAfterSeconds = ((HttpStatusException) exception).getRetryAfterSeconds();
+        HttpStatusException status = (HttpStatusException) exception;
+        Long retryAfterSeconds = status.getRetryAfterSeconds();
         if (retryAfterSeconds == null) {
-            return backoffMillis;
+            // A 429 without Retry-After used to wait the plain 200 ms, so one rate-limit window was
+            // hit by every one of the attempts in a row. A rate limit is the one answer that says
+            // "come back later", so it gets a floor an order of magnitude above a generic retry.
+            long floor = status.getStatusCode() == 429 ? RATE_LIMIT_FLOOR_MILLIS : backoffMillis;
+            return jitter(Math.max(backoffMillis, floor));
         }
         long seconds = retryAfterSeconds.longValue();
         long retryAfterMillis = seconds >= MAX_RETRY_AFTER_MILLIS / 1000L
                 ? MAX_RETRY_AFTER_MILLIS
                 : seconds * 1000L;
-        return Math.min(MAX_RETRY_AFTER_MILLIS, Math.max(backoffMillis, retryAfterMillis));
+        return jitter(Math.min(MAX_RETRY_AFTER_MILLIS, Math.max(backoffMillis, retryAfterMillis)));
+    }
+
+    /**
+     * Spreads the wait so the workers do not retry in lockstep.
+     *
+     * <p>Every worker sees the same 429 or 5xx at the same moment, and an identical delay made them
+     * all hammer the endpoint again on the same millisecond. The jitter is added, never subtracted,
+     * so it cannot shorten a wait below the backoff or below a server-requested {@code Retry-After}.
+     */
+    private static long jitter(long delayMillis) {
+        if (delayMillis <= 0L) {
+            return delayMillis;
+        }
+        long spread = Math.max(1L, delayMillis / 4L);
+        return delayMillis + ThreadLocalRandom.current().nextLong(spread);
     }
 
     private static boolean isRetryable(Exception exception) {
@@ -152,6 +197,16 @@ final class ResilientTranslationProvider implements TranslationProvider, AutoClo
         }
         if (exception instanceof HttpStatusException) {
             return ((HttpStatusException) exception).isRetryable();
+        }
+        // A read or connect timeout is a network failure worth another attempt, and it is also an
+        // InterruptedIOException, so it has to be recognised before the cancellation test below.
+        if (exception instanceof SocketTimeoutException) {
+            return true;
+        }
+        // A cancelled session surfaces as an InterruptedIOException. Retrying it sent the remaining
+        // attempts after the worker had already been asked to stop.
+        if (exception instanceof InterruptedIOException) {
+            return false;
         }
         return exception instanceof IOException;
     }

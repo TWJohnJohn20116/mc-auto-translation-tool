@@ -23,6 +23,9 @@ public enum HudIndicatorContent {
 
     private final String configName;
 
+    /** Cached once: {@code values()} clones the whole array on every call. */
+    private static final HudIndicatorContent[] VALUES = values();
+
     HudIndicatorContent(String configName) {
         this.configName = configName;
     }
@@ -35,7 +38,7 @@ public enum HudIndicatorContent {
     public static HudIndicatorContent fromConfig(String value) {
         if (value != null) {
             String normalized = value.trim().toLowerCase(java.util.Locale.ROOT).replace('_', '-');
-            for (HudIndicatorContent content : values()) {
+            for (HudIndicatorContent content : VALUES) {
                 if (content.configName.equals(normalized)) {
                     return content;
                 }

@@ -13,6 +13,7 @@ import org.universaltranslator.core.net.HttpStatusException;
 import org.universaltranslator.core.net.JsonStrings;
 import org.universaltranslator.core.net.ServerSentEvents;
 
+import java.io.IOException;
 import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -53,6 +54,12 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
     /** {@code stop_reason} of an answer cut off at {@code max_tokens}. */
     private static final String STOP_REASON_MAX_TOKENS = "max_tokens";
     private static final String PROBE_TEXT = "ping";
+    /**
+     * Characters the accumulation has to grow by before the listener is handed a new snapshot.
+     * Without a threshold every delta copied the whole accumulation and pushed a full string at the
+     * UI, which is quadratic in the length of the answer.
+     */
+    private static final int PARTIAL_TEXT_STEP_CHARS = 32;
 
     private final URI endpoint;
     private final String apiKey;
@@ -135,12 +142,14 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
             int escalated = escalatedBudget();
             if (escalated > budget) {
                 response = post(text, system, escalated, false);
+                // Quote the budget the request really used: reporting the pre-escalation value in
+                // the failure message sent the reader looking for a limit that no longer applied.
+                budget = escalated;
                 translated = extractContent(response);
                 stopReason = JsonStrings.readStringField(response, STOP_REASON_FIELD);
                 if (translated != null && !translated.trim().isEmpty()
                         && !STOP_REASON_MAX_TOKENS.equals(stopReason)) {
                     acceptedOutputTokens = escalated;
-                    budget = escalated;
                 }
             }
         }
@@ -171,7 +180,9 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
         String text = request.getText();
         int budget = completionBudget(text);
         StringBuilder accumulated = new StringBuilder(64);
-        boolean[] sawEvent = new boolean[1];
+        // Characters already handed to the listener. Copying the whole accumulation on every delta
+        // made one translation copy O(n^2) characters and pushed a full string at the UI per delta.
+        int[] published = new int[1];
         // A stream reports how generation ended in its message_delta event, and message_stop is its
         // own statement that the answer is complete; both have to be captured while the body is
         // still being read. They are separate because only the latter proves the stream ended: a
@@ -208,9 +219,13 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
                     fragment = JsonTree.stringAt(event, "content_block.text");
                 }
                 if (fragment != null && !fragment.isEmpty()) {
-                    sawEvent[0] = true;
                     accumulated.append(fragment);
-                    listener.onPartialText(accumulated.toString());
+                    // One callback per PARTIAL_TEXT_STEP_CHARS instead of one per delta: every
+                    // callback used to copy the whole accumulation, which is O(n^2) per line.
+                    if (accumulated.length() - published[0] >= PARTIAL_TEXT_STEP_CHARS) {
+                        published[0] = accumulated.length();
+                        listener.onPartialText(accumulated.toString());
+                    }
                 } else if (JsonStrings.readStringField(payload, "error") != null) {
                     // Anthropic reports a failure as an ordinary event behind HTTP 200; stop and let
                     // the plain path produce the message the user has always seen.
@@ -224,9 +239,19 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
             }
             streamingUnsupported = true;
             return TranslationProvider.super.translateStreaming(request, listener);
+        } catch (IOException broken) {
+            if (StreamWatchdog.isLimitExceeded(broken)) {
+                // This endpoint could not deliver an event stream inside the watchdog's budget, so
+                // every later line would pay the same three minutes before failing over.
+                streamingUnsupported = true;
+            }
+            throw broken;
         }
         if (accumulated.length() == 0) {
-            streamingUnsupported = !sawEvent[0];
+            // Nothing usable came back, including an event stream carrying only an error event. The
+            // plain path is the one that reports why, so it takes over. The permanent flag is
+            // deliberately not set: an endpoint that answered "nothing to translate" has not proved
+            // anything about whether it can stream.
             return TranslationProvider.super.translateStreaming(request, listener);
         }
         if (!sawEnd[0]) {
@@ -246,7 +271,22 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
             return TranslationProvider.super.translateStreaming(request, listener);
         }
         streamMemory.rememberComplete();
-        requireCompleteAnswer(stopReason[0], budget);
+        if (stopReason[0] != null) {
+            // The stream itself reported that generation stopped early — in practice max_tokens.
+            // The plain path is where the budget is escalated and the request retried, so handing
+            // over is what keeps a long line recoverable; the partial text already published is
+            // replaced by the complete answer.
+            DebugLog.global().log("stream-fallback",
+                    "provider", "claude:" + model,
+                    "reason", "stream ended early: " + stopReason[0],
+                    "action", "fell back to a plain request",
+                    "characters", Integer.toString(accumulated.length()));
+            return TranslationProvider.super.translateStreaming(request, listener);
+        }
+        if (published[0] != accumulated.length()) {
+            // The throttle may have held the tail back; the preview has to end up complete.
+            listener.onPartialText(accumulated.toString());
+        }
         return TranslationOutputValidator.requireValid(text, accumulated.toString());
     }
 

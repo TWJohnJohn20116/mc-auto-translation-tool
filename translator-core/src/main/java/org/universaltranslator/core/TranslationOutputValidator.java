@@ -3,7 +3,6 @@ package org.universaltranslator.core;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -11,7 +10,13 @@ import java.util.regex.Pattern;
 /** Rejects small-model failure modes before they reach the render cache. */
 public final class TranslationOutputValidator {
     private static final Pattern TOKEN = Pattern.compile("__UT_\\d+__", Pattern.CASE_INSENSITIVE);
-    private static final String[] INSTRUCTION_FRAGMENTS = {
+    /**
+     * Phrasing earlier prompt versions used.
+     *
+     * <p>Kept on top of the live markers from {@link TranslationPrompt#echoMarkers()}: a reply that is
+     * served from a cache written by an older build, or copied out of an old log, is still rejected.
+     */
+    private static final String[] HISTORICAL_INSTRUCTION_FRAGMENTS = {
             "translate minecraft server interface text",
             "minecraft server interface text from",
             "translate the minecraft ui text",
@@ -39,6 +44,23 @@ public final class TranslationOutputValidator {
             "不要解释",
             "翻译引擎"
     };
+    /**
+     * Every phrase a reply echoes when the model answers with its instructions: the wording the live
+     * prompts use plus the historical phrasing above.
+     */
+    private static final String[] INSTRUCTION_FRAGMENTS = instructionFragments();
+    /**
+     * Every marker {@link #containsInstructionArtifact(String)} looks for, in one alternation.
+     *
+     * <p>The check used to copy the whole string to lower case and then run one {@code contains} per
+     * fragment — 29 full scans and one equal-length copy for every segment, for every request, and
+     * again on the render thread for every unseen string. One precompiled alternation folds the case
+     * as it matches, so the scan happens once and nothing is copied.
+     */
+    private static final Pattern INSTRUCTION_ARTIFACT = Pattern.compile(
+            artifactSource(), Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+    /** The shortest fragment in the list; a shorter text cannot contain one. */
+    private static final int MINIMUM_ARTIFACT_LENGTH = shortestFragment();
 
     private TranslationOutputValidator() {
     }
@@ -57,7 +79,7 @@ public final class TranslationOutputValidator {
         if (source == null || translated == null || translated.trim().isEmpty()) {
             throw new IllegalArgumentException("Translation output is empty");
         }
-        String output = unwrapQuotes(translated.trim());
+        String output = unwrapQuotes(source, translated.trim());
         if (output.isEmpty()) {
             throw new IllegalArgumentException("Translation output is empty");
         }
@@ -125,27 +147,31 @@ public final class TranslationOutputValidator {
         if (source == null || restored == null || restored.trim().isEmpty()) {
             throw new IllegalArgumentException("Restored translation output is empty");
         }
-        String output = restored.trim();
+        // The checks below run on the trimmed view, but the text handed back is the restored one:
+        // the segment path strips a segment before sending it and splices the original leading and
+        // trailing whitespace back in, so trimming the whole answer here undid the indentation that
+        // keeps scoreboards aligned and book pages laid out.
+        String trimmed = restored.trim();
         int maximumLength = Math.max(48, source.length() * 3 + 24);
-        if (output.length() > maximumLength) {
+        if (trimmed.length() > maximumLength) {
             throw new IllegalArgumentException("Restored translation output is unexpectedly long");
         }
-        if (!source.contains("\n") && (output.contains("\n") || output.contains("\r"))) {
+        if (!source.contains("\n") && (trimmed.contains("\n") || trimmed.contains("\r"))) {
             throw new IllegalArgumentException("Restored translation unexpectedly contains multiple lines");
         }
         if (liveTokens != null) {
             for (String token : liveTokens) {
                 // Only a token that actually travelled to the provider can travel back out of it.
-                if (token != null && !token.isEmpty() && output.contains(token)) {
+                if (token != null && !token.isEmpty() && restored.contains(token)) {
                     throw new IllegalArgumentException(
                             "Restored translation leaked an internal placeholder");
                 }
             }
         }
-        if (containsInstructionArtifact(output)) {
+        if (containsInstructionArtifact(trimmed)) {
             throw new IllegalArgumentException("Restored translation echoed its instructions");
         }
-        return output;
+        return restored;
     }
 
     /** Prevents leaked model instructions/placeholders from being translated recursively. */
@@ -204,18 +230,57 @@ public final class TranslationOutputValidator {
     }
 
     private static boolean containsInstructionArtifact(String text) {
-        String normalized = text.toLowerCase(Locale.ROOT);
-        if (normalized.contains("<|system|>")
-                || normalized.contains("<|assistant|>")
-                || normalized.contains("[quote]")) {
-            return true;
+        if (text.length() < MINIMUM_ARTIFACT_LENGTH) {
+            // Nothing this short can carry a fragment, so it does not pay for a scan at all.
+            return false;
         }
-        for (String fragment : INSTRUCTION_FRAGMENTS) {
-            if (normalized.contains(fragment)) {
-                return true;
-            }
+        return INSTRUCTION_ARTIFACT.matcher(text).find();
+    }
+
+    /** The alternation source of {@link #INSTRUCTION_ARTIFACT}; every entry is quoted verbatim. */
+    private static String artifactSource() {
+        StringBuilder source = new StringBuilder();
+        appendAlternative(source, "<|system|>");
+        appendAlternative(source, "<|assistant|>");
+        appendAlternative(source, "[quote]");
+        for (int index = 0; index < INSTRUCTION_FRAGMENTS.length; index++) {
+            appendAlternative(source, INSTRUCTION_FRAGMENTS[index]);
         }
-        return false;
+        return source.toString();
+    }
+
+    /**
+     * The live prompt wording followed by the historical phrasing.
+     *
+     * <p>The live half is {@link TranslationPrompt#echoMarkers()}, so a prompt edit changes what is
+     * detected instead of leaving the detector on the previous wording.
+     */
+    private static String[] instructionFragments() {
+        String[] live = TranslationPrompt.echoMarkers();
+        List<String> fragments = new ArrayList<String>(live.length
+                + HISTORICAL_INSTRUCTION_FRAGMENTS.length);
+        for (int index = 0; index < live.length; index++) {
+            fragments.add(live[index]);
+        }
+        for (int index = 0; index < HISTORICAL_INSTRUCTION_FRAGMENTS.length; index++) {
+            fragments.add(HISTORICAL_INSTRUCTION_FRAGMENTS[index]);
+        }
+        return fragments.toArray(new String[fragments.size()]);
+    }
+
+    private static void appendAlternative(StringBuilder source, String fragment) {
+        if (source.length() > 0) {
+            source.append('|');
+        }
+        source.append(Pattern.quote(fragment));
+    }
+
+    private static int shortestFragment() {
+        int shortest = Integer.MAX_VALUE;
+        for (int index = 0; index < INSTRUCTION_FRAGMENTS.length; index++) {
+            shortest = Math.min(shortest, INSTRUCTION_FRAGMENTS[index].length());
+        }
+        return shortest == Integer.MAX_VALUE ? 0 : shortest;
     }
 
     private static List<String> tokenSequence(String text) {
@@ -227,16 +292,37 @@ public final class TranslationOutputValidator {
         return tokens;
     }
 
-    private static String unwrapQuotes(String text) {
+    /**
+     * Strips the pair of quotes the model wrapped its answer in, and keeps a pair the source had.
+     *
+     * <p>A source line can be a quotation of its own ({@code He said "hi"} in a quest description), so
+     * the model legitimately answers with a quoted translation. Stripping that pair removed quotes
+     * the original text carried, and the stripped value is what got cached, so the missing quotes
+     * stayed for good. Only a pair the source does not open with is dropped.
+     */
+    private static String unwrapQuotes(String source, String text) {
         if (text.length() >= 2) {
             char first = text.charAt(0);
             char last = text.charAt(text.length() - 1);
-            if ((first == '"' && last == '"')
-                    || (first == '\'' && last == '\'')
-                    || (first == '\u201c' && last == '\u201d')) {
+            if (isQuotePair(first, last) && !opensWithQuote(source, first)) {
                 return text.substring(1, text.length() - 1).trim();
             }
         }
         return text;
+    }
+
+    private static boolean isQuotePair(char first, char last) {
+        return (first == '"' && last == '"')
+                || (first == '\'' && last == '\'')
+                || (first == '\u201c' && last == '\u201d');
+    }
+
+    /** Whether the source text itself opens with this quote, so the pair is not the model's doing. */
+    private static boolean opensWithQuote(String source, char quote) {
+        if (source == null) {
+            return false;
+        }
+        String trimmed = source.trim();
+        return !trimmed.isEmpty() && trimmed.charAt(0) == quote;
     }
 }

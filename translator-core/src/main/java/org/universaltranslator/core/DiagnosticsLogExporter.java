@@ -32,6 +32,16 @@ public final class DiagnosticsLogExporter {
     private static final String TOKEN_RUN =
             "(?:[A-Za-z0-9._~+/=-]{16,}|(?=[A-Za-z0-9._~+/=-]*[0-9])[A-Za-z0-9._~+/=-]{8,})";
 
+    /**
+     * What both exported artefacts promise about their contents.
+     *
+     * <p>Kept in one place because the report and the bundle each carried their own sentence about
+     * the same material, and the two disagreed about whether translated text can be in them.
+     */
+    static final String PRIVACY_NOTICE = "Privacy: API keys and full endpoints are excluded. "
+            + "Statistics may carry a per-provider identifier. A debug log, when included, may "
+            + "contain up to 120 characters of source and translated text per request.";
+
     private DiagnosticsLogExporter() {
     }
 
@@ -46,7 +56,7 @@ public final class DiagnosticsLogExporter {
         StringBuilder report = new StringBuilder(512);
         report.append("MC Auto Translation Tool - Diagnostics\n");
         report.append("Generated: ").append(LocalDateTime.now()).append('\n');
-        report.append("Privacy: API endpoints, keys, translated text and chat are excluded.\n\n");
+        report.append(PRIVACY_NOTICE).append("\n\n");
         if (diagnosticLines == null || diagnosticLines.isEmpty()) {
             report.append("Diagnostics unavailable\n");
         } else {
@@ -81,6 +91,12 @@ public final class DiagnosticsLogExporter {
     ) {
         String clean = value == null ? "" : value.replace('\r', ' ').replace('\n', ' ').trim();
         clean = clean.replaceAll("(?i)https?://\\S+", Matcher.quoteReplacement(addressPlaceholder));
+        // A credential inside a JSON body. Its name is quoted, so the assignments below never reached
+        // it, and a provider that echoes its own request back in an error message put the key into
+        // the report and into the bundle verbatim.
+        clean = clean.replaceAll(
+                "(?i)\"" + SECRET_NAMES + "\"\\s*:\\s*\"[^\"]*\"",
+                "\"$1\":\"" + Matcher.quoteReplacement(secretPlaceholder) + "\"");
         // "name=value" / "name: value" / "name: Bearer value" / "Authorization Bearer value".
         // An explicit assignment to a credential-ish name is always redacted, whatever the shape.
         clean = clean.replaceAll(

@@ -16,9 +16,9 @@ import java.nio.charset.StandardCharsets;
  *
  * <p>Both the accumulated payload size and the length of a single line are bounded, so a
  * misbehaving endpoint cannot make the client buffer without limit: the non-streaming path is
- * bounded the same way. Non-payload lines are counted separately and the whole read also runs
- * against a wall-clock budget, because bytes alone never terminate a stream that only sends
- * keep-alives.
+ * bounded the same way. Non-payload lines are counted separately and the read also fails once the
+ * stream has stayed silent for its budget, because bytes alone never terminate a stream that only
+ * sends keep-alives.
  *
  * <p>Comment lines ({@code :} keep-alives), empty event separators and every field other than
  * {@code data} are ignored. Multiple {@code data} lines inside one event are deliberately not
@@ -38,7 +38,7 @@ public final class ServerSentEvents {
      * the read loop never returned.
      */
     public static final int MAXIMUM_IGNORED_BYTES = 256 * 1024;
-    /** Wall-clock budget a stream may consume when the caller does not supply a deadline. */
+    /** How long a stream may stay silent when the caller does not supply a deadline. */
     public static final long DEFAULT_TIME_BUDGET_MILLIS = 5 * 60 * 1000L;
 
     private static final long DEFAULT_TIME_BUDGET_NANOS = DEFAULT_TIME_BUDGET_MILLIS * 1000L * 1000L;
@@ -69,31 +69,42 @@ public final class ServerSentEvents {
 
     /**
      * Reads the stream to its end, to the first payload whose handler returned {@code false}, or
-     * until {@code deadlineNanos} passes.
+     * until the stream has stayed silent for the budget {@code deadlineNanos} encodes.
      *
-     * <p>The deadline is what makes a stalled stream terminating at all. A socket read timeout is
-     * re-armed on every single {@code read()}, so an endpoint that sends a {@code :} keep-alive
-     * comment every so often — what a proxy in front of a stuck upstream does — keeps one worker
-     * thread inside this loop forever without ever tripping it. The reader is the only place that
-     * can see the stream is making no progress, so the budget lives here.
+     * <p>Only silence needs a bound here: a socket read timeout is re-armed on every single
+     * {@code read()}, so an endpoint that sends a {@code :} keep-alive comment every so often — what
+     * a proxy in front of a stuck upstream does — keeps one worker thread inside this loop forever
+     * without ever tripping it, while an answer that keeps arriving is making progress.
      *
-     * @param deadlineNanos absolute {@link System#nanoTime()} value to stop at
+     * @param deadlineNanos absolute {@link System#nanoTime()} value a silent stream fails at; the
+     *         distance to now is the budget a stall is measured against
      * @return number of payload characters handed to the handler
-     * @throws IOException when the stream fails, exceeds a bound, or outlives its budget
+     * @throws IOException when the stream fails, exceeds a bound, or stops delivering data
      */
     public static int read(InputStream input, PayloadHandler handler, long deadlineNanos)
             throws IOException {
+        if (input == null) {
+            // Reported where the body actually goes missing: as a plain NullPointerException it
+            // escaped every retry and fallback decision as an unchecked failure.
+            throw new IllegalStateException("Server-sent event stream carried no body");
+        }
         byte[] buffer = new byte[READ_BUFFER_BYTES];
         ByteArrayOutputStream line = new ByteArrayOutputStream(READ_BUFFER_BYTES);
+        long budgetNanos = deadlineNanos - System.nanoTime();
+        long stallDeadlineNanos = deadlineNanos;
+        // Whether the line being assembled can carry a payload: a ":" line is a keep-alive, and
+        // counting it as progress would let a stream that only pings never run out of budget.
+        boolean lineCarriesPayload = false;
         int total = 0;
         long ignored = 0L;
         int count;
         while (true) {
-            requireTimeBudget(deadlineNanos);
+            requireProgress(stallDeadlineNanos, budgetNanos);
             count = input.read(buffer);
             if (count < 0) {
                 break;
             }
+            boolean progressed = false;
             for (int index = 0; index < count; index++) {
                 int value = buffer[index] & 0xFF;
                 if (value != '\n' && value != '\r') {
@@ -102,6 +113,10 @@ public final class ServerSentEvents {
                                 "Server-sent event line exceeded " + MAXIMUM_LINE_BYTES + " bytes");
                     }
                     line.write(value);
+                    if (line.size() == 1) {
+                        lineCarriesPayload = value != ':';
+                    }
+                    progressed |= lineCarriesPayload;
                     continue;
                 }
                 if (line.size() == 0) {
@@ -128,6 +143,13 @@ public final class ServerSentEvents {
                     return total;
                 }
             }
+            if (progressed) {
+                long now = System.nanoTime();
+                long next = now + budgetNanos;
+                // Saturated, not wrapped: a caller that passes Long.MAX_VALUE means "no deadline",
+                // and a wrapped value would fail the very next read.
+                stallDeadlineNanos = next < now ? Long.MAX_VALUE : next;
+            }
         }
         // A stream that ends without a trailing terminator still carries its last event.
         if (line.size() > 0) {
@@ -146,9 +168,19 @@ public final class ServerSentEvents {
         return total;
     }
 
-    private static void requireTimeBudget(long deadlineNanos) throws IOException {
-        if (System.nanoTime() - deadlineNanos > 0L) {
-            throw new IOException("Server-sent event stream exceeded its time budget");
+    /**
+     * Fails the read when the stream has delivered nothing for the whole budget.
+     *
+     * <p>The budget bounds how long the stream may stay silent, not how long the answer may be: a
+     * 4096-token answer from a 15 token/s endpoint needs 273 s, so a budget on the whole stream
+     * turned healthy answers into timeouts, and each retry re-sent the entire paid prompt. It is
+     * reported as a socket timeout — the same shape the transport uses for its total budget — so a
+     * caller classifying the failure sees a timeout and not a malformed answer.
+     */
+    private static void requireProgress(long stallDeadlineNanos, long budgetNanos) throws IOException {
+        if (System.nanoTime() - stallDeadlineNanos > 0L) {
+            throw new java.net.SocketTimeoutException("Server-sent event stream received no data for "
+                    + (budgetNanos / 1000000L) + " ms");
         }
     }
 
