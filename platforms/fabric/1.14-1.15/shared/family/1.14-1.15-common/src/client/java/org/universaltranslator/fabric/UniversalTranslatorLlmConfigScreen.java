@@ -11,6 +11,7 @@ import net.minecraft.text.TranslatableText;
 import net.minecraft.text.LiteralText;
 import org.universaltranslator.core.ModelListPaging;
 import org.universaltranslator.core.provider.OpenAiModelCatalog;
+import org.universaltranslator.core.FocusHelper;
 
 /** Local-only editor for an OpenAI-compatible hosted or loopback LLM endpoint. */
 final class UniversalTranslatorLlmConfigScreen extends Screen {
@@ -187,13 +188,13 @@ int width = Math.max(180, Math.min(360, this.width - 20));
      */
     private void releaseFieldFocus() {
         if (endpoint != null) {
-            endpoint.setFocused(false);
+            FocusHelper.clear(endpoint);
         }
         if (model != null) {
-            model.setFocused(false);
+            FocusHelper.clear(model);
         }
         if (apiKey != null) {
-            apiKey.setFocused(false);
+            FocusHelper.clear(apiKey);
         }
     }
 

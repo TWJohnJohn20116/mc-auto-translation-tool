@@ -10,6 +10,7 @@ import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import org.universaltranslator.core.ModelListPaging;
 import org.universaltranslator.core.provider.OpenAiModelCatalog;
+import org.universaltranslator.core.FocusHelper;
 
 /**
  * OpenAI-compatible LLM settings for Fabric 1.3.1-1.8.8; 1.8.9-1.12.2 use the same-named file under
@@ -199,13 +200,13 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
      */
     private void releaseFieldFocus() {
         if (endpoint != null) {
-            endpoint.setFocused(false);
+            FocusHelper.clear(endpoint);
         }
         if (model != null) {
-            model.setFocused(false);
+            FocusHelper.clear(model);
         }
         if (apiKey != null) {
-            apiKey.setFocused(false);
+            FocusHelper.clear(apiKey);
         }
     }
 

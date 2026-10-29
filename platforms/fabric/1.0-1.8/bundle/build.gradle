@@ -46,7 +46,12 @@ tasks.register("verifyBundle") {
         // One walk for the whole list; zipTree inside the loop re-expanded the aggregate jar once per
         // required entry.
         def present = new java.util.zip.ZipFile(archive).withCloseable { zip ->
-            zip.entries().collect { it.name } as Set
+            def names = new HashSet()
+            def entries = zip.entries()
+            while (entries.hasMoreElements()) {
+                names.add(entries.nextElement().name)
+            }
+            names as Set
         }
         def absent = required.findAll { !present.contains(it) }
         if (!absent.isEmpty()) throw new GradleException("Missing bundle entry: ${absent.join(', ')}")

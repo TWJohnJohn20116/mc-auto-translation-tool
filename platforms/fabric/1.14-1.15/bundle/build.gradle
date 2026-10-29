@@ -71,7 +71,12 @@ tasks.register("verifyBundle") {
         // required entry re-expanded the entire aggregate jar — about 110 full ZIP parses per build
         // across the eight bundles, each nested jar being a multi-megabyte deflate stream.
         def present = new java.util.zip.ZipFile(archive).withCloseable { zip ->
-            zip.entries().collect { it.name } as Set
+            def names = new HashSet()
+            def entries = zip.entries()
+            while (entries.hasMoreElements()) {
+                names.add(entries.nextElement().name)
+            }
+            names as Set
         }
         def absent = required.findAll { !present.contains(it) }
         if (!absent.isEmpty()) {

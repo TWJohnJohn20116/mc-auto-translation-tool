@@ -34,6 +34,7 @@ import org.universaltranslator.core.provider.OpenAiModelCatalog;
 import org.universaltranslator.core.provider.ProviderProbe;
 import org.universaltranslator.core.UiTextKeys;
 import org.universaltranslator.core.UiLimits;
+import org.universaltranslator.core.FocusHelper;
 
 /** Minimal dependency-free settings screen, opened with U by default. */
 final class UniversalTranslatorConfigScreen extends Screen {
@@ -1275,13 +1276,13 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
      */
     private void releaseFieldFocusForModelList() {
         if (endpoint != null) {
-            endpoint.setFocused(false);
+            FocusHelper.clear(endpoint);
         }
         if (customPrompt != null) {
-            customPrompt.setFocused(false);
+            FocusHelper.clear(customPrompt);
         }
         if (blockedKeywords != null) {
-            blockedKeywords.setFocused(false);
+            FocusHelper.clear(blockedKeywords);
         }
     }
 

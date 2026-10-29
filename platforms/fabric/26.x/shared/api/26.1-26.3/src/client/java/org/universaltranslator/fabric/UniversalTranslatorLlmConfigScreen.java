@@ -12,6 +12,7 @@ import org.universaltranslator.core.provider.OpenAiModelCatalog;
 
 import java.util.Collections;
 import java.util.List;
+import org.universaltranslator.core.FocusHelper;
 
 /** Local-only editor for an OpenAI-compatible hosted or loopback LLM endpoint. */
 final class UniversalTranslatorLlmConfigScreen extends Screen {
@@ -190,13 +191,13 @@ int formWidth = Math.max(180, Math.min(360, this.width - 20));
      */
     private void releaseFieldFocus() {
         if (endpoint != null) {
-            endpoint.setFocused(false);
+            FocusHelper.clear(endpoint);
         }
         if (model != null) {
-            model.setFocused(false);
+            FocusHelper.clear(model);
         }
         if (apiKey != null) {
-            apiKey.setFocused(false);
+            FocusHelper.clear(apiKey);
         }
     }
 
