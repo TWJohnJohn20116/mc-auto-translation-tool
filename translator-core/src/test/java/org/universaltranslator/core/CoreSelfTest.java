@@ -439,8 +439,11 @@ public final class CoreSelfTest {
             public String translate(TranslationRequest request) throws Exception {
                 calls.incrementAndGet();
                 String text = request.getText();
-                if ("Coins: 42".equals(text)) {
-                    return "\u91d1\u5e01: 42";
+                // Prefix match, not equality: the render path protects digit runs before the request
+                // leaves, so the provider can see "Coins: 42" or a protected form of it, and the
+                // translation has to keep whatever tail the request carried.
+                if (text.startsWith("Coins:")) {
+                    return "\u91d1\u5e01:" + text.substring("Coins:".length());
                 }
                 // Held back until the test releases it: the frames in between are the partly
                 // translated list, which is the state this memo has to honour.
