@@ -18,7 +18,9 @@
 //
 // Both directions are hard failures: an unlisted @Mixin class is a hook that silently does nothing,
 // and a listed name with no class is a `required: true` config that refuses to start the client.
-def remappedJar = tasks.named("remapJar")
+// 26.x Loom no longer publishes a remapJar task (that layer remaps during jar), so fall back to jar.
+def remappedName = tasks.findByName("remapJar") ?: tasks.findByName("jar")
+def remappedJar = tasks.named(remappedName.name)
 
 tasks.register("verifyMixinConfigCoverage") {
     group = "verification"
@@ -43,7 +45,7 @@ tasks.register("verifyMixinConfigCoverage") {
                 }
                 if (entry.name.endsWith(".mixins.json")) {
                     def config = new groovy.json.JsonSlurper()
-                            .parse(zip.getInputStream(entry).getText("UTF-8"))
+                            .parseText(zip.getInputStream(entry).getText("UTF-8"))
                     // get() rather than a property read: "package" is a reserved word.
                     def packageName = config.get("package") == null ? "" : config.get("package").toString()
                     ["mixins", "client", "server"].each { section ->

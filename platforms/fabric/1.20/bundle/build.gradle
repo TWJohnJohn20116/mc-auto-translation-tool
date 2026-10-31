@@ -82,16 +82,15 @@ tasks.register("verifyBundle") {
         def required = ["fabric.mod.json"] + supportedVersions.collect {
             "META-INF/jars/universal-translator-${it}.jar"
         }
-        // One walk of the central directory, and entry names are kept whole. zipTree used to be built
-        // inside the loop (one full ZIP parse per required entry per bundle) and handed back temp
-        // files, so the comparison had already been reduced to `it.name` — a nested jar that sat one
-        // directory deeper than META-INF/jars still passed while the Loader could not find it.
+        // One walk through Gradle's archive view of the JAR, and entry names are kept whole. `zipTree`
+        // is the only reader that sees the entries `jar` writes from other tasks' outputs — a raw
+        // `ZipFile` on the same path reports the nested jars as absent. `visit` hands back the whole
+        // entry path, so a nested jar that sat one directory deeper than META-INF/jars no longer
+        // passes while the Loader could not find it (the old code compared `it.name` only).
         def present = [] as Set
-        new java.util.zip.ZipFile(archive).withCloseable { zip ->
-            zip.entries().each { entry ->
-                if (!entry.directory) {
-                    present.add(entry.name)
-                }
+        zipTree(archive).visit { details ->
+            if (!details.directory) {
+                present.add(details.path.replace('\\', '/'))
             }
         }
         def missing = required.findAll { !present.contains(it) }

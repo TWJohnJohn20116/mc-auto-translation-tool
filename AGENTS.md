@@ -40,7 +40,7 @@
 
 | Workflow | 檔案 | 觸發條件 | 用途 |
 | --- | --- | --- | --- |
-| 主要建置 | `.github/workflows/build.yml` | PR、push `main`、`workflow_dispatch` | workflow 靜態檢查（actionlint + shellcheck）、核心檢查、網站檢查（只在 PR 動到 `website/` 時才真的跑）、17 個平台目標、7 個舊版目標（各自獨立 job 平行跑）、發布資產驗證，最後由 `CI 總結` 彙總。這是 PR 必經路徑，牆鐘約 5～6 分（由最慢的 job 決定） |
+| 主要建置 | `.github/workflows/build.yml` | PR、push `main`、`workflow_dispatch` | workflow 靜態檢查（actionlint + shellcheck）、核心檢查、網站檢查（只在 PR 動到 `website/` 時才真的跑）、16 個平台目標、7 個舊版目標（各自獨立 job 平行跑）、發布資產驗證，最後由 `CI 總結` 彙總。這是 PR 必經路徑，牆鐘約 5～6 分（由最慢的 job 決定） |
 | 舊版目標 | `.github/workflows/legacy-targets.yml` | 每週排程（週一 03:17 UTC）、`workflow_dispatch` | 4 個 Ornithe／舊版 Fabric bundle（1.3.1–1.15）、2 個獨立 Forge 1.8.9／1.12.2 建置，以及 15 個 NeoForge 目標（1.20.4～26.2）。這些要 remap／decompile 或跑 Minecraft Mavenizer，刻意不放在 PR 路徑 |
 | 準備發布資產 | `.github/workflows/prepare-release.yml` | 只有 `workflow_dispatch` | 一鍵準備 `downloads/<mod_version>`：建置 48 個目標、用標準檔名收集、產生 `SHA256SUMS.txt`、跑 `verify_release_jars.py` 驗證，再開 PR。手動觸發，不在 PR 路徑上（一次約 10～20 分鐘牆鐘時間） |
 | 發布下載資產 | `.github/workflows/publish-release.yml` | push `main`（限特定路徑）、`workflow_dispatch` | 驗證 `downloads/<version>` 並建立或更新 GitHub Release |
@@ -141,12 +141,16 @@ git -c 'credential.helper=' -c 'credential.helper=!gh auth git-credential' push 
 
 ### 目標名稱
 
-`build.yml` → `platform-build`（17 個，PR 必經）：
+`build.yml` → `platform-build`（16 個，PR 必經）：
 
 `fabric-1.16.x`、`fabric-1.17-1.18.x`、`fabric-1.19.x`、`fabric-1.20.x`、`fabric-1.21.x`、
-`fabric-1.21.4-1.21.5`、`fabric-26.x`、`neoforge-1.20.1`、`forge-1.21.1`、`forge-1.21.7`、
+`fabric-26.x`、`neoforge-1.20.1`、`forge-1.21.1`、`forge-1.21.7`、
 `forge-1.21.9`、`forge-1.21.11`、`forge-26.1.1`、`forge-26.2`、`neoforge-1.21.1`、`neoforge-1.21.3`、
 `neoforge-1.21.11`
+
+`fabric-1.21.4-1.21.5` 這個目標已於第四輪審計（B07-004）刪除：它每個 PR 都吃掉一個完整 Loom 專案，
+卻不在任何 bundle、也不在 `downloads/` 的收集範圍裡；1.21.4／1.21.5 本來就由 `fabric-1.21.x`
+的 bundle 涵蓋。刪除它不影響 48 顆發布資產，所以 `publish-release.yml` 的 `expected` 與數量不必跟著動。
 
 `build.yml` → `legacy-build`（7 個，各自獨立平行 job；關鍵字 `legacy` 可全選）：
 

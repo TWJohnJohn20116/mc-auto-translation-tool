@@ -25,7 +25,10 @@ if (!project.ext.has("fabricReleaseJava")) {
 }
 def releaseJava = project.ext.fabricReleaseJava as int
 def expectedMajor = releaseJava + 44
-def remapped = tasks.named("remapJar")
+// 26.x Loom no longer publishes a remapJar task (that layer remaps during jar), so fall back to jar:
+// this gate only decides which archive to inspect, not what is inspected.
+def remappedTask = tasks.findByName("remapJar") ?: tasks.findByName("jar")
+def remapped = tasks.named(remappedTask.name)
 
 tasks.register("verifyBuiltJar") {
     group = "verification"

@@ -474,8 +474,11 @@ tasks.register("validateDualLayerApiParity") {
 
         def failures = []
         pairs.each { pair ->
-            def leftRoot = new File(pair[0])
-            def rightRoot = new File(pair[1])
+            // project.file(), not new File(): the latter resolves against the JVM working directory,
+            // which is the Gradle daemon's rather than this project's — on CI that made every shared
+            // file look present in one layer and absent in the other.
+            def leftRoot = project.file(pair[0])
+            def rightRoot = project.file(pair[1])
             if (!leftRoot.isDirectory() || !rightRoot.isDirectory()) {
                 return
             }
@@ -487,7 +490,7 @@ tasks.register("validateDualLayerApiParity") {
                     include "**/*.java"
                     exclude "**/build/**"
                 }.files.each { source ->
-                    relatives.add(source.absolutePath.substring(root.absolutePath.length() + 1))
+                    relatives.add(root.toPath().relativize(source.toPath()).toString().replace('\\', '/'))
                 }
             }
             relatives.each { String relative ->
