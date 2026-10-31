@@ -139,9 +139,15 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     private Button targetLanguageButton;
     private Button outgoingTargetLanguageButton;
     private String status = "";
-    /** Result of the engine tab's connection test; written by its worker thread. */
-    private volatile String testStatus = "";
-    private volatile boolean testStatusIsError;
+    /**
+     * Result of the engine tab's connection test, written by its worker thread.
+     *
+     * <p>One reference rather than two independent fields: the message and its error flag are one
+     * line on screen, and a reader that picked up the new message next to the previous flag painted
+     * a failure in green (or the reverse). A single volatile reference publishes both at once, while
+     * the writer runs on a worker and {@code render()} reads it.
+     */
+    private volatile TestStatus testStatus = TestStatus.EMPTY;
     // volatile because the fetch/test workers clear them and the render thread reads them as a
     // re-entry guard. Without it a worker could clear the flag without the render thread ever
     // observing the write, and the tab's "fetch models" and "test" buttons stayed dead for the life
@@ -373,13 +379,14 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         }).bounds(layout.right, engineRow(5), layout.buttonWidth, 20).build());
 
         String promptValue = customPrompt == null
-                ? TranslationPrompt.toEditorText(original.customSystemPrompt())
+                ? TranslationPrompt.toEditorText(
+                        TranslationPrompt.clampForEditor(original.customSystemPrompt()))
                 : customPrompt.getValue();
         int promptApplyWidth = Math.max(48, layout.buttonWidth - 24);
         customPrompt = addRenderableWidget(new EditBox(font, left, engineRow(4),
                 layout.totalWidth - promptApplyWidth - 8,
                 20, translatable("screen.universal_translator.diagnostics.prompt")));
-        customPrompt.setMaxLength(UiLimits.PROMPT_MAX_CHARS);
+        customPrompt.setMaxLength(UiLimits.PROMPT_EDITOR_MAX_CHARS);
         customPrompt.setValue(promptValue);
         applyPromptButton = addRenderableWidget(ButtonSpec.of(
                 translatable("screen.universal_translator.diagnostics.prompt_apply"),
@@ -777,11 +784,13 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         String localized = localizedStatus();
         int belowSave = layout.saveY + 24;
         int messageY = belowSave <= height - 10 ? belowSave : SettingsScreenLayout.COMPACT_STATUS_Y;
+        // Read the worker's result once, so the message and its colour come from the same write.
+        TestStatus engineTest = testStatus;
         if (!status.isEmpty()) {
             graphics.centered(literal(status), width / 2, messageY, 0xFFFF5555);
-        } else if (!testStatus.isEmpty()) {
-            graphics.centered(literal(testStatus), width / 2, messageY,
-                    testStatusIsError ? 0xFFFF5555 : 0xFF55FF55);
+        } else if (!engineTest.message.isEmpty()) {
+            graphics.centered(literal(engineTest.message), width / 2, messageY,
+                    engineTest.error ? 0xFFFF5555 : 0xFF55FF55);
         } else if (!localized.isEmpty()) {
             graphics.centered(literal(localized), width / 2, messageY,
                     cachedStatusIsFailure ? 0xFFFF5555 : 0xFF55FF55);
@@ -1320,9 +1329,21 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         }
     }
 
+    /** One coherent "engine test" line: the message and the colour it is drawn in. */
+    private static final class TestStatus {
+        static final TestStatus EMPTY = new TestStatus("", false);
+
+        final String message;
+        final boolean error;
+
+        TestStatus(String message, boolean error) {
+            this.message = message == null ? "" : message;
+            this.error = error;
+        }
+    }
+
     private void setTestStatus(String message, boolean error) {
-        testStatus = message;
-        testStatusIsError = error;
+        testStatus = new TestStatus(message, error);
     }
 
     private static String describe(Exception error) {

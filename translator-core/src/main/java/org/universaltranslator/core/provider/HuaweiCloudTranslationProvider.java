@@ -53,7 +53,11 @@ public final class HuaweiCloudTranslationProvider implements TranslationProvider
                         ProviderLanguageCodes.huawei(request.getTargetLanguage(), false)) + "}";
         String response = http.post(endpoint, payload,
                 Collections.singletonMap("X-Auth-Token", authToken));
-        String translated = JsonStrings.readStringField(response, "translated_text");
+        // Read through the shared helper so a body that is not the provider's document at all — an
+        // entry portal, an intercepting proxy, a truncated reply — becomes the retryable failure the
+        // retry policy and the fallback are built for, instead of a one-shot hard error.
+        String translated = ProviderErrors.pathOrNull(
+                "Huawei Cloud", response, "translated_text");
         if (translated == null || translated.trim().isEmpty()) {
             throw BaiduTranslationProvider.providerError(
                     "Huawei Cloud", response, "error_code", "error_msg");

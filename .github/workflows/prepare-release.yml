@@ -151,6 +151,15 @@ jobs:
             python3 - "$requested" >> "$GITHUB_OUTPUT" <<'PY'
           import json, os, sys
           requested = [name for name in sys.argv[1].split(",") if name]
+          # targets 只打了逗號或空白時 requested 是空清單：既不報錯也不選任何目標，於是照樣輸出
+          # matrix={"include": []}，build-target 在展開階段就以 GitHub 的「Matrix vector … does not
+          # contain any values」失敗（訊息完全不提 targets），assemble 也永遠不會執行。另外兩支
+          # workflow 早就擋掉這個輸入（build.yml 的 ::error::、legacy-targets.yml 的哨兵），
+          # prepare-release 是唯一漏掉的第三支。
+          if not requested:
+              print("::error::targets 只給了逗號或空白，沒有指定任何目標；留空才會執行全部目標",
+                    file=sys.stderr)
+              sys.exit(1)
           targets = json.loads(os.environ["TARGETS_JSON"])
           known = {entry["target"] for entry in targets}
           unknown = [name for name in requested if name not in known]
@@ -265,6 +274,17 @@ jobs:
           mkdir -p dist
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --dir dist
           find dist -type f -name '*.jar' | sort
+
+      - name: 確認 plan 至少選了一個目標
+        env:
+          TARGET_COUNT: ${{ needs.plan.outputs.target_count }}
+        run: |
+          set -euo pipefail
+          # 第二道防線：plan 的空輸入守衛被改掉時，這裡仍然不會讓「0 顆 JAR 也算彙整成功」成立。
+          if [[ -z "${TARGET_COUNT:-}" || "$TARGET_COUNT" -le 0 ]]; then
+            echo "plan 沒有選到任何目標（target_count=${TARGET_COUNT:-}），不彙整" >&2
+            exit 1
+          fi
 
       - name: 收集到 downloads 並產生 checksum
         env:
@@ -394,16 +414,25 @@ jobs:
           # refs/remotes/origin/release/prepare-<version>，於是 --force-with-lease 的語意變成
           # 「遠端不得存在這個 ref」：分支一存在，push 必被拒（! [rejected] ... stale info）。
           # 這裡先 fetch，再用明確的預期 SHA 當 lease；同時確認遠端分支上只有本 workflow 產生的
-          # commit——AGENTS.md 要求在 release/prepare-<version> PR 裡人工調整 expected／數量，
-          # 那些 commit 不能被下一次重跑無聲覆蓋。
+          # commit——AGENTS.md 要求在 release PR 裡人工補 CHANGELOG 區段、四份 README 的下載連結與
+          # website/app/page.tsx 的版本文案，那些 commit 不能被下一次重跑無聲覆蓋。
           lease=()
           if git ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null 2>&1; then
-            git fetch --no-tags origin "refs/heads/$branch:refs/remotes/origin/$branch"
+            # main 一起抓：下面的守衛要比對「main 之後的 commit」，不能假設 origin/main 已經存在。
+            git fetch --no-tags origin "refs/heads/$branch:refs/remotes/origin/$branch" \
+              "refs/heads/main:refs/remotes/origin/main"
             remote_sha="$(git rev-parse "refs/remotes/origin/$branch")"
-            unexpected="$(git log --format=%s "$remote_sha" --not --remotes=origin \
-              | grep -vxF "chore(release): 準備 $VERSION 的發布資產" || true)"
+            # 比較基準必須是 origin/main，不能是 `--not --remotes=origin`：上一行剛把 $remote_sha
+            # 建成 refs/remotes/origin/$branch，那個旗標於是把要比對的 commit 自己也排除掉，集合
+            # 恆為空、守衛永遠放行，重跑就無聲覆蓋分支上的人工 commit（AGENTS.md 要求在 release
+            # PR 裡手改 CHANGELOG／README／website，那些 commit 正是受害者）。逐個 commit 比對
+            # author 而不只比對 subject，才不會把別人的同名 commit 當成自己人。
+            bot_commit="$(printf 'github-actions[bot]\t%s' "chore(release): 準備 $VERSION 的發布資產")"
+            unexpected="$(git log --format='%an%x09%s' "$remote_sha" --not refs/remotes/origin/main \
+              | grep -vxF -- "$bot_commit" || true)"
             if [[ -n "$unexpected" ]]; then
-              echo "::error::$branch 上有非本 workflow 產生的 commit，不覆蓋：$unexpected" >&2
+              echo "::error::$branch 上有非本 workflow 產生的 commit（author 與 subject 以 tab 分隔），不覆蓋：" >&2
+              printf '%s\n' "$unexpected" >&2
               exit 1
             fi
             lease=(--force-with-lease="refs/heads/$branch:$remote_sha")

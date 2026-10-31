@@ -1,0 +1,70 @@
+// Reverse metadata verification for the legacy Minecraft bundle jars.
+//
+// A bundle's verifyBundle task only proves that everything in supportedVersions was packed, and its
+// jar block builds that list from the same variable, so that direction can hardly fail. What can and
+// did fail is the other way round: a fabric.mod.json that declares versions nobody builds. The
+// Loader then treats those as supported and fails them at resolution time, and nothing in CI looks at
+// it. This script is the single copy of that comparison; a bundle opts in with
+//
+//     ext.bundleSupportedVersions = supportedVersions
+//     apply from: rootProject.file("gradle/bundle-metadata-verify.gradle")
+//
+// and calls verifyBundleMetadata() from its verifyBundle task.
+
+def bundleMetadataFile = project.file("src/main/resources/fabric.mod.json")
+
+ext.verifyBundleMetadata = {
+    def supported = project.ext.bundleSupportedVersions
+    if (supported == null) {
+        throw new GradleException(
+                "bundleSupportedVersions must be set before applying bundle-metadata-verify.gradle")
+    }
+    // Launchers and the bundle's own nested jars are keyed by the launcher name ("1.13", not
+    // "1.13.0"), which is what supportedVersions already holds in every bundle.
+    def supportedSorted = new ArrayList(supported)
+    def metadata = new groovy.json.JsonSlurper().parse(bundleMetadataFile)
+    def declaredJars = metadata.jars.collect { entry ->
+        // A jars[] element without "file" is easy to produce by hand and used to surface as
+        // "Cannot invoke method tokenize() on null object", with no hint of which entry it was.
+        if (entry.file == null) {
+            throw new GradleException("fabric.mod.json jars entry ${entry} has no 'file' key")
+        }
+        entry.file.tokenize('/').last()
+                .replace('universal-translator-', '')
+                .replace('.jar', '')
+    }
+    def declaredMinecraft = metadata.depends.minecraft
+    if (!(declaredMinecraft instanceof Collection)) {
+        declaredMinecraft = [declaredMinecraft]
+    }
+    // Compare as sets: the order of jars[] and depends.minecraft is semantically irrelevant, so a
+    // reorder must not be reported as an inconsistency.
+    if (declaredJars.sort() != supportedSorted.sort()) {
+        throw new GradleException(
+                "fabric.mod.json jars ${declaredJars} != supportedVersions ${supported}")
+    }
+    if (declaredMinecraft.sort() != supportedSorted.sort()) {
+        throw new GradleException(
+                "fabric.mod.json depends.minecraft ${declaredMinecraft} != supportedVersions ${supported}")
+    }
+    // Fabric API's mod id. The ten hand-written bundle metadata files spelled it three ways ("fabric"
+    // in three, no entry at all in 1.19, "fabric-api" in six); "fabric" only resolves through Fabric
+    // API's `provides` alias, so nothing compared the three answers. settings.gradle's
+    // gradle.ext.fabricApiModId is the one value, ${fabricDependency} in the template is the one
+    // spelling, and a bundle that declares two of them fails here instead of at load time.
+    def apiIdSpellings = ["fabric", "fabric-api", '${fabricDependency}']
+    def declaredApiIds = apiIdSpellings.findAll { metadata.depends != null && metadata.depends.containsKey(it) }
+    if (declaredApiIds.size() > 1) {
+        throw new GradleException(
+                "fabric.mod.json depends on Fabric API more than once (${declaredApiIds.join(', ')}); " +
+                        "the mod id is '${project.gradle.ext.fabricApiModId}' (gradle.ext.fabricApiModId)")
+    }
+    if (declaredApiIds.isEmpty()) {
+        // Only the nested implementations declare the dependency then, so a launcher that reads the
+        // bundle metadata alone cannot tell the bundle needs Fabric API at all.
+        project.logger.warn(
+                "${project.path}: fabric.mod.json declares no Fabric API dependency (expected " +
+                        "'\${fabricDependency}' = '${project.gradle.ext.fabricApiModId}'); " +
+                        "only the nested implementations do")
+    }
+}

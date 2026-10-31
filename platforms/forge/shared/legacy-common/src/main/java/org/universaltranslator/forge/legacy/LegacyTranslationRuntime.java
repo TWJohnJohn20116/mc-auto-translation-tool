@@ -32,6 +32,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public final class LegacyTranslationRuntime {
     private static final long PLAYER_NAME_SNAPSHOT_MILLIS = 5_000L;
@@ -122,8 +123,10 @@ public final class LegacyTranslationRuntime {
                 // Record the provider before the store and the session are built around it: a
                 // failure in either must not orphan a provider that may already hold resources.
                 createdProvider = provider;
+                // One store per cache file: a settings change must not make the next session's first
+                // lookup parse the whole file again.
                 store = config.diskCache
-                        ? new PersistentTranslationCache(config.cacheFile.toPath(), 10_000)
+                        ? PersistentTranslationCache.shared(config.cacheFile.toPath(), 10_000)
                         : new TranslationCache(10_000);
                 // The offline llama.cpp server is single threaded, so it always gets one worker no
                 // matter what the configuration asks for.
@@ -177,14 +180,35 @@ public final class LegacyTranslationRuntime {
         }
     }
 
+    /** Teardowns queued but not finished; caps the reaper's backlog (see {@link #closeInBackground}). */
+    private static final AtomicInteger PENDING_TEARDOWNS = new AtomicInteger();
+    /** Backlog the reaper accepts before the caller performs the teardown itself. */
+    private static final int MAX_PENDING_TEARDOWNS = 2;
+
     /**
      * Hands a replaced session to the shared reaper so its teardown never runs on the caller's
      * thread. {@link #shutdown()} stays synchronous on purpose: it runs while the game is closing,
      * where blocking is free, and it closes whichever session is current at that moment, which is
      * never one that was already handed to the reaper.
+     *
+     * <p>The reaper is a single unbounded queue, so a burst of switches — holding F8 down, or a
+     * HUD drag that re-initializes several times a second — used to queue one live session with its
+     * thread pool and caches per press, each worth up to five seconds of teardown. Past
+     * {@link #MAX_PENDING_TEARDOWNS} the caller now performs the teardown itself: the tick that
+     * switched pays the cost instead of the process growing an unbounded backlog of live sessions.
      */
     private static void closeInBackground(final RenderTranslationSession replaced) {
         if (replaced == null) {
+            return;
+        }
+        if (PENDING_TEARDOWNS.incrementAndGet() > MAX_PENDING_TEARDOWNS) {
+            try {
+                replaced.close();
+            } catch (Throwable ignored) {
+                // Same contract as the reaper body: a teardown must never take the caller down.
+            } finally {
+                PENDING_TEARDOWNS.decrementAndGet();
+            }
             return;
         }
         try {
@@ -197,12 +221,15 @@ public final class LegacyTranslationRuntime {
                         // A reaper must never die with a teardown still pending. The session is
                         // already unreachable from the live fields, so a failure here can only
                         // leak its resources; there is no caller left to report it to.
+                    } finally {
+                        PENDING_TEARDOWNS.decrementAndGet();
                     }
                 }
             });
         } catch (Throwable rejected) {
             // The executor only rejects once it has been shut down, which this class never does.
             // Leaving the replaced session unclosed still beats blocking the caller.
+            PENDING_TEARDOWNS.decrementAndGet();
         }
     }
 
@@ -240,6 +267,14 @@ public final class LegacyTranslationRuntime {
         protectedPlayerNamesExpireAt = 0L;
         RECENT_USER_TEXT.clear();
         outgoingTail = CompletableFuture.completedFuture(null);
+        // The queued writes are the ones this runtime accepted; let them land before the state they
+        // were derived from is dropped.
+        LegacyConfigWriter.shutdown();
+        // The screens' shared pool goes with the client so a closed game keeps no daemon threads.
+        LegacyScreenWorkers.shutdown();
+        // The on-disk copy of the advanced keys outlives a session on purpose (every snapshot of the
+        // same file shares it), so releasing the configuration is where it is dropped.
+        LegacyConfig.clearCaches();
         if (active != null) {
             active.close();
         }
@@ -502,7 +537,7 @@ public final class LegacyTranslationRuntime {
             }
             runtimeChanged = true;
             initialize(updated);
-            updated.save();
+            LegacyConfigWriter.saveOffTick(updated, null);
             return homeSettingsState(updated);
         } catch (Exception failure) {
             if (runtimeChanged) {

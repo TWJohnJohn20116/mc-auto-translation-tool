@@ -29,6 +29,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public final class ForgeTranslationRuntime {
     private static final long PLAYER_NAME_SNAPSHOT_MILLIS = 5_000L;
@@ -154,8 +155,10 @@ public final class ForgeTranslationRuntime {
                 // Record the provider before the store and the session are built around it: a
                 // failure in either must not orphan a provider that may already hold resources.
                 createdProvider = provider;
+                // One store per cache file: a settings change must not make the next session's first
+                // lookup parse the whole file again.
                 TranslationStore store = config.diskCache
-                        ? new PersistentTranslationCache(config.cacheFile, 10_000)
+                        ? PersistentTranslationCache.shared(config.cacheFile, 10_000)
                         : new TranslationCache(10_000);
                 // The offline llama.cpp server is single threaded, so it always gets one worker no
                 // matter what the configuration asks for.
@@ -201,14 +204,35 @@ public final class ForgeTranslationRuntime {
         closeInBackground(replaced);
     }
 
+    /** Teardowns queued but not finished; caps the reaper's backlog (see {@link #closeInBackground}). */
+    private static final AtomicInteger PENDING_TEARDOWNS = new AtomicInteger();
+    /** Backlog the reaper accepts before the caller performs the teardown itself. */
+    private static final int MAX_PENDING_TEARDOWNS = 2;
+
     /**
      * Hands a replaced session to the shared reaper so its teardown never runs on the caller's
      * thread. {@link #shutdown()} stays synchronous on purpose: it runs while the game is closing,
      * where blocking is free, and it closes whichever session is current at that moment, which is
      * never one that was already handed to the reaper.
+     *
+     * <p>The reaper is a single unbounded queue, so a burst of switches — holding F8 down, or a
+     * HUD drag that re-initializes several times a second — used to queue one live session with its
+     * thread pool and caches per press, each worth up to five seconds of teardown. Past
+     * {@link #MAX_PENDING_TEARDOWNS} the caller now performs the teardown itself: the tick that
+     * switched pays the cost instead of the process growing an unbounded backlog of live sessions.
      */
     private static void closeInBackground(final RenderTranslationSession replaced) {
         if (replaced == null) {
+            return;
+        }
+        if (PENDING_TEARDOWNS.incrementAndGet() > MAX_PENDING_TEARDOWNS) {
+            try {
+                replaced.close();
+            } catch (Throwable ignored) {
+                // Same contract as the reaper body: a teardown must never take the caller down.
+            } finally {
+                PENDING_TEARDOWNS.decrementAndGet();
+            }
             return;
         }
         try {
@@ -221,12 +245,15 @@ public final class ForgeTranslationRuntime {
                         // A reaper must never die with a teardown still pending. The session is
                         // already unreachable from the live fields, so a failure here can only
                         // leak its resources; there is no caller left to report it to.
+                    } finally {
+                        PENDING_TEARDOWNS.decrementAndGet();
                     }
                 }
             });
         } catch (Throwable rejected) {
             // The executor only rejects once it has been shut down, which this class never does.
             // Leaving the replaced session unclosed still beats blocking the caller.
+            PENDING_TEARDOWNS.decrementAndGet();
         }
     }
 
@@ -306,6 +333,12 @@ public final class ForgeTranslationRuntime {
         RECENT_USER_TEXT.clear();
         outgoingTail = CompletableFuture.completedFuture(null);
         invalidateRenderMemo();
+        // Both caches outlive the session on purpose (they are shared by every snapshot of the same
+        // file), so releasing the configuration is the point where they are dropped instead.
+        ForgeConfig.clearCaches();
+        // The queued writes are the ones this runtime accepted; let them land, then stop the writer so
+        // no daemon thread outlives the configuration it was writing.
+        ForgeConfigWriter.shutdown();
         if (active != null) {
             active.close();
         }
@@ -374,6 +407,18 @@ public final class ForgeTranslationRuntime {
         }
         protectedPlayerNamesExpireAt = now + PLAYER_NAME_SNAPSHOT_MILLIS;
         return protectedPlayerNames;
+    }
+
+    /**
+     * Refreshes the protected-name snapshot from the client tick instead of from a draw call.
+     *
+     * <p>The supplier below is asked for this on the render thread for every submitted string, so
+     * the refresh runs inside a frame: on a full server the 5 s window expiring on an unlucky frame
+     * walks the whole tab list between two draw calls. Refreshing here means a frame only reads the
+     * published snapshot, and the client thread is where the tab list may be read at all.
+     */
+    static void refreshProtectedNames() {
+        playerNameSnapshot();
     }
 
     private static void addProtectedLiteral(LinkedHashSet<String> values, String value) {
@@ -575,7 +620,9 @@ public final class ForgeTranslationRuntime {
             }
             runtimeChanged = true;
             initialize(updated);
-            updated.save();
+            // Queued off the caller's thread: the home buttons and F8 arrive on the client tick, and a
+            // save is a temporary create, a write, an atomic move and two ownership changes.
+            ForgeConfigWriter.saveOffTick(updated, null);
             return homeSettingsState(updated);
         } catch (Exception failure) {
             if (runtimeChanged) {

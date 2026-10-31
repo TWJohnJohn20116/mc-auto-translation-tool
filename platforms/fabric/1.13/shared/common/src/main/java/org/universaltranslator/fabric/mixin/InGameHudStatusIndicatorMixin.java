@@ -75,6 +75,12 @@ abstract class InGameHudStatusIndicatorMixin {
         if (window == null) {
             return;
         }
+        TextRenderer font = client.textRenderer;
+        if (font == null) {
+            // The renderer is null while a resource reload swaps it, so both the preview and the
+            // label below would NPE out of the render thread; the check has to come first.
+            return;
+        }
         int windowWidth = window.getGuiScaledWidth();
         int windowHeight = window.getGuiScaledHeight();
         HudIndicatorCorner corner = settings.getCorner();
@@ -118,8 +124,8 @@ abstract class InGameHudStatusIndicatorMixin {
             TranslationRenderContext.pushTextInput();
             try {
                 int previewY = Math.max(0, windowHeight - 60);
-                int previewX = windowWidth / 2 - client.textRenderer.getWidth(outgoingPreview) / 2;
-                client.textRenderer.drawWithShadow(outgoingPreview, (float) previewX, (float) previewY, 0xFFFFFFFF);
+                int previewX = windowWidth / 2 - font.getWidth(outgoingPreview) / 2;
+                font.drawWithShadow(outgoingPreview, (float) previewX, (float) previewY, 0xFFFFFFFF);
             } finally {
                 TranslationRenderContext.popTextInput();
             }
@@ -142,7 +148,6 @@ abstract class InGameHudStatusIndicatorMixin {
         if (label == null || label.isEmpty()) {
             return;
         }
-        TextRenderer font = client.textRenderer;
         // This version hooks TextRenderer.getWidth and TextRenderer.draw in order to translate what
         // it renders, so measuring or drawing the label unguarded would feed the indicator's own
         // text back into the translation path.

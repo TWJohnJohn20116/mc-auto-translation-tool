@@ -629,10 +629,10 @@ public final class OnlineProviderConfig {
                     value("deepl-model"), http);
         } else if ("gemini".equals(selected)) {
             raw = new GeminiTranslationProvider(value("gemini-endpoint"), value("gemini-api-key"),
-                    value("gemini-model"), http, promptSettings());
+                    value("gemini-model"), http, promptSettings(), tuning());
         } else if ("claude".equals(selected)) {
             raw = new ClaudeTranslationProvider(value("claude-endpoint"), value("claude-api-key"),
-                    value("claude-model"), http, promptSettings());
+                    value("claude-model"), http, promptSettings(), tuning());
         } else if ("custom-http-json".equals(selected)) {
             raw = custom(http);
         } else {

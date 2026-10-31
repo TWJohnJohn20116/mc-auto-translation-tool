@@ -5,7 +5,7 @@
   "name": "MC Auto Translation Tool - Fabric 1.8.9/1.12.2 Bundle",
   "description": "Selects the exact compatible Ornithe Fabric implementation for Minecraft 1.8.9 through 1.12.2.",
   "authors": [
-    "272635"
+    "我小张7272635"
   ],
   "contact": {
     "homepage": "https://space.bilibili.com/3546631091783712",
@@ -80,6 +80,6 @@
       "1.12.2"
     ],
     "java": ">=8",
-    "universal_translator": "*"
+    "universal_translator": ">=${version}"
   }
 }

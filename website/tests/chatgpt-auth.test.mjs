@@ -2,16 +2,12 @@ import assert from "node:assert/strict";
 import * as nodeModule from "node:module";
 import test from "node:test";
 
-// `app/chatgpt-auth.ts` imports `next/headers` and `next/navigation`, which are
-// only resolvable inside the vinext/Next build. Stub them so the module can be
-// imported directly from source and its helpers exercised in isolation. The
-// headers stub reads `globalThis.__nextRequestHeaders` so a test can present a
-// specific identity, and `redirect` throws like the real one does.
+// `app/chatgpt-auth.ts` imports `next/navigation`, which is only resolvable inside
+// the vinext/Next build. Stub it so the module can be imported directly from source
+// and its helpers exercised in isolation; `redirect` throws like the real one does.
 const NEXT_STUBS =
   "data:text/javascript," +
   encodeURIComponent(`
-export const headers = async () =>
-  new Map(Object.entries(globalThis.__nextRequestHeaders ?? {}));
 export function redirect(url) {
   const error = new Error("NEXT_REDIRECT " + url);
   error.digest = "NEXT_REDIRECT";
@@ -19,13 +15,33 @@ export function redirect(url) {
 }
 `);
 
+// `worker/index.ts` imports the app router entry point. A real render is not needed
+// here, so it is replaced by an echo that reports the header names it received; that
+// is what lets the strip test observe what the app router actually sees.
+const APP_ENTRY_STUBS =
+  "data:text/javascript," +
+  encodeURIComponent(`
+export default {
+  async fetch(request) {
+    return new Response(JSON.stringify([...request.headers.keys()]), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  },
+};
+`);
+
+const STUBBED_SPECIFIERS = new Map([
+  ["next/navigation", NEXT_STUBS],
+  ["vinext/server/app-router-entry", APP_ENTRY_STUBS],
+]);
+
 function stubNextServerModules() {
   if (typeof nodeModule.registerHooks === "function") {
     nodeModule.registerHooks({
       resolve(specifier, context, next) {
-        if (specifier === "next/headers" || specifier === "next/navigation") {
-          return { url: NEXT_STUBS, shortCircuit: true };
-        }
+        const stub = STUBBED_SPECIFIERS.get(specifier);
+        if (stub) return { url: stub, shortCircuit: true };
         return next(specifier, context);
       },
     });
@@ -37,9 +53,10 @@ function stubNextServerModules() {
   const loader =
     "data:text/javascript," +
     encodeURIComponent(`
+const STUBS = ${JSON.stringify(Object.fromEntries(STUBBED_SPECIFIERS))};
 export async function resolve(specifier, context, next) {
-  if (specifier === "next/headers" || specifier === "next/navigation") {
-    return { url: ${JSON.stringify(NEXT_STUBS)}, shortCircuit: true };
+  if (Object.hasOwn(STUBS, specifier)) {
+    return { url: STUBS[specifier], shortCircuit: true };
   }
   return next(specifier, context);
 }
@@ -157,105 +174,54 @@ test("never emits a return_to that starts with a double slash or backslash", () 
   }
 });
 
-// `getChatGPTUser()` is the identity source every future `requireChatGPTUser()`
-// caller relies on, so its three branches are pinned here.
-function withRequestHeaders(headers, body) {
-  return (async () => {
-    globalThis.__nextRequestHeaders = headers;
-    try {
-      return await body();
-    } finally {
-      delete globalThis.__nextRequestHeaders;
-    }
-  })();
-}
+// `worker/index.ts` strips every `oai-authenticated-*` header before the app router
+// sees a request, so nothing the app can observe carries an identity. The reader must
+// say so rather than hand back `null`, which used to turn every `requireChatGPTUser()`
+// caller into an endless sign-in redirect.
+const FORGED_IDENTITY = {
+  "oai-authenticated-user-id": "user-1",
+  "oai-authenticated-user-email": "user@example.com",
+  "oai-authenticated-user-full-name": "%E5%BC%A0%E4%B8%89",
+  "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8",
+};
 
-test("returns null when the identity headers are absent", async () => {
+test("refuses to resolve an identity", async () => {
   const { getChatGPTUser } = requireAuth();
-  const user = await withRequestHeaders({}, () => getChatGPTUser());
-  assert.equal(user, null);
-  const partial = await withRequestHeaders(
-    { "oai-authenticated-user-id": "user-1" },
+  await assert.rejects(
     () => getChatGPTUser(),
+    /authentication is not configured/i,
   );
-  assert.equal(partial, null, "an id without an email is not a usable identity");
 });
 
-test("returns the injected identity", async () => {
-  const { getChatGPTUser } = requireAuth();
-  const user = await withRequestHeaders(
-    {
-      "oai-authenticated-user-id": "user-1",
-      "oai-authenticated-user-email": "user@example.com",
-    },
-    () => getChatGPTUser(),
-  );
-  assert.deepEqual(user, {
-    userId: "user-1",
-    displayName: "user@example.com",
-    email: "user@example.com",
-    fullName: null,
-  });
-});
-
-test("decodes the full name only when the encoding header says so", async () => {
-  const { getChatGPTUser } = requireAuth();
-  const decoded = await withRequestHeaders(
-    {
-      "oai-authenticated-user-id": "user-1",
-      "oai-authenticated-user-email": "user@example.com",
-      "oai-authenticated-user-full-name": "%E5%BC%A0%E4%B8%89",
-      "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8",
-    },
-    () => getChatGPTUser(),
-  );
-  assert.equal(decoded?.fullName, "张三");
-  assert.equal(decoded?.displayName, "张三");
-
-  const undecoded = await withRequestHeaders(
-    {
-      "oai-authenticated-user-id": "user-1",
-      "oai-authenticated-user-email": "user@example.com",
-      "oai-authenticated-user-full-name": "%E5%BC%A0%E4%B8%89",
-    },
-    () => getChatGPTUser(),
-  );
-  assert.equal(undecoded?.fullName, null);
-  assert.equal(undecoded?.displayName, "user@example.com");
-
-  const malformed = await withRequestHeaders(
-    {
-      "oai-authenticated-user-id": "user-1",
-      "oai-authenticated-user-email": "user@example.com",
-      "oai-authenticated-user-full-name": "%E5%BC",
-      "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8",
-    },
-    () => getChatGPTUser(),
-  );
-  assert.equal(malformed?.fullName, null, "a broken escape must not throw");
-});
-
-// `redirect()` never returns; a stubbed no-op redirect used to let this function
-// fall off the end and resolve to `undefined` while typed as `ChatGPTUser`.
-test("requireChatGPTUser returns the user, and throws a redirect when absent", async () => {
+test("requireChatGPTUser reports the missing authentication instead of redirecting", async () => {
   const { requireChatGPTUser } = requireAuth();
-  const user = await withRequestHeaders(
-    {
-      "oai-authenticated-user-id": "user-1",
-      "oai-authenticated-user-email": "user@example.com",
-    },
-    () => requireChatGPTUser("/dashboard"),
-  );
-  assert.equal(user.userId, "user-1");
-
-  await withRequestHeaders({}, async () => {
-    await assert.rejects(
-      () => requireChatGPTUser("/dashboard"),
-      (error) => {
-        assert.equal(error.digest, "NEXT_REDIRECT");
-        assert.match(error.message, /\/signin-with-chatgpt\?return_to=/);
-        return true;
-      },
+  await assert.rejects(() => requireChatGPTUser("/dashboard"), (error) => {
+    assert.notEqual(
+      error.digest,
+      "NEXT_REDIRECT",
+      "沒有可用的身分來源時不得再轉址：登入回來仍然沒有身分，就是無限轉址",
     );
+    assert.match(error.message, /authentication is not configured/i);
+    return true;
   });
+});
+
+// The strip is the other half of that contract: if it regressed, a forged identity
+// would reach the app. Pin it by observing the headers the app router receives.
+test("worker strips oai-authenticated-* before the app router sees the request", async () => {
+  const { default: worker } = await import("../worker/index.ts");
+  const response = await worker.fetch(
+    new Request("http://localhost/", {
+      headers: { accept: "text/html", ...FORGED_IDENTITY },
+    }),
+    { ASSETS: undefined, DB: undefined },
+    { waitUntil() {}, passThroughOnException() {} },
+  );
+  assert.equal(response.status, 200);
+  const seen = await response.json();
+  assert.ok(
+    !seen.some((name) => name.toLowerCase().startsWith("oai-authenticated-")),
+    `worker 沒有剝離身分標頭，應用程式會收到：${seen.join(", ")}`,
+  );
+  assert.ok(seen.includes("accept"), "worker 不得順手丟掉正常請求標頭");
 });

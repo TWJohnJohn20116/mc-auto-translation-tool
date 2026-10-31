@@ -3,6 +3,7 @@ package org.universaltranslator.fabric.mixin;
 import net.minecraft.client.gui.GameGui;
 import net.minecraft.client.render.Window;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -18,11 +19,19 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  */
 @Mixin(GameGui.class)
 abstract class InGameHudStatusIndicatorMixin {
+    /**
+     * True once the HUD-tail injection has run at least once, which means the {@code renderHotbar}
+     * fallback below would only paint the same pixels a second time.
+     */
+    @Unique
+    private boolean universalTranslator$hudTailActive;
+
     // require = 1: this is the primary entry point for the indicator on 1.6.1-1.7.10, so a mapping
     // change must fail at class load instead of silently drawing nothing. The renderHotbar hook
     // below stays require = 0 for the reason in the class comment.
     @Inject(method = "render(FZII)V", at = @At("RETURN"), require = 1)
     private void universalTranslator$renderStatusIndicatorLegacy(float delta, boolean flag, int width, int height, CallbackInfo callback) {
+        universalTranslator$hudTailActive = true;
         HudIndicatorOverlay.render(width, height);
     }
 
@@ -31,6 +40,10 @@ abstract class InGameHudStatusIndicatorMixin {
         if (window == null) {
             return;
         }
-        HudIndicatorOverlay.render((int) window.getScaledWidth(), (int) window.getScaledHeight());
+        // Only while the HUD tail above has not drawn yet: two passes over the same pixels read as a
+        // bolder, darker label than every other version draws.
+        if (!universalTranslator$hudTailActive) {
+            HudIndicatorOverlay.render((int) window.getScaledWidth(), (int) window.getScaledHeight());
+        }
     }
 }

@@ -43,6 +43,7 @@ public final class CoreSelfTest {
         stylesCompletedTranslations();
         plansPerRunStyling();
         validatesSmallModelOutputs();
+        roundTripsTheCustomPromptEditor();
         preservesRecentUserMessages();
         cachesDynamicTemplates();
         deduplicatesConcurrentRequests();        deduplicatesRefreshedProtectedLiterals();
@@ -586,6 +587,18 @@ public final class CoreSelfTest {
         assertEquals("Hello __UT_999__ world", text.getOriginal());
         java.util.List<?> segments = text.getSegments();
         assertFalse(segments.isEmpty());
+        // The generator, the parser and the leak detector share one grammar
+        // (ProtectedText.TOKEN_SOURCE), so the token the generator writes has to be the token the
+        // detector sees. Two copies let a rewrite of the spelling turn the detector into a silent
+        // no-op: a echoed token then passed validation and was cached.
+        ProtectedText generated = ProtectedText.parse("123");
+        String token = generated.getTemplate();
+        assertTrue(token.startsWith(ProtectedText.TOKEN_PREFIX));
+        assertTrue(token.endsWith(ProtectedText.TOKEN_SUFFIX));
+        assertTrue(TranslationOutputValidator.containsInternalArtifact(token));
+        assertTrue(TranslationOutputValidator.containsInternalArtifact(
+                token.toLowerCase(java.util.Locale.ROOT)));
+        assertEquals("123", generated.restore(token));
     }
 
     private static void handlesJsonStrings() {
@@ -638,6 +651,10 @@ public final class CoreSelfTest {
                 provider, "auto", "zh-CN", 100, 1)) {
             java.util.List<String> original = Arrays.asList("Players online", "Coins");
             assertEquals(original, session.lookupLines(original, TextKind.TOOLTIP));
+            // The same answer is shared by several frames, so it must not be editable: the first
+            // frame used to hand back a mutable list and a memo hit an unmodifiable one, so a caller
+            // that edited the result kept working for one frame and threw from the next.
+            assertReadOnly(session.lookupLines(original, TextKind.TOOLTIP));
             long deadline = System.currentTimeMillis() + 2000L;
             java.util.List<String> translated;
             do {
@@ -645,8 +662,21 @@ public final class CoreSelfTest {
                 translated = session.lookupLines(original, TextKind.TOOLTIP);
             } while (original.equals(translated) && System.currentTimeMillis() < deadline);
             assertEquals(Arrays.asList("在线玩家", "金币"), translated);
+            assertReadOnly(translated);
             assertEquals(1, provider.calls.get());
         }
+    }
+
+    /** Asserts that a list handed to a render bridge cannot be edited by it. */
+    private static void assertReadOnly(java.util.List<String> lines) {
+        boolean rejected;
+        try {
+            lines.set(0, "mutated");
+            rejected = false;
+        } catch (UnsupportedOperationException expected) {
+            rejected = true;
+        }
+        assertTrue(rejected);
     }
 
     private static void exposesRenderTranslationFailures() throws Exception {
@@ -1149,6 +1179,25 @@ public final class CoreSelfTest {
         assertFalse(multiLine.getTemplate().contains("\u2022"));
         assertEquals("\u2022 \u52dd\u5229: 0\n\u2022 \u5931\u6557: 1",
                 multiLine.restore("__UT_0__\u52dd\u5229: __UT_1__\n__UT_2__\u5931\u6557: __UT_3__"));
+        // A scoreboard and a tab list put a formatting code or an indent in front of the bullet. The
+        // bullet branch was anchored at the very first character of the line, so "§7◆" was split into
+        // a format code plus an unprotected decoration glyph that the model could replace.
+        String[] decoratedBullets = {
+                "\u00a77\u25c6 Wins: 0",
+                " \u25c6 Wins: 0",
+                "Wins: 0\n\u00a7e\u25c6 Losses: 1"
+        };
+        for (int index = 0; index < decoratedBullets.length; index++) {
+            ProtectedText decorated = ProtectedText.parse(decoratedBullets[index]);
+            assertFalse(decorated.getTemplate().contains("\u25c6"));
+            assertEquals(decoratedBullets[index], decorated.restore(decorated.getTemplate()));
+        }
+        // The placeholder branch has to win over the bullet branch: "\u00a77%player%" is a format code
+        // and a placeholder, not a format code plus a decoration run that eats the "%".
+        ProtectedText codeAndPlaceholder = ProtectedText.parse("\u00a77%player%");
+        assertEquals("\u00a77%player%",
+                codeAndPlaceholder.restore(codeAndPlaceholder.getTemplate()));
+        assertFalse(codeAndPlaceholder.getTemplate().contains("player"));
     }
 
     private static void skipsAlreadyChineseAndNonTextValues() {
@@ -1317,6 +1366,23 @@ public final class CoreSelfTest {
                 "Minecraft server interface text from auto to zh-CN. Return only the translation. __UT_0__"));
         assertThrows(IllegalArgumentException.class, () -> TranslationOutputValidator.requireValid(
                 "Welcome", "游戏服务器界面文本从自动翻译为中文，不要解释"));
+        // "翻译引擎" is how a model correctly renders "Translation Engine", so it must not be read as an
+        // echoed instruction: a rejected line fails, retries every thirty seconds and never shows a
+        // translation at all.
+        assertEquals("翻译引擎", TranslationOutputValidator.requireValid(
+                "Translation engine", "翻译引擎"));
+        assertEquals("翻译引擎", TranslationOutputValidator.requireDisplaySafe(
+                "Translation engine", "翻译引擎"));
+        // An answer identical to its source is a provider that did nothing. Accepting it cached the
+        // source as that line's own translation and repainted it in the translated colour.
+        assertThrows(IllegalArgumentException.class, () -> TranslationOutputValidator.requireValid(
+                "Welcome aboard", "Welcome aboard"));
+        // ... while an identical Han answer is a real translation, and a short reply is a real answer.
+        assertEquals("日本語", TranslationOutputValidator.requireValid("日本語", "日本語"));
+        assertEquals("OK", TranslationOutputValidator.requireValid("OK", "OK"));
+        // A lone token is carried over verbatim often enough that judging it would reject real
+        // translations and put the line into the retry loop for good.
+        assertEquals("VIP", TranslationOutputValidator.requireValid("VIP", "VIP"));
         // A restored protected value may itself look like an internal token: a player is allowed to
         // be named __UT_0__, and the segment path never sends tokens to a provider, so the
         // two-argument form has to accept the value it just restored.
@@ -1338,8 +1404,38 @@ public final class CoreSelfTest {
         assertThrows(IllegalArgumentException.class,
                 () -> TranslationOutputValidator.requireValid("OK", "\u3000\u3000"));
         assertEquals("你好", TranslationOutputValidator.requireValid("Welcome back", "你好"));
+        // The prompt promises the same number of lines, so a reply that lost one is a lost line in the
+        // item description or the book page, kept for good once it is cached.
+        assertThrows(IllegalArgumentException.class, () -> TranslationOutputValidator.requireValid(
+                "line one\nline two\nline three", "第一行\n第二行"));
+        assertThrows(IllegalArgumentException.class,
+                () -> TranslationOutputValidator.requireDisplaySafe("line one\nline two", "第一行"));
+        assertEquals("第一行\n第二行\n第三行", TranslationOutputValidator.requireValid(
+                "line one\nline two\nline three", "第一行\n第二行\n第三行"));
         assertFalse(LanguageHeuristics.shouldTranslate(
                 "Minecraft server interface text from auto to zh-CN", "zh-CN"));
+    }
+
+    private static void roundTripsTheCustomPromptEditor() {
+        // The editor shows the escaped form, so one bound has to cover the stored prompt and another the
+        // field: sizing the field with the stored limit made the widget cut the escaped text and the
+        // next save wrote the cut version back, which lost half of a multi-line prompt without a word.
+        String stored = "line one\r\nline two \\n literal";
+        assertEquals(stored,
+                TranslationPrompt.fromEditorText(TranslationPrompt.toEditorText(stored)));
+        String overlong = repeat("a", UiLimits.PROMPT_MAX_CHARS + 10);
+        assertEquals(UiLimits.PROMPT_MAX_CHARS, TranslationPrompt.clampForEditor(overlong).length());
+        // The settings file is a second way in, and it has no text field: the bound has to hold there
+        // too, otherwise every request copies and bills the whole stored prompt.
+        assertEquals(UiLimits.PROMPT_MAX_CHARS,
+                new TranslationPrompt.Settings(null, overlong).customSystemPrompt().length());
+        assertTrue(TranslationPrompt.toEditorText(TranslationPrompt.clampForEditor(overlong)).length()
+                <= UiLimits.PROMPT_EDITOR_MAX_CHARS);
+        // The cut must not land between the halves of a surrogate pair.
+        String splitPair = repeat("a", UiLimits.PROMPT_MAX_CHARS - 1) + "\ud83d\ude00" + "tail";
+        String clampedPair = TranslationPrompt.clampForEditor(splitPair);
+        assertEquals(UiLimits.PROMPT_MAX_CHARS - 1, clampedPair.length());
+        assertFalse(Character.isHighSurrogate(clampedPair.charAt(clampedPair.length() - 1)));
     }
 
     private static void preservesRecentUserMessages() {

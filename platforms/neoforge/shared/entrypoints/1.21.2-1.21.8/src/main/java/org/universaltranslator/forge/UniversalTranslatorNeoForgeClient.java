@@ -31,20 +31,6 @@ public final class UniversalTranslatorNeoForgeClient {
     private static boolean connectedLastTick;
     private static int joinHintTicks = -1;
     private static boolean resendingTranslatedMessage;
-    /**
-     * Writes the configuration file away from the client tick thread.
-     *
-     * <p>The tick handler is the client's render thread: {@code save()} there is a delete, a create,
-     * a buffered write and a move, and on Windows an on-access virus scanner turns those into tens of
-     * milliseconds of frozen frame. Daemon thread, because a pending write must never hold the JVM
-     * open, and the runtime has already been switched to the new configuration by the time it runs.
-     */
-    private static final java.util.concurrent.ExecutorService CONFIG_WRITER =
-            java.util.concurrent.Executors.newSingleThreadExecutor(task -> {
-                Thread thread = new Thread(task, "universal-translator-config-writer");
-                thread.setDaemon(true);
-                return thread;
-            });
 
     private UniversalTranslatorNeoForgeClient() {
     }
@@ -56,8 +42,8 @@ public final class UniversalTranslatorNeoForgeClient {
      * check) on the tick thread; after startup the runtime already holds the same values.
      */
     private static ForgeConfig liveConfig() throws java.io.IOException {
-        ForgeConfig live = ForgeTranslationRuntime.diagnosticsConfig();
-        return live != null ? live : ForgeConfig.load(FMLPaths.CONFIGDIR.get());
+        // One implementation for every Forge-family tree; see ForgeConfig.liveOrLoad.
+        return ForgeConfig.liveOrLoad(FMLPaths.CONFIGDIR.get());
     }
 
     private static void loadConfig() {
@@ -171,15 +157,12 @@ public final class UniversalTranslatorNeoForgeClient {
             }
             ForgeTranslationRuntime.initialize(updated);
             ForgeRuntimeStatusNotifier.reset();
-            CONFIG_WRITER.execute(() -> {
-                try {
-                    updated.save();
-                } catch (Exception failure) {
-                    UniversalTranslatorNeoForgeMod.LOGGER.error(
-                            "Could not save MC Auto Translation Tool settings", failure);
-                    client.execute(() -> client.gui.setOverlayMessage(
-                            Component.translatable("message.universal_translator.toggle_failed"), false));
-                }
+            // Queued on the shared daemon writer instead of a per-client executor.
+            ForgeConfigWriter.saveOffTick(updated, failure -> {
+                UniversalTranslatorNeoForgeMod.LOGGER.error(
+                        "Could not save MC Auto Translation Tool settings", failure);
+                client.execute(() -> client.gui.setOverlayMessage(
+                        Component.translatable("message.universal_translator.toggle_failed"), false));
             });
             client.gui.setOverlayMessage(
                     Component.translatable(

@@ -15,6 +15,7 @@ import org.universaltranslator.core.HudIndicatorVisibility;
 import org.universaltranslator.core.OutgoingTranslationPreview;
 import org.universaltranslator.core.TranslationActivity;
 import org.universaltranslator.forge.ForgeTranslationRuntime;
+import org.universaltranslator.forge.HudStatusLabels;
 import org.universaltranslator.forge.TranslationRenderContext;
 
 /**
@@ -116,7 +117,7 @@ abstract class InGameHudStatusIndicatorMixin {
             try {
                 graphics.drawCenteredString(
                         font,
-                        net.minecraft.network.chat.Component.literal(outgoingPreview),
+                        HudStatusLabels.label(outgoingPreview),
                         previewCenterX, previewY, 0xFFFFFFFF);
             } finally {
                 TranslationRenderContext.popTextInput();
@@ -134,12 +135,10 @@ abstract class InGameHudStatusIndicatorMixin {
                 label = quickSettings.getProvider();
             } else if (content == HudIndicatorContent.ACTIVITY
                     && TranslationActivity.isTranslating()) {
-                label = net.minecraft.network.chat.Component.translatable(
-                        "value.universal_translator.hud_content.activity").getString();
+                label = HudStatusLabels.activity();
             }
             if (label != null && !label.isEmpty()) {
-                net.minecraft.network.chat.Component text =
-                        net.minecraft.network.chat.Component.literal(label);
+                net.minecraft.network.chat.Component text = HudStatusLabels.label(label);
                 // Measuring is inside the guard too: TextRenderer.getWidth is one of the hooked
                 // methods, so an unguarded width makes the label jump once a translation lands.
                 TranslationRenderContext.pushTextInput();

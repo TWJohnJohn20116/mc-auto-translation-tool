@@ -1078,8 +1078,12 @@ public final class ProviderSelfTest {
                     "Hello", "auto", "zh-TW", TextKind.CHAT), collector);
             // (b) the result is the whole translation, and the last partial is that same string.
             assertEquals("你好，世界", translated);
-            // (a) several partial texts arrived, each one carrying the text so far.
-            assertEquals(Arrays.asList("你", "你好，世", "你好，世界"), collector.snapshot());
+            // (a) the answer is published as it arrives — one step per PARTIAL_TEXT_STEP_CHARS
+            // rather than one callback per delta — and the preview still ends up complete.
+            List<String> partials = collector.snapshot();
+            assertFalse(partials.isEmpty());
+            assertTrue(partials.size() <= 3);
+            assertEquals("你好，世界", partials.get(partials.size() - 1));
             assertTrue(body.get().contains("\"stream\":true"));
         } finally {
             server.close();

@@ -47,6 +47,8 @@ public final class TranslationStats {
     private static final String PROVIDER_OVERFLOW = "other";
     private static final String PROVIDER_PREFIX = "provider.";
     private static final String FAILURE_PREFIX = "failure.";
+    /** Longs {@link #captureProviderFields} copies per provider, in {@link ProviderLine} order. */
+    private static final int PROVIDER_FIELDS = 7;
 
     public static final String REASON_AUTH = "auth";
     public static final String REASON_RATE_LIMIT = "rate-limit";
@@ -88,6 +90,12 @@ public final class TranslationStats {
      */
     private List<String> cachedLines;
     private long cachedLinesRevision = -1L;
+    /**
+     * Guarded by the path monitor of {@code file}, not by {@link #lock}: the newest {@link #revision}
+     * whose counters reached the disk. A flush that took its snapshot before a {@link #reset()} must
+     * not write those pre-reset totals back over the zeros.
+     */
+    private long writtenRevision = -1L;
     private volatile Path file;
     private volatile boolean flusherStarted;
 
@@ -141,6 +149,9 @@ public final class TranslationStats {
         if (replaced) {
             DebugLog.global().log("stats-attach", "result", "replaced");
         }
+        // Same cleanup point as reset(): the display lines cached from the previous file or from the
+        // previous language must not survive the switch.
+        invalidateLocalizedLines();
         load(statisticsFile);
         startFlusher();
     }
@@ -265,7 +276,11 @@ public final class TranslationStats {
      *
      * @param providerId provider id, or {@code null} for the unknown bucket
      * @param responseBody raw response body, possibly {@code null}
+     * @deprecated only for a caller that has no parsed body. A provider that already parsed the
+     *     response pays for a second full parse of a multi-kilobyte batch answer here, so it should
+     *     hand its parsed root to {@link #recordParsedUsage(String, Object)}.
      */
+    @Deprecated
     public void recordUsage(String providerId, String responseBody) {
         if (responseBody == null) {
             return;
@@ -276,10 +291,25 @@ public final class TranslationStats {
         } catch (RuntimeException malformed) {
             return;
         }
-        if (!(root instanceof Map)) {
+        recordParsedUsage(providerId, root);
+    }
+
+    /**
+     * Adds the token counts of a response a provider has already parsed.
+     *
+     * <p>Every LLM provider parses the body into a map before it can take the translation out of it,
+     * so a provider holding that map can hand it over here and pay for one parse instead of two. The
+     * protocol-specific names stay in this class instead of being repeated by every provider.
+     *
+     * @param providerId provider id, or {@code null} for the unknown bucket
+     * @param parsedRoot the body as returned by {@code JsonStrings.parse}; anything that is not a map,
+     *     or carries no token counts, adds nothing
+     */
+    public void recordParsedUsage(String providerId, Object parsedRoot) {
+        if (!(parsedRoot instanceof Map)) {
             return;
         }
-        Map<?, ?> object = (Map<?, ?>) root;
+        Map<?, ?> object = (Map<?, ?>) parsedRoot;
         long prompt = 0L;
         long completion = 0L;
         Object usage = object.get("usage");
@@ -294,17 +324,7 @@ public final class TranslationStats {
             prompt = number(values.get("promptTokenCount"), null);
             completion = number(values.get("candidatesTokenCount"), null);
         }
-        if (prompt <= 0L && completion <= 0L) {
-            return;
-        }
-        synchronized (lock) {
-            promptTokens += prompt;
-            completionTokens += completion;
-            ProviderCounters counters = counters(providerId);
-            counters.promptTokens += prompt;
-            counters.completionTokens += completion;
-            revision++;
-        }
+        recordUsage(providerId, prompt, completion);
     }
 
     /**
@@ -351,6 +371,7 @@ public final class TranslationStats {
             completionTokens = 0L;
             revision++;
         }
+        invalidateLocalizedLines();
         flush();
     }
 
@@ -365,17 +386,28 @@ public final class TranslationStats {
     private static final ConcurrentHashMap<String, Object> PATH_LOCKS =
             new ConcurrentHashMap<String, Object>();
 
-    /** Writes the counters out. Never throws: statistics must not be able to break a translation. */
+    /**
+     * Writes the counters out. Never throws: statistics must not be able to break a translation.
+     *
+     * <p>The counters are read before the path monitor is taken, so the revision they were read at
+     * travels into that monitor with them: a flush that snapshotted before a {@link #reset()} finds
+     * a newer {@link #writtenRevision} and gives up instead of putting the deleted totals back.
+     */
     public void flush() {
         Path target = file;
         if (target == null) {
             return;
         }
         Properties properties;
+        long snapshotRevision;
         synchronized (lock) {
+            snapshotRevision = revision;
             properties = toProperties();
         }
         synchronized (lockFor(target)) {
+            if (snapshotRevision < writtenRevision) {
+                return;
+            }
             Path temporary = null;
             try {
                 // A unique name per attempt: a shared ".tmp" is what allowed one writer to truncate
@@ -392,6 +424,7 @@ public final class TranslationStats {
                     Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
                 }
                 temporary = null;
+                writtenRevision = snapshotRevision;
             } catch (IOException | RuntimeException failed) {
                 // Not a translation failure, but no longer invisible: a statistics file that never
                 // lands used to be indistinguishable from one that was simply not due yet.
@@ -436,17 +469,21 @@ public final class TranslationStats {
         long rejectedTotal;
         long promptTotal;
         long completionTotal;
-        long[] samples;
-        List<ProviderLine> lines;
-        Map<String, Long> reasons;
+        String[] reasonKeys;
+        long[] reasonValues;
+        String[] providerIds;
+        long[] providerFields;
+        int sampleCount;
         synchronized (lock) {
             Snapshot cached = cachedSnapshot;
             if (cached != null && cachedRevision == revision) {
                 return cached;
             }
-            // Only the state the workers own is read here. The view itself is assembled below,
-            // outside the monitor, so a diagnostics screen that asks while translations are running
-            // no longer stops every worker for the length of the boxing and map building.
+            // Only the state the workers own is copied out here, into arrays of primitives and
+            // string references. The view itself -- the boxed reason map, the provider lines and the
+            // sample copy -- is assembled below, outside the monitor, so a diagnostics screen that
+            // asks while translations are running no longer stops every worker for the length of
+            // that boxing and object allocation.
             builtRevision = revision;
             requestTotal = requests;
             successTotal = successes;
@@ -456,10 +493,28 @@ public final class TranslationStats {
             rejectedTotal = rejected;
             promptTotal = promptTokens;
             completionTotal = completionTokens;
-            reasons = new LinkedHashMap<String, Long>(failuresByReason);
-            lines = buildProviderLines();
-            samples = Arrays.copyOf(latencySamples, latencyCount);
+            reasonKeys = new String[failuresByReason.size()];
+            reasonValues = new long[reasonKeys.length];
+            int reasonIndex = 0;
+            for (Map.Entry<String, Long> entry : failuresByReason.entrySet()) {
+                reasonKeys[reasonIndex] = entry.getKey();
+                reasonValues[reasonIndex] = entry.getValue().longValue();
+                reasonIndex++;
+            }
+            providerIds = new String[providers.size()];
+            providerFields = new long[providers.size() * PROVIDER_FIELDS];
+            captureProviderFields(providerIds, providerFields);
+            sampleCount = latencyCount;
         }
+        Map<String, Long> reasons = new LinkedHashMap<String, Long>(reasonKeys.length * 2 + 1);
+        for (int index = 0; index < reasonKeys.length; index++) {
+            reasons.put(reasonKeys[index], Long.valueOf(reasonValues[index]));
+        }
+        List<ProviderLine> lines = providerLines(providerIds, providerFields);
+        // Copied outside the monitor: the ring is a fixed-length array and the count only grows, so a
+        // sample recorded during the copy is simply one of the newer measurements. Copying it under
+        // the monitor put a four kilobyte allocation on the same lock every worker settles under.
+        long[] samples = Arrays.copyOf(latencySamples, Math.min(sampleCount, LATENCY_SAMPLE_CAPACITY));
         Snapshot built = new Snapshot(requestTotal, successTotal, failureTotal, hitTotal, missTotal,
                 rejectedTotal, promptTotal, completionTotal, reasons, lines, samples);
         synchronized (lock) {
@@ -473,14 +528,38 @@ public final class TranslationStats {
         return built;
     }
 
-    /** One immutable line per provider; must be called with {@link #lock} held. */
-    private List<ProviderLine> buildProviderLines() {
-        List<ProviderLine> lines = new ArrayList<ProviderLine>(providers.size());
+    /**
+     * Copies the per-provider counters into two parallel arrays; must be called with {@link #lock}
+     * held.
+     *
+     * <p>{@code ids} holds {@code providers.size()} references and {@code fields} seven longs per
+     * provider, in {@link ProviderLine} order, so the immutable lines can be built after the monitor
+     * has been released.
+     */
+    private void captureProviderFields(String[] ids, long[] fields) {
+        int index = 0;
         for (Map.Entry<String, ProviderCounters> entry : providers.entrySet()) {
             ProviderCounters counters = entry.getValue();
-            lines.add(new ProviderLine(entry.getKey(), counters.requests, counters.successes,
-                    counters.failures, counters.latencySum, counters.latencyCount,
-                    counters.promptTokens, counters.completionTokens));
+            ids[index] = entry.getKey();
+            int base = index * PROVIDER_FIELDS;
+            fields[base] = counters.requests;
+            fields[base + 1] = counters.successes;
+            fields[base + 2] = counters.failures;
+            fields[base + 3] = counters.latencySum;
+            fields[base + 4] = counters.latencyCount;
+            fields[base + 5] = counters.promptTokens;
+            fields[base + 6] = counters.completionTokens;
+            index++;
+        }
+    }
+
+    /** One immutable line per provider, built from the arrays {@link #captureProviderFields} filled. */
+    private static List<ProviderLine> providerLines(String[] ids, long[] fields) {
+        List<ProviderLine> lines = new ArrayList<ProviderLine>(ids.length);
+        for (int index = 0; index < ids.length; index++) {
+            int base = index * PROVIDER_FIELDS;
+            lines.add(new ProviderLine(ids[index], fields[base], fields[base + 1], fields[base + 2],
+                    fields[base + 3], fields[base + 4], fields[base + 5], fields[base + 6]));
         }
         return lines;
     }
@@ -494,17 +573,28 @@ public final class TranslationStats {
     public List<String> localizedLines(UiTranslator translator) {
         UiTranslator ui = translator == null ? (key, arguments) -> key : translator;
         long buildRevision;
+        List<String> cached;
+        long cachedVersion;
         synchronized (lock) {
-            if (cachedLines != null && cachedLinesRevision == revision) {
-                return cachedLines;
-            }
             buildRevision = revision;
+            cached = cachedLines;
+            cachedVersion = cachedLinesRevision;
         }
         Snapshot snapshot = snapshot();
-        List<String> lines = new ArrayList<String>(6);
-        lines.add(ui.translate("screen.universal_translator.stats.totals",
+        String totals = ui.translate("screen.universal_translator.stats.totals",
                 Long.valueOf(snapshot.requests()), Long.valueOf(snapshot.successes()),
-                Long.valueOf(snapshot.failures())));
+                Long.valueOf(snapshot.failures()));
+        if (cached != null && cachedVersion == buildRevision && !cached.isEmpty()
+                && cached.get(0).equals(totals)) {
+            // The counters did not move and the first line still resolves to the same text, so the
+            // language did not change either: a language switch moves no counter, and rebuilding is
+            // only due once the wording actually differs. One rebuilt line is one lookup against the
+            // five this cache exists to avoid, and it keeps the reuse correct even on a platform that
+            // does not call invalidateLocalizedLines() when its resources reload.
+            return cached;
+        }
+        List<String> lines = new ArrayList<String>(6);
+        lines.add(totals);
         lines.add(ui.translate("screen.universal_translator.stats.cache",
                 Long.valueOf(snapshot.cacheHits()), Long.valueOf(snapshot.cacheMisses()),
                 snapshot.cacheHitRate()));
@@ -533,6 +623,20 @@ public final class TranslationStats {
             }
         }
         return lines;
+    }
+
+    /**
+     * Drops the cached display lines.
+     *
+     * <p>The lines are cached by counter revision, and the text they carry also depends on the game
+     * language, which moves no counter. A platform calls this when its resources reload after a
+     * language change so the diagnostics page does not keep serving the previous language.
+     */
+    public void invalidateLocalizedLines() {
+        synchronized (lock) {
+            cachedLines = null;
+            cachedLinesRevision = -1L;
+        }
     }
 
     /** The statistics as plain lines, for the exported diagnostics report. */

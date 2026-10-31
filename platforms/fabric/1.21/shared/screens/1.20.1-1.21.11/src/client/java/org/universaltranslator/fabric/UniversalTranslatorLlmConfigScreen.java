@@ -10,7 +10,6 @@ import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.text.Text;
 import org.universaltranslator.core.provider.OpenAiModelCatalog;
-import org.universaltranslator.core.FocusHelper;
 
 /** Local-only editor for an OpenAI-compatible hosted or loopback LLM endpoint. */
 final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorLlmConfigScreenBase {
@@ -114,7 +113,7 @@ int width = Math.max(180, Math.min(360, this.width - 20));
                 ? parent.llmApiKey() : ("-".equals(enteredKey) ? "" : enteredKey);
         fetching = true;
         setStatus(tr("screen.universal_translator.llm.fetching"), false);
-        Thread worker = new Thread(() -> {
+        ScreenWorkerPool.execute(() -> {
             List<String> models = Collections.emptyList();
             String failure = "";
             try {
@@ -141,9 +140,7 @@ int width = Math.max(180, Math.min(360, this.width - 20));
             // while init() rebuilt them on every resize, so the guard landed on dead instances (and
             // the fresh ones stayed focused, collecting what was typed over the overlay).
             setStatus("", false);
-        }, "universal-translator-model-list");
-        worker.setDaemon(true);
-        worker.start();
+        });
     }
 
     private void setStatus(String message, boolean error) {
@@ -179,25 +176,40 @@ int width = Math.max(180, Math.min(360, this.width - 20));
         if (modelListOpen) {
             releaseFieldFocus();
             renderModelList(context, mouseX, mouseY);
+        } else {
+            restoreFieldEditing();
         }
     }
 
     /**
-     * Drops focus from the form while the picker covers it.
+     * Keeps the form from collecting characters while the picker covers it.
      *
      * <p>Applied on every frame the overlay is open rather than once when the list arrives: a resize
      * rebuilds the three fields in {@code init()}, and a one-shot call left the fresh instances
-     * focused, so the characters typed over the overlay went into the hidden API key field again.
+     * accepting input, so the characters typed over the overlay went into the hidden API key field
+     * again.
+     *
+     * <p>Clearing a field's own focus needs an accessor the game renames at runtime, so the
+     * reflective call this used to make found nothing and did not guard anything. The editability
+     * switch exists on every generation and stops the characters at the field itself;
+     * {@link #restoreFieldEditing()} hands it back when the picker closes.
      */
     private void releaseFieldFocus() {
-        if (endpoint != null) {
-            FocusHelper.clear(endpoint);
-        }
-        if (model != null) {
-            FocusHelper.clear(model);
-        }
-        if (apiKey != null) {
-            FocusHelper.clear(apiKey);
+        setFieldEditing(endpoint, false);
+        setFieldEditing(model, false);
+        setFieldEditing(apiKey, false);
+    }
+
+    /** Gives the form its editing back once the picker is gone. */
+    private void restoreFieldEditing() {
+        setFieldEditing(endpoint, true);
+        setFieldEditing(model, true);
+        setFieldEditing(apiKey, true);
+    }
+
+    private static void setFieldEditing(TextFieldWidget field, boolean editable) {
+        if (field != null) {
+            field.setEditable(editable);
         }
     }
 

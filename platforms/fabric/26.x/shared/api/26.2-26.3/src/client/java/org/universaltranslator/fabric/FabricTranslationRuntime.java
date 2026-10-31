@@ -19,7 +19,8 @@ import java.util.concurrent.CompletableFuture;
  *
  * <p>The body lives in {@link FabricTranslationRuntimeBase}; this file only answers the six
  * platform questions for this generation and forwards the unchanged static entry points. From
- * 26.2 the screen accessor moved to {@code client.gui.screen()}.
+ * 26.2 the screen accessor moved to {@code client.gui.screen()}, which is the single line kept in
+ * {@link FabricScreenOpener}.
  */
 public final class FabricTranslationRuntime {
     private static final Impl INSTANCE = new Impl();
@@ -108,7 +109,7 @@ public final class FabricTranslationRuntime {
     private static final class Impl extends FabricTranslationRuntimeBase {
         @Override
         protected Object currentScreen() {
-            return Minecraft.getInstance().gui.screen();
+            return FabricScreenOpener.currentScreen(Minecraft.getInstance());
         }
 
         @Override

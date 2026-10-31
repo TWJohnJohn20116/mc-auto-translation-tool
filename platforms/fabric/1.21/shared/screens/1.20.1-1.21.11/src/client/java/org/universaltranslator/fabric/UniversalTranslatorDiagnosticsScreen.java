@@ -253,7 +253,7 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
     private void exportLog() {
         final List<String> lines = diagnosticsLines();
         final String exported = tr("screen.universal_translator.diagnostics.exported");
-        runExport("universal-translator-diagnostics-export", tr(
+        runExport(tr(
                 "screen.universal_translator.diagnostics.export_failed"), new ExportJob() {
             @Override
             public String run() throws Exception {
@@ -276,7 +276,7 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
         }
         final Path configFile = config.configFile();
         final List<String> lines = diagnosticsLines();
-        runExport("universal-translator-diagnostics-bundle", tr(
+        runExport(tr(
                 "screen.universal_translator.diagnostics.export_failed"), new ExportJob() {
             @Override
             public String run() throws Exception {
@@ -303,13 +303,13 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
      * screen did not interrupt it. The outcome is published back on the client thread; the buttons
      * go flat meanwhile so the same file cannot be written twice.
      */
-    private void runExport(String threadName, final String failureMessage, final ExportJob job) {
+    private void runExport(final String failureMessage, final ExportJob job) {
         if (exporting) {
             return;
         }
         exporting = true;
         refreshExportButtons();
-        Thread worker = new Thread(() -> {
+        ScreenWorkerPool.execute(() -> {
             String message;
             boolean failed;
             try {
@@ -334,9 +334,7 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
             } else {
                 publish.run();
             }
-        }, threadName);
-        worker.setDaemon(true);
-        worker.start();
+        });
     }
 
     @Override

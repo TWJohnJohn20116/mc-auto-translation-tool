@@ -1,5 +1,6 @@
 package org.universaltranslator.core.provider;
 
+import org.universaltranslator.core.DebugLog;
 import org.universaltranslator.core.TranslationOutputValidator;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationRequest;
@@ -74,13 +75,47 @@ public final class TencentTmtProvider implements TranslationProvider {
             throw BaiduTranslationProvider.providerError(
                     "Tencent TMT", response, "Code", "Message");
         }
-        String translated = JsonStrings.readStringField(response, "TargetText");
+        String translated = ProviderErrors.pathOrNull(
+                "Tencent TMT", response, "Response.TargetText");
         if (translated == null || translated.trim().isEmpty()) {
-            // No error, no text: a source of pure symbols or spaces has nothing to translate, which
-            // is not a failure and must not be reported as one.
+            // The reply is wrapped in "Response"; a relay that answers without the wrapper still
+            // carries the field, so the bare path is the second read.
+            translated = ProviderErrors.pathOrNull("Tencent TMT", response, "TargetText");
+        }
+        if (translated == null || translated.trim().isEmpty()) {
+            if (hasTranslatableContent(request.getText())) {
+                // No error object and no text for a text that has something to translate: the engine
+                // answered nothing. Returning the source here would write "the source is the
+                // translation" into the persistent cache, where it would be replayed for the rest of
+                // the installation without a single request being made.
+                throw BaiduTranslationProvider.providerError(
+                        "Tencent TMT", response, "Code", "Message");
+            }
+            // A source of pure symbols or spaces has nothing to translate, so the source really is
+            // the answer. The trace records it, because "returned the source" has to stay visible
+            // instead of looking like a translation.
+            DebugLog.global().logStreamEvent("tencent-tmt", "tmt-empty", request.getText().length());
             return request.getText();
         }
         return TranslationOutputValidator.requireValid(request.getText(), translated);
+    }
+
+    /**
+     * Whether a text carries anything a translation engine could change.
+     *
+     * <p>The line between "nothing to translate" and "the engine answered nothing" is exactly
+     * whether the source has a letter or a digit in it; punctuation, formatting markers and spaces
+     * are the same in every language.
+     */
+    private static boolean hasTranslatableContent(String text) {
+        for (int index = 0; index < text.length(); index++) {
+            int codePoint = text.codePointAt(index);
+            index += Character.charCount(codePoint) - 1;
+            if (Character.isLetterOrDigit(codePoint)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Whether the reply carries {@code Response.Error}. */

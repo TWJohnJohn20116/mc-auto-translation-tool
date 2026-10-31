@@ -202,6 +202,14 @@ tasks.register("releaseJar", Copy) {
 def normalizedReleaseJar = layout.buildDirectory.file(
         "release/mc-auto-translation-tool-forge-${gameVersion}-${project.version}.jar")
 
+// verify_release_jars.py derives its class-file ceiling from the published file name, and this
+// artifact is called mc-auto-translation-tool-forge-<mc version>-<mod version>.jar, which never
+// matches its RELEASE_JAR pattern — _expected_class_major() then returned null, so the Java 8/17 gate
+// was skipped for all four Forge modern targets. Stage a copy under the published name (same bytes;
+// build/release keeps its own name) and verify that.
+def stagedReleaseJar = layout.buildDirectory.file(
+        "verify-release/MCAutoTranslationTool-${project.version}-mc${gameVersion}-forge.jar")
+
 tasks.register("verifyBuiltJar", Exec) {
     group = "verification"
     description = "Validates the SRG-remapped Forge release JAR."
@@ -210,10 +218,16 @@ tasks.register("verifyBuiltJar", Exec) {
     inputs.file(rootProject.file("scripts/verify_release_jars.py"))
     doFirst {
         def pythonCmd = System.getProperty("os.name").toLowerCase().contains("windows") ? "python" : "python3"
+        def released = normalizedReleaseJar.get().asFile
+        def staged = stagedReleaseJar.get().asFile
+        staged.parentFile.mkdirs()
+        released.withInputStream { input ->
+            staged.withOutputStream { output -> output << input }
+        }
         commandLine(
                 pythonCmd,
                 rootProject.file("scripts/verify_release_jars.py"),
-                normalizedReleaseJar.get().asFile
+                staged
         )
     }
 }

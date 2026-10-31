@@ -18,9 +18,11 @@ interface ExecutionContext {
 // `env.IMAGES` interception here would throw on every request; leave the
 // built-in passthrough in place.
 
-// `app/chatgpt-auth.ts` treats these as a platform-injected identity, which is
-// only true once the edge has stripped whatever the client sent: otherwise a
-// caller can forge a user id and email with two request headers.
+// Identity headers are stripped here rather than trusted: otherwise a caller can
+// forge a user id and an email with two request headers. `app/chatgpt-auth.ts`
+// therefore refuses to read an identity at all (it throws AUTH_NOT_CONFIGURED)
+// instead of reporting `null` for every request — these two files describe one
+// decision, so change them together.
 const IDENTITY_HEADER_PREFIX = "oai-authenticated-";
 
 // The site's only interactive element is a download button, so it must not be

@@ -8,7 +8,6 @@ import org.universaltranslator.core.net.EndpointPolicy;
 import org.universaltranslator.core.net.HttpJsonClient;
 import org.universaltranslator.core.net.JsonStrings;
 
-import java.io.IOException;
 import java.net.URI;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -67,7 +66,7 @@ public final class YoudaoTranslationProvider implements TranslationProvider {
                 Collections.<String, String>emptyMap());
         // errorCode is checked first: a warning code can come back with a translation array, and
         // "the text happened to be there" is not the same as "the request succeeded".
-        String errorCode = JsonStrings.readStringField(response, "errorCode");
+        String errorCode = ProviderErrors.pathOrNull("Youdao", response, "errorCode");
         if (errorCode != null && !errorCode.trim().isEmpty() && !"0".equals(errorCode.trim())) {
             throw BaiduTranslationProvider.providerError(
                     "Youdao", response, "errorCode", "msg");
@@ -77,10 +76,10 @@ public final class YoudaoTranslationProvider implements TranslationProvider {
             translated = parseTranslatedText(response);
         } catch (IllegalArgumentException malformed) {
             // The reply is not the provider's document at all, which another attempt can answer
-            // differently; the reader's own exception is a deterministic failure to the retry policy.
-            IOException failure = ProviderErrors.unreadable("Youdao", response);
-            failure.initCause(malformed);
-            throw failure;
+            // differently. The reader's exception travels in the message rather than as the cause:
+            // the fallback decision reads an IllegalArgumentException inside the chain as "this
+            // request cannot succeed" and therefore refused exactly these failures.
+            throw ProviderErrors.unreadable("Youdao", response, malformed.getMessage());
         }
         if (translated == null || translated.trim().isEmpty()) {
             throw BaiduTranslationProvider.providerError(

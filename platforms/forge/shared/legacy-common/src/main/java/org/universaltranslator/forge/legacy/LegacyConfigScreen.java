@@ -194,9 +194,15 @@ final class LegacyConfigScreen extends GuiScreen {
 
     private FontRenderer renderer;
     private String status = "";
-    /** Result of the engine tab's connection test; written by its worker thread. */
-    private volatile String testStatus = "";
-    private volatile boolean testStatusIsError;
+    /**
+     * Result of the engine tab's connection test, written by its worker thread.
+     *
+     * <p>One reference rather than two independent fields: the message and its error flag are one
+     * line on screen, and a reader that picked up the new message next to the previous flag painted
+     * a failure in green (or the reverse). A single volatile reference publishes both at once, while
+     * the writer runs on a worker and {@code drawScreen()} reads it.
+     */
+    private volatile TestStatus testStatus = TestStatus.EMPTY;
     private volatile boolean testing;
     private volatile boolean fetchingModels;
     private volatile List<String> fetchedModels = Collections.emptyList();
@@ -321,7 +327,7 @@ final class LegacyConfigScreen extends GuiScreen {
         playerNamesButton = new GuiButton(PLAYER_NAMES, right, layout.contentRow(1), buttonWidth, 20, "");
         mixedTextButton = new GuiButton(MIXED_TEXT, left, layout.contentRow(2), totalWidth, 20, "");
         blockedKeywords = new GuiTextField(22, renderer, left, layout.contentRow(3), totalWidth, 20);
-        blockedKeywords.setMaxStringLength(4096);
+        blockedKeywords.setMaxStringLength(UiLimits.KEYWORDS_MAX_CHARS);
         blockedKeywords.setText(blockedKeywordsValue);
 
         buttonList.add(chatButton);
@@ -346,7 +352,7 @@ final class LegacyConfigScreen extends GuiScreen {
         checkSettingsButton = new GuiButton(CHECK_SETTINGS, left, engineRow(2), totalWidth, 20, "");
         fallbackButton = new GuiButton(FALLBACK, left, engineRow(2), totalWidth, 20, "");
         endpoint = new GuiTextField(21, renderer, left, engineRow(1), totalWidth, 20);
-        endpoint.setMaxStringLength(512);
+        endpoint.setMaxStringLength(UiLimits.ENDPOINT_MAX_CHARS);
         endpoint.setText(endpointValue);
 
         buttonList.add(providerButton);
@@ -372,12 +378,13 @@ final class LegacyConfigScreen extends GuiScreen {
         buttonList.add(batchSizeButton);
 
         String promptValue = customPrompt == null
-                ? TranslationPrompt.toEditorText(original.customSystemPrompt())
+                ? TranslationPrompt.toEditorText(
+                        TranslationPrompt.clampForEditor(original.customSystemPrompt()))
                 : customPrompt.getText();
         int promptApplyWidth = Math.max(48, buttonWidth - 24);
         customPrompt = new GuiTextField(PROMPT_FIELD, renderer, left, engineRow(4),
                 totalWidth - promptApplyWidth - gap, 20);
-        customPrompt.setMaxStringLength(UiLimits.PROMPT_MAX_CHARS);
+        customPrompt.setMaxStringLength(UiLimits.PROMPT_EDITOR_MAX_CHARS);
         customPrompt.setText(promptValue);
         applyPromptButton = new GuiButton(PROMPT_APPLY, right + buttonWidth - promptApplyWidth,
                 engineRow(4), promptApplyWidth, 20,
@@ -1281,11 +1288,13 @@ final class LegacyConfigScreen extends GuiScreen {
         if (messageY > height - 10) {
             messageY = height - 10;
         }
+        // Read the worker's result once, so the message and its colour come from the same write.
+        TestStatus engineTest = testStatus;
         if (!status.isEmpty()) {
             drawCenteredString(renderer, status, width / 2, messageY, 0xFFFF5555);
-        } else if (!testStatus.isEmpty()) {
-            drawCenteredString(renderer, testStatus, width / 2, messageY,
-                    testStatusIsError ? 0xFFFF5555 : 0xFF55FF55);
+        } else if (!engineTest.message.isEmpty()) {
+            drawCenteredString(renderer, engineTest.message, width / 2, messageY,
+                    engineTest.error ? 0xFFFF5555 : 0xFF55FF55);
         } else if (!runtimeStatus.isEmpty()) {
             drawCenteredString(renderer, runtimeStatus, width / 2, messageY,
                     cachedStatusIsFailure ? 0xFFFF5555 : 0xFF55FF55);
@@ -1455,7 +1464,7 @@ final class LegacyConfigScreen extends GuiScreen {
         final String keyValue = llmApiKey;
         fetchingModels = true;
         setTestStatus(tr("screen.universal_translator.llm.fetching"), false);
-        Thread worker = new Thread(() -> {
+        LegacyScreenWorkers.execute(() -> {
             OpenAiModelCatalog.Catalog catalog = null;
             String failure = "";
             try {
@@ -1481,9 +1490,7 @@ final class LegacyConfigScreen extends GuiScreen {
             modelListOpen = true;
             releaseFieldFocus();
             setTestStatus("", false);
-        }, "universal-translator-model-list");
-        worker.setDaemon(true);
-        worker.start();
+        });
     }
 
     /**
@@ -1501,7 +1508,7 @@ final class LegacyConfigScreen extends GuiScreen {
         final String keyValue = llmApiKey;
         testing = true;
         setTestStatus(tr("screen.universal_translator.engine.testing"), false);
-        Thread worker = new Thread(() -> {
+        LegacyScreenWorkers.execute(() -> {
             String message;
             boolean error;
             try {
@@ -1540,14 +1547,24 @@ final class LegacyConfigScreen extends GuiScreen {
             }
             testing = false;
             setTestStatus(message, error);
-        }, "universal-translator-connection-test");
-        worker.setDaemon(true);
-        worker.start();
+        });
+    }
+
+    /** One coherent "engine test" line: the message and the colour it is drawn in. */
+    private static final class TestStatus {
+        static final TestStatus EMPTY = new TestStatus("", false);
+
+        final String message;
+        final boolean error;
+
+        TestStatus(String message, boolean error) {
+            this.message = message == null ? "" : message;
+            this.error = error;
+        }
     }
 
     private void setTestStatus(String message, boolean error) {
-        testStatus = message;
-        testStatusIsError = error;
+        testStatus = new TestStatus(message, error);
     }
 
     private static String describe(Exception error) {

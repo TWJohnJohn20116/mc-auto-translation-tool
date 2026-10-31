@@ -1,5 +1,6 @@
 package org.universaltranslator.fabric.mixin;
 
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.hud.InGameHud;
 import net.minecraft.client.render.RenderTickCounter;
@@ -59,6 +60,12 @@ abstract class InGameHudStatusIndicatorMixin {
             case ALWAYS:
             default:
                 break;
+        }
+        // The injection sits at the RETURN of the HUD render, which still runs while F1 hides the
+        // HUD: without this the square and its label stayed on an otherwise empty screen and were
+        // painted over the chat and the hotbar, because RETURN is the last thing that happens.
+        if (MinecraftClient.getInstance().options.hudHidden) {
+            return;
         }
         HudIndicatorCorner corner = settings.getCorner();
         int margin = settings.getMargin();

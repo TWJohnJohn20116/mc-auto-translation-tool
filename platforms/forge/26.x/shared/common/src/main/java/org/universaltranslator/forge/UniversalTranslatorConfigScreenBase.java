@@ -140,9 +140,15 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     private Button targetLanguageButton;
     private Button outgoingTargetLanguageButton;
     private String status = "";
-    /** Result of the engine tab's connection test; written by its worker thread. */
-    private volatile String testStatus = "";
-    private volatile boolean testStatusIsError;
+    /**
+     * Result of the engine tab's connection test, written by its worker thread.
+     *
+     * <p>One reference rather than two independent fields: the message and its error flag are one
+     * line on screen, and a reader that picked up the new message next to the previous flag painted
+     * a failure in green (or the reverse). A single volatile reference publishes both at once, while
+     * the writer runs on a worker and the render pass reads it.
+     */
+    private volatile TestStatus testStatus = TestStatus.EMPTY;
     private volatile boolean testing;
     private volatile boolean fetchingModels;
     private volatile List<String> fetchedModels = Collections.emptyList();
@@ -267,6 +273,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
 
         targetLanguageButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
             openSelection = SettingsSelectionList.Kind.TARGET_LANGUAGE;
+            releaseFieldFocusForOverlay();
         }).bounds(layout.right, layout.contentRow(0), layout.buttonWidth, 20).build());
 
         displayButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
@@ -339,6 +346,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         // shared Save/Cancel row that the other tabs and the HUD preview depend on.
         providerButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
             openSelection = SettingsSelectionList.Kind.PROVIDER;
+            releaseFieldFocusForOverlay();
         }).bounds(left, engineRow(0), layout.totalWidth, 20).build());
 
         modelButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
@@ -356,7 +364,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                 fetchModels();
             } else {
                 modelListOpen = true;
-                releaseFieldFocusForModelList();
+                releaseFieldFocusForOverlay();
             }
         }).bounds(left, engineRow(1), layout.buttonWidth, 20).build());
 
@@ -411,13 +419,14 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         }).bounds(layout.right, engineRow(5), layout.buttonWidth, 20).build());
 
         String promptValue = customPrompt == null
-                ? TranslationPrompt.toEditorText(original.customSystemPrompt())
+                ? TranslationPrompt.toEditorText(
+                        TranslationPrompt.clampForEditor(original.customSystemPrompt()))
                 : customPrompt.getValue();
         int promptApplyWidth = Math.max(48, layout.buttonWidth - 24);
         this.customPrompt = addRenderableWidget(new EditBox(this.font, left, engineRow(4),
                 layout.totalWidth - promptApplyWidth - 8,
                 20, Component.translatable("screen.universal_translator.diagnostics.prompt")));
-        this.customPrompt.setMaxLength(UiLimits.PROMPT_MAX_CHARS);
+        this.customPrompt.setMaxLength(UiLimits.PROMPT_EDITOR_MAX_CHARS);
         this.customPrompt.setValue(promptValue);
         this.customPrompt.setHint(Component.translatable(
                 "screen.universal_translator.diagnostics.prompt_hint"));
@@ -434,6 +443,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
 
         outgoingTargetLanguageButton = addRenderableWidget(Button.builder(Component.empty(), button -> {
             openSelection = SettingsSelectionList.Kind.OUTGOING_LANGUAGE;
+            releaseFieldFocusForOverlay();
         }).bounds(layout.right, layout.contentRow(0), layout.buttonWidth, 20).build());
 
         // --- Tab 5: HUD (抬頭顯示) ---
@@ -818,6 +828,11 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
         applyPendingModelList();
+        if (overlayOwnsKeyboard()) {
+            // Re-asserted every frame: TAB or a click that lands under the painted overlay can put
+            // focus back on a field, and opening the overlay is only the first of those paths.
+            releaseFieldFocusForOverlay();
+        }
         Layout layout = layout();
         long now = System.nanoTime();
         float opening = 1.0F;
@@ -861,12 +876,14 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         String runtimeStatus = localizedStatus;
         int belowSave = layout.saveY + 24;
         int messageY = belowSave <= this.height - 10 ? belowSave : SettingsScreenLayout.COMPACT_STATUS_Y;
+        // Read the worker's result once, so the message and its colour come from the same write.
+        TestStatus engineTest = testStatus;
         if (!status.isEmpty()) {
             graphics.centeredText(this.font, Component.literal(status),
                     this.width / 2, messageY, 0xFFFF5555);
-        } else if (!testStatus.isEmpty()) {
-            graphics.centeredText(this.font, Component.literal(testStatus),
-                    this.width / 2, messageY, testStatusIsError ? 0xFFFF5555 : 0xFF55FF55);
+        } else if (!engineTest.message.isEmpty()) {
+            graphics.centeredText(this.font, Component.literal(engineTest.message),
+                    this.width / 2, messageY, engineTest.error ? 0xFFFF5555 : 0xFF55FF55);
         } else if (!runtimeStatus.isEmpty()) {
             graphics.centeredText(this.font, Component.literal(runtimeStatus),
                     this.width / 2, messageY,
@@ -1264,7 +1281,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         final String keyValue = llmApiKey;
         fetchingModels = true;
         setTestStatus(tr("screen.universal_translator.llm.fetching"), false);
-        Thread worker = new Thread(() -> {
+        ScreenWorkers.execute(() -> {
             OpenAiModelCatalog.Catalog catalog = null;
             String failure = "";
             try {
@@ -1297,9 +1314,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
             // Published for the render thread to apply in one step; see applyPendingModelList().
             pendingModelList = catalog.models();
             setTestStatus("", false);
-        }, "universal-translator-model-list");
-        worker.setDaemon(true);
-        worker.start();
+        });
     }
 
     /**
@@ -1320,20 +1335,34 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         fetchedModels = pending;
         modelPage = 0;
         modelListOpen = true;
-        releaseFieldFocusForModelList();
+        releaseFieldFocusForOverlay();
     }
 
     /**
-     * Drops keyboard focus from the engine tab's fields before the model picker covers them.
+     * Whether a painted overlay covers the form, and with it the keyboard.
      *
-     * <p>The picker is a painted rectangle, not a screen, so nothing intercepts typing while it is
-     * open: whatever still holds focus collects the characters typed over the overlay, and the next
-     * Save writes them into the configuration — including the custom system prompt and the endpoint.
+     * <p>Single decision point for both overlays: the model picker and the selection list cover the
+     * same area, and keeping two separate gates is what let typing reach the field underneath the
+     * selection list while the model picker already blocked it. The keyboard callback's signature
+     * differs between screen generations, so the enforced part of the gate is the focus itself:
+     * while this answers true no field may hold focus.
+     */
+    private boolean overlayOwnsKeyboard() {
+        return modelListOpen || openSelection != SettingsSelectionList.Kind.NONE;
+    }
+
+    /**
+     * Drops keyboard focus from the engine tab's fields while an overlay covers them.
+     *
+     * <p>The overlays are painted rectangles, not screens, so nothing intercepts typing while one
+     * is open: whatever still holds focus collects the characters typed over the overlay, and the
+     * next Save writes them into the configuration — including the custom system prompt and the
+     * endpoint.
      *
      * <p>Focus is not restored afterwards on purpose: the player clicks the field they want, which
      * is also the only way to be sure of which field they end up in.
      */
-    private void releaseFieldFocusForModelList() {
+    private void releaseFieldFocusForOverlay() {
         if (endpoint != null) {
             endpoint.setFocused(false);
         }
@@ -1360,7 +1389,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         final String keyValue = llmApiKey;
         testing = true;
         setTestStatus(tr("screen.universal_translator.engine.testing"), false);
-        Thread worker = new Thread(() -> {
+        ScreenWorkers.execute(() -> {
             String message;
             boolean error;
             try {
@@ -1399,14 +1428,24 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
             }
             testing = false;
             setTestStatus(message, error);
-        }, "universal-translator-connection-test");
-        worker.setDaemon(true);
-        worker.start();
+        });
+    }
+
+    /** One coherent "engine test" line: the message and the colour it is drawn in. */
+    private static final class TestStatus {
+        static final TestStatus EMPTY = new TestStatus("", false);
+
+        final String message;
+        final boolean error;
+
+        TestStatus(String message, boolean error) {
+            this.message = message == null ? "" : message;
+            this.error = error;
+        }
     }
 
     private void setTestStatus(String message, boolean error) {
-        testStatus = message;
-        testStatusIsError = error;
+        testStatus = new TestStatus(message, error);
     }
 
     private static String describe(Exception error) {

@@ -42,6 +42,28 @@ public final class LegacyClientEvents {
     private static Method elementTypeGetter;
     private static Field elementTypeField;
     private static final long FAILURE_NOTIFICATION_COOLDOWN_MILLIS = 60_000L;
+    /**
+     * Minimum gap between two action-bar messages.
+     *
+     * <p>The offline engine reports download and load progress inside its status string, so the
+     * percent changes tens of times per second. De-duplicating on the whole string meant every one
+     * of those overwrote the action bar — the player's own {@code /title actionbar} was pushed off
+     * within a few hundred milliseconds, and the bar flickered instead of showing progress. The same
+     * window is applied by {@code ForgeRuntimeStatusNotifier} in the 1.21, 26.x and modern trees.
+     */
+    private static final long STATUS_NOTIFICATION_INTERVAL_MILLIS = 1_000L;
+    /**
+     * Title-screen button geometry.
+     *
+     * <p>Right-aligned, 132 wide, 4 from the edge: the same decision every Forge tree makes (see
+     * {@code HomeButtonGeometry} in the shared 1.21 layer). This tree is a standalone Gradle build
+     * that only mounts {@code translator-core} and this directory, so the numbers live here as named
+     * constants instead of as literals inside the widget call.
+     */
+    private static final int HOME_BUTTON_WIDTH = 132;
+    private static final int HOME_BUTTON_HEIGHT = 20;
+    private static final int HOME_BUTTON_TOP = 6;
+    private static final int HOME_BUTTON_MARGIN = 4;
     private static final LegacyClientEvents INSTANCE = new LegacyClientEvents();
     private static final KeyBinding OPEN_SETTINGS = new KeyBinding(
             "key.universal_translator.open_settings", Keyboard.KEY_U, "MC Auto Translation Tool");
@@ -53,6 +75,7 @@ public final class LegacyClientEvents {
     private int joinHintTicks = -1;
     private String lastRuntimeStatus = "";
     private long nextFailureNotificationAt;
+    private long nextStatusNotificationAt;
 
     private LegacyClientEvents() {
     }
@@ -72,9 +95,11 @@ public final class LegacyClientEvents {
         if (!(LegacyVersionAccess.eventScreen(event) instanceof GuiMainMenu)) {
             return;
         }
-        int x = Math.max(4, LegacyVersionAccess.eventScreen(event).width - 136);
+        int x = Math.max(HOME_BUTTON_MARGIN,
+                LegacyVersionAccess.eventScreen(event).width - (HOME_BUTTON_WIDTH + HOME_BUTTON_MARGIN));
         LegacyVersionAccess.buttonList(event).add(new GuiButton(
-                HOME_OPEN, x, 6, 132, 20, tr("screen.universal_translator.home.open")));
+                HOME_OPEN, x, HOME_BUTTON_TOP, HOME_BUTTON_WIDTH, HOME_BUTTON_HEIGHT,
+                tr("screen.universal_translator.home.open")));
     }
 
     @SubscribeEvent
@@ -157,7 +182,12 @@ public final class LegacyClientEvents {
             LegacyConfig previous = null;
             boolean runtimeChanged = false;
             try {
-                previous = LegacyConfig.load(configDirectory);
+                // The live snapshot is the one last written; re-reading the file here parsed the
+                // whole properties file on the client tick only to throw the result away.
+                previous = LegacyTranslationRuntime.diagnosticsConfig();
+                if (previous == null) {
+                    previous = LegacyConfig.load(configDirectory);
+                }
                 LegacyConfig updated = previous.withEnabled(!previous.enabled);
                 if (updated.enabled) {
                     updated.validateProviderConfiguration();
@@ -166,7 +196,8 @@ public final class LegacyClientEvents {
                 LegacyTranslationRuntime.initialize(updated);
                 lastRuntimeStatus = "";
                 nextFailureNotificationAt = 0L;
-                updated.save();
+                nextStatusNotificationAt = 0L;
+                LegacyConfigWriter.saveOffTick(updated, null);
                 minecraft.ingameGUI.setRecordPlayingMessage(
                         tr("message.universal_translator.toggle", tr(updated.enabled
                                 ? "value.universal_translator.enabled"
@@ -190,7 +221,12 @@ public final class LegacyClientEvents {
             return;
         }
         try {
-            LegacyConfig config = LegacyConfig.load(configDirectory);
+            // The runtime already holds the configuration it is running; the file is only the
+            // answer before the first load succeeded.
+            LegacyConfig config = LegacyTranslationRuntime.diagnosticsConfig();
+            if (config == null) {
+                config = LegacyConfig.load(configDirectory);
+            }
             minecraft.displayGuiScreen(new LegacyConfigScreen(minecraft.currentScreen, config));
         } catch (Exception exception) {
             LOGGER.error("Could not open settings", exception);
@@ -221,6 +257,13 @@ public final class LegacyClientEvents {
                     tr("message.universal_translator.runtime_failed", localized));
         } else {
             nextFailureNotificationAt = 0L;
+            long now = System.currentTimeMillis();
+            if (now < nextStatusNotificationAt) {
+                // Progress strings are kept out of the action bar for this window; the newest one
+                // then replaces the previous one instead of overwriting it dozens of times.
+                return;
+            }
+            nextStatusNotificationAt = now + STATUS_NOTIFICATION_INTERVAL_MILLIS;
             minecraft.ingameGUI.setRecordPlayingMessage(
                     tr("message.universal_translator.runtime_status", localized));
         }

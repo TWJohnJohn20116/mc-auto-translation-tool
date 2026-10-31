@@ -140,7 +140,8 @@ public final class RenderedTextBridge {
         if (text == null || bypassRenderTranslation()) {
             return text;
         }
-        if (TranslationRenderContext.isTranslatedResult(text)) {
+        if (TranslationRenderContext.isTranslatedResult(text)
+                || TranslationRenderContext.isUnchangedResult(text)) {
             // The line this method returned a moment ago: the measuring hook is handed what the
             // drawing hook already drew, so answering from the frame's own output set keeps the
             // repeat off the guard chain and out of the provider.
@@ -148,6 +149,7 @@ public final class RenderedTextBridge {
         }
         String translated = translateRaw(text);
         if (text.equals(translated)) {
+            TranslationRenderContext.rememberUnchanged(text);
             return text;
         }
         String styled = styledText(text, translated);
@@ -188,13 +190,23 @@ public final class RenderedTextBridge {
         // A component with no children renders exactly its own literal under its own style, so the
         // run walk below would collect a single run and decline to rebuild it every time. Skipping
         // it keeps an ordinary label at one string copy and one cache lookup per frame.
-        Text styled = text.getSiblings().isEmpty() ? null : translateStyledSiblings(text);
+        String original = text.getString();
+        if (TranslationRenderContext.isUnchangedResult(original)) {
+            // Answered a moment ago on the drawing hook with the input itself, so the measuring hook
+            // can take the component as it stands instead of walking it again.
+            return text;
+        }
+        // Translated before the run walk, and handed to it: both paths used to call the same lookup
+        // for the same visible text, and the sibling path rebuilt the string a second time for the
+        // fallthrough that follows it.
+        String translated = translateRaw(original);
+        Text styled = text.getSiblings().isEmpty()
+                ? null : translateStyledSiblings(text, original, translated);
         if (styled != null) {
             return styled;
         }
-        String original = text.getString();
-        String translated = translateRaw(original);
         if (original.equals(translated)) {
+            TranslationRenderContext.rememberUnchanged(original);
             return text;
         }
         return Text.literal(translated).setStyle(translatedStyle(text.getStyle()));
@@ -223,16 +235,24 @@ public final class RenderedTextBridge {
             return true;
         });
         String visible = original.toString();
+        if (TranslationRenderContext.isUnchangedResult(visible)) {
+            // The measuring hook of a line the drawing hook already answered with the input.
+            return text;
+        }
+        // One lookup for the whole line, shared by the run rebuild and the fallthrough below: both
+        // used to translate the same flattened text, which is twice the work on every line that
+        // needed no translation at all.
+        String translated = translateRaw(visible);
         if (flattened.multiStyle) {
             // Flattening would keep only the first segment's colour and drop bold, italic and
             // click events from later segments, so rebuild the line run by run instead.
-            OrderedText rebuilt = rebuildStyledRuns(text, visible);
+            OrderedText rebuilt = rebuildStyledRuns(text, visible, translated);
             if (rebuilt != null) {
                 return rebuilt;
             }
         }
-        String translated = translateRaw(visible);
         if (visible.equals(translated)) {
+            TranslationRenderContext.rememberUnchanged(visible);
             return text;
         }
         MutableText replacement = Text.literal(translated).setStyle(translatedStyle(flattened.first));
@@ -251,7 +271,7 @@ public final class RenderedTextBridge {
      * visible text starts with; per-segment styles cannot be mapped onto a translation that no
      * longer aligns segment by segment.
      */
-    private static OrderedText rebuildStyledRuns(OrderedText text, String visible) {
+    private static OrderedText rebuildStyledRuns(OrderedText text, String visible, String translated) {
         RunScratch scratch = RUNS.get();
         scratch.reset();
         List<String> texts = scratch.texts;
@@ -278,7 +298,6 @@ public final class RenderedTextBridge {
         }
         TranslationTextColor color = TranslationStyleRuns.resolveTranslatedColor(
                 sourceHasColor, FabricTranslationRuntime.translatedTextColor());
-        String translated = translateRaw(visible);
         if (visible.equals(translated)) {
             return null;
         }
@@ -398,13 +417,12 @@ public final class RenderedTextBridge {
      * only the style of the node it was flattened from. Returns {@code null} when the visible text
      * already renders with the root's own style, so the caller keeps the ordinary path.
      */
-    private static Text translateStyledSiblings(Text text) {
+    private static Text translateStyledSiblings(Text text, String visible, String translated) {
         RunScratch scratch = RUNS.get();
         scratch.reset();
         List<String> texts = scratch.texts;
         List<Object> styleKeys = scratch.styleKeys;
         List<Style> styles = scratch.styles;
-        String visible = text.getString();
         collectStyledLeaves(text, visible, texts, styleKeys, styles);
         if (texts.isEmpty()) {
             return null;
@@ -422,8 +440,8 @@ public final class RenderedTextBridge {
         // One translation for the whole line, exactly as the ordered path above: a sibling boundary
         // is a style change, so translating each sibling sent one request per segment — none of
         // them carrying enough context to be translated well — and the rebuilt line keeps the style
-        // of the segment its visible text starts with.
-        String translated = translateRaw(visible);
+        // of the segment its visible text starts with. The translation is the caller's, which also
+        // needs it for the fallthrough; asking for it here was the duplicate lookup on this path.
         if (visible.equals(translated)) {
             return null;
         }

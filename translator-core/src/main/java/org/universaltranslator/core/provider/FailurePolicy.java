@@ -28,7 +28,7 @@ final class FailurePolicy {
      * unbounded walk then never returns: the worker that asked this question disappears without the
      * coordinator noticing. {@code TranslationStats.reasonOf} bounds the same walk the same way.
      */
-    private static final int MAXIMUM_CAUSE_DEPTH = 16;
+    static final int MAXIMUM_CAUSE_DEPTH = 16;
 
     private FailurePolicy() {
     }

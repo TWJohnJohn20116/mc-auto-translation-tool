@@ -18,6 +18,11 @@ ext.neoforgeMinecraftVersion = minecraft_neoforge_1_20_1_version
 ext.neoforgeVersion = neoforge_1_20_1_version
 ext.neoforgeJavaRelease = 17
 ext.neoforgeEntryLayer = "1.20.2-1.20.4"
+// Declaring the layer above puts this module inside validateNeoForgeModuleCoordinates, but the layer
+// itself is not mounted: this source set comes from platforms/forge/modern/1.20.1, so an edit under
+// entrypoints/1.20.2-1.20.4 never reaches this JAR. The flag makes that exception checkable instead of
+// leaving "the three 1.20.x targets share one entrypoint layer" as an assumption.
+ext.neoforgeEntryLayerMounted = false
 ext.neoforgeMetadataLayer = "1.20-1.20.4"
 ext.neoforgeForgeSharedRoot = "platforms/forge/modern/shared"
 ext.neoforgeForgeLayers = ["common", "family/1.19.2-plus"]
@@ -103,10 +108,12 @@ tasks.named("processResources", ProcessResources).configure {
             expand "packFormat": 15
         }
     }
-    from("src/main/resources") {
-        filesMatching("META-INF/mods.toml") {
-            expand "version": project.version
-        }
+    // Root-level filters: they apply to every copy spec of this task, including the one Java plugin
+    // registers for src/main/resources. A filter nested inside from("src/main/resources") only ran
+    // on that copy, and duplicatesStrategy = EXCLUDE kept the earlier, unexpanded copy instead — so
+    // the shipped mods.toml carried the literal ${version}.
+    filesMatching("META-INF/mods.toml") {
+        expand "version": project.version
     }
 }
 

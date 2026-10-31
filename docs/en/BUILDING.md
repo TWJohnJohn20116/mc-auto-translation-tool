@@ -371,6 +371,18 @@ python3 scripts/verify_release_jars.py \
   --require-complete-checksums build/release-assets/*.jar
 ```
 
+Release targets and source-only bundles are two different things; conflating them produces coverage
+claims that contradict the published artifacts:
+
+| Kind | Contents | Published with a release |
+| --- | --- | --- |
+| Release target (48) | Fabric 1.13–26.3, Forge 1.8.9–26.2, NeoForge 1.20.1–26.2 | Yes, reduced to 31 installable JARs |
+| Source-only bundle (2) | `fabric-1.0-1.8.x` (26 of 1.3.1–1.8.8) and `fabric-1.8-1.12.x` (1.8.9–1.12.2, 15 versions) | No, built only by `legacy-targets.yml` and never present in `downloads/<version>/` |
+
+So `fabric-all` carries the 51 exact implementations for 1.13–26.3 only; 1.3.1–1.12.2 players have to
+build those two bundles themselves. Cite this section when stating the coverage in CHANGELOG or
+README instead of restating the numbers.
+
 ## Core self-test
 
 The root `translator-core` project does not depend on Minecraft. Its test sources are under

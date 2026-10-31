@@ -308,7 +308,7 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
         }
         final Path configFile = config.configFile();
         final List<String> lines = diagnosticsLines();
-        Thread worker = new Thread(() -> {
+        ScreenWorkers.execute(() -> {
             String archiveName;
             try {
                 Path archive = DiagnosticsBundleExporter.export(
@@ -321,9 +321,7 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
             // Published in this order: the client thread only reads the name after the flag is set.
             pendingExportArchive = archiveName;
             pendingExportDone = true;
-        }, "universal-translator-diagnostics-export");
-        worker.setDaemon(true);
-        worker.start();
+        });
     }
 
     /** Publishes the export worker's result on the client thread, where the label can be localized. */

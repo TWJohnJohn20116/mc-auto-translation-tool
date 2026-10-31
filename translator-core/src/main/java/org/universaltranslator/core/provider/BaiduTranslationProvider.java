@@ -47,6 +47,13 @@ public final class BaiduTranslationProvider implements TranslationProvider {
         fields.put("sign", CryptoSupport.md5Hex(appId + request.getText() + salt + secret));
         String response = http.postForm(endpoint, CryptoSupport.formEncode(fields),
                 Collections.<String, String>emptyMap());
+        if (JsonTree.parseOrNull(response) == null) {
+            // A body that is not JSON at all — an entry-portal page, an intercepting proxy, a
+            // truncated document — is a transport-shaped failure another attempt can answer
+            // differently, so it becomes the type both the retry policy and the fallback accept
+            // instead of the one-shot "this request cannot succeed" its reader would imply.
+            throw ProviderErrors.unreadable("Baidu", response);
+        }
         String translated = parseTranslatedText(response);
         if (translated == null || translated.trim().isEmpty()) {
             throw providerError("Baidu", response, "error_code", "error_msg");
@@ -81,12 +88,11 @@ public final class BaiduTranslationProvider implements TranslationProvider {
         if (response == null || response.trim().isEmpty()) {
             return null;
         }
-        Object parsed;
-        try {
-            parsed = JsonStrings.parse(response);
-        } catch (RuntimeException malformed) {
-            // Fall back to reading single field if JSON structure is unexpected
-            return JsonStrings.readStringField(response, "dst");
+        Object parsed = JsonTree.parseOrNull(response);
+        if (parsed == null) {
+            // The caller reports a body that is not a document as a retryable failure; scanning such a
+            // body for "dst" here used to turn an HTML page into a plausible-looking translation.
+            return null;
         }
         if (parsed instanceof Map) {
             Object transResult = ((Map<?, ?>) parsed).get("trans_result");

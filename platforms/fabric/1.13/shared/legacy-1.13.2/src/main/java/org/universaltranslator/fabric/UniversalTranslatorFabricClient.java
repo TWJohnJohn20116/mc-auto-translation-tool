@@ -27,6 +27,8 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
     private static volatile Runnable stopHook;
     /** Set once the runtime has been shut down, so the JVM hook cannot run the body twice. */
     private static volatile boolean shutdownRequested;
+    /** Upper bound on how long the JVM shutdown hook waits for the teardown before letting it exit. */
+    private static final long SHUTDOWN_JOIN_MILLIS = 1500L;
 
     private UniversalTranslatorFabricClient() {
     }
@@ -46,6 +48,10 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
             hook.run();
         } catch (RuntimeException failure) {
             LOGGER.log(Level.SEVERE, "MC Auto Translation Tool tick failed", failure);
+        } catch (Error failure) {
+            // A drifted NoSuchMethodError out of the status notifier is an Error, so it used to escape
+            // through MinecraftClient.tick()V and take the game down over one line of HUD text.
+            LOGGER.log(Level.SEVERE, "MC Auto Translation Tool tick failed", failure);
         }
     }
 
@@ -55,14 +61,27 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
             return;
         }
         shutdownRequested = true;
+        // The screens' shared pool is dropped here so a closed game does not keep two daemon threads
+        // (and whatever request they are waiting on) alive.
+        ScreenWorkers.shutdown();
         Runnable hook = stopHook;
+        stopHook = null;
         if (hook == null) {
             return;
         }
+        // Bounded wait instead of running the teardown inline: it closes the coordinator (which
+        // settles open requests, shuts its workers down and waits up to 5 s for them) and then
+        // flushes the whole cache store, so running it on the JVM shutdown hook made "close the
+        // game" wait for all of that with no upper bound. The hook here only waits 1.5 s; a teardown
+        // still running after that is cut short by the JVM exiting, and the store's own flush path
+        // covers whatever did not get written.
+        final Thread teardown = new Thread(hook, "universal-translator-stop");
+        teardown.setDaemon(false);
+        teardown.start();
         try {
-            hook.run();
-        } catch (RuntimeException failure) {
-            LOGGER.log(Level.SEVERE, "MC Auto Translation Tool shutdown failed", failure);
+            teardown.join(SHUTDOWN_JOIN_MILLIS);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
         }
     }
 

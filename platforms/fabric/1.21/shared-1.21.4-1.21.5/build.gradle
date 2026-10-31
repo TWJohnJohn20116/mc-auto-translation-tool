@@ -7,6 +7,14 @@ ext.fabricYarnMappings = yarn_1_21_5_mappings
 ext.fabricLoaderVersion = loader_1_21_5_version
 ext.fabricApiVersion = fabric_api_1_21_5_version
 ext.fabricSourceVersion = "1.21.5"
-ext.fabricArchiveVersion = "1.21.4-1.21.5"
 
 apply from: rootProject.file("platforms/fabric/1.21/shared.gradle")
+
+// Archives name set here instead of through a fabricArchiveVersion hook in the shared script: this is
+// the only project whose JAR is named after a version span rather than a Minecraft version, and no
+// bundle lists it and no release target builds it (audit4 A08-005 — whether it should ship at all is
+// still an open decision), so the shared script should not carry an override point for a target that
+// is built but never published.
+base {
+    archivesName = "mc-auto-translation-tool-fabric-1.21.4-1.21.5"
+}

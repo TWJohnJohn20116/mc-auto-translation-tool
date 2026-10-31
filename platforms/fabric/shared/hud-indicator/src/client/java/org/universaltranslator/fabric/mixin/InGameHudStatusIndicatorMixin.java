@@ -4,7 +4,6 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawableHelper;
 import net.minecraft.client.gui.hud.InGameHud;
-import net.minecraft.client.resource.language.I18n;
 import net.minecraft.client.util.math.MatrixStack;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -33,10 +32,10 @@ import org.universaltranslator.fabric.TranslationRenderContext;
  * <p>All state lives in locals on purpose: a mixin that declares extra fields or helper methods
  * risks colliding with members of the target class.
  *
- * <p>The label is looked up through {@code I18n.translate} rather than a {@code Text} factory
- * because the shared 1.16.2-1.19.2 source layer spans the 1.19 rename that removed
- * {@code TranslatableText}; {@code I18n.translate} is the one API present in every version this
- * file is compiled against.
+ * <p>The label is looked up through {@link HudLabels}, which resolves it through
+ * {@code I18n.translate} rather than a {@code Text} factory because the shared 1.16.2-1.19.2 source
+ * layer spans the 1.19 rename that removed {@code TranslatableText}; {@code I18n.translate} is the
+ * one API present in every version this file is compiled against.
  */
 @Mixin(InGameHud.class)
 abstract class InGameHudStatusIndicatorMixin {
@@ -121,11 +120,17 @@ abstract class InGameHudStatusIndicatorMixin {
         String outgoingPreview = OutgoingTranslationPreview.text();
         HudIndicatorContent content = settings.getContent();
         TextRenderer font = client.textRenderer;
+        // While resources reload (F3+T, a server resource pack, a GUI scale change) the text renderer
+        // is null and the HUD keeps rendering through that window, so this frame has to skip the two
+        // strings instead of measuring and drawing with nothing.
+        if (font == null) {
+            return;
+        }
         TranslationRenderContext.pushTextInput();
         try {
             if (outgoingPreview != null) {
                 int previewY = Math.max(0, windowHeight - 60);
-                int previewX = windowWidth / 2 - font.getWidth(outgoingPreview) / 2;
+                int previewX = windowWidth / 2 - HudLabels.width(font, outgoingPreview) / 2;
                 font.drawWithShadow(matrices, outgoingPreview, (float) previewX, (float) previewY, 0xFFFFFFFF);
             }
 
@@ -140,12 +145,12 @@ abstract class InGameHudStatusIndicatorMixin {
             } else if (content == HudIndicatorContent.PROVIDER) {
                 label = quickSettings.getProvider();
             } else if (content == HudIndicatorContent.ACTIVITY && TranslationActivity.isTranslating()) {
-                label = I18n.translate("value.universal_translator.hud_content.activity");
+                label = HudLabels.activity();
             }
             if (label == null || label.isEmpty()) {
                 return;
             }
-            int labelWidth = font.getWidth(label);
+            int labelWidth = HudLabels.width(font, label);
             // Beside the square, never over it: a 6px square cannot hold "zh-TW", and a label
             // centred on a right-corner square would run off the screen edge.
             int labelLeft = corner.isRight() ? left - 2 - labelWidth : right + 2;

@@ -2,7 +2,6 @@ package org.universaltranslator.fabric.mixin;
 
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.hud.InGameHud;
-import net.minecraft.client.render.RenderTickCounter;
 import net.minecraft.scoreboard.ScoreboardObjective;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -19,8 +18,10 @@ import org.universaltranslator.fabric.TranslationRenderContext;
  * {@code translate-action-bar} — with nothing to switch, and filed every other HUD line under the
  * generic kind in the statistics.
  *
- * <p>The four added pairs are {@code require = 0}: their signatures are the 1.20.1 ones, and this
- * file serves every 1.20.x target, where a renamed method must cost that region's tag rather than
+ * <p>The four region methods only exist from 1.20.5, and there they take a plain {@code float}: the
+ * {@code RenderTickCounter} parameter did not arrive until 1.21. 1.20 through 1.20.4 has no
+ * per-region HUD method at all (only {@code render(DrawContext,float)} and the scoreboard one), so
+ * their pairs are {@code require = 0}: a version without the method loses that region's tag, never
  * the launch.
  */
 @Mixin(InGameHud.class)
@@ -42,66 +43,66 @@ abstract class InGameHudContextMixin {
     }
 
     @Inject(
-            method = "renderChat(Lnet/minecraft/client/gui/DrawContext;Lnet/minecraft/client/render/RenderTickCounter;)V",
+            method = "renderChat(Lnet/minecraft/client/gui/DrawContext;F)V",
             at = @At("HEAD"), require = 0)
     private void universalTranslator$enterChat(
-            DrawContext context, RenderTickCounter tickCounter, CallbackInfo callback) {
+            DrawContext context, float tickDelta, CallbackInfo callback) {
         TranslationRenderContext.push(TextKind.CHAT);
     }
 
     @Inject(
-            method = "renderChat(Lnet/minecraft/client/gui/DrawContext;Lnet/minecraft/client/render/RenderTickCounter;)V",
+            method = "renderChat(Lnet/minecraft/client/gui/DrawContext;F)V",
             at = @At("RETURN"), require = 0)
     private void universalTranslator$leaveChat(
-            DrawContext context, RenderTickCounter tickCounter, CallbackInfo callback) {
+            DrawContext context, float tickDelta, CallbackInfo callback) {
         TranslationRenderContext.pop();
     }
 
     @Inject(
-            method = "renderPlayerList(Lnet/minecraft/client/gui/DrawContext;Lnet/minecraft/client/render/RenderTickCounter;)V",
+            method = "renderPlayerList(Lnet/minecraft/client/gui/DrawContext;F)V",
             at = @At("HEAD"), require = 0)
     private void universalTranslator$enterPlayerList(
-            DrawContext context, RenderTickCounter tickCounter, CallbackInfo callback) {
+            DrawContext context, float tickDelta, CallbackInfo callback) {
         TranslationRenderContext.push(TextKind.PLAYER_LIST_HEADER);
     }
 
     @Inject(
-            method = "renderPlayerList(Lnet/minecraft/client/gui/DrawContext;Lnet/minecraft/client/render/RenderTickCounter;)V",
+            method = "renderPlayerList(Lnet/minecraft/client/gui/DrawContext;F)V",
             at = @At("RETURN"), require = 0)
     private void universalTranslator$leavePlayerList(
-            DrawContext context, RenderTickCounter tickCounter, CallbackInfo callback) {
+            DrawContext context, float tickDelta, CallbackInfo callback) {
         TranslationRenderContext.pop();
     }
 
     @Inject(
-            method = "renderTitleAndSubtitle(Lnet/minecraft/client/gui/DrawContext;Lnet/minecraft/client/render/RenderTickCounter;)V",
+            method = "renderTitleAndSubtitle(Lnet/minecraft/client/gui/DrawContext;F)V",
             at = @At("HEAD"), require = 0)
     private void universalTranslator$enterTitle(
-            DrawContext context, RenderTickCounter tickCounter, CallbackInfo callback) {
+            DrawContext context, float tickDelta, CallbackInfo callback) {
         TranslationRenderContext.push(TextKind.TITLE);
     }
 
     @Inject(
-            method = "renderTitleAndSubtitle(Lnet/minecraft/client/gui/DrawContext;Lnet/minecraft/client/render/RenderTickCounter;)V",
+            method = "renderTitleAndSubtitle(Lnet/minecraft/client/gui/DrawContext;F)V",
             at = @At("RETURN"), require = 0)
     private void universalTranslator$leaveTitle(
-            DrawContext context, RenderTickCounter tickCounter, CallbackInfo callback) {
+            DrawContext context, float tickDelta, CallbackInfo callback) {
         TranslationRenderContext.pop();
     }
 
     @Inject(
-            method = "renderOverlayMessage(Lnet/minecraft/client/gui/DrawContext;Lnet/minecraft/client/render/RenderTickCounter;)V",
+            method = "renderOverlayMessage(Lnet/minecraft/client/gui/DrawContext;F)V",
             at = @At("HEAD"), require = 0)
     private void universalTranslator$enterActionBar(
-            DrawContext context, RenderTickCounter tickCounter, CallbackInfo callback) {
+            DrawContext context, float tickDelta, CallbackInfo callback) {
         TranslationRenderContext.push(TextKind.ACTION_BAR);
     }
 
     @Inject(
-            method = "renderOverlayMessage(Lnet/minecraft/client/gui/DrawContext;Lnet/minecraft/client/render/RenderTickCounter;)V",
+            method = "renderOverlayMessage(Lnet/minecraft/client/gui/DrawContext;F)V",
             at = @At("RETURN"), require = 0)
     private void universalTranslator$leaveActionBar(
-            DrawContext context, RenderTickCounter tickCounter, CallbackInfo callback) {
+            DrawContext context, float tickDelta, CallbackInfo callback) {
         TranslationRenderContext.pop();
     }
 }

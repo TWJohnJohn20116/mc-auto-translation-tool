@@ -86,6 +86,7 @@ public final class UniversalTranslatorForgeClient {
         @SubscribeEvent
         public static void clientTick(TickEvent.ClientTickEvent.Post event) {
             TranslationRenderContext.beginFrame();
+            ForgeTranslationRuntime.refreshProtectedNames();
             Minecraft client = Minecraft.getInstance();
             boolean connected = client.level != null && client.getConnection() != null;
             if (connected && !connectedLastTick) {
@@ -131,7 +132,7 @@ public final class UniversalTranslatorForgeClient {
             return;
         }
         try {
-            ForgeConfig config = ForgeConfig.load(FMLPaths.CONFIGDIR.get());
+            ForgeConfig config = ForgeConfig.liveOrLoad(FMLPaths.CONFIGDIR.get());
             client.gui.setScreen(new UniversalTranslatorConfigScreen(
                     (net.minecraft.client.gui.screens.Screen) parent, config));
         } catch (Exception exception) {
@@ -142,7 +143,7 @@ public final class UniversalTranslatorForgeClient {
 
     private static void openSettings(Minecraft client) {
         try {
-            ForgeConfig config = ForgeConfig.load(FMLPaths.CONFIGDIR.get());
+            ForgeConfig config = ForgeConfig.liveOrLoad(FMLPaths.CONFIGDIR.get());
             client.gui.setScreen(new UniversalTranslatorConfigScreen(client.gui.screen(), config));
         } catch (Exception exception) {
             UniversalTranslatorForgeMod.LOGGER.error(
@@ -154,14 +155,20 @@ public final class UniversalTranslatorForgeClient {
 
     private static void toggle(Minecraft client) {
         try {
-            ForgeConfig previous = ForgeConfig.load(FMLPaths.CONFIGDIR.get());
+            // The live configuration is what F8 acts on; re-reading the file parsed the whole
+            // properties file on the client tick only to throw the result away.
+            ForgeConfig previous = ForgeConfig.liveOrLoad(FMLPaths.CONFIGDIR.get());
             ForgeConfig updated = previous.withEnabled(!previous.enabled);
             if (updated.enabled) {
                 updated.validateProviderConfiguration();
             }
             ForgeTranslationRuntime.initialize(updated);
             ForgeRuntimeStatusNotifier.reset();
-            updated.save();
+            // Queued off the client tick; a failed write is logged rather than shown, because the
+            // toggle itself has already taken effect in memory.
+            ForgeConfigWriter.saveOffTick(updated, failure ->
+                    UniversalTranslatorForgeMod.LOGGER.warn(
+                            "Could not persist the toggled settings", failure));
             client.gui.hud.setOverlayMessage(
                     Component.translatable(
                             "message.universal_translator.toggle",

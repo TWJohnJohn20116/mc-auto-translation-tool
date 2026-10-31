@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.net.SocketTimeoutException;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 
 /** Adds a configurable global request interval and bounded transient-error retries. */
 final class ResilientTranslationProvider implements TranslationProvider, AutoCloseable {
@@ -21,19 +22,34 @@ final class ResilientTranslationProvider implements TranslationProvider, AutoClo
      * responsive. It is deliberately far above the plain exponential backoff ceiling (2000 ms) so
      * adopting {@code Retry-After} can only ever lengthen a wait, never shorten one.
      */
-    private static final long MAX_RETRY_AFTER_MILLIS = 30000L;
+    static final long MAX_RETRY_AFTER_MILLIS = 30000L;
     /**
      * Shortest wait after a {@code 429} the server did not put a {@code Retry-After} on. The generic
      * backoff floor (200 ms) is far below any real rate-limit window, so all attempts of one window
      * landed inside it.
      */
-    private static final long RATE_LIMIT_FLOOR_MILLIS = 1000L;
+    static final long RATE_LIMIT_FLOOR_MILLIS = 1000L;
+
+    /**
+     * How long a vendor-reported fatal failure keeps this provider from sending another request.
+     *
+     * <p>An exhausted balance, a rejected signature or a credential the provider does not accept
+     * answers every request the same way, and nothing used to remember that verdict: a forty-line
+     * screen sent forty signed requests, each with its own TLS handshake, and the next world load
+     * repeated all forty. The state lives on this instance, so editing the configuration — which
+     * builds a new provider — clears it.
+     */
+    private static final long FATAL_COOLDOWN_NANOS = TimeUnit.SECONDS.toNanos(60);
 
     private final TranslationProvider delegate;
     private final int maximumAttempts;
     private final long minimumIntervalMillis;
     /** One request per interval; the same gate {@link TencentHunyuanProvider} uses. */
     private final RequestGate gate;
+    /** The vendor message that paused this provider, or {@code null} while it is not paused. */
+    private volatile String fatalReason;
+    /** {@link System#nanoTime()} instant the pause ends; {@code 0} while nothing is paused. */
+    private volatile long fatalUntilNanos;
 
     ResilientTranslationProvider(
             TranslationProvider delegate,
@@ -53,6 +69,7 @@ final class ResilientTranslationProvider implements TranslationProvider, AutoClo
 
     @Override
     public String translate(TranslationRequest request) throws Exception {
+        awaitFatalCooldown();
         Exception last = null;
         for (int attempt = 1; attempt <= maximumAttempts; attempt++) {
             awaitRateLimit();
@@ -60,6 +77,7 @@ final class ResilientTranslationProvider implements TranslationProvider, AutoClo
                 return delegate.translate(request);
             } catch (Exception exception) {
                 last = exception;
+                recordFatalFailure(exception);
                 if (attempt == maximumAttempts || !isRetryable(exception)) {
                     throw exception;
                 }
@@ -84,6 +102,7 @@ final class ResilientTranslationProvider implements TranslationProvider, AutoClo
     @Override
     public String translateStreaming(TranslationRequest request, TranslationStreamListener listener)
             throws Exception {
+        awaitFatalCooldown();
         PartialTextGuard guard = new PartialTextGuard(listener);
         Exception last = null;
         for (int attempt = 1; attempt <= maximumAttempts; attempt++) {
@@ -92,6 +111,7 @@ final class ResilientTranslationProvider implements TranslationProvider, AutoClo
                 return delegate.translateStreaming(request, guard);
             } catch (Exception exception) {
                 last = exception;
+                recordFatalFailure(exception);
                 if (attempt == maximumAttempts || guard.published() || !isRetryable(exception)) {
                     throw exception;
                 }
@@ -211,8 +231,58 @@ final class ResilientTranslationProvider implements TranslationProvider, AutoClo
         return exception instanceof IOException;
     }
 
+    /**
+     * Refuses to send anything while a vendor-reported fatal failure is cooling down.
+     *
+     * <p>The failure itself is deterministic, so every request sent during the pause can only be
+     * charged and fail the same way. The thrown type is the same family as the original verdict, so
+     * neither the retry loop nor the fallback decision changes its answer.
+     *
+     * @throws ProviderErrors.FatalException the verdict that started the pause
+     */
+    private void awaitFatalCooldown() {
+        long until = fatalUntilNanos;
+        if (until == 0L || System.nanoTime() - until >= 0L) {
+            return;
+        }
+        String reason = fatalReason == null ? "Translation is paused" : fatalReason;
+        throw new ProviderErrors.FatalException(reason
+                + " (paused for " + TimeUnit.NANOSECONDS.toSeconds(FATAL_COOLDOWN_NANOS)
+                + " s so no further request is paid for a failure that cannot change)", "");
+    }
+
+    /** Starts the pause when the failure was a vendor-reported fatal error. */
+    private void recordFatalFailure(Throwable failure) {
+        ProviderErrors.FatalException fatal = fatalIn(failure);
+        if (fatal == null) {
+            return;
+        }
+        if (fatalReason == null || !fatalReason.equals(fatal.getMessage())) {
+            DebugLog.global().logFailure(delegate.id(), fatal);
+        }
+        fatalReason = fatal.getMessage();
+        fatalUntilNanos = System.nanoTime() + FATAL_COOLDOWN_NANOS;
+    }
+
+    /** The fatal failure inside one cause chain, or {@code null}. */
+    private static ProviderErrors.FatalException fatalIn(Throwable failure) {
+        Throwable current = failure;
+        for (int depth = 0; current != null && depth < FailurePolicy.MAXIMUM_CAUSE_DEPTH; depth++) {
+            if (current instanceof ProviderErrors.FatalException) {
+                return (ProviderErrors.FatalException) current;
+            }
+            Throwable next = current.getCause();
+            current = next == current ? null : next;
+        }
+        return null;
+    }
+
     @Override
     public void close() throws Exception {
+        // The pause is instance state, so closing clears it: a provider that is reopened must not
+        // inherit a verdict about a credential the user may have replaced meanwhile.
+        fatalReason = null;
+        fatalUntilNanos = 0L;
         if (delegate instanceof AutoCloseable) {
             ((AutoCloseable) delegate).close();
         }

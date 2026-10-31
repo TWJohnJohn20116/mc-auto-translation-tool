@@ -20,9 +20,14 @@ import org.universaltranslator.fabric.RenderedTextBridge;
  * since 1.19.3, and a bare name lets Mixin pick the overload whose arguments match the handler.
  * The OrderedText hook cannot rely on that (its handler takes the same carrier type as the
  * StringVisitable width hook on some builds), so it is pinned to a descriptor and marked
- * {@code require = 0}: this file is the only copy for 1.19.3/1.19.4 and no mapped artifact for
- * those two versions is cached, so a wrong descriptor must degrade to "world text stays
- * un-translated" rather than a {@code MixinApplyError} at startup.
+ * {@code require = 0}.
+ *
+ * <p>This layer serves 1.19.3 and 1.19.4, and {@code drawInternal} is not the same shape in both:
+ * 1.19.4 carries {@code TextRenderer$TextLayerType} before the background colour and light
+ * parameters, 1.19.3 does not. Both descriptors are listed, each {@code require = 0}, so the version
+ * that owns the other shape simply skips the pair — 1.19.3 used to have only the 1.19.4 descriptor
+ * and therefore translated nothing that renders through {@code OrderedText} while its width came
+ * from the translated text.
  *
  * <p>If CI or {@code runClient} reports a descriptor mismatch on the OrderedText hook, the
  * fallbacks are, in order:
@@ -46,6 +51,13 @@ abstract class TextRendererMixin {
             method = "drawInternal(Lnet/minecraft/text/OrderedText;FFIZLorg/joml/Matrix4f;Lnet/minecraft/client/render/VertexConsumerProvider;Lnet/minecraft/client/font/TextRenderer$TextLayerType;II)I",
             at = @At("HEAD"), argsOnly = true, require = 0)
     private OrderedText universalTranslator$translatePreparedOrderedText(OrderedText text) {
+        return RenderedTextBridge.translate(text);
+    }
+
+    @ModifyVariable(
+            method = "drawInternal(Lnet/minecraft/text/OrderedText;FFIZLorg/joml/Matrix4f;Lnet/minecraft/client/render/VertexConsumerProvider;ZII)I",
+            at = @At("HEAD"), argsOnly = true, require = 0)
+    private OrderedText universalTranslator$translatePreparedOrderedTextNoLayer(OrderedText text) {
         return RenderedTextBridge.translate(text);
     }
 

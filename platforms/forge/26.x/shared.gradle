@@ -14,7 +14,12 @@ def sourceLayers = [
         "26.2"  : "api/26.2"
 ]
 
-def gameVersion = project.name - "platform-forge-"
+// Groovy's String.minus removes the first occurrence of the substring, not a prefix, so this only
+// derived the right version while the project name contained "platform-forge-" exactly once. Strip the
+// prefix explicitly so the value the sourceLayers lookup uses cannot differ from the directory name.
+def gameVersion = project.name.startsWith("platform-forge-")
+        ? project.name.substring("platform-forge-".length())
+        : project.name
 def sourceLayer = sourceLayers[gameVersion]
 if (sourceLayer == null) {
     throw new GradleException("No Forge 26.x source layer is registered for ${gameVersion}")

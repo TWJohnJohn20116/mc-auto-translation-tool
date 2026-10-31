@@ -10,11 +10,13 @@ import net.minecraft.text.LiteralText;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.universaltranslator.core.DebugLog;
+import org.universaltranslator.core.HotkeyKeys;
 
 public final class OrnitheClientAccess {
     /** One-shot switches: a drifted mapping must be reported once, not once per tick. */
     private static final AtomicBoolean OVERLAY_FALLBACK_REPORTED = new AtomicBoolean();
     private static final AtomicBoolean CHAT_FALLBACK_REPORTED = new AtomicBoolean();
+    private static final AtomicBoolean HOTKEY_FALLBACK_REPORTED = new AtomicBoolean();
 
     private OrnitheClientAccess() {
     }
@@ -74,6 +76,25 @@ public final class OrnitheClientAccess {
                 "call", call,
                 "result", "unavailable",
                 "failure", failure == null ? "none" : failure.getClass().getName());
+    }
+
+    /**
+     * Records once that a configured hotkey name has no LWJGL2 key code.
+     *
+     * <p>{@code HotkeyKeys.codeOf} accepts more names than {@code lwjgl2CodeOf} can number, and the
+     * poll silently skips a negative code, so the only place a player can find out why the key does
+     * nothing in these generations is the debug log the diagnostics screen prints.
+     */
+    public static void reportHotkey(boolean settingsUnmapped, boolean toggleUnmapped) {
+        if (!HOTKEY_FALLBACK_REPORTED.compareAndSet(false, true)) {
+            return;
+        }
+        DebugLog.global().log("hotkey",
+                "settings-key", HotkeyKeys.settingsName(),
+                "settings-key-lwjgl2", settingsUnmapped ? "unmapped" : "ok",
+                "toggle-key", HotkeyKeys.toggleName(),
+                "toggle-key-lwjgl2", toggleUnmapped ? "unmapped" : "ok",
+                "result", "not-polled");
     }
 
     static int maximumChatLength() {

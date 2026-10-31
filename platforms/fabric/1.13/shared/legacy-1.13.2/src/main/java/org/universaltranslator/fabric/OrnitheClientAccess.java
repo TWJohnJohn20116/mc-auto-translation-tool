@@ -7,7 +7,15 @@ import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.resource.language.I18n;
 import net.minecraft.text.LiteralText;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import org.universaltranslator.core.DebugLog;
+
 public final class OrnitheClientAccess {
+    /** One-shot switches: a drifted mapping must be reported once, not once per tick. */
+    private static final AtomicBoolean OVERLAY_FALLBACK_REPORTED = new AtomicBoolean();
+    private static final AtomicBoolean CHAT_FALLBACK_REPORTED = new AtomicBoolean();
+
     private OrnitheClientAccess() {
     }
 
@@ -37,11 +45,44 @@ public final class OrnitheClientAccess {
     }
 
     public static void overlay(String key, Object... arguments) {
-        client().inGameHud.setOverlayMessage(tr(key, arguments), false);
+        String message = tr(key, arguments);
+        if (client() == null || client().inGameHud == null) {
+            // Start-up and shutdown leave the HUD unset; the message has nowhere to go and this is
+            // not a mapping drift, so it is dropped without a report.
+            return;
+        }
+        try {
+            client().inGameHud.setOverlayMessage(message, false);
+        } catch (LinkageError error) {
+            // A renamed setOverlayMessage surfaces as an Error, which used to escape into
+            // MinecraftClient.tick() through the status notification.
+            reportOnce(OVERLAY_FALLBACK_REPORTED, "setOverlayMessage", error);
+        }
     }
 
     public static void chat(String key, Object... arguments) {
-        client().inGameHud.getChatHud().addMessage(new LiteralText(tr(key, arguments)));
+        String message = tr(key, arguments);
+        if (client() == null || client().inGameHud == null) {
+            return;
+        }
+        try {
+            client().inGameHud.getChatHud().addMessage(new LiteralText(message));
+        } catch (LinkageError error) {
+            reportOnce(CHAT_FALLBACK_REPORTED, "ChatHud.addMessage", error);
+        } catch (NullPointerException error) {
+            // The chat HUD itself is not built yet: nothing to append the line to.
+            reportOnce(CHAT_FALLBACK_REPORTED, "ChatHud.addMessage", error);
+        }
+    }
+
+    private static void reportOnce(AtomicBoolean reported, String call, Throwable failure) {
+        if (!reported.compareAndSet(false, true)) {
+            return;
+        }
+        DebugLog.global().log("reflection",
+                "call", call,
+                "result", "unavailable",
+                "failure", failure == null ? "none" : failure.getClass().getName());
     }
 
     static int maximumChatLength() {

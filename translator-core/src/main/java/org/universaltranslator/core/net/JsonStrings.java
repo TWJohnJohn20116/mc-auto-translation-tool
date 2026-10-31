@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.universaltranslator.core.TextPreview;
 
 /** Small dependency-free JSON string helper for the narrow provider response formats we use. */
 public final class JsonStrings {
@@ -60,13 +61,9 @@ public final class JsonStrings {
     public static String bodyPreview(String json) {
         String value = json == null ? "" : json;
         int limit = Math.min(value.length(), 60);
-        StringBuilder excerpt = new StringBuilder(limit + 24);
-        for (int index = 0; index < limit; index++) {
-            char character = value.charAt(index);
-            excerpt.append(character < 0x20 ? ' ' : character);
-        }
+        String excerpt = TextPreview.oneLine(value, limit);
         if (value.length() > limit) {
-            excerpt.append('\u2026');
+            excerpt = excerpt + '\u2026';
         }
         return " (body starts with: \"" + excerpt + "\")";
     }

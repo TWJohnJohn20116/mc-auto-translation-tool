@@ -126,7 +126,9 @@ processResources {
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
-    options.release = 25
+    // Read from settings.gradle's treeJavaRelease so the compile target and the Mixin bounds derived
+    // from the same table cannot disagree.
+    options.release = gradle.ext.treeJavaTarget("platforms/fabric/26.x/")
 }
 
 java {

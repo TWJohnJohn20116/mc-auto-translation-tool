@@ -5,7 +5,7 @@
   "name": "MC Auto Translation Tool - Fabric 1.17/1.18 Bundle",
   "description": "Selects the exact compatible Universal Translator implementation for every Minecraft 1.17 and 1.18 release.",
   "authors": [
-    "272635"
+    "我小张7272635"
   ],
   "contact": {
     "homepage": "https://space.bilibili.com/3546631091783712",
@@ -40,7 +40,7 @@
       "1.18.2"
     ],
     "java": ">=17",
-    "fabric": "*",
-    "universal_translator": "*"
+    "${fabricDependency}": "*",
+    "universal_translator": ">=${version}"
   }
 }

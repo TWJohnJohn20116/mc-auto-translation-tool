@@ -27,8 +27,18 @@ public final class LanguageHeuristics {
 
     public static boolean shouldTranslate(String text, String targetLanguage) {
         return shouldTranslateToTarget(text, isChineseTarget(targetLanguage),
-                TargetLanguage.isTraditionalChinese(targetLanguage));
+                isTraditionalTarget(targetLanguage));
     }
+
+    /**
+     * What {@link #shouldTranslateToTarget(String, boolean)} assumes about the target script.
+     *
+     * <p>Naming the assumption is what keeps it visible: the overload exists for callers that only
+     * carry the Chinese/not-Chinese boolean, and it therefore answers "Simplified". A caller that
+     * holds the language identifier has to use the three-argument overload instead, otherwise a
+     * {@code zh-TW} target never converts anything.
+     */
+    private static final boolean ASSUMED_TRADITIONAL_TARGET = false;
 
     /**
      * The same check with the target-language test already resolved.
@@ -37,10 +47,14 @@ public final class LanguageHeuristics {
      * re-normalize the language identifier per call; the identifier is fixed for the lifetime of a
      * session, which makes the boolean a per-session constant.
      *
+     * <p>Compatibility overload: it assumes the target is Simplified Chinese
+     * ({@link #ASSUMED_TRADITIONAL_TARGET}). Any caller that holds the language identifier must use
+     * the three-argument overload, or a Traditional target silently skips every Han-only line.
+     *
      * @param chineseTarget whether {@code targetLanguage} names a Chinese variant
      */
     public static boolean shouldTranslateToTarget(String text, boolean chineseTarget) {
-        return shouldTranslateToTarget(text, chineseTarget, false);
+        return shouldTranslateToTarget(text, chineseTarget, ASSUMED_TRADITIONAL_TARGET);
     }
 
     /**
@@ -162,6 +176,17 @@ public final class LanguageHeuristics {
                 || (codePoint >= 0xf900 && codePoint <= 0xfaff)
                 || (codePoint >= 0x20000 && codePoint <= 0x2fa1f)
                 || (codePoint >= 0x30000 && codePoint <= 0x323af);
+    }
+
+    /**
+     * Whether {@code language} asks for Traditional Chinese characters.
+     *
+     * <p>Settle this once per session or request, next to {@link #isChineseTarget(String)}:
+     * {@link TargetLanguage#isTraditionalChinese(String)} canonicalizes its argument on every call,
+     * which is too much for the render path.
+     */
+    static boolean isTraditionalTarget(String language) {
+        return language != null && TargetLanguage.isTraditionalChinese(language);
     }
 
     /** True when {@code language} is {@code zh} or a {@code zh-*} variant. */

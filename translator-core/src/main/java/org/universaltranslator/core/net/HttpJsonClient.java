@@ -17,6 +17,7 @@ import java.util.Collections;
 import java.util.Map;
 import java.util.zip.GZIPInputStream;
 import javax.net.ssl.SSLException;
+import org.universaltranslator.core.TextPreview;
 import org.universaltranslator.core.UserAgent;
 
 /** Bounded Java 8 HTTP client used to avoid shipping a large networking dependency. */
@@ -202,12 +203,7 @@ public final class HttpJsonClient {
 
     /** One-line, bounded rendering of a server supplied header value. */
     private static String displayText(String value) {
-        StringBuilder safe = new StringBuilder(Math.min(value.length(), MAXIMUM_REDIRECT_CHARS));
-        for (int index = 0; index < value.length() && safe.length() < MAXIMUM_REDIRECT_CHARS; index++) {
-            char character = value.charAt(index);
-            safe.append(character < 0x20 ? ' ' : character);
-        }
-        return safe.toString();
+        return TextPreview.oneLine(value, MAXIMUM_REDIRECT_CHARS);
     }
 
     /**
@@ -252,7 +248,8 @@ public final class HttpJsonClient {
      * directions of mismatch happen in the wild: a proxy can drop the header on a gzipped body, and
      * a server can echo the header without compressing. Trusting the header turned the second case
      * into a failed translation, so the sniff is what decides and the header is only documentation.
-     * The sniffed bytes are pushed back so a plain body is read unchanged.
+     * The sniffed bytes are pushed back in both directions, so whatever happens next reads the body
+     * from its first byte.
      */
     private static InputStream decoded(InputStream stream) throws IOException {
         PushbackInputStream probe = new PushbackInputStream(stream, 2);
@@ -266,6 +263,11 @@ public final class HttpJsonClient {
             read += count;
         }
         if (read == head.length && (head[0] & 0xFF) == 0x1F && (head[1] & 0xFF) == 0x8B) {
+            // The gzip constructor reads and compares the magic itself, so the two bytes consumed by
+            // the sniff have to be back in the stream. Without this the constructor compared the
+            // header fields and every compressed body failed as "Not in GZIP format", which is a
+            // retryable IOException — three paid attempts per line, all of them doomed.
+            probe.unread(head, 0, read);
             return new GZIPInputStream(probe);
         }
         if (read > 0) {
@@ -466,9 +468,28 @@ public final class HttpJsonClient {
             return body;
         }
 
-        /** Absolute {@link System#nanoTime()} value this response stops reading at. */
+        /**
+         * Absolute {@link System#nanoTime()} value the first no-progress window of this body ends at.
+         *
+         * <p>The transport re-arms that window whenever the body delivers bytes, so the distance to
+         * now is the budget a stall is measured against — not a bound on how long the answer may
+         * take. A stream consumer passes it to
+         * {@link ServerSentEvents#read(InputStream, ServerSentEvents.PayloadHandler, long)} so one
+         * setting decides the deadline for every provider.
+         */
         public long getDeadlineNanos() {
             return deadlineNanos;
+        }
+
+        /**
+         * How long this body may stay silent before the transport tears it down.
+         *
+         * <p>The single decision point for a consumer that arms a stall watchdog of its own: a
+         * constant there would override {@code api-read-timeout-ms} again, which is how three
+         * providers ended up disagreeing about one setting.
+         */
+        public long getProgressBudgetMillis() {
+            return Math.max(1L, (deadlineNanos - System.nanoTime()) / 1000000L);
         }
 
         /**
@@ -507,40 +528,72 @@ public final class HttpJsonClient {
     }
 
     /**
-     * Enforces a total time budget on a response body.
+     * Bounds a response body on silence rather than on total length.
      *
      * <p>The read timeout is per {@code read()}, so it cannot stop a stream that keeps trickling
-     * bytes. This wrapper asks the deadline before every read and, once it passes, disconnects the
+     * bytes. This wrapper asks the budget before every read and, once it passes, disconnects the
      * connection — the only action that unblocks the currently blocked read — and reports the
      * overrun as an {@link IOException} to the caller.
+     *
+     * <p>The budget is re-armed by every read that delivers a byte, which is what makes
+     * {@code api-read-timeout-ms} mean the same thing here as it does in the parser: a healthy
+     * answer that takes longer than one budget in total is not an error, a silent one is. A wall-clock
+     * ceiling still exists so a peer that trickles one byte per budget cannot keep a worker forever.
      */
     private static final class DeadlineInputStream extends java.io.FilterInputStream {
+        /** Absolute ceiling for one streamed body, independent of how often it makes progress. */
+        private static final long MAXIMUM_STREAM_DURATION_NANOS =
+                MAXIMUM_TIME_BUDGET_MILLIS * 1000L * 1000L;
+
         private final HttpURLConnection connection;
-        private final long deadlineNanos;
+        private final long progressBudgetNanos;
+        private final long absoluteDeadlineNanos;
+        private long progressDeadlineNanos;
 
         private DeadlineInputStream(InputStream body, HttpURLConnection connection, long deadlineNanos) {
             super(body);
             this.connection = connection;
-            this.deadlineNanos = deadlineNanos;
+            long now = System.nanoTime();
+            this.progressBudgetNanos = Math.max(1L, deadlineNanos - now);
+            this.progressDeadlineNanos = deadlineNanos;
+            this.absoluteDeadlineNanos = now + MAXIMUM_STREAM_DURATION_NANOS;
         }
 
         @Override
         public int read() throws IOException {
             requireTimeBudget();
-            return super.read();
+            int value = super.read();
+            if (value >= 0) {
+                noteProgress();
+            }
+            return value;
         }
 
         @Override
         public int read(byte[] buffer, int offset, int length) throws IOException {
             requireTimeBudget();
-            return super.read(buffer, offset, length);
+            int count = super.read(buffer, offset, length);
+            if (count > 0) {
+                noteProgress();
+            }
+            return count;
+        }
+
+        private void noteProgress() {
+            progressDeadlineNanos = System.nanoTime() + progressBudgetNanos;
         }
 
         private void requireTimeBudget() throws IOException {
-            if (System.nanoTime() - deadlineNanos > 0L) {
+            long now = System.nanoTime();
+            if (now - absoluteDeadlineNanos > 0L) {
                 connection.disconnect();
                 throw new java.net.SocketTimeoutException(
                         "Response exceeded its total time budget");
+            }
+            if (now - progressDeadlineNanos > 0L) {
+                connection.disconnect();
+                throw new java.net.SocketTimeoutException("Response received no data for "
+                        + (progressBudgetNanos / 1000000L) + " ms");
             }
         }
     }
@@ -574,6 +627,10 @@ public final class HttpJsonClient {
      * <p>The byte bound alone never terminates a body that arrives slowly: a peer sending one byte
      * just before every read timeout keeps the request alive forever while staying under the size
      * limit. The deadline turns that into an ordinary read failure.
+     *
+     * <p>This is the total-budget path: it exists for a non-streaming body, whose caller receives
+     * nothing until the whole answer is in. A streamed body goes through
+     * {@link DeadlineInputStream}, which is bounded on silence instead.
      *
      * @param deadlineNanos absolute {@link System#nanoTime()} value to stop at
      */

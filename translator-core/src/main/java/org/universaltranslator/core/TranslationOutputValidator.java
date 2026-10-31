@@ -9,7 +9,15 @@ import java.util.regex.Pattern;
 
 /** Rejects small-model failure modes before they reach the render cache. */
 public final class TranslationOutputValidator {
-    private static final Pattern TOKEN = Pattern.compile("__UT_\\d+__", Pattern.CASE_INSENSITIVE);
+    /**
+     * Matches the placeholders {@link ProtectedText} generates.
+     *
+     * <p>The grammar comes from {@link ProtectedText#TOKEN_SOURCE}, so a change there cannot leave
+     * this detector behind; only the case folding is this side's business, because a model that
+     * echoes a token in a different case still leaked it.
+     */
+    private static final Pattern TOKEN = Pattern.compile(
+            ProtectedText.TOKEN_SOURCE, Pattern.CASE_INSENSITIVE);
     /**
      * Phrasing earlier prompt versions used.
      *
@@ -45,6 +53,29 @@ public final class TranslationOutputValidator {
             "翻译引擎"
     };
     /**
+     * Shortest historical phrasing that is still watched for, in characters.
+     *
+     * <p>A fragment shorter than this is far more likely to be a correct translation than an echoed
+     * instruction: "翻译引擎" is exactly how a model renders {@code Translation Engine}, and rejecting
+     * it made that line fail forever (a failure re-enters the retry loop every 30 seconds). The
+     * entries below this length stay in the list as a record of what older prompts said; they are not
+     * part of the detector.
+     */
+    private static final int MINIMUM_HISTORICAL_FRAGMENT_LENGTH = 12;
+    /**
+     * Markers that can never be part of a translation, whatever wording the prompt uses.
+     *
+     * <p>They are kept apart from the prompt phrasing because they are not prompt text, and because
+     * {@link #shortestFragment()} has to see them: they are the shortest alternatives in the whole
+     * alternation, so leaving them out of that measurement would let a text that can carry one skip
+     * the scan entirely.
+     */
+    private static final String[] STRUCTURAL_MARKERS = {
+            "<|system|>",
+            "<|assistant|>",
+            "[quote]"
+    };
+    /**
      * Every phrase a reply echoes when the model answers with its instructions: the wording the live
      * prompts use plus the historical phrasing above.
      */
@@ -61,6 +92,13 @@ public final class TranslationOutputValidator {
             artifactSource(), Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
     /** The shortest fragment in the list; a shorter text cannot contain one. */
     private static final int MINIMUM_ARTIFACT_LENGTH = shortestFragment();
+    /**
+     * Latin letters a source phrase needs before an unchanged answer counts as a provider failure.
+     *
+     * <p>Short replies are real answers ("OK", "GG", a single proper noun), so the equality check
+     * would misfire on them, and every misfire sends the line into the retry loop.
+     */
+    private static final int MINIMUM_UNCHANGED_LATIN_LETTERS = 3;
 
     private TranslationOutputValidator() {
     }
@@ -90,6 +128,20 @@ public final class TranslationOutputValidator {
         requireContent(output);
         if (!source.contains("\n") && (output.contains("\n") || output.contains("\r"))) {
             throw new IllegalArgumentException("Translation output unexpectedly contains multiple lines");
+        }
+        // A reply that is the source text means the provider did nothing: the text was cached as its
+        // own translation and repainted in the translated colour while the characters stayed the same.
+        // Only a phrase is judged, because a single token is legitimately carried over verbatim (a
+        // proper noun, an abbreviation) and every rejection sends the line into the retry loop.
+        if (output.equals(source) && countLatinLetters(source) >= MINIMUM_UNCHANGED_LATIN_LETTERS
+                && containsWhitespace(source)) {
+            throw new IllegalArgumentException("Translation output repeats the source text");
+        }
+        // The prompt promises the same number of lines. Only a loss is rejected: a CJK target
+        // legitimately wraps one long line into two, but nothing legitimate drops a line.
+        int sourceLines = lineCount(source);
+        if (sourceLines > 1 && lineCount(output) < sourceLines) {
+            throw new IllegalArgumentException("Translation output dropped a line");
         }
         if (containsInstructionArtifact(output)) {
             throw new IllegalArgumentException("Translation output echoed its instructions");
@@ -158,6 +210,11 @@ public final class TranslationOutputValidator {
         }
         if (!source.contains("\n") && (trimmed.contains("\n") || trimmed.contains("\r"))) {
             throw new IllegalArgumentException("Restored translation unexpectedly contains multiple lines");
+        }
+        // Same loss rule as requireValid: the restored text keeps one line per source line.
+        int sourceLines = lineCount(source);
+        if (sourceLines > 1 && lineCount(trimmed) < sourceLines) {
+            throw new IllegalArgumentException("Restored translation dropped a line");
         }
         if (liveTokens != null) {
             for (String token : liveTokens) {
@@ -229,6 +286,59 @@ public final class TranslationOutputValidator {
         }
     }
 
+    /**
+     * Number of Latin letters in {@code text}, counted by code point.
+     *
+     * <p>Only Latin letters count towards the unchanged-answer rule: an identical Han answer is a
+     * legitimate translation of a Han source (a Japanese target leaves "日本語" alone), while an
+     * identical answer to a Latin source is a provider that did not translate.
+     */
+    private static int countLatinLetters(String text) {
+        int letters = 0;
+        for (int index = 0; index < text.length(); ) {
+            int codePoint = text.codePointAt(index);
+            index += Character.charCount(codePoint);
+            if (Character.isLetter(codePoint) && codePoint < 0x0250) {
+                letters++;
+            }
+        }
+        return letters;
+    }
+
+    /**
+     * Whether {@code text} carries a word break, which is what makes it a phrase and not a token.
+     */
+    private static boolean containsWhitespace(String text) {
+        for (int index = 0; index < text.length(); index++) {
+            char character = text.charAt(index);
+            if (character == ' ' || character == '\n' || character == '\r'
+                    || character == '\u3000' || character == '\t') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Number of lines in {@code text}; every line break counts once, so {@code \r\n} is one break.
+     *
+     * <p>A hand-written loop, not {@code split}: this runs per segment and must not allocate an array,
+     * and an empty source legitimately has one line.
+     */
+    private static int lineCount(String text) {
+        int lines = 1;
+        for (int index = 0; index < text.length(); index++) {
+            char character = text.charAt(index);
+            if (character == '\n') {
+                lines++;
+            } else if (character == '\r'
+                    && (index + 1 >= text.length() || text.charAt(index + 1) != '\n')) {
+                lines++;
+            }
+        }
+        return lines;
+    }
+
     private static boolean containsInstructionArtifact(String text) {
         if (text.length() < MINIMUM_ARTIFACT_LENGTH) {
             // Nothing this short can carry a fragment, so it does not pay for a scan at all.
@@ -240,9 +350,9 @@ public final class TranslationOutputValidator {
     /** The alternation source of {@link #INSTRUCTION_ARTIFACT}; every entry is quoted verbatim. */
     private static String artifactSource() {
         StringBuilder source = new StringBuilder();
-        appendAlternative(source, "<|system|>");
-        appendAlternative(source, "<|assistant|>");
-        appendAlternative(source, "[quote]");
+        for (int index = 0; index < STRUCTURAL_MARKERS.length; index++) {
+            appendAlternative(source, STRUCTURAL_MARKERS[index]);
+        }
         for (int index = 0; index < INSTRUCTION_FRAGMENTS.length; index++) {
             appendAlternative(source, INSTRUCTION_FRAGMENTS[index]);
         }
@@ -250,7 +360,7 @@ public final class TranslationOutputValidator {
     }
 
     /**
-     * The live prompt wording followed by the historical phrasing.
+     * The live prompt wording followed by the historical phrasing that is specific enough to keep.
      *
      * <p>The live half is {@link TranslationPrompt#echoMarkers()}, so a prompt edit changes what is
      * detected instead of leaving the detector on the previous wording.
@@ -263,7 +373,10 @@ public final class TranslationOutputValidator {
             fragments.add(live[index]);
         }
         for (int index = 0; index < HISTORICAL_INSTRUCTION_FRAGMENTS.length; index++) {
-            fragments.add(HISTORICAL_INSTRUCTION_FRAGMENTS[index]);
+            String fragment = HISTORICAL_INSTRUCTION_FRAGMENTS[index];
+            if (fragment.length() >= MINIMUM_HISTORICAL_FRAGMENT_LENGTH) {
+                fragments.add(fragment);
+            }
         }
         return fragments.toArray(new String[fragments.size()]);
     }
@@ -277,6 +390,9 @@ public final class TranslationOutputValidator {
 
     private static int shortestFragment() {
         int shortest = Integer.MAX_VALUE;
+        for (int index = 0; index < STRUCTURAL_MARKERS.length; index++) {
+            shortest = Math.min(shortest, STRUCTURAL_MARKERS[index].length());
+        }
         for (int index = 0; index < INSTRUCTION_FRAGMENTS.length; index++) {
             shortest = Math.min(shortest, INSTRUCTION_FRAGMENTS[index].length());
         }

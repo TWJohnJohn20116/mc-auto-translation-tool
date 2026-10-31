@@ -13,7 +13,7 @@
 | **`build_single.ps1`** | PowerShell | 單一模組靶向編譯（自動切換對應 JDK）。實際耗時依目標與快取狀態而定，沒有固定秒數 | `.\scripts\build_single.ps1 fabric-1.21.4` |
 | **`prepare_release_assets.py`** | Python 3 | 將各平台產物組裝為發布用 JAR（含超壓縮 `fabric-all.jar` 與 SHA256 驗證碼） | `python scripts\prepare_release_assets.py --release-dir downloads\1.4 --output-dir build\release-assets --version 1.4` |
 | **`verify_release_jars.py`** | Python 3 | 檢驗發布資產的位元碼完整性與 Fabric Loader 解壓正確性 | `python scripts\verify_release_jars.py --checksum-file downloads\1.4\SHA256SUMS.txt --require-complete-checksums downloads\1.4\*.jar` |
-| **`setup_defender_exclusions.bat`**| Batch / PS | 一鍵將專案目錄、Gradle 快取與 `java.exe` 加入 Windows Defender 排除名單。專案目錄由腳本位置推導 | 右鍵 ->「以系統管理員身分執行」 |
+| **`setup_defender_exclusions.bat`**| Batch / PS | 只將專案目錄與 Gradle 快取兩個資料夾加入 Windows Defender 排除名單；刻意**不**排除 `java.exe` 程序（那會關掉整台機器的即時掃描）。專案目錄由腳本位置推導 | 右鍵 ->「以系統管理員身分執行」 |
 
 ## 內部工具 (`tools/`)
 
@@ -27,9 +27,24 @@
 - `_seed_forge_1182_cache.py`、`_seed_loom_jars.py`、`_seed_loom_versions.py`、`_gen_mojang_poms.py`：
   離線快取種子。快取位置集中在 `_cache_paths.py`（`GRADLE_USER_HOME` → `~/.gradle`），不再硬編 `D:\`；
   `APPDATA` 無法定位時只寫 Gradle 快取，不會把 library 寫進當前工作目錄。`_gen_mojang_poms.py`
-  缺目錄或一個 POM 都沒補到都以非零碼結束（原本會靜默回報「wrote 0 poms」而成功）。
+  只在「缺目錄」或「一個 `*.jar` 都沒有」時回非零；POM 全部已存在（最常見的健康狀態）回 0。
 
 ## CI 共用腳本 (`ci/`)
 
 - `ci/write-build-summary.sh`：`build.yml` 與 `legacy-targets.yml` 共 7 個建置 job 的繁中摘要，
-  只留這一份（參數走 `TARGET`／`OUTCOME`／`ARTIFACT` 三個 env），`lint` job 會用 `bash -n` 檢查語法。
+  只留這一份（參數走 `TARGET`／`OUTCOME`／`ARTIFACT` 三個 env），`lint` job 會逐檔 `bash -n` 檢查語法。
+- `ci/read-mod-version.sh`：`gradle.properties` 的 `mod_version` 讀取＋字元白名單的**唯一**實作。
+  版本號會被拼進 `find -name` 與 `rm -rf`，所以含空白／`*`／`[`／CRLF 的值必須在這裡就被擋下。
+  呼叫端：`prepare-release.yml`（`plan`）與 `publish-release.yml`（讀取並驗證發布版本）。
+- `ci/derive-prepare-targets.py`：把發布資產名稱（`mc1.21.7-forge`）推導成 `-PtargetPlatform`
+  吃的平台名稱（`forge-1.21.7`），推錯會在 settings 評估階段以 `Unknown targetPlatform` 失敗。
+  呼叫端：`prepare-release.yml`（`plan`）。
+- `ci/build-targets.json`：`build.yml` 的**權威**目標清單（平台 17 筆、舊版 7 筆，各帶 `java`／
+  `bundle`）。`plan` 用它驗證 `-f targets=...` 的名稱，靜態 matrix 是它的投影；
+  `ci/test_build_targets.py` 會交叉比對兩者，分叉就是 PR 紅燈。
+- `ci/set-defender-exclusions.ps1`：Defender 資料夾排除的**唯一**實作，路徑全部由 `$PSScriptRoot`
+  推導（批次檔不再把路徑插進 `-Command`）。呼叫端：`setup_defender_exclusions.bat`。
+
+`scripts/ci/` 的 `*.sh` 由 `lint` job 逐檔 `bash -n`、`*.py` 逐檔 `py_compile`，`test_*.py` 由
+`python -m unittest discover -s scripts/ci` 執行（`scripts/ci` 沒有 `__init__.py`，`discover -s scripts`
+進不到這一層，所以那一步另外指定這個起點）。

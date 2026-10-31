@@ -109,6 +109,12 @@ final class HudIndicatorPainter {
             default:
                 break;
         }
+        // The injection sits at the RETURN of the HUD render, which still runs while F1 hides the
+        // HUD: without this the square and its label stayed on an otherwise empty screen and were
+        // painted over the chat and the hotbar, because RETURN is the last thing that happens.
+        if (Minecraft.getInstance().options.hideGui) {
+            return;
+        }
         HudIndicatorCorner corner = settings.getCorner();
         int margin = settings.getMargin();
         int size = settings.getSize();

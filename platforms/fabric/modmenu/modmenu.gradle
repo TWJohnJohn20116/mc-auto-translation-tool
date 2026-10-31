@@ -27,3 +27,36 @@ sourceSets.named(targetName) {
 tasks.matching { it.name == "jar" || it.name == "remapJar" || it.name == "sourcesJar" || it.name == "remapSourcesJar" }.configureEach {
     exclude "com/terraformersmc/modmenu/**"
 }
+
+// The stub's abstract method name has to be the real library's one: the class that ships is Mod
+// Menu's own ConfigScreenFactory, and its method is createScreen. The integration class spells
+// createScreen out with @Override, so renaming the stub alone fails to compile; this task catches
+// the direction nothing else compares — both files renamed together to a name Mod Menu does not
+// have, which only shows up as AbstractMethodError when the player presses the config button.
+def contractSources = [
+        new File(modmenuRoot, "api/yarn/src/main/java/com/terraformersmc/modmenu/api/ConfigScreenFactory.java"),
+        new File(modmenuRoot, "api/mojmap/src/main/java/com/terraformersmc/modmenu/api/ConfigScreenFactory.java")
+]
+tasks.register("verifyModMenuContract") {
+    group = "verification"
+    description = "Checks the Mod Menu stubs declare createScreen(Screen) as the factory method."
+    inputs.files(contractSources)
+    doLast {
+        contractSources.each { source ->
+            // Whitespace is collapsed first so a reformatted signature is not reported as a rename.
+            def body = source.getText("UTF-8").replaceAll("\\s+", " ")
+            if (!body.contains("createScreen(Screen parent);")) {
+                throw new GradleException(
+                        "${source} does not declare 'createScreen(Screen parent);'. Mod Menu's " +
+                                "factory method is createScreen, so any other name links fine and " +
+                                "then fails at run time with AbstractMethodError.")
+            }
+        }
+    }
+}
+
+// matched rather than named: every Fabric tree applies the java plugin, but `matching` keeps this
+// file harmless in a project that does not have a `check` lifecycle task.
+tasks.matching { it.name == "check" }.configureEach {
+    dependsOn tasks.named("verifyModMenuContract")
+}

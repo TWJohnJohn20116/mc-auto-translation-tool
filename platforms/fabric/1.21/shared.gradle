@@ -51,14 +51,15 @@ if (layers == null) {
 }
 
 def sharedRoot = rootProject.file("platforms/fabric/1.21/shared")
-def archiveVersion = project.ext.has("fabricArchiveVersion") ?
-        project.ext.fabricArchiveVersion : project.ext.fabricMinecraftVersion
 
 version = project.mod_version
 group = project.maven_group
 
 base {
-    archivesName = "mc-auto-translation-tool-fabric-${archiveVersion}"
+    // One source for the file name: the Minecraft version this target compiles against. It used to
+    // take a fabricArchiveVersion override so one unpublished project could be named after a version
+    // span; that project now sets its own archivesName after applying this script instead.
+    archivesName = "mc-auto-translation-tool-fabric-${project.ext.fabricMinecraftVersion}"
 }
 
 repositories {
@@ -197,18 +198,39 @@ processResources {
     // for every version, including any future one that reuses the global loader_version key.
     // Read once into a local so the filter below never touches `project` at execution time.
     def loaderFloor = project.ext.fabricLoaderVersion.toString()
+    def loaderFloorLine = /"fabricloader": ">=[^"]*"/
+    def sourceMetadata = fileTree(projectDir) {
+        include "src/main/resources/fabric.mod.json"
+        exclude "**/build/**"
+    }
     inputs.property "loaderFloor", loaderFloor
+    // The filter only rewrites a line that still has exactly this shape. A reformatted fabric.mod.json
+    // (a multi-line depends block, a tab, four spaces before the value) made the replaceAll miss in
+    // silence and the hand-written floor shipped instead — that is the drift this block exists to
+    // remove, so the shape is asserted before the filter runs.
+    doFirst {
+        sourceMetadata.files.each { metadata ->
+            if (!(metadata.getText("UTF-8") =~ loaderFloorLine).find()) {
+                throw new GradleException(
+                        "${project.path}: ${metadata.name} has no single-line " +
+                                "'\"fabricloader\": \">=…\"' entry, so the declared loader floor cannot be " +
+                                "rewritten from fabricLoaderVersion")
+            }
+        }
+    }
     filesMatching("fabric.mod.json") {
         expand "version": project.version
         filter { line ->
-            line.replaceAll(/"fabricloader": ">=[^"]*"/, "\"fabricloader\": \">=${loaderFloor}\"")
+            line.replaceAll(loaderFloorLine, "\"fabricloader\": \">=${loaderFloor}\"")
         }
     }
 }
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
-    options.release = 21
+    // Read from settings.gradle's treeJavaRelease so the compile target and the Mixin bounds derived
+    // from that same table cannot disagree.
+    options.release = gradle.ext.treeJavaTarget("platforms/fabric/1.21/")
 }
 
 java {

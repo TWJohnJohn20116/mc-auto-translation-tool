@@ -104,6 +104,11 @@ int formWidth = Math.max(180, Math.min(360, this.width - 20));
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
         applyPendingModelList();
+        if (modelListOpen) {
+            // Re-asserted every frame: TAB or a click under the painted picker can put focus back on
+            // the endpoint, model or key field, and Save would then write what was typed over it.
+            releaseFieldFocusForModelList();
+        }
         int formWidth = Math.max(180, Math.min(360, this.width - 20));
         int left = (this.width - formWidth) / 2;
         int top = Math.max(42, (this.height - 174) / 2);
@@ -141,7 +146,7 @@ int formWidth = Math.max(180, Math.min(360, this.width - 20));
                 ? parent.llmApiKey() : ("-".equals(enteredKey) ? "" : enteredKey);
         fetching = true;
         setStatus(tr("screen.universal_translator.llm.fetching"), false);
-        Thread worker = new Thread(() -> {
+        ScreenWorkers.execute(() -> {
             OpenAiModelCatalog.Catalog catalog = null;
             String failure = "";
             try {
@@ -176,9 +181,7 @@ int formWidth = Math.max(180, Math.min(360, this.width - 20));
             // Published for the render thread to apply in one step; see applyPendingModelList().
             pendingModelList = models;
             setStatus("", false);
-        }, "universal-translator-model-list");
-        worker.setDaemon(true);
-        worker.start();
+        });
     }
 
     /**

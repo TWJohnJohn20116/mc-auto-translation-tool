@@ -204,10 +204,10 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
     private ButtonWidget hudVisibilityButton;
 
     private TextRenderer renderer;
-    private String status = "";
+    /** Also cleared from the request workers' thread by setTestStatus, so it needs the same guarantee. */
+    private volatile String status = "";
     /** Result of the engine tab's connection test; written by its worker thread. */
-    private volatile String testStatus = "";
-    private volatile boolean testStatusIsError;
+    private volatile TestStatus testStatus = TestStatus.EMPTY;
     private volatile boolean testing;
     private volatile boolean fetchingModels;
     private volatile List<String> fetchedModels = Collections.emptyList();
@@ -375,12 +375,13 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
         buttons.add(batchSizeButton);
 
         String promptValue = customPrompt == null
-                ? TranslationPrompt.toEditorText(original.customSystemPrompt())
+                ? TranslationPrompt.toEditorText(
+                        TranslationPrompt.clampForEditor(original.customSystemPrompt()))
                 : customPrompt.getText();
         int promptApplyWidth = Math.max(48, buttonWidth - 24);
         customPrompt = textField(PROMPT, renderer, left, engineRow(4),
                 totalWidth - promptApplyWidth - 8, 20);
-        customPrompt.setMaxLength(UiLimits.PROMPT_MAX_CHARS);
+        customPrompt.setMaxLength(UiLimits.PROMPT_EDITOR_MAX_CHARS);
         customPrompt.setText(promptValue);
         applyPromptButton = new ButtonWidget(PROMPT_APPLY,
                 right + buttonWidth - promptApplyWidth, engineRow(4), promptApplyWidth, 20,
@@ -1300,11 +1301,14 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         if (messageY > height - 10) {
             messageY = height - 10;
         }
+        // One read of the published pair: reading the field twice could pair a new message with the
+        // previous message's colour.
+        TestStatus testStatusLine = testStatus;
         if (!status.isEmpty()) {
             drawCenteredString(renderer, status, width / 2, messageY, 0xFFFF5555);
-        } else if (!testStatus.isEmpty()) {
-            drawCenteredString(renderer, testStatus, width / 2, messageY,
-                    testStatusIsError ? 0xFFFF5555 : 0xFF55FF55);
+        } else if (!testStatusLine.message.isEmpty()) {
+            drawCenteredString(renderer, testStatusLine.message, width / 2, messageY,
+                    testStatusLine.isError ? 0xFFFF5555 : 0xFF55FF55);
         } else if (!runtimeStatus.isEmpty()) {
             drawCenteredString(renderer, runtimeStatus, width / 2, messageY,
                     isFailureStatus(rawRuntimeStatus) ? 0xFFFF5555 : 0xFF55FF55);
@@ -1429,7 +1433,7 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         final String keyValue = llmApiKey;
         fetchingModels = true;
         setTestStatus(tr("screen.universal_translator.llm.fetching"), false);
-        Thread worker = new Thread(() -> {
+        ScreenWorkers.execute(() -> {
             OpenAiModelCatalog.Catalog catalog = null;
             String failure = "";
             try {
@@ -1464,9 +1468,7 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
             // Handed to the client thread instead of touching modelPage/modelListOpen here.
             pendingModelList = catalog.models();
             setTestStatus("", false);
-        }, "universal-translator-model-list");
-        worker.setDaemon(true);
-        worker.start();
+        });
     }
 
     /**
@@ -1484,7 +1486,7 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         final String keyValue = llmApiKey;
         testing = true;
         setTestStatus(tr("screen.universal_translator.engine.testing"), false);
-        Thread worker = new Thread(() -> {
+        ScreenWorkers.execute(() -> {
             String message;
             boolean error;
             try {
@@ -1526,17 +1528,29 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
                 testing = false;
             }
             setTestStatus(message, error);
-        }, "universal-translator-connection-test");
-        worker.setDaemon(true);
-        worker.start();
+        });
     }
 
     private void setTestStatus(String message, boolean error) {
-        testStatus = message;
-        testStatusIsError = error;
+        // One volatile write publishes both halves: two separate fields — volatile or not — let the
+        // worker thread hand render() a new message carrying the previous message's colour.
+        testStatus = new TestStatus(message == null ? "" : message, error);
         // The save-failure line outranks the test line in render(), and nothing ever cleared it: one
         // failed save hid every later "test connection" result until the screen was reopened.
         status = "";
+    }
+
+    /** The status line and whether it describes a failure, published as one immutable pair. */
+    private static final class TestStatus {
+        private static final TestStatus EMPTY = new TestStatus("", false);
+
+        private final String message;
+        private final boolean isError;
+
+        private TestStatus(String message, boolean isError) {
+            this.message = message;
+            this.isError = isError;
+        }
     }
 
     private static String describe(Exception error) {

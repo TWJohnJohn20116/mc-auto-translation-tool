@@ -86,6 +86,7 @@ public final class UniversalTranslatorForgeClient {
         @SubscribeEvent
         public static void clientTick(TickEvent.ClientTickEvent.Post event) {
             TranslationRenderContext.beginFrame();
+            ForgeTranslationRuntime.refreshProtectedNames();
             Minecraft client = Minecraft.getInstance();
             boolean connected = client.level != null && client.getConnection() != null;
             if (connected && !connectedLastTick) {
@@ -133,17 +134,27 @@ public final class UniversalTranslatorForgeClient {
         if (client == null || parent instanceof UniversalTranslatorConfigScreen) {
             return;
         }
+        ForgeConfig config;
         try {
-            ForgeConfig config = ForgeConfig.load(FMLPaths.CONFIGDIR.get());
-            client.setScreen(new UniversalTranslatorConfigScreen((net.minecraft.client.gui.screens.Screen) parent, config));
+            config = ForgeConfig.liveOrLoad(FMLPaths.CONFIGDIR.get());
         } catch (Exception exception) {
-            UniversalTranslatorForgeMod.LOGGER.error(LogMessages.SETTINGS_OPEN_FAILED, exception);
+            // Still open the screen with whatever the runtime holds so the player can fix the
+            // broken setting from the UI; a silent return here is what made the entry a dead key.
+            config = ForgeTranslationRuntime.diagnosticsConfig();
+            if (config == null) {
+                UniversalTranslatorForgeMod.LOGGER.error(LogMessages.SETTINGS_OPEN_FAILED, exception);
+                return;
+            }
+            UniversalTranslatorForgeMod.LOGGER.warn(
+                    "Translation settings could not be re-read; opening the last loaded copy",
+                    exception);
         }
+        client.setScreen(new UniversalTranslatorConfigScreen((net.minecraft.client.gui.screens.Screen) parent, config));
     }
 
     private static void openSettings(Minecraft client) {
         try {
-            ForgeConfig config = ForgeConfig.load(FMLPaths.CONFIGDIR.get());
+            ForgeConfig config = ForgeConfig.liveOrLoad(FMLPaths.CONFIGDIR.get());
             client.setScreen(new UniversalTranslatorConfigScreen(client.screen, config));
         } catch (Exception exception) {
             UniversalTranslatorForgeMod.LOGGER.error(LogMessages.SETTINGS_OPEN_FAILED, exception);
@@ -166,7 +177,12 @@ public final class UniversalTranslatorForgeClient {
             }
             ForgeTranslationRuntime.initialize(updated);
             ForgeRuntimeStatusNotifier.reset();
-            updated.save();
+            // Queued off the client tick: a save is a temporary create, a buffered write, an atomic
+            // move and two ownership changes right before the next frame. A failed write is logged
+            // rather than shown, because the toggle itself has already taken effect in memory.
+            ForgeConfigWriter.saveOffTick(updated, failure ->
+                    UniversalTranslatorForgeMod.LOGGER.warn(
+                            "Could not persist the toggled settings", failure));
             client.gui.setOverlayMessage(
                     Component.translatable(
                             "message.universal_translator.toggle",

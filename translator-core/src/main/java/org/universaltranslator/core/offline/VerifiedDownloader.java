@@ -20,7 +20,6 @@ public final class VerifiedDownloader {
     private static final int MAX_REDIRECTS = 8;
     /** Smallest progress step reported to the caller; the final byte is always reported. */
     private static final long PROGRESS_STEP_BYTES = 1024L * 1024L;
-    private static final long MINIMUM_FREE_SPACE_BYTES = 64L * 1024L * 1024L;
 
     /** Receives verified byte progress without owning any UI or platform code. */
     public interface ProgressListener {
@@ -154,9 +153,6 @@ public final class VerifiedDownloader {
             connection.disconnect();
             throw failure;
         }
-        // The length the file had when this attempt started writing. A server that answered a
-        // resume with a full body already truncated the file, so nothing of it is kept.
-        long attemptOffset = offset;
         progress.onProgress(offset, expectedSize);
 
         StandardOpenOption[] options = append
@@ -195,11 +191,15 @@ public final class VerifiedDownloader {
         }
         String actualSha256 = sha256(partial);
         if (!expectedSha256.equalsIgnoreCase(actualSha256)) {
-            // Only the bytes this attempt wrote are suspect. Throwing away the whole partial made
-            // the next mirror restart a gigabyte from zero, so the failure of one mirror also
-            // destroyed the progress of the ones before it.
-            discardUnverifiedTail(partial, attemptOffset);
-            throw new IOException("Downloaded file failed SHA-256 verification");
+            // Nothing in this file is known to be right. The resume offset is only the length of
+            // bytes no verification ever covered, so keeping the part written before this attempt
+            // replayed the same mismatch forever: one broken prefix made the asset uninstallable,
+            // re-downloading the remainder on every launch. Dropping the partial costs one mirror's
+            // progress and is the only state the next attempt can safely start from.
+            discardUnverifiedTail(partial, 0L);
+            throw new IOException("Downloaded file failed SHA-256 verification; "
+                    + partial.getFileName() + " was discarded, so the next attempt starts from the "
+                    + "first byte");
         }
         progress.onProgress(expectedSize, expectedSize);
         moveVerifiedPartial(partial, destination);
@@ -208,10 +208,14 @@ public final class VerifiedDownloader {
     }
 
     /**
-     * Truncates a failed download back to the length it had before the attempt.
+     * Drops a partial download whose bytes cannot be trusted.
      *
-     * <p>With no earlier progress there is nothing to keep, so the file is removed; with earlier
-     * progress the next mirror only has to fetch the segment this one wrote.
+     * <p>A resume trusts {@code Files.size(partial)}, and nothing ever verified that prefix, so a
+     * prefix that arrived corrupt survived every mirror and every restart and the asset could never
+     * be installed. Only a length that is itself verified may be kept; with none available the file
+     * is removed so the next attempt reads bytes that are checked again.
+     *
+     * @param keepBytes verified prefix length to keep, {@code 0} to remove the file
      */
     private static void discardUnverifiedTail(Path partial, long keepBytes) {
         try {
@@ -239,16 +243,20 @@ public final class VerifiedDownloader {
      * @param neededBytes bytes the transfer still has to add
      */
     private static void requireSpaceForDownload(Path destination, long neededBytes) throws IOException {
-        long usable;
+        // The peak is the partial plus the file it replaces: the verified partial is moved over the
+        // destination at the end, so the old one is still on the volume until then. Ignoring it
+        // passed a machine that then filled the partition during the final move.
+        long replacedBytes = 0L;
         try {
-            usable = Files.getFileStore(destination.toAbsolutePath().getParent()).getUsableSpace();
+            Path existing = destination.toAbsolutePath();
+            if (Files.isRegularFile(existing)) {
+                replacedBytes = Files.size(existing);
+            }
         } catch (IOException | RuntimeException unknown) {
-            return;
+            replacedBytes = 0L;
         }
-        if (usable < neededBytes + MINIMUM_FREE_SPACE_BYTES) {
-            throw new IOException("Not enough free space for the download: " + neededBytes
-                    + " bytes needed, " + usable + " available");
-        }
+        DiskSpace.require(destination.toAbsolutePath().getParent(),
+                neededBytes + replacedBytes, "download");
     }
 
     /**

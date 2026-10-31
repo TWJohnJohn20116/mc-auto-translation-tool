@@ -139,9 +139,14 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     private Button outgoingTargetLanguageButton;
     private Button diagnosticsButton;
     private String status = "";
-    /** Result of the engine tab's connection test; written by its worker thread. */
-    private volatile String testStatus = "";
-    private volatile boolean testStatusIsError;
+    /**
+     * Result of the engine tab's connection test, written by its worker thread.
+     *
+     * <p>One reference rather than two independent fields: the message and its error flag are one
+     * line on screen, and a reader that picked up the new message next to the previous flag painted
+     * a failure in green (or the reverse). A single volatile reference publishes both at once.
+     */
+    private volatile TestStatus testStatus = TestStatus.EMPTY;
     private volatile boolean testing;
     private volatile boolean fetchingModels;
     private volatile List<String> fetchedModels = Collections.emptyList();
@@ -346,13 +351,14 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         }));
 
         String promptValue = customPrompt == null
-                ? TranslationPrompt.toEditorText(original.customSystemPrompt())
+                ? TranslationPrompt.toEditorText(
+                        TranslationPrompt.clampForEditor(original.customSystemPrompt()))
                 : customPrompt.getValue();
         int promptApplyWidth = Math.max(48, layout.buttonWidth - 24);
         customPrompt = addButton(new TextFieldWidget(font, left, engineRow(4),
                 layout.totalWidth - promptApplyWidth - 8,
                 20, new TranslationTextComponent("screen.universal_translator.diagnostics.prompt")));
-        customPrompt.setMaxLength(UiLimits.PROMPT_MAX_CHARS);
+        customPrompt.setMaxLength(UiLimits.PROMPT_EDITOR_MAX_CHARS);
         customPrompt.setValue(promptValue);
         applyPromptButton = addButton(new Button(layout.right + layout.buttonWidth - promptApplyWidth, engineRow(4), promptApplyWidth, 20,
                 new TranslationTextComponent("screen.universal_translator.diagnostics.prompt_apply"), button -> applyPromptSettings()));
@@ -727,11 +733,13 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                 animatedUi ? SettingsUiAnimation.pulseColor(now) : 0xFFFFFFFF);
         int belowSave = layout.saveY + 24;
         int messageY = belowSave <= height - 10 ? belowSave : SettingsScreenLayout.COMPACT_STATUS_Y;
+        // Read the worker's result once, so the message and its colour come from the same write.
+        TestStatus engineTest = testStatus;
         if (!status.isEmpty()) {
             graphics.centered(new StringTextComponent(status), width / 2, messageY, 0xFFFF5555);
-        } else if (!testStatus.isEmpty()) {
-            graphics.centered(new StringTextComponent(testStatus), width / 2, messageY,
-                    testStatusIsError ? 0xFFFF5555 : 0xFF55FF55);
+        } else if (!engineTest.message.isEmpty()) {
+            graphics.centered(new StringTextComponent(engineTest.message), width / 2, messageY,
+                    engineTest.error ? 0xFFFF5555 : 0xFF55FF55);
         } else {
             // Only localise when the line is actually shown: this used to run
             // ForgeTranslationRuntime.status() plus a prefix/contains pass over the localised text
@@ -1079,9 +1087,21 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         });
     }
 
+    /** One coherent "engine test" line: the message and the colour it is drawn in. */
+    private static final class TestStatus {
+        static final TestStatus EMPTY = new TestStatus("", false);
+
+        final String message;
+        final boolean error;
+
+        TestStatus(String message, boolean error) {
+            this.message = message == null ? "" : message;
+            this.error = error;
+        }
+    }
+
     private void setTestStatus(String message, boolean error) {
-        testStatus = message;
-        testStatusIsError = error;
+        testStatus = new TestStatus(message, error);
     }
 
     private static String describe(Exception error) {

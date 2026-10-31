@@ -67,16 +67,26 @@ public final class ProtectedText {
      * <p>The class covers every Unicode symbol and punctuation category on purpose: the common
      * bullets are split across them ("•" U+2022 is punctuation, "◆" U+25C6 is a symbol, "»" U+00BB
      * is final punctuation), and a run of leading decoration is never translatable text.
+     *
+     * <p>The run also swallows the indentation and the formatting codes in front of it, and it only
+     * ends at a space, a line break, the end of the text or a non-ASCII character. That anchoring is
+     * what keeps the pattern from claiming a placeholder: {@code "§7%player%"} must stay two tokens
+     * (the format code and the placeholder), not "§7%" plus "player%".
      */
-    private static final String BULLET_CORE = "^[\\p{S}\\p{P}]+[ \\u3000]*";
+    private static final String BULLET_CORE = "^[ \\u3000]*(?:" + FORMAT_CODE
+            + ")*[\\p{S}\\p{P}]+(?:[ \\u3000]+|(?=\\n)|$|(?=[^\\x00-\\x7F]))";
+    // The bullet branch sits before the bare FORMAT_CODE branch on purpose. Java takes the first
+    // alternative that matches at the leftmost position, so a formatting code in front of a bullet
+    // was consumed on its own and the bullet behind it was never at the start of a line any more,
+    // which is the shape every scoreboard and tab list uses ("§7◆ §f<name>").
     private static final String PROTECTED_SOURCE =
             "(?:" + FORMATTED_VALUE_SOURCE + ")" +
+            "|(?:" + BULLET_CORE + ")" +
             "|(?:" + FORMAT_CODE + ")" +
             "|(?:https?://\\S+|www\\.\\S+)" +
             "|(?:" + BRACKETED_IPV6_SOURCE + "|" + IPV4_SOURCE + "|" + RAW_IPV6_SOURCE
                     + "|" + DOMAIN_SOURCE + "|" + LOCALHOST_SOURCE + ")" +
             "|(?:" + NUMBER_SOURCE + ")" +
-            "|(?:" + BULLET_CORE + ")" +
             "|(?:%[A-Za-z0-9_.:-]+%)" +
             "|(?:\\{[A-Za-z0-9_.:-]+})";
     // The supplementary ranges are written as \x{...} code points: CJK Extension B (20000..2FA1F) and
@@ -91,7 +101,20 @@ public final class ProtectedText {
     private static final Pattern PROTECTED = Pattern.compile(PROTECTED_SOURCE, Pattern.MULTILINE);
     private static final Pattern PROTECTED_WITH_HAN =
             Pattern.compile("(?:" + PROTECTED_SOURCE + "|" + HAN_SOURCE + ")", Pattern.MULTILINE);
-    private static final Pattern INTERNAL_TOKEN = Pattern.compile("__UT_\\d+__");
+    /** The prefix {@code appendToken} writes in front of the index. */
+    static final String TOKEN_PREFIX = "__UT_";
+    /** The suffix {@code appendToken} writes behind the index. */
+    static final String TOKEN_SUFFIX = "__";
+    /**
+     * The token grammar, and the only copy of it.
+     *
+     * <p>The generator ({@code appendToken}), the parser ({@link #INTERNAL_TOKEN}) and the leak
+     * detector ({@link TranslationOutputValidator#containsInternalArtifact(String)}) used to spell
+     * this out three times, so changing one of them turned the detector into a silent no-op. The
+     * validator still decides case folding on its own: it is a matcher, not the generator.
+     */
+    static final String TOKEN_SOURCE = TOKEN_PREFIX + "\\d+" + TOKEN_SUFFIX;
+    private static final Pattern INTERNAL_TOKEN = Pattern.compile(TOKEN_SOURCE);
     /**
      * Sessions that can translate at the same time: a second game window (or the self test) may run
      * while a settings change retires the first one, and both keep publishing literal snapshots.
@@ -609,7 +632,7 @@ public final class ProtectedText {
 
     /** Writes {@code __UT_<index>__} without building the token as a separate {@code String}. */
     private static void appendToken(StringBuilder output, int index) {
-        output.append("__UT_").append(index).append("__");
+        output.append(TOKEN_PREFIX).append(index).append(TOKEN_SUFFIX);
     }
 
     /**
@@ -618,7 +641,8 @@ public final class ProtectedText {
      */
     private static int tokenIndex(String token) {
         try {
-            return Integer.parseInt(token.substring("__UT_".length(), token.length() - 2));
+            return Integer.parseInt(token.substring(TOKEN_PREFIX.length(),
+                    token.length() - TOKEN_SUFFIX.length()));
         } catch (NumberFormatException overflow) {
             return -1;
         }

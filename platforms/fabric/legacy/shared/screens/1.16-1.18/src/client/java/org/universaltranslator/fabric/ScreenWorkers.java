@@ -1,0 +1,68 @@
+package org.universaltranslator.fabric;
+
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadFactory;
+
+/**
+ * Worker threads shared by the LLM and diagnostics screens of the Fabric 1.16-1.18 layer.
+ *
+ * <p>Every button press used to build a fresh {@code Thread} — a thread object, a
+ * {@code ThreadLocalMap} and a megabyte of reserved stack — with a fixed name, so pressing "fetch
+ * models" and "export" in quick succession left several same-named threads running against the same
+ * endpoint and made a thread dump guesswork. Two daemon threads are enough: the {@code fetching} and
+ * {@code exporting} flags already serialize each kind of request, and the pool queues whatever a
+ * second button starts while the first is still in flight.
+ */
+public final class ScreenWorkers {
+    /** Enough to keep "fetch models" and "export" from blocking each other. */
+    private static final int THREADS = 2;
+
+    private static ExecutorService workers = create();
+
+    private ScreenWorkers() {
+    }
+
+    /** Runs {@code task} on the next free shared worker. */
+    public static void execute(Runnable task) {
+        try {
+            current().execute(task);
+        } catch (RejectedExecutionException shuttingDown) {
+            // A screen action during shutdown must still run: the task only touches screen state.
+            task.run();
+        }
+    }
+
+    /**
+     * Drops the pool.
+     *
+     * <p>Called from the client's shutdown path so a closed game does not leave the two threads (and
+     * whatever request they are waiting on) behind on a daemon thread no one owns. The next
+     * {@link #execute} builds a fresh pool, so a client that re-initializes still works.
+     */
+    public static synchronized void shutdown() {
+        if (workers != null) {
+            workers.shutdownNow();
+            workers = null;
+        }
+    }
+
+    private static synchronized ExecutorService current() {
+        if (workers == null) {
+            workers = create();
+        }
+        return workers;
+    }
+
+    private static ExecutorService create() {
+        return Executors.newFixedThreadPool(THREADS, new ThreadFactory() {
+            @Override
+            public Thread newThread(Runnable runnable) {
+                Thread thread = new Thread(runnable, "universal-translator-screen");
+                thread.setDaemon(true);
+                return thread;
+            }
+        });
+    }
+}

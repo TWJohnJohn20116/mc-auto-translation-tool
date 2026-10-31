@@ -28,6 +28,14 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
     private static volatile Runnable stopHook;
     /** Set once the runtime has been shut down, so the JVM hook cannot run the body twice. */
     private static volatile boolean shutdownRequested;
+    /**
+     * How long the JVM shutdown hook waits for the teardown before letting the process exit.
+     *
+     * <p>The runtime's own close settles open requests and waits up to five seconds for a worker
+     * parked in a provider read, then flushes the whole cache store; running that inline on the hook
+     * made "close the game" wait for all of it with no upper bound.
+     */
+    private static final long SHUTDOWN_JOIN_MILLIS = 1500L;
 
     private UniversalTranslatorFabricClient() {
     }
@@ -56,6 +64,9 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
             return;
         }
         shutdownRequested = true;
+        // The screens' shared pool is dropped here so a closed game does not keep two daemon threads
+        // (and whatever request they are waiting on) alive.
+        ScreenWorkers.shutdown();
         // Dropped here, not just flagged: the tick mixin keeps calling tickFromMixin() on every
         // tick after this point, and a hook left in place kept resetting the render context and
         // re-running the status notifier against a runtime with no session.
@@ -65,10 +76,17 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
         if (hook == null) {
             return;
         }
+        // Bounded wait instead of running the teardown inline: it closes the coordinator and then
+        // flushes the whole cache store, which on the JVM shutdown hook made "close the game" wait
+        // for all of it with no upper bound. Past the timeout the store's own flush path covers
+        // whatever did not get written.
+        final Thread teardown = new Thread(hook, "universal-translator-stop");
+        teardown.setDaemon(false);
+        teardown.start();
         try {
-            hook.run();
-        } catch (RuntimeException failure) {
-            LOGGER.log(Level.SEVERE, "MC Auto Translation Tool shutdown failed", failure);
+            teardown.join(SHUTDOWN_JOIN_MILLIS);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
         }
     }
 

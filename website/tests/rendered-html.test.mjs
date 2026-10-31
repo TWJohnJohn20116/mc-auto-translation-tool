@@ -153,19 +153,39 @@ test("server-renders the public-benefit project home page", async () => {
   // comes from `NEXT_PUBLIC_SITE_URL`; a repository-shaped fallback would resolve
   // `/og-card.png` to `<host>/og-card.png` (the base path is discarded), which is
   // an image no server hosts.
+  //
+  // 這條斷言必須雙向明確。只驗「結尾是 /og-card.png」時，正確的絕對 URL 與沒有
+  // 設環境變數時的相對路徑都通過，而社交平台不接受相對 URL —— 兩者結果天差地遠，
+  // 測試卻分不出來。所以：有設 `NEXT_PUBLIC_SITE_URL` 就要求同來源的絕對 URL，
+  // 沒設就要求正好是 `/og-card.png`（該模式在 website/README.md 的部署章節有說明）。
   const socialImages = [
     ...html.matchAll(
       /<meta[^>]+(?:property="og:image"|name="twitter:image")[^>]+content="([^"]+)"/g,
     ),
   ].map((match) => match[1]);
   assert.ok(socialImages.length > 0, "expected social image meta tags");
+  const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL
+    ? new URL(process.env.NEXT_PUBLIC_SITE_URL).origin
+    : null;
   for (const content of socialImages) {
     assert.doesNotMatch(
       content,
       /^https?:\/\/(?:[a-z0-9-]+\.)*github\.com\//i,
       `社交預覽圖不能解析到 GitHub 根目錄：${content}`,
     );
-    assert.match(content, /\/og-card\.png$/, content);
+    if (siteOrigin) {
+      assert.ok(
+        content.startsWith(`${siteOrigin}/`),
+        `NEXT_PUBLIC_SITE_URL=${siteOrigin} 時社交預覽圖必須是同來源的絕對 URL：${content}`,
+      );
+      assert.equal(new URL(content).pathname, "/og-card.png", content);
+    } else {
+      assert.equal(
+        content,
+        "/og-card.png",
+        `未設定 NEXT_PUBLIC_SITE_URL 時社交預覽圖只會是相對路徑（等於沒有預覽圖）：${content}`,
+      );
+    }
   }
 });
 
@@ -185,6 +205,17 @@ test("keeps privacy and public-benefit claims in source", async () => {
   assert.match(css, /prefers-reduced-motion:\s*reduce/);
   assert.match(css, /@media \(max-width:\s*560px\)/);
   assert.doesNotMatch(page, /SkeletonPreview|codex-preview/);
+  // 社交預覽圖的來源只有 `NEXT_PUBLIC_SITE_URL` 一個決策點：若哪天有人為了「總是有圖」
+  // 加回備用網域，預覽圖就會指向不存在的圖，這幾條斷言是那個決策點的守衛。
+  assert.match(layout, /resolveMetadataBase\(process\.env\.NEXT_PUBLIC_SITE_URL\)/);
+  assert.doesNotMatch(
+    layout,
+    /\|\|\s*["'`]https?:\/\//,
+    "metadataBase 不得有硬寫的備用網域：`/og-card.png` 會把 base path 丟掉",
+  );
+  // Open Graph 與 Twitter 兩張卡片必須共用同一個圖檔路徑，否則只會有一邊被更新。
+  assert.match(layout, /const OG_CARD_PATH = "\/og-card\.png"/);
+  assert.match(layout, /images: \[OG_CARD_PATH\]/);
 });
 
 // The page and its metadata reference absolute asset paths; nothing else checks
@@ -192,10 +223,13 @@ test("keeps privacy and public-benefit claims in source", async () => {
 test("every absolute asset the page references exists in public/", async () => {
   const html = await (await render()).text();
   const referenced = new Set();
-  for (const [, href] of html.matchAll(
-    /(?:href|src|content)="(\/[A-Za-z0-9._/-]+\.(?:png|svg|ico|webp|avif|jpe?g))"/g,
+  // 設了 `NEXT_PUBLIC_SITE_URL` 之後，同一批資產會渲染成絕對 URL（`metadataBase`
+  // 會把以 `/` 開頭的路徑接上去），所以兩種形式都要抓，並一律以 pathname 對應
+  // `public/`：只認相對形式的話，絕對形式的部署下這條測試會一個資產都抓不到而空過。
+  for (const [, raw] of html.matchAll(
+    /(?:href|src|content)="((?:https?:\/\/[^"]+|\/)[A-Za-z0-9._/-]*\.(?:png|svg|ico|webp|avif|jpe?g))"/g,
   )) {
-    referenced.add(href);
+    referenced.add(new URL(raw, "http://localhost").pathname);
   }
   assert.ok(
     referenced.size > 0,
@@ -214,4 +248,132 @@ test("every absolute asset the page references exists in public/", async () => {
       `public${href} is referenced by the rendered page but does not exist`,
     );
   }
+});
+
+// The page renders its download links from `releaseFile()`／`releaseJar()`, but the
+// same 31 filenames are also hand-copied into the repository README and the three
+// translated READMEs (31 names each). Nothing compared the two sets, so a single
+// family rename (say `26.1-26.1.2` → `26.1.2`) could 404 four documents while the
+// whole build stayed green: the only existing gate checked the version label.
+// 這些檔案在倉庫根與 `docs/`，相對 `website/tests/` 要走兩層出去。
+const DOCUMENTED_READMES = [
+  "../../README.md",
+  "../../docs/Zh-cn/README.md",
+  "../../docs/Zh-tw/README.md",
+  "../../docs/en/README.md",
+];
+
+test("keeps every documented download name in sync with the rendered page", async (t) => {
+  const pageSource = await readFile(
+    new URL("../app/page.tsx", import.meta.url),
+    "utf8",
+  );
+  const releaseVersion = pageSource.match(/const releaseVersion = "([^"]+)"/)?.[1];
+  assert.ok(releaseVersion, "app/page.tsx 找不到 releaseVersion");
+
+  const html = await (await render()).text();
+  const version = escapeRe(releaseVersion);
+  const rendered = new Set(
+    (
+      html.match(
+        new RegExp(`download/v${version}/[A-Za-z0-9.-]+\\.jar`, "g"),
+      ) ?? []
+    ).map((href) => href.split("/").pop()),
+  );
+  assert.ok(rendered.size > 0, "頁面沒有渲染出任何 .jar 下載連結");
+
+  for (const relative of DOCUMENTED_READMES) {
+    const text = await readFile(new URL(relative, import.meta.url), "utf8");
+    const documented = new Set(text.match(/MCAutoTranslationTool-[^)"\s]+\.jar/g) ?? []);
+    assert.deepEqual(
+      [...documented].sort(),
+      [...rendered].sort(),
+      `${relative} 的下載檔名與頁面渲染的不一致：多出來的會 404，少掉的是文件沒跟上`,
+    );
+    // 版本標籤同樣是手抄的，一處留在舊版本就是整段連結 404。
+    const linked = new Set(
+      (text.match(/releases\/download\/v([^/]+)\//g) ?? []).map((url) =>
+        url.replace(/^releases\/download\/v/, "").replace(/\/$/, ""),
+      ),
+    );
+    assert.deepEqual(
+      [...linked],
+      [releaseVersion],
+      `${relative} 的下載連結必須全部指向 v${releaseVersion}（目前：${[...linked].join(", ")}）`,
+    );
+  }
+
+  // `scripts/prepare_release_assets.py` 若已寫出 `downloads/<版本>/release-assets.txt`
+  // （31 個可安裝檔名的權威清單），就以它為準再比一次。檔案不存在時只提示、不紅燈：
+  // 版本號 bump 後 `downloads/` 還沒重新產生時，網站檢查不該先壞掉。
+  let manifest = null;
+  try {
+    manifest = await readFile(
+      new URL(`../../downloads/${releaseVersion}/release-assets.txt`, import.meta.url),
+      "utf8",
+    );
+  } catch {
+    manifest = null;
+  }
+  if (manifest === null) {
+    t.diagnostic(
+      `downloads/${releaseVersion}/release-assets.txt 不存在，略過與發佈清單的比對`,
+    );
+  } else {
+    const listed = new Set(
+      manifest
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean),
+    );
+    assert.deepEqual(
+      [...listed].sort(),
+      [...rendered].sort(),
+      "頁面渲染的下載檔名與 downloads/<版本>/release-assets.txt 不一致",
+    );
+  }
+});
+
+// The repository README and `docs/Zh-cn/README.md` are two hand-written copies of the
+// same Simplified-Chinese text. Fixing only one of them is how the root README kept
+// telling beta5 users to delete "1.4-beta4 and earlier" (two JARs of the same modId
+// then sit in `mods/`, and the game refuses to start) and kept describing Forge
+// family JARs as continuous version ranges. Link targets and the few lines GitHub's
+// repository page needs are allowed to differ; everything else must match line for
+// line, otherwise the copies have drifted again.
+const README_COPY_DRIFT_ALLOWED = new Set([
+  // GitHub 首頁徽章只出現在根 README。
+  "[![主要建置](X)](X)",
+  // 語言切換列：docs 版多一個「倉庫首頁」回連。
+  "[简体中文](X) · [繁體中文](X) · [English](X)",
+  "[简体中文](X) · [繁體中文](X) · [English](X) · [仓库首页](X)",
+]);
+
+function normalizeReadmeCopy(text) {
+  return text
+    .split("\n")
+    .map((line) => line.trim().replace(/\]\([^)]*\)/g, "](X)").replace(/\*\*/g, ""))
+    .filter((line) => line && !README_COPY_DRIFT_ALLOWED.has(line));
+}
+
+test("keeps the repository README and docs/Zh-cn/README.md saying the same thing", async () => {
+  const [root, docs] = await Promise.all([
+    readFile(new URL("../../README.md", import.meta.url), "utf8"),
+    readFile(new URL("../../docs/Zh-cn/README.md", import.meta.url), "utf8"),
+  ]);
+  const rootLines = new Set(normalizeReadmeCopy(root));
+  const docsLines = new Set(normalizeReadmeCopy(docs));
+  const drift = [
+    ...[...rootLines]
+      .filter((line) => !docsLines.has(line))
+      .map((line) => `根 README 獨有：${line}`),
+    ...[...docsLines]
+      .filter((line) => !rootLines.has(line))
+      .map((line) => `docs/Zh-cn/README.md 獨有：${line}`),
+  ];
+  assert.deepEqual(
+    drift,
+    [],
+    "兩份簡中 README 已經漂移：同步內容，或把刻意不同的那一行加進 README_COPY_DRIFT_ALLOWED",
+  );
 });

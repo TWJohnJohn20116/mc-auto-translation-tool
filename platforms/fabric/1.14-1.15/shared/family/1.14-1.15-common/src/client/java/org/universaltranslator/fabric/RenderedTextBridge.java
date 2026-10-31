@@ -1,8 +1,11 @@
 package org.universaltranslator.fabric;
 
 import net.minecraft.text.LiteralText;
+import net.minecraft.text.MutableText;
+import net.minecraft.text.Style;
 import net.minecraft.text.Text;
 import org.universaltranslator.core.TextKind;
+import org.universaltranslator.core.TranslationStyleRuns;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TranslationTextStyling;
 import org.universaltranslator.core.WeakIdentitySet;
@@ -89,6 +92,14 @@ public final class RenderedTextBridge {
                 || !FabricTranslationRuntimeBase.renderTranslationEnabled()) {
             return text;
         }
+        // A component whose visible text does not all render with the root's own style has to be
+        // rebuilt run by run: flattening it below keeps the root style alone, which is how a team
+        // prefix and the name after it came out in one colour. Asked before getString() so an
+        // ordinary label still costs one string copy.
+        Text styled = text.getSiblings().isEmpty() ? null : translateStyledSiblings(text);
+        if (styled != null) {
+            return styled;
+        }
         String original = text.getString();
         String translated = translateRaw(original);
         if (original.equals(translated)) {
@@ -103,11 +114,83 @@ public final class RenderedTextBridge {
                 .setStyle(text.getStyle());
     }
 
-    public static List<Text> translateTooltip(List<Text> lines) {
-        return translateTooltip(lines, false);
+    /**
+     * Rebuilds the translation as one child per style the source's visible text renders with, so
+     * every server-provided style survives; flattening the component into a single literal keeps
+     * only the style of the node it was flattened from. Returns {@code null} when the visible text
+     * already renders with the root's own style, so the caller keeps the ordinary path.
+     */
+    private static Text translateStyledSiblings(Text text) {
+        List<String> texts = new ArrayList<String>();
+        List<Object> styleKeys = new ArrayList<Object>();
+        List<Style> styles = new ArrayList<Style>();
+        collectStyledLeaves(text, texts, styleKeys, styles);
+        if (texts.isEmpty()) {
+            return null;
+        }
+        boolean sourceHasColor = text.getStyle().getColor() != null;
+        for (Style style : styles) {
+            sourceHasColor |= style.getColor() != null;
+        }
+        List<TranslationStyleRuns.Run> runs = TranslationStyleRuns.mergeAdjacent(texts, styleKeys);
+        if (!TranslationStyleRuns.shouldRebuildRuns(runs, text.getStyle())) {
+            return null;
+        }
+        TranslationTextColor color = TranslationStyleRuns.resolveTranslatedColor(
+                sourceHasColor, FabricTranslationRuntime.translatedTextColor());
+        MutableText rebuilt = new LiteralText("");
+        rebuilt.setStyle(text.getStyle());
+        for (TranslationStyleRuns.Run run : runs) {
+            String translatedRun = translateRaw(run.text());
+            Style runStyle = styles.get(run.sourceIndex());
+            if (color == TranslationTextColor.ORIGINAL || translatedRun.equals(run.text())) {
+                rebuilt.append(new LiteralText(translatedRun).setStyle(runStyle));
+                continue;
+            }
+            // This generation has no Style.withColor, so the configured colour travels as a legacy
+            // code inside the run — and only when the source carries no colour of its own, which is
+            // the one case resolveTranslatedColor does not answer ORIGINAL for.
+            rebuilt.append(new LiteralText(TranslationTextStyling.applyTranslatedStyle(
+                    run.text(), translatedRun, color)).setStyle(runStyle));
+        }
+        return rebuilt;
     }
 
-    public static List<Text> translateItemTooltip(List<Text> lines) {
+    /**
+     * Collects the visible text of {@code text} together with the style of the node that carries it,
+     * descending into nested children: team prefixes and suffixes arrive as nested trees, so reading
+     * only the direct children left the caller with the root style alone.
+     *
+     * <p>Children are walked first and each returns the length of its own visible text, so a node
+     * never has to flatten a child a second time to work out where its own literal ends.
+     *
+     * @return the visible length of the whole subtree
+     */
+    private static int collectStyledLeaves(Text node, List<String> texts, List<Object> styleKeys,
+            List<Style> styles) {
+        int start = texts.size();
+        int childLength = 0;
+        for (Text child : node.getSiblings()) {
+            childLength += collectStyledLeaves(child, texts, styleKeys, styles);
+        }
+        String full = node.getString();
+        // Only a literal node renders a text of its own: for a translatable node getString() is its
+        // formatted value, arguments included, so "full length minus the children" attributed the
+        // expanded arguments to the node as well and the same characters reached the run list twice.
+        if (node instanceof LiteralText && full.length() > childLength) {
+            String own = full.substring(0, full.length() - childLength);
+            if (!own.isEmpty()) {
+                texts.add(start, own);
+                styleKeys.add(start, node.getStyle());
+                styles.add(start, node.getStyle());
+            }
+        }
+        return full.length();
+    }
+
+    public static List<Text> translateTooltip(List<Text> lines) {
+        return translateTooltip(lines, false);
+    }    public static List<Text> translateItemTooltip(List<Text> lines) {
         return translateTooltip(lines, true);
     }
 

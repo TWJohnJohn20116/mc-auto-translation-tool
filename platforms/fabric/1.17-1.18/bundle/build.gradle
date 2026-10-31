@@ -34,8 +34,9 @@ def implementationJars = supportedVersions.collectEntries { gameVersion ->
 
 processResources {
     inputs.property "version", project.version
+    inputs.property "fabricDependency", gradle.ext.fabricApiModId
     filesMatching("fabric.mod.json") {
-        expand "version": project.version
+        expand "version": project.version, "fabricDependency": gradle.ext.fabricApiModId
     }
 }
 
@@ -50,6 +51,10 @@ jar {
 }
 ext.jarLicenseName = "LICENSE_universal_translator_bundle"
 apply from: rootProject.file("gradle/jar-contents.gradle")
+// The reverse direction: a fabric.mod.json that declares a version this jar does not ship would pass
+// every presence check below, and the Loader then fails that version at resolution time.
+ext.bundleSupportedVersions = supportedVersions
+apply from: rootProject.file("gradle/bundle-metadata-verify.gradle")
 
 tasks.register("verifyBundle") {
     dependsOn jar
@@ -58,14 +63,19 @@ tasks.register("verifyBundle") {
         def required = ["fabric.mod.json"] + supportedVersions.collect {
             "META-INF/jars/universal-translator-${it}.jar"
         }
-        // One walk for the whole list. zipTree(archive) used to be built inside the loop, so every
-        // required entry re-expanded the entire aggregate jar — about 110 full ZIP parses per build
-        // across the eight bundles, each nested jar being a multi-megabyte deflate stream.
-        required.each { path ->
-            if (!zipTree(archive).matching { include path }.files) {
-                throw new GradleException("Missing bundle entry: ${path}")
-            }
+        // One walk for the whole list: collect the entries that exist, then compare names. zipTree used
+        // to be built inside the loop, so every required entry re-listed the entire jar — one full ZIP
+        // parse per required entry per bundle, each nested jar being a multi-megabyte deflate stream.
+        def present = [] as Set
+        zipTree(archive).matching {
+            include "fabric.mod.json"
+            include "META-INF/jars/universal-translator-*.jar"
+        }.files.each { present.add(it.name) }
+        def missing = required.findAll { !present.contains(it.tokenize('/').last()) }
+        if (!missing.isEmpty()) {
+            throw new GradleException("Missing bundle entries: ${missing}")
         }
+        verifyBundleMetadata()
         println "Verified ${archive.name}: all ${supportedVersions.size()} Minecraft 1.17/1.18 implementations present"
     }
 }
@@ -87,9 +97,11 @@ test {
 
 build.dependsOn verifyBundle, verifyLoaderSelection
 
-// The Fabric Loader discovery harness is byte-identical across these seven bundles; it lives in
-// platforms/fabric/bundles/shared-test so a Loader API change is fixed once. The 1.20/1.21 and
-// 26.x bundles keep their own copy: they run against a different Loader generation.
+// The Fabric Loader discovery harness is identical across the Fabric bundles; it lives in
+// platforms/fabric/bundles/shared-test so a Loader API change is fixed once. The 1.20 and 1.21
+// copies were byte-identical to this one and point here as well; the 26.x bundle keeps its own,
+// because its fabric.mod.json declares `fabric-api` and not `fabric`, so its stub game provider
+// registers one fewer builtin mod.
 sourceSets {
     test {
         java.srcDir rootProject.file("platforms/fabric/bundles/shared-test/src/test/java")

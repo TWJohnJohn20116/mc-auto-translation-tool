@@ -38,7 +38,15 @@ public final class ServerSentEvents {
      * the read loop never returned.
      */
     public static final int MAXIMUM_IGNORED_BYTES = 256 * 1024;
-    /** How long a stream may stay silent when the caller does not supply a deadline. */
+    /**
+     * How long a stream may stay silent when the caller supplies no deadline at all.
+     *
+     * <p>A fallback, not a policy: a production stream must pass the budget its own response was
+     * issued with, because a constant here is a second, hidden limit that overrides
+     * {@code api-read-timeout-ms}. Two providers still reached this overload, so the same setting
+     * produced three different stall limits and a user who raised it kept losing the stream at a
+     * fixed value. {@link HttpJsonClient.StreamedResponse#getDeadlineNanos()} is the number to pass.
+     */
     public static final long DEFAULT_TIME_BUDGET_MILLIS = 5 * 60 * 1000L;
 
     private static final long DEFAULT_TIME_BUDGET_NANOS = DEFAULT_TIME_BUDGET_MILLIS * 1000L * 1000L;
@@ -59,6 +67,10 @@ public final class ServerSentEvents {
     /**
      * Reads the stream to its end, or to the first payload whose handler returned {@code false},
      * under {@link #DEFAULT_TIME_BUDGET_MILLIS}.
+     *
+     * <p>Fallback for a stream with no transport deadline of its own (tests, an in-memory body). A
+     * response body handed over by {@link HttpJsonClient#postStreaming} must use
+     * {@link #read(InputStream, PayloadHandler, HttpJsonClient.StreamedResponse)} instead.
      *
      * @return number of payload characters handed to the handler
      * @throws IOException when the stream fails or exceeds a bound
@@ -166,6 +178,31 @@ public final class ServerSentEvents {
             }
         }
         return total;
+    }
+
+    /**
+     * Reads the stream under the budget the response itself was issued with.
+     *
+     * <p>This is the call a provider should use: {@code api-read-timeout-ms} then decides the stall
+     * budget for every provider, instead of each one supplying a constant of its own — which is how
+     * one setting produced three different limits. It also keeps the arithmetic in one place, so a
+     * later provider cannot compute the window differently.
+     *
+     * @param input the body of {@code response}, typically wrapped by the caller's own watchdog
+     * @param handler receives every payload
+     * @param response the response whose body {@code input} reads
+     * @return number of payload characters handed to the handler
+     * @throws IOException when the stream fails, exceeds a bound, or stops delivering data
+     */
+    public static int read(
+            InputStream input,
+            PayloadHandler handler,
+            HttpJsonClient.StreamedResponse response
+    ) throws IOException {
+        if (response == null) {
+            throw new IllegalStateException("Streamed response is required for a streamed body");
+        }
+        return read(input, handler, response.getDeadlineNanos());
     }
 
     /**

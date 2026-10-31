@@ -71,6 +71,12 @@ public final class RenderedTextBridge {
     }
 
     public static String translate(String text) {
+        // The measuring hook is handed the string the drawing hook produced a moment earlier, so the
+        // repeat has to be recognised before anything else runs; without this the same line walked the
+        // whole guard chain two to four times per frame.
+        if (TranslationRenderContext.isTranslatedResult(text)) {
+            return text;
+        }
         // Ask the cheap questions first: this hook runs for every line of every frame, and the
         // styling below is what made it expensive.
         if (TranslationRenderContext.isTextInput()
@@ -81,7 +87,14 @@ public final class RenderedTextBridge {
         if (text == null || text.equals(translated)) {
             return text;
         }
-        return styledText(text, translated);
+        String styled = styledText(text, translated);
+        // Both forms: the measuring hook receives what the drawing hook produced, and the two only
+        // differ when a translated colour is applied.
+        TranslationRenderContext.rememberTranslation(translated);
+        if (styled != translated) {
+            TranslationRenderContext.rememberTranslation(styled);
+        }
+        return styled;
     }
 
     /** Styles one already translated line, reusing the answer when the same line is redrawn. */

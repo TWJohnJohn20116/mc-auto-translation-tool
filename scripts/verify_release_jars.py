@@ -163,10 +163,17 @@ def _validate_class_versions(
     for name in archive.namelist():
         if not name.endswith(".class"):
             continue
-        data = archive.read(name)
-        if len(data) < 8 or data[:4] != b"\xca\xfe\xba\xbe":
+        # Only the first eight bytes matter (magic + major version), so the entry is streamed
+        # instead of decompressed in full: ZipFile.read() inflated every .class of every JAR twice
+        # per push main, while this needs 8 bytes of each. `file_size` keeps the old "shorter than a
+        # header" rejection, which a partial read cannot express on its own.
+        if archive.getinfo(name).file_size < 8:
             raise VerificationError(f"invalid class file header: {name}")
-        major = struct.unpack(">H", data[6:8])[0]
+        with archive.open(name) as handle:
+            header = handle.read(8)
+        if len(header) < 8 or header[:4] != b"\xca\xfe\xba\xbe":
+            raise VerificationError(f"invalid class file header: {name}")
+        major = struct.unpack(">H", header[6:8])[0]
         if major > expected_major:
             raise VerificationError(
                 f"class file {name} requires major {major}, target allows {expected_major}"

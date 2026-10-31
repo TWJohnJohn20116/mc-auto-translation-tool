@@ -17,6 +17,13 @@ function resolveMetadataBase(value: string | undefined): URL | undefined {
 
 const metadataBase = resolveMetadataBase(process.env.NEXT_PUBLIC_SITE_URL);
 
+// Both social cards below emit the same preview image; keeping the path and the
+// declared size in one place is what stops the Open Graph and Twitter tags from
+// drifting apart (the test suite asserts both tags resolve to the same file).
+const OG_CARD_PATH = "/og-card.png";
+const OG_CARD_WIDTH = 1200;
+const OG_CARD_HEIGHT = 628;
+
 export const metadata: Metadata = {
   metadataBase,
   title: "MC 自动翻译工具",
@@ -26,13 +33,20 @@ export const metadata: Metadata = {
     title: "MC 自动翻译工具",
     description: "让语言不再成为一起游戏的门槛。",
     type: "website",
-    images: [{ url: "/og-card.png", width: 1200, height: 628, alt: "MC 自动翻译工具公益项目" }],
+    images: [
+      {
+        url: OG_CARD_PATH,
+        width: OG_CARD_WIDTH,
+        height: OG_CARD_HEIGHT,
+        alt: "MC 自动翻译工具公益项目",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "MC 自动翻译工具",
     description: "让语言不再成为一起游戏的门槛。",
-    images: ["/og-card.png"],
+    images: [OG_CARD_PATH],
   },
 };
 

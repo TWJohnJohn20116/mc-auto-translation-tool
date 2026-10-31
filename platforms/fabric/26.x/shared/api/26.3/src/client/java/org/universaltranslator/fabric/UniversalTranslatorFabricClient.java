@@ -85,12 +85,13 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
 
         @Override
         protected Object currentScreen() {
-            return Minecraft.getInstance().gui.screen();
+            return FabricScreenOpener.currentScreen(Minecraft.getInstance());
         }
 
         @Override
         protected void openSettings(Object parent, FabricConfig config) {
-            Minecraft.getInstance().gui.setScreen(new UniversalTranslatorConfigScreen((Screen) parent, config));
+            FabricScreenOpener.open(Minecraft.getInstance(),
+                    new UniversalTranslatorConfigScreen((Screen) parent, config));
         }
 
         @Override

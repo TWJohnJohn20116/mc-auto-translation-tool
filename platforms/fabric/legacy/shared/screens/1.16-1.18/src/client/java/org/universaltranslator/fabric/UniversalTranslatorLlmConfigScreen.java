@@ -119,7 +119,7 @@ int width = Math.max(180, Math.min(360, this.width - 20));
                 ? parent.llmApiKey() : ("-".equals(enteredKey) ? "" : enteredKey);
         fetching = true;
         setStatus(tr("screen.universal_translator.llm.fetching"), false);
-        Thread worker = new Thread(() -> {
+        ScreenWorkers.execute(() -> {
             List<String> models = null;
             String failure = "";
             try {
@@ -141,9 +141,7 @@ int width = Math.max(180, Math.min(360, this.width - 20));
                 return;
             }
             pendingModels = models;
-        }, "universal-translator-model-list");
-        worker.setDaemon(true);
-        worker.start();
+        });
     }
 
     /**

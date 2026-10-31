@@ -89,44 +89,23 @@ tasks.register("validateMixinConfigs") {
                 )
             }
 
-            // Each tree is compiled for exactly one release, so the bounds are read from an explicit
-            // table instead of being inferred from a version substring in the path. The previous
-            // heuristic matched none of the four NeoForge metadata layers (their paths carry no
-            // "/1.20.1/"-style component) and let every one of them through as JAVA_21, so the upper
-            // bound was vacuously true there while the lower bound only existed for two fabric paths.
-            // First match wins; a config that matches no entry fails instead of falling back to a
-            // default, because a silent default is how both gaps appeared.
-            def levelBounds = [
-                    // path prefix                                          maximum     minimum
-                    ["platforms/fabric/1.0-1.8/",                          "JAVA_8",   "JAVA_8"],
-                    ["platforms/fabric/1.8-1.12/",                         "JAVA_8",   "JAVA_8"],
-                    ["platforms/fabric/1.13/",                             "JAVA_8",   "JAVA_8"],
-                    ["platforms/fabric/1.14-1.15/",                        "JAVA_8",   "JAVA_8"],
-                    ["platforms/fabric/1.16/",                             "JAVA_8",   "JAVA_8"],
-                    ["platforms/fabric/1.17-1.18/",                        "JAVA_17",  "JAVA_17"],
-                    ["platforms/fabric/1.19/",                             "JAVA_17",  "JAVA_17"],
-                    // The 1.20 family is shared by 1.20.5/1.20.6 (Java 21) and 1.20-1.20.4 (Java 17).
-                    ["platforms/fabric/1.20/",                             "JAVA_21",  "JAVA_17"],
-                    ["platforms/fabric/1.21/",                             "JAVA_21",  "JAVA_21"],
-                    // 26.x compiles with options.release = 25 but Mixin's enum stops at JAVA_21.
-                    ["platforms/fabric/26.x/",                             "JAVA_21",  "JAVA_21"],
-                    ["platforms/forge/modern/1.16.5/",                     "JAVA_8",   "JAVA_8"],
-                    ["platforms/forge/modern/1.18.2/",                     "JAVA_17",  "JAVA_17"],
-                    ["platforms/forge/modern/1.19.2/",                     "JAVA_17",  "JAVA_17"],
-                    ["platforms/forge/modern/1.20.1/",                     "JAVA_17",  "JAVA_17"],
-                    ["platforms/forge/1.21/",                              "JAVA_21",  "JAVA_21"],
-                    ["platforms/forge/26.x/",                              "JAVA_21",  "JAVA_21"],
-                    ["platforms/neoforge/1.20.1/",                         "JAVA_17",  "JAVA_17"],
-                    ["platforms/neoforge/shared/metadata/1.20-1.20.4/",    "JAVA_17",  "JAVA_17"],
-                    ["platforms/neoforge/shared/metadata/1.20.6/",         "JAVA_21",  "JAVA_21"],
-                    ["platforms/neoforge/shared/metadata/1.21/",           "JAVA_21",  "JAVA_21"],
-                    ["platforms/neoforge/shared/metadata/26.x/",           "JAVA_21",  "JAVA_21"]
-            ]
+            // Each tree is compiled for exactly one release, so the bounds are derived from
+            // settings.gradle's treeJavaRelease — the same table the compile options read — instead of
+            // being inferred from a version substring in the path or copied a second time here. Both
+            // copies used to be edited by hand, and neither change could make the other follow.
+            // Clamped at JAVA_21 because Mixin's CompatibilityLevel enum stops there (see the 26.x note
+            // below). First match wins; a config that matches no entry fails instead of falling back to
+            // a default, because a silent default is how both gaps appeared.
+            def mixinLevelOf = { Object release -> "JAVA_" + Math.min((release as Integer), 21) }
+            def levelBounds = gradle.ext.treeJavaRelease.collect { String prefix, List releases ->
+                // path prefix, maximum, minimum
+                [prefix, mixinLevelOf(releases[1]), mixinLevelOf(releases[0])]
+            }
             def bounds = levelBounds.find { relativeConfigPath.startsWith(it[0].toString()) }
             if (bounds == null) {
                 throw new GradleException(
                         "No Mixin compatibilityLevel bounds are registered for ${relativeConfigPath}; add the " +
-                                "tree to levelBounds in build.gradle with the release it is compiled for"
+                                "tree to treeJavaRelease in settings.gradle with the release it is compiled for"
                 )
             }
             def maximumLevel = bounds[1]
@@ -167,6 +146,181 @@ tasks.register("validateMixinConfigs") {
                         "Legacy Forge Mixin hooks must remain tolerant (defaultRequire 0): ${relativeConfigPath}"
                 )
             }
+        }
+    }
+}
+
+tasks.register("validateResourcePackFormats") {
+    group = "verification"
+    description = "Rejects pack.mcmeta templates whose min_format is newer than their max_format."
+
+    doLast {
+        // Every numeric resource pack coordinate the version modules declare, keyed by the placeholder
+        // it fills. Only these can be read without evaluating a platform's build script, and they are
+        // the only values a pack.mcmeta template is ever expanded with.
+        def declaredFormats = [:]
+        fileTree("platforms") {
+            include "**/build.gradle"
+            exclude "**/build/**"
+            exclude "**/.gradle/**"
+        }.each { script ->
+            script.getText("UTF-8").readLines().each { line ->
+                def assignment = line =~ '^\\s*ext\\.(\\w+)\\s*=\\s*(\\d+)\\s*$'
+                if (assignment.matches()) {
+                    def name = assignment.group(1)
+                    if (!declaredFormats.containsKey(name)) {
+                        declaredFormats.put(name, new LinkedHashSet<Integer>())
+                    }
+                    declaredFormats.get(name).add(Integer.valueOf(assignment.group(2)))
+                }
+            }
+        }
+
+        def readBound = { String body, String key ->
+            def matcher = body =~ ('"' + key + '"\\s*:\\s*(\\[[^\\]]*\\]|\\d+)')
+            return matcher.find() ? matcher.group(1).trim() : null
+        }
+
+        // A bound is (major, minor): a bare integer is (value, 0), an array carries the minor
+        // explicitly. A bound that still holds a placeholder is reported by the NeoForge pack
+        // template check instead, so it answers null here and is not compared.
+        def parseBound = { String raw ->
+            def text = raw.replaceAll('[\\[\\]\\s]', '')
+            if (text.contains('$')) {
+                return null
+            }
+            def parts = text.split(',')
+            if (parts.length != 1 && parts.length != 2) {
+                return null
+            }
+            try {
+                return [Integer.parseInt(parts[0]),
+                        parts.length == 2 ? Integer.parseInt(parts[1]) : 0]
+            } catch (NumberFormatException ignored) {
+                return null
+            }
+        }
+
+        def failures = []
+        fileTree("platforms") {
+            include "**/src/**/pack.mcmeta"
+            exclude "**/build/**"
+            exclude "**/.gradle/**"
+        }.each { template ->
+            def body = template.getText("UTF-8")
+            def minRaw = readBound(body, "min_format")
+            def maxRaw = readBound(body, "max_format")
+            if (minRaw == null || maxRaw == null) {
+                return
+            }
+            // The placeholders both bounds share, and every value the modules declare under a name
+            // that ends with them: a template names the placeholder "resourcePackFormat" while the
+            // modules declare "forgeResourcePackFormat" / "neoforgeResourcePackFormat".
+            def placeholders = new TreeSet<String>()
+            [minRaw, maxRaw].each { bound ->
+                def matcher = bound =~ '\\$\\{(\\w+)\\}'
+                while (matcher.find()) {
+                    placeholders.add(matcher.group(1))
+                }
+            }
+            def worlds = new TreeSet<Integer>()
+            placeholders.each { name ->
+                declaredFormats.each { declaredName, values ->
+                    if (declaredName.endsWith(name)) {
+                        worlds.addAll(values)
+                    }
+                }
+            }
+            if (worlds.isEmpty()) {
+                // No coordinate at all: the bounds are literals, so there is one world to check.
+                worlds.add(Integer.valueOf(0))
+            }
+            worlds.each { value ->
+                def expandedMin = minRaw
+                def expandedMax = maxRaw
+                placeholders.each { name ->
+                    expandedMin = expandedMin.replace('${' + name + '}', String.valueOf(value))
+                    expandedMax = expandedMax.replace('${' + name + '}', String.valueOf(value))
+                }
+                def lower = parseBound(expandedMin)
+                def upper = parseBound(expandedMax)
+                // Compared as (major, minor) pairs, the ordering the game itself applies. A range that
+                // starts above where it ends accepts no format at all, which made the 26.x built-in
+                // pack - and with it every language file - unreadable while the build stayed green.
+                if (lower != null && upper != null
+                        && lower[0] * 1000 + lower[1] > upper[0] * 1000 + upper[1]) {
+                    failures.add("${relativePath(template)} declares min_format ${lower} above " +
+                            "max_format ${upper} for format ${value}")
+                }
+            }
+        }
+        if (!failures.isEmpty()) {
+            throw new GradleException(
+                    "pack.mcmeta accepts no game format at all: " + failures.join("; "))
+        }
+    }
+}
+
+tasks.register("validateDualLayerApiParity") {
+    group = "verification"
+    description = "Keeps the two hand-maintained 26.x Forge API layers structurally identical."
+
+    doLast {
+        // The 26.1-26.1.2 and 26.2 layers are hand-maintained copies of the same client body; the only
+        // difference allowed between them is how each generation names the HUD, the chat HUD and
+        // setScreen. Round after round of fixes landed in one copy only — the local-input guard report,
+        // a row bound, a type cast — so the members each file declares are compared here: a helper that
+        // exists in one layer and not the other is the shape every one of those misses took.
+        def pairs = [
+                ["platforms/forge/26.x/shared/api/26.1-26.1.2", "platforms/forge/26.x/shared/api/26.2"]
+        ]
+        def declaredMethods = { File source ->
+            def names = new TreeSet<String>()
+            source.readLines("UTF-8").each { line ->
+                def trimmed = line.trim()
+                if (trimmed.isEmpty() || trimmed.startsWith("//") || trimmed.startsWith("*")
+                        || trimmed.startsWith("/*")) {
+                    return
+                }
+                def method = trimmed =~ /^(?:(?:public|private|protected|static|final|abstract|synchronized)\s+)+[\w.<>\[\],\s?]+?\s(\w+)\s*\(/
+                if (method.find()) {
+                    names.add(method.group(1))
+                }
+            }
+            return names
+        }
+
+        def failures = []
+        pairs.each { pair ->
+            def leftRoot = new File(pair[0])
+            def rightRoot = new File(pair[1])
+            if (!leftRoot.isDirectory() || !rightRoot.isDirectory()) {
+                return
+            }
+            fileTree(leftRoot) {
+                include "**/*.java"
+                exclude "**/build/**"
+            }.files.sort { it.absolutePath }.each { source ->
+                def relative = source.absolutePath.substring(leftRoot.absolutePath.length() + 1)
+                def counterpart = new File(rightRoot, relative)
+                if (!counterpart.isFile()) {
+                    return
+                }
+                def leftMembers = declaredMethods(source)
+                def rightMembers = declaredMethods(counterpart)
+                def onlyLeft = new TreeSet<String>(leftMembers)
+                onlyLeft.removeAll(rightMembers)
+                def onlyRight = new TreeSet<String>(rightMembers)
+                onlyRight.removeAll(leftMembers)
+                if (!onlyLeft.isEmpty() || !onlyRight.isEmpty()) {
+                    failures.add("${relative} declares methods only in ${pair[0]} ${onlyLeft} " +
+                            "and only in ${pair[1]} ${onlyRight}")
+                }
+            }
+        }
+        if (!failures.isEmpty()) {
+            throw new GradleException("The 26.x Forge API layers drifted apart: "
+                    + failures.join("; "))
         }
     }
 }
@@ -634,6 +788,21 @@ tasks.register("validateNeoForgeModuleCoordinates") {
                     !file("platforms/neoforge/shared/entrypoints/${unquote(entryLayer)}").isDirectory()) {
                 problems.add("${relative}: neoforgeEntryLayer does not resolve".toString())
             }
+            // Declaring the entrypoint layer is not the same as mounting it: 1.20.1 keeps a hand-written
+            // source set (it cannot apply neoforge/shared.gradle without re-running the Mavenizer), so it
+            // takes its @Mod and client from the Forge 1.20.1 tree and an edit under
+            // entrypoints/1.20.2-1.20.4 never reaches that JAR. A module that opts out has to name the
+            // Forge tree it uses instead, so the "the three 1.20.x targets share one layer" reading stops
+            // being an assumption.
+            def entryLayerMounted = coordinateValue(text, "neoforgeEntryLayerMounted")
+            if (entryLayerMounted != null && unquote(entryLayerMounted) == "false") {
+                def forgeEntrySource = "platforms/forge/modern/${directoryVersion}/src/main/java"
+                if (!file(forgeEntrySource).isDirectory() || !text.contains(forgeEntrySource)) {
+                    problems.add(
+                            "${relative}: neoforgeEntryLayerMounted is false but the module does not mount " +
+                                    "${forgeEntrySource} for its @Mod entrypoint".toString())
+                }
+            }
 
             def metadataLayer = coordinateValue(text, "neoforgeMetadataLayer")
             if (metadataLayer != null &&
@@ -740,28 +909,53 @@ tasks.register("validateNeoForgeModuleCoordinates") {
             }
             matcher.group(1)
         }
+        // Every key a map declares has to be understood by the regex that reads it. A re-laid-out map
+        // (array value where a string is expected, a key spelled with a nested map, a trailing entry on
+        // the closing line) used to parse to fewer entries than it declares and the cross-check then
+        // reported "cannot resolve the expected Forge layer", which points at the NeoForge module that
+        // is correct instead of at the map that changed shape.
+        def requireShape = { File source, String mapName, String body, int parsed, String expectedShape ->
+            def declared = (body =~ /(?m)^\s*"([^"]+)"\s*:/).size()
+            if (parsed != declared) {
+                throw new GradleException(
+                        "${mapName} in ${relativePath(source)} is not in the expected ${expectedShape} " +
+                                "shape: ${parsed} of ${declared} keys parsed")
+            }
+        }
 
         // Map variable names follow the shape of the map they hold so the three trees stay
         // distinguishable: "<key>By<value>" reads left to right.
+        def body121 = mapBody(file("platforms/forge/1.21/shared.gradle"), "versionFamilies")
+        def parsedFamilies = 0
         def familyByVersion = [:]
-        (mapBody(file("platforms/forge/1.21/shared.gradle"), "versionFamilies") =~
-                /"([^"]+)"\s*:\s*\[([^\]]*)\]/).each { match ->
+        (body121 =~ /"([^"]+)"\s*:\s*\[([^\]]*)\]/).each { match ->
             def family = match[1]
+            parsedFamilies++
             (match[2] =~ /"([^"]+)"/).each { version -> familyByVersion[version[1]] = family }
         }
+        requireShape(file("platforms/forge/1.21/shared.gradle"), "versionFamilies", body121,
+                parsedFamilies, '"<family>": ["<version>", ...]')
 
+        def body26 = mapBody(file("platforms/forge/26.x/shared.gradle"), "sourceLayers")
+        def parsed26 = 0
         def layerByVersion26 = [:]
-        (mapBody(file("platforms/forge/26.x/shared.gradle"), "sourceLayers") =~
-                /"([^"]+)"\s*:\s*"([^"]+)"/).each { match ->
+        (body26 =~ /"([^"]+)"\s*:\s*"([^"]+)"/).each { match ->
+            parsed26++
             layerByVersion26[match[1]] = match[2]
         }
+        requireShape(file("platforms/forge/26.x/shared.gradle"), "sourceLayers", body26, parsed26,
+                '"<version>": "<layer>"')
 
+        def bodyModern = mapBody(file("platforms/forge/modern/shared.gradle"), "sourceLayers")
+        def parsedModern = 0
         def layerByVersionModern = [:]
-        (mapBody(file("platforms/forge/modern/shared.gradle"), "sourceLayers") =~
-                /"([^"]+)"\s*:\s*\[([^\]]*)\]/).each { match ->
+        (bodyModern =~ /"([^"]+)"\s*:\s*\[([^\]]*)\]/).each { match ->
+            parsedModern++
             def layers = (match[2] =~ /"([^"]+)"/).collect { it[1] }
             layerByVersionModern[match[1]] = layers.join("/")
         }
+        requireShape(file("platforms/forge/modern/shared.gradle"), "sourceLayers", bodyModern,
+                parsedModern, '"<version>": ["<layer>", ...]')
 
         def versionParts = { String value ->
             value.tokenize('.').collect { (it ==~ /\d+/) ? it.toInteger() : 0 }
@@ -862,6 +1056,45 @@ tasks.register("verifyPreparedReleaseAssets", Exec) {
     }
 }
 
+// fabric-all.jar is the only asset that carries the awkward generations of the three legacy bundles,
+// and their own aggregate verification runs only when those projects are part of the build
+// (settings.gradle includes a project only when -PtargetPlatform or a task path names it). The entry
+// names can be checked without configuring any of them, so the seventeen 1.13-1.16.x versions are not
+// left to a warning that only fires inside a task nobody schedules.
+tasks.register("verifyReleaseAggregateMembership") {
+    group = "verification"
+    description = "Checks that the Fabric aggregate JAR carries one implementation per release version."
+    dependsOn("prepareReleaseAssets")
+    def aggregate = preparedReleaseDirectory.map { directory ->
+        new File(directory.asFile, "MCAutoTranslationTool-${project.mod_version}-fabric-all.jar")
+    }
+    inputs.file(aggregate)
+    doLast {
+        def archive = aggregate.get()
+        if (!archive.isFile()) {
+            throw new GradleException("Missing release aggregate ${archive}; run :prepareReleaseAssets first.")
+        }
+        def expected = (gradle.ext.fabricReleaseVersions as List).collect {
+            "META-INF/jars/universal-translator-${it}.jar"
+        }
+        def carried = [] as Set
+        new java.util.zip.ZipFile(archive).withCloseable { zip ->
+            zip.entries().each { entry ->
+                if (entry.name.endsWith(".jar")) {
+                    carried.add(entry.name)
+                }
+            }
+        }
+        def missing = expected.findAll { !carried.contains(it) }
+        if (!missing.isEmpty()) {
+            throw new GradleException(
+                    "${archive.name} does not carry every Fabric release implementation. Missing: " +
+                            missing.join(", ") + ". downloads/${project.mod_version} and " +
+                            "settings.gradle's platformDependencies are out of step.")
+        }
+    }
+}
+
 // Release-asset verification is a release-only concern, so it is not part of `check`: it needs
 // downloads/<mod_version> to be committed (prepare-release.yml only creates that directory after it
 // has built all targets, so a version bump failed the required check by definition) and it re-scans
@@ -870,17 +1103,19 @@ tasks.register("verifyPreparedReleaseAssets", Exec) {
 tasks.register("verifyPublishedRelease") {
     group = "verification"
     description = "Validates downloads/<mod_version> and the reduced release asset set (release flows only)."
-    dependsOn("verifyPreparedReleaseAssets")
+    dependsOn("verifyPreparedReleaseAssets", "verifyReleaseAggregateMembership")
 }
 
 tasks.named("check") {
     dependsOn(
+            "validateDualLayerApiParity",
             "validateMixinConfigs",
             "validateNeoForgeModuleCoordinates",
             "validateNonOverlappingSettingsLabels",
             "validateOutgoingTranslationReentryGuards",
             "validateOpaqueDiagnosticsTextColors",
             "validateOpaqueSelectionTextColors",
+            "validateResourcePackFormats",
             "validateSharedPlatformLayouts"
     )
 }

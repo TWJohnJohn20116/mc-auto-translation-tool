@@ -338,6 +338,16 @@ python3 scripts/prepare_release_assets.py \
   --version 1.4
 ```
 
+发布目标和 source-only bundle 是两种不同的东西，混成一类就会写与实际产出相反的说明：
+
+| 类别 | 内容 | 是否随正式版发布 |
+| --- | --- | --- |
+| 发布目标（48 个） | 覆盖 Fabric 1.13–26.3、Forge 1.8.9–26.2、NeoForge 1.20.1–26.2 | 是，缩减为 31 个可安装 JAR |
+| source-only bundle（2 个） | `fabric-1.0-1.8.x`（1.3.1–1.8.8 中的 26 个版本）与 `fabric-1.8-1.12.x`（1.8.9–1.12.2，15 个版本） | 否，只在 `legacy-targets.yml` 建置，从不出现在 `downloads/<版本>/` |
+
+所以 `fabric-all` 只含 1.13–26.3 的 51 个精确实作；1.3.1–1.12.2 的玩家要自行构建这两个 bundle。
+要把覆盖范围写进 CHANGELOG 或 README 时引用这一节，不要另写一份数字。
+
 ## 核心自测
 
 根项目的 `translator-core` 不依赖 Minecraft。测试源码位于

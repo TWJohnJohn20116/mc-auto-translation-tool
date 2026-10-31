@@ -233,12 +233,29 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
      * {@code universal-translator-connection-test} thread reads an object owned by the client thread
      * (which may be loading a language file at that moment) and can answer the raw key. The client
      * thread localizes when it draws the line.
+     *
+     * <p>One immutable line behind one volatile field: with a field per part, the drawing code could
+     * read the key of the message the worker had just published together with the argument and the
+     * colour of the one before it, so the line shown was a mix of two answers.
      */
-    private volatile String testStatusKey;
-    private volatile String testStatusArgument = "";
-    /** Already plain text: an exception message, or a line produced on the client thread. */
-    private volatile String testStatusText = "";
-    private volatile boolean testStatusIsError;
+    private volatile TestStatus testStatus = TestStatus.EMPTY;
+
+    /** One published engine-tab status line; see {@link #testStatus}. */
+    private static final class TestStatus {
+        static final TestStatus EMPTY = new TestStatus(null, "", "", false);
+        /** Localization key, or {@code null} when {@link #text} is already the whole line. */
+        final String key;
+        final String argument;
+        final String text;
+        final boolean error;
+
+        TestStatus(String key, String argument, String text, boolean error) {
+            this.key = key;
+            this.argument = argument == null ? "" : argument;
+            this.text = text == null ? "" : text;
+            this.error = error;
+        }
+    }
     /**
      * In-flight flags for the two engine-tab requests.
      *
@@ -513,13 +530,14 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         }).dimensions(layout.right, engineRow(5), layout.buttonWidth, 20).build());
 
         String promptValue = customPrompt == null
-                ? TranslationPrompt.toEditorText(original.customSystemPrompt())
+                ? TranslationPrompt.toEditorText(
+                        TranslationPrompt.clampForEditor(original.customSystemPrompt()))
                 : customPrompt.getText();
         int promptApplyWidth = Math.max(48, layout.buttonWidth - 24);
         this.customPrompt = addSettingField(newTextField(left, engineRow(4),
                 layout.totalWidth - promptApplyWidth - 8, 20,
                 tr("screen.universal_translator.diagnostics.prompt")));
-        this.customPrompt.setMaxLength(UiLimits.PROMPT_MAX_CHARS);
+        this.customPrompt.setMaxLength(UiLimits.PROMPT_EDITOR_MAX_CHARS);
         this.customPrompt.setText(promptValue);
         this.customPrompt.setSuggestion(tr("screen.universal_translator.diagnostics.prompt_hint"));
         this.applyPromptButton = addSettingButton(of(
@@ -705,51 +723,35 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
      * the save then wrote what had been typed into a field nobody could see.
      */
     private void releaseFieldFocus() {
-        clearFieldFocus(endpoint);
-        clearFieldFocus(customPrompt);
-        clearFieldFocus(blockedKeywords);
+        syncFieldEditing();
     }
 
     /**
-     * Clears a text field's focus through whichever accessor this Minecraft version exposes.
+     * Keeps the three fields from accepting characters while an overlay owns the keyboard, and hands
+     * them back the moment it closes.
      *
-     * <p>1.16–1.20 keep {@code setFocused} protected on {@code ClickableWidget} and only publish
-     * {@code setTextFieldFocused}, while 1.21 publishes {@code setFocused} itself. This screen is
-     * compiled against both trees, so the accessor is resolved once and cached; the method is only
-     * called while an overlay owns the keyboard.
+     * <p>Clearing a field's own focus needs an accessor whose visibility and name both move between
+     * generations ({@code setTextFieldFocused} up to 1.20, {@code setFocused} from 1.21) and the game
+     * rewrites that name at runtime, so resolving it by reflection found nothing and the guard was a
+     * no-op in every published client. The editability switch exists on every generation, so the
+     * characters are stopped at the field itself instead.
+     *
+     * <p>Re-applied from {@link #renderChrome} every frame rather than only when an overlay opens:
+     * that is what unfreezes the fields for the paths that dismiss an overlay without going through
+     * {@link #releaseFieldFocus()} (ESC, a click outside the list, a resize rebuilding the widgets).
      */
-    private static void clearFieldFocus(Object field) {
-        if (field == null || CLEAR_TEXT_FIELD_FOCUS == null) {
-            return;
-        }
-        try {
-            CLEAR_TEXT_FIELD_FOCUS.invoke(field, Boolean.FALSE);
-        } catch (ReflectiveOperationException | RuntimeException ignored) {
-            // Focus stays where it was; clearing it is an improvement, not a requirement.
-        }
+    private void syncFieldEditing() {
+        boolean overlayOwnsKeyboard = openSelection != SettingsSelectionList.Kind.NONE
+                || (activeTab == Tab.ENGINE && modelListOpen);
+        setFieldEditing(endpoint, !overlayOwnsKeyboard);
+        setFieldEditing(customPrompt, !overlayOwnsKeyboard);
+        setFieldEditing(blockedKeywords, !overlayOwnsKeyboard);
     }
 
-    private static final java.lang.reflect.Method CLEAR_TEXT_FIELD_FOCUS = findFocusClearer();
-
-    private static java.lang.reflect.Method findFocusClearer() {
-        Class<?> type;
-        try {
-            type = Class.forName("net.minecraft.client.gui.widget.TextFieldWidget");
-        } catch (ClassNotFoundException missing) {
-            return null;
+    private static void setFieldEditing(TextFieldWidget field, boolean editable) {
+        if (field != null) {
+            field.setEditable(editable);
         }
-        for (String name : new String[] {"setTextFieldFocused", "setFocused"}) {
-            try {
-                java.lang.reflect.Method method = type.getMethod(name, boolean.class);
-                method.setAccessible(true);
-                return method;
-            } catch (NoSuchMethodException inaccessible) {
-                // Try the next accessor name; the older one is protected rather than absent.
-            } catch (RuntimeException denied) {
-                return null;
-            }
-        }
-        return null;
     }
 
     /**
@@ -780,12 +782,11 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
 
     /** The engine tab's status line, localized on the client thread. */
     private String testStatusLine() {
-        String key = testStatusKey;
-        if (key == null) {
-            return testStatusText == null ? "" : testStatusText;
+        TestStatus line = testStatus;
+        if (line.key == null) {
+            return line.text;
         }
-        String argument = testStatusArgument;
-        return argument == null || argument.isEmpty() ? tr(key) : tr(key, argument);
+        return line.argument.isEmpty() ? tr(line.key) : tr(line.key, line.argument);
     }
 
     /**
@@ -1005,6 +1006,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     }
 
     protected final void renderChrome(Object canvas, int mouseX, int mouseY, float delta) {
+        syncFieldEditing();
         Layout layout = layout();
         long now = System.nanoTime();
         float opening = 1.0F;
@@ -1042,7 +1044,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
                     this.width / 2, messageY, 0xFFFF5555);
         } else if (!testLine.isEmpty()) {
             drawCentered(canvas, textRenderer(), lit(testLine),
-                    this.width / 2, messageY, testStatusIsError ? 0xFFFF5555 : 0xFF55FF55);
+                    this.width / 2, messageY, testStatus.error ? 0xFFFF5555 : 0xFF55FF55);
         } else if (!runtimeStatus.isEmpty()) {
             drawCentered(canvas, textRenderer(), lit(runtimeStatus),
                     this.width / 2, messageY,
@@ -1583,28 +1585,22 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
 
     /** Publishes a line that is already text: an exception message, or a client-thread lookup. */
     private void setTestStatus(String message, boolean error) {
-        testStatusText = message == null ? "" : message;
-        testStatusArgument = "";
-        testStatusKey = null;
-        testStatusIsError = error;
+        testStatus = new TestStatus(null, "", message, error);
     }
 
     /**
      * Publishes a status line for the client thread to localize.
      *
      * <p>A {@code null} key means the argument is already the whole line, which is what an exception
-     * message is. Otherwise the argument is published before the key, so a reader that sees the key
-     * also sees the argument it belongs to.
+     * message is. The whole line is published in one write, so a reader either sees the finished
+     * message or the one before it — never a key paired with the argument of another answer.
      */
     private void setTestResult(String key, String argument, boolean error) {
         if (key == null) {
             setTestStatus(argument, error);
             return;
         }
-        testStatusText = "";
-        testStatusArgument = argument == null ? "" : argument;
-        testStatusKey = key;
-        testStatusIsError = error;
+        testStatus = new TestStatus(key, argument, "", error);
     }
 
     private static String describe(Exception error) {

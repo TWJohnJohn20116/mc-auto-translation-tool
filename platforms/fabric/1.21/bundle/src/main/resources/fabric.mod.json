@@ -5,7 +5,7 @@
   "name": "MC Auto Translation Tool - Fabric 1.21.x Bundle",
   "description": "Selects the exact compatible Universal Translator implementation for every Minecraft 1.21 release.",
   "authors": [
-    "272635"
+    "我小张7272635"
   ],
   "contact": {
     "homepage": "https://space.bilibili.com/3546631091783712",
@@ -68,7 +68,7 @@
       "1.21.11"
     ],
     "java": ">=21",
-    "fabric-api": "*",
-    "universal_translator": "*"
+    "${fabricDependency}": "*",
+    "universal_translator": ">=${version}"
   }
 }

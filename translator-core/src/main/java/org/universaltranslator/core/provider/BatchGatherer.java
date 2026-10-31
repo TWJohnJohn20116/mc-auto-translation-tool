@@ -1,6 +1,7 @@
 package org.universaltranslator.core.provider;
 
 import org.universaltranslator.core.TranslationRequest;
+import org.universaltranslator.core.net.HttpStatusException;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -8,6 +9,7 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -74,6 +76,14 @@ final class BatchGatherer {
      * answers cannot retire the worker.
      */
     private static final long WAITER_TIMEOUT_MILLIS = 180000L;
+    /**
+     * Base delay before the one whole-group retry.
+     *
+     * <p>It is {@link ResilientTranslationProvider}'s own first-attempt backoff, so one reissued
+     * batch waits exactly what one retried single request waits; the rate-limit floor and the
+     * {@code Retry-After} header raise it from there.
+     */
+    private static final long GROUP_RETRY_BACKOFF_MILLIS = 200L;
 
     private final Object lock = new Object();
     private final List<Entry> pending = new ArrayList<Entry>();
@@ -302,8 +312,11 @@ final class BatchGatherer {
             if (!FailurePolicy.repairablePerLine(batchFailure)) {
                 // An authentication, quota, transport or cancellation answer is the same for every
                 // line: repeating it seven more times only multiplies the failure. One retry of the
-                // whole group rides out a transient 5xx for one request instead of one per line.
+                // whole group rides out a transient 5xx for one request instead of one per line — but
+                // it waits first: reissued a few milliseconds after a 429 it landed inside the same
+                // rate-limit window, which is exactly the pattern an endpoint reads as scanning.
                 if (FailurePolicy.retryableAsGroup(batchFailure)) {
+                    awaitGroupRetry(batchFailure);
                     translated = work.translateGroup(requests);
                 } else {
                     throw batchFailure;
@@ -327,6 +340,66 @@ final class BatchGatherer {
             // for the eighth, instead of resending all eight.
             translateAlone(entry, work);
         }
+    }
+
+    /**
+     * Waits before the one whole-group retry.
+     *
+     * <p>{@link ResilientTranslationProvider} already knows how long to wait — it honours
+     * {@code Retry-After}, floors a bare {@code 429} at
+     * {@link ResilientTranslationProvider#RATE_LIMIT_FLOOR_MILLIS} and adds jitter — but it wraps
+     * this gatherer from the outside, so a retry issued here bypassed all of it.
+     *
+     * @param failure what the group request threw
+     * @throws InterruptedException when the session was closed during the wait
+     */
+    private static void awaitGroupRetry(Exception failure) throws InterruptedException {
+        try {
+            Thread.sleep(groupRetryDelayMillis(failure));
+        } catch (InterruptedException cancelled) {
+            Thread.currentThread().interrupt();
+            throw cancelled;
+        }
+    }
+
+    /** Delay before one group retry: the backoff raised to a rate limit's floor or its Retry-After. */
+    private static long groupRetryDelayMillis(Exception failure) {
+        long backoff = GROUP_RETRY_BACKOFF_MILLIS;
+        HttpStatusException status = statusIn(failure);
+        if (status == null) {
+            return jitter(backoff);
+        }
+        Long retryAfterSeconds = status.getRetryAfterSeconds();
+        if (retryAfterSeconds == null) {
+            long floor = status.getStatusCode() == 429
+                    ? ResilientTranslationProvider.RATE_LIMIT_FLOOR_MILLIS : backoff;
+            return jitter(Math.max(backoff, floor));
+        }
+        long seconds = retryAfterSeconds.longValue();
+        long retryAfterMillis = seconds >= ResilientTranslationProvider.MAX_RETRY_AFTER_MILLIS / 1000L
+                ? ResilientTranslationProvider.MAX_RETRY_AFTER_MILLIS
+                : seconds * 1000L;
+        return jitter(Math.min(ResilientTranslationProvider.MAX_RETRY_AFTER_MILLIS,
+                Math.max(backoff, retryAfterMillis)));
+    }
+
+    /** The HTTP status inside one cause chain, or {@code null} when there is none. */
+    private static HttpStatusException statusIn(Throwable failure) {
+        Throwable current = failure;
+        for (int depth = 0; current != null && depth < FailurePolicy.MAXIMUM_CAUSE_DEPTH; depth++) {
+            if (current instanceof HttpStatusException) {
+                return (HttpStatusException) current;
+            }
+            Throwable next = current.getCause();
+            current = next == current ? null : next;
+        }
+        return null;
+    }
+
+    /** Spreads the wait so the workers do not retry in lockstep; added, never subtracted. */
+    private static long jitter(long delayMillis) {
+        long spread = Math.max(1L, delayMillis / 4L);
+        return delayMillis + ThreadLocalRandom.current().nextLong(spread);
     }
 
     /** Translates one entry with a request of its own, recording whatever it produces. */

@@ -6,6 +6,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -14,6 +15,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.zip.ZipEntry;
@@ -33,6 +35,8 @@ public final class DiagnosticsBundleExporter {
     public static final String FILE_PREFIX = "universal-translator-diagnostics-";
     private static final DateTimeFormatter FILE_TIME =
             DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss", Locale.ROOT);
+    /** Archives kept in the configuration directory; the oldest ones are deleted before a new one. */
+    private static final int MAXIMUM_RETAINED_EXPORTS = 5;
 
     private DiagnosticsBundleExporter() {
     }
@@ -59,6 +63,7 @@ public final class DiagnosticsBundleExporter {
             throw new IOException("Diagnostics directory is unavailable");
         }
         Files.createDirectories(configDirectory);
+        pruneOldExports(configDirectory);
         Path output = reserveUniqueFile(configDirectory,
                 FILE_PREFIX + LocalDateTime.now().format(FILE_TIME) + ".zip");
         try (OutputStream file = Files.newOutputStream(output);
@@ -173,6 +178,59 @@ public final class DiagnosticsBundleExporter {
             }
         }
         throw new IOException("Too many diagnostics bundles in " + directory);
+    }
+
+    /**
+     * Deletes the oldest archives of this class so repeated exports cannot fill the folder.
+     *
+     * <p>Each archive carries up to two megabytes of debug log, and nothing ever deleted them: a
+     * hundred exports left two hundred megabytes in a directory that launchers and cloud clients
+     * sync. Only names carrying {@link #FILE_PREFIX} are touched, one slot is left for the archive
+     * the caller is about to write, and any failure here is swallowed -- housekeeping must never be
+     * the reason a support request cannot be exported.
+     *
+     * @param directory directory the archives are written into
+     */
+    private static void pruneOldExports(Path directory) {
+        List<Path> existing = new ArrayList<Path>();
+        try (DirectoryStream<Path> stream =
+                     Files.newDirectoryStream(directory, FILE_PREFIX + "*")) {
+            for (Path candidate : stream) {
+                if (Files.isRegularFile(candidate)) {
+                    existing.add(candidate);
+                }
+            }
+        } catch (IOException | RuntimeException unreadable) {
+            return;
+        }
+        int excess = existing.size() - (MAXIMUM_RETAINED_EXPORTS - 1);
+        if (excess <= 0) {
+            return;
+        }
+        Collections.sort(existing, new Comparator<Path>() {
+            @Override
+            public int compare(Path first, Path second) {
+                long left = lastModifiedMillis(first);
+                long right = lastModifiedMillis(second);
+                return left < right ? -1 : (left > right ? 1 : 0);
+            }
+        });
+        for (int index = 0; index < excess; index++) {
+            try {
+                Files.deleteIfExists(existing.get(index));
+            } catch (IOException ignored) {
+                // A read-only directory must not fail the export that called this.
+            }
+        }
+    }
+
+    /** Last modification time in milliseconds, or {@code 0} when it cannot be read. */
+    private static long lastModifiedMillis(Path candidate) {
+        try {
+            return Files.getLastModifiedTime(candidate).toMillis();
+        } catch (IOException unreadable) {
+            return 0L;
+        }
     }
 
     /** The entry names the archive always contains, for callers that want to verify a bundle. */

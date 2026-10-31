@@ -454,17 +454,13 @@ public final class DebugLog {
         if (text == null) {
             return null;
         }
-        String single = text.replace('\r', ' ').replace('\n', ' ');
-        if (single.length() <= MAXIMUM_PREVIEW_CHARS) {
+        // Cutting between the halves of a surrogate pair leaves an unpaired one, which the UTF-8
+        // encoder turns into '?', so the shared preview drops the pair instead of splitting it.
+        String single = TextPreview.oneLine(text, MAXIMUM_PREVIEW_CHARS);
+        if (text.length() <= MAXIMUM_PREVIEW_CHARS) {
             return single;
         }
-        // Cutting between the halves of a surrogate pair leaves an unpaired one, which the UTF-8
-        // encoder turns into '?', so the pair is dropped instead of split.
-        int end = MAXIMUM_PREVIEW_CHARS;
-        if (Character.isHighSurrogate(single.charAt(end - 1))) {
-            end--;
-        }
-        return single.substring(0, end) + "...";
+        return single + "...";
     }
 
     /** Queues one already formatted line. Caller holds {@link #lock}. */

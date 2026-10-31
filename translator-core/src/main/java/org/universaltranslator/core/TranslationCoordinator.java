@@ -29,8 +29,22 @@ public final class TranslationCoordinator implements AutoCloseable {
      * only that: the in-flight de-duplication key has its own version, because it only has to stay
      * stable inside one session. Sharing one constant meant that a disk format change silently
      * disabled de-duplication too, so the same request was sent twice and billed twice.
+     *
+     * <p>Bump this whenever the stored <em>values</em> change meaning, not only when the on-disk
+     * layout does: the key is the identity of a stored value, so a rule change (a validation
+     * accepting a different set of values, a normalization) leaves the old, now unwanted values
+     * reachable forever, because nothing makes them invalid. v6 entries were written before
+     * {@link TranslationOutputValidator} started keeping a leading quote the source itself carries.
      */
-    private static final String CACHE_FORMAT_VERSION = "translation-v6";
+    private static final String CACHE_FORMAT_VERSION = "translation-v7";
+    /**
+     * Version of the validation and normalization rules a stored value was produced under. Part of
+     * the cache key for the same reason as {@link #CACHE_FORMAT_VERSION}, but kept separate so that
+     * each rule change is one edit in one place instead of a silent dependency on whoever remembers
+     * to bump the format version. It is never written to the store and never part of the in-flight
+     * key.
+     */
+    private static final String VALIDATION_RULES_VERSION = "validate-v2";
     /** Prefix of the in-flight de-duplication key; never written to the store. */
     private static final String REQUEST_KEY_VERSION = "request-v1";
 
@@ -103,7 +117,32 @@ public final class TranslationCoordinator implements AutoCloseable {
             final boolean preserveHanText
     ) {
         return translate(text, sourceLanguage, targetLanguage, kind, protectedLiterals, preserveHanText,
-                null);
+                null, false);
+    }
+
+    /**
+     * The render-path entry point: the caller has already run
+     * {@link LanguageHeuristics#shouldTranslateToTarget(String, boolean, boolean)} on this exact text
+     * with this session's own {@code chineseTarget} and {@code traditionalTarget}, which are resolved
+     * from the same language identifier, so repeating the scan here reaches the same verdict by
+     * construction. That scan is a full code point pass, the self-name comparison and the
+     * internal-artifact regex, and it used to run a second time on the render thread for every string
+     * the hooks saw for the first time.
+     *
+     * <p>Package-private on purpose: the public overloads must keep doing the check themselves,
+     * because a caller that has not run it would otherwise silently skip text that has to be
+     * translated.
+     */
+    CompletableFuture<TranslationResult> translateKnownTranslatable(
+            final String text,
+            final String sourceLanguage,
+            final String targetLanguage,
+            final TextKind kind,
+            final Iterable<String> protectedLiterals,
+            final boolean preserveHanText
+    ) {
+        return translate(text, sourceLanguage, targetLanguage, kind, protectedLiterals, preserveHanText,
+                null, true);
     }
 
     /**
@@ -130,12 +169,14 @@ public final class TranslationCoordinator implements AutoCloseable {
     ) {
         Objects.requireNonNull(listener, "listener");
         return translate(text, sourceLanguage, targetLanguage, kind, protectedLiterals, preserveHanText,
-                listener);
+                listener, false);
     }
 
     /**
-     * Shared body of both entry points. {@code listener} is {@code null} for the ordinary path, which
-     * must not pay for any of the preview bookkeeping.
+     * Shared body of every entry point. {@code listener} is {@code null} for the ordinary path, which
+     * must not pay for any of the preview bookkeeping, and {@code heuristicSettled} says whether the
+     * caller has already run {@link LanguageHeuristics#shouldTranslateToTarget(String, boolean, boolean)}
+     * on this exact text.
      *
      * <p>Four steps that used to be interleaved in one 130-line method: reject what must not be
      * translated, describe the request, hand it to the workers exactly once, and attach the preview.
@@ -149,7 +190,8 @@ public final class TranslationCoordinator implements AutoCloseable {
             final TextKind kind,
             final Iterable<String> protectedLiterals,
             final boolean preserveHanText,
-            final TranslationStreamListener listener
+            final TranslationStreamListener listener,
+            final boolean heuristicSettled
     ) {
         Objects.requireNonNull(text, "text");
         if (targetLanguage == null || targetLanguage.trim().isEmpty()) {
@@ -165,7 +207,12 @@ public final class TranslationCoordinator implements AutoCloseable {
         // render path is the render thread. The identifier cannot change inside one request, so the
         // boolean is a per-request constant.
         final boolean chineseTarget = LanguageHeuristics.isChineseTarget(targetLanguage);
-        if (!LanguageHeuristics.shouldTranslateToTarget(text, chineseTarget)) {
+        // Also per request: whether the target asks for Traditional Chinese characters. Without it a
+        // Chinese target treats every Han-only string as already translated, so a zh-TW session never
+        // converted Simplified input — the only reason that preset exists.
+        final boolean traditionalTarget = LanguageHeuristics.isTraditionalTarget(targetLanguage);
+        if (!heuristicSettled
+                && !LanguageHeuristics.shouldTranslateToTarget(text, chineseTarget, traditionalTarget)) {
             return CompletableFuture.completedFuture(TranslationResult.unchanged(text));
         }
 
@@ -177,8 +224,8 @@ public final class TranslationCoordinator implements AutoCloseable {
         // different player-name snapshots cannot accidentally share an in-flight result, while
         // requests that only differ in the list instance still de-duplicate.
         final Submission submission = new Submission(text, effectiveSource, targetLanguage,
-                effectiveKind, protectedLiterals, preserveHanText, chineseTarget, listener,
-                provider.id(), protectedLiteralsSignature(protectedLiterals));
+                effectiveKind, protectedLiterals, preserveHanText, chineseTarget, traditionalTarget,
+                listener, provider.id(), protectedLiteralsSignature(protectedLiterals));
         final CompletableFuture<TranslationResult> settled = settle(submission);
         if (listener != null) {
             attachPreview(settled, listener);
@@ -272,7 +319,8 @@ public final class TranslationCoordinator implements AutoCloseable {
             ProtectedText protectedText = ProtectedText.parse(
                     text, submission.protectedLiterals, submission.preserveHanText);
             if (!LanguageHeuristics.shouldTranslateToTarget(
-                    protectedText.getUnprotectedTemplateText(), submission.chineseTarget)) {
+                    protectedText.getUnprotectedTemplateText(), submission.chineseTarget,
+                    submission.traditionalTarget)) {
                 created.complete(TranslationResult.unchanged(text));
                 return;
             }
@@ -339,6 +387,8 @@ public final class TranslationCoordinator implements AutoCloseable {
         private final Iterable<String> protectedLiterals;
         private final boolean preserveHanText;
         private final boolean chineseTarget;
+        /** Whether the target asks for Traditional Chinese; see {@link LanguageHeuristics}. */
+        private final boolean traditionalTarget;
         private final TranslationStreamListener listener;
         private final String requestKey;
         /**
@@ -358,6 +408,7 @@ public final class TranslationCoordinator implements AutoCloseable {
                 Iterable<String> protectedLiterals,
                 boolean preserveHanText,
                 boolean chineseTarget,
+                boolean traditionalTarget,
                 TranslationStreamListener listener,
                 String providerId,
                 String literalsSignature
@@ -369,12 +420,14 @@ public final class TranslationCoordinator implements AutoCloseable {
             this.protectedLiterals = protectedLiterals;
             this.preserveHanText = preserveHanText;
             this.chineseTarget = chineseTarget;
+            this.traditionalTarget = traditionalTarget;
             this.listener = listener;
             this.providerId = providerId;
             // One builder each instead of eight string concatenations: this runs on the caller's
             // thread, which on the render path is the render thread, and the text is copied once.
             StringBuilder prefix = new StringBuilder(text.length() + 96);
-            prefix.append(CACHE_FORMAT_VERSION).append('\n').append(providerId)
+            prefix.append(CACHE_FORMAT_VERSION).append('\n').append(VALIDATION_RULES_VERSION)
+                    .append('\n').append(providerId)
                     .append('\n').append(sourceLanguage).append('\n').append(targetLanguage)
                     .append('\n').append(kind).append('\n');
             this.cacheKeyPrefix = prefix.toString();
@@ -484,7 +537,8 @@ public final class TranslationCoordinator implements AutoCloseable {
             end--;
         }
         String core = segment.substring(start, end);
-        if (!LanguageHeuristics.shouldTranslateToTarget(core, submission.chineseTarget)) {
+        if (!LanguageHeuristics.shouldTranslateToTarget(core, submission.chineseTarget,
+                submission.traditionalTarget)) {
             return segment;
         }
         String providerId = submission.providerId;
@@ -596,13 +650,16 @@ public final class TranslationCoordinator implements AutoCloseable {
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
         }
-        // The store may coalesce writes, so the last burst is only durable once this runs -- but only
-        // once no worker can still put into it. A worker that outlived the timeout keeps writing while
-        // this flushes, and an entry it writes after the snapshot taken here is lost for good because
-        // the session is being discarded; leaving the flush to the store's own background flush keeps
-        // that last burst reachable instead.
-        if (workersStopped) {
-            cache.flush();
+        // The store may coalesce writes, so the last burst is only durable once this runs -- and it has
+        // to run unconditionally. No store implementation has a background flush of its own (the
+        // disk-backed one says so in its own javadoc), and the interface contract puts the call on the
+        // owner, so skipping it here loses the coalesced window outright the moment this session is
+        // dropped. A worker that outlived the timeout is not a reason to skip it either: the flush
+        // takes its own snapshot under its own guard, so an entry written afterwards is at worst left
+        // out of this snapshot instead of taking the whole window down with it.
+        cache.flush();
+        if (!workersStopped) {
+            DebugLog.global().log("shutdown", "cache", "flushed-with-live-workers");
         }
         // Graceful, so a completion that is already queued still settles its future; no new request
         // can be registered after close(), and the sweep above has settled everything still in flight.

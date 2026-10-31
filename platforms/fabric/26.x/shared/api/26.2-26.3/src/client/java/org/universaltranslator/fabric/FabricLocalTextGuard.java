@@ -12,9 +12,11 @@ import java.lang.reflect.Field;
 /**
  * Identifies text currently being edited by the local player in the chat box.
  *
- * <p>Keep in sync with the {@code 26.1-26.1.2} copy: the bodies are the same and differ only in the
- * client accessors ({@code client.gui.screen()} here, {@code client.screen} there). Collapsing the
- * pair needs a seam for those calls plus the per-version {@code srcDir} wiring.
+ * <p>Every screen lookup goes through {@link FabricScreenOpener#currentScreen}, which is the only
+ * place that knows 26.1 reads {@code Minecraft#screen} and 26.2+ reads {@code Minecraft#gui}. The
+ * body below is therefore identical to the {@code 26.1-26.1.2} copy; the two still live in separate
+ * layers because they are compiled against different Minecraft versions, but a change here has to be
+ * mirrored there by hand.
  */
 final class FabricLocalTextGuard {
     /** Field names a chat screen's input box is known by, mojmap first. */
@@ -40,15 +42,18 @@ final class FabricLocalTextGuard {
     }
 
     static Object currentScreen(Minecraft client) {
-        return client == null ? null : client.gui.screen();
+        return FabricScreenOpener.currentScreen(client);
     }
 
     static boolean isLocalChatInput(Minecraft client, String rendered) {
-        if (client == null || !(client.gui.screen() instanceof ChatScreen)
-                || rendered == null || rendered.isEmpty()) {
+        if (client == null || rendered == null || rendered.isEmpty()) {
             return false;
         }
-        EditBox field = findChatField(client.gui.screen());
+        Screen screen = FabricScreenOpener.currentScreen(client);
+        if (!(screen instanceof ChatScreen)) {
+            return false;
+        }
+        EditBox field = findChatField(screen);
         return field != null && matches(field.getValue(), rendered);
     }
 

@@ -6,6 +6,7 @@ import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.client.resources.I18n;
 import org.universaltranslator.core.ModelListPaging;
+import org.universaltranslator.core.UiLimits;
 import org.universaltranslator.core.provider.OpenAiModelCatalog;
 
 import java.io.IOException;
@@ -72,13 +73,13 @@ final class LegacyLlmConfigScreen extends GuiScreen {
         int left = (width - fieldWidth) / 2;
         int top = Math.max(42, (height - 174) / 2);
         endpoint = new GuiTextField(10, renderer, left, top, fieldWidth, 20);
-        endpoint.setMaxStringLength(512);
+        endpoint.setMaxStringLength(UiLimits.ENDPOINT_MAX_CHARS);
         endpoint.setText(initialEndpoint);
         model = new GuiTextField(11, renderer, left, top + 36, fieldWidth, 20);
-        model.setMaxStringLength(128);
+        model.setMaxStringLength(UiLimits.MODEL_ID_MAX_CHARS);
         model.setText(initialModel);
         apiKey = new GuiTextField(12, renderer, left, top + 72, fieldWidth, 20);
-        apiKey.setMaxStringLength(512);
+        apiKey.setMaxStringLength(UiLimits.SECRET_MAX_CHARS);
         apiKey.setText(initialApiKey);
         int gap = 8;
         int buttonWidth = (fieldWidth - gap) / 2;
@@ -139,7 +140,7 @@ final class LegacyLlmConfigScreen extends GuiScreen {
                 ? parent.llmApiKey() : ("-".equals(enteredKey) ? "" : enteredKey);
         fetching = true;
         setStatus(tr("screen.universal_translator.llm.fetching"), false);
-        Thread worker = new Thread(() -> {
+        LegacyScreenWorkers.execute(() -> {
             List<String> models = Collections.emptyList();
             String failure = "";
             try {
@@ -161,9 +162,7 @@ final class LegacyLlmConfigScreen extends GuiScreen {
             modelListOpen = true;
             releaseFieldFocus();
             setStatus("", false);
-        }, "universal-translator-model-list");
-        worker.setDaemon(true);
-        worker.start();
+        });
     }
 
     private void setStatus(String message, boolean error) {

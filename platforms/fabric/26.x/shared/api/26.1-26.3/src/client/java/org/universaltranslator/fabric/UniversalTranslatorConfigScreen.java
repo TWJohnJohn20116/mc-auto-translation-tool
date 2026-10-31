@@ -5,6 +5,7 @@ import java.net.URI;
 import java.util.Collections;
 import java.util.List;
 
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
@@ -34,7 +35,6 @@ import org.universaltranslator.core.provider.OpenAiModelCatalog;
 import org.universaltranslator.core.provider.ProviderProbe;
 import org.universaltranslator.core.UiTextKeys;
 import org.universaltranslator.core.UiLimits;
-import org.universaltranslator.core.FocusHelper;
 
 /** Minimal dependency-free settings screen, opened with U by default. */
 final class UniversalTranslatorConfigScreen extends Screen {
@@ -151,7 +151,9 @@ final class UniversalTranslatorConfigScreen extends Screen {
     /** Result of the engine tab's connection test; written by its worker thread. */
     private volatile String testStatus = "";
     private volatile boolean testStatusIsError;
-    private boolean testing;
+    // Cleared by the test worker and read by the next click on the render thread: without the
+    // barrier the button can stay dead for the session even though the worker finished.
+    private volatile boolean testing;
     private volatile boolean fetchingModels;
     private volatile List<String> fetchedModels = Collections.emptyList();
     private volatile boolean modelListOpen;
@@ -399,13 +401,14 @@ final class UniversalTranslatorConfigScreen extends Screen {
         }).bounds(layout.right, engineRow(5), layout.buttonWidth, 20).build());
 
         String promptValue = customPrompt == null
-                ? TranslationPrompt.toEditorText(original.customSystemPrompt())
+                ? TranslationPrompt.toEditorText(
+                        TranslationPrompt.clampForEditor(original.customSystemPrompt()))
                 : customPrompt.getValue();
         int promptApplyWidth = Math.max(48, layout.buttonWidth - 24);
         this.customPrompt = addRenderableWidget(new EditBox(this.font, left, engineRow(4),
                 layout.totalWidth - promptApplyWidth - 8,
                 20, Component.translatable("screen.universal_translator.diagnostics.prompt")));
-        this.customPrompt.setMaxLength(UiLimits.PROMPT_MAX_CHARS);
+        this.customPrompt.setMaxLength(UiLimits.PROMPT_EDITOR_MAX_CHARS);
         this.customPrompt.setValue(promptValue);
         this.customPrompt.setHint(Component.translatable(
                 "screen.universal_translator.diagnostics.prompt_hint"));
@@ -716,7 +719,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         boolean runtimeChanged = false;
         FabricConfig base = writeBackBase();
         try {
-            FabricConfig updated = base.withSettings(
+            FabricConfig updated = base.withAllSettings(
                     enabled,
                     translateChat,
                     translateOther,
@@ -742,13 +745,17 @@ final class UniversalTranslatorConfigScreen extends Screen {
                     new HudIndicatorSettings(hudIndicator, hudIndicatorCorner,
                             hudIndicatorSize, hudIndicatorMargin, hudIndicatorColor,
                             hudIndicatorContent, hudIndicatorVisibility,
-                            hudIndicatorOffsetX, hudIndicatorOffsetY))
+                            hudIndicatorOffsetX, hudIndicatorOffsetY),
                     // Save writes the engine tab's prompt controls too, so applying the prompt
-                    // and then saving cannot silently restore the value the screen
-                    // was opened with.
-                    .withPromptSettings(quality, TranslationPrompt.fromEditorText(
-                            customPrompt == null ? "" : customPrompt.getValue()))
-                    .withTranslationTuning(workers, batchSize);
+                    // and then saving cannot silently restore the value the screen was opened
+                    // with. One call for all three groups: each of withSettings,
+                    // withPromptSettings and withTranslationTuning re-read the config file from
+                    // disk, so a chained build cost four reads and one write per button press.
+                    quality,
+                    TranslationPrompt.fromEditorText(
+                            customPrompt == null ? "" : customPrompt.getValue()),
+                    workers,
+                    batchSize);
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
                     && (updated.tencentSecretId.isEmpty() || updated.tencentSecretKey.isEmpty())) {
                 throw new IllegalArgumentException(tr("error.universal_translator.tencent_credentials"));
@@ -759,7 +766,10 @@ final class UniversalTranslatorConfigScreen extends Screen {
             runtimeChanged = true;
             FabricTranslationRuntime.initialize(updated);
             updated.save();
-            onClose();
+            // Drawn once before the screen goes away; closing straight from this callback meant the
+            // success line never appeared anywhere, so Save gave no feedback unless it failed.
+            status = tr("status.universal_translator.saved");
+            closeAfterSave();
         } catch (Exception exception) {
             if (runtimeChanged) {
                 try {
@@ -785,6 +795,16 @@ final class UniversalTranslatorConfigScreen extends Screen {
         return live == null ? original : live;
     }
 
+    /** Leaves the screen after the success line has had one frame to be drawn. */
+    private void closeAfterSave() {
+        Minecraft client = Minecraft.getInstance();
+        if (client == null) {
+            onClose();
+            return;
+        }
+        client.execute(this::onClose);
+    }
+
     @Override
     public void onClose() {
         if (minecraft != null) {
@@ -794,6 +814,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
+        syncFieldEditing();
         Layout layout = layout();
         long now = System.nanoTime();
         float opening = 1.0F;
@@ -1224,7 +1245,7 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         final String keyValue = llmApiKey;
         fetchingModels = true;
         setTestStatus(tr("screen.universal_translator.llm.fetching"), false);
-        Thread worker = new Thread(() -> {
+        ScreenWorkerPool.execute(() -> {
             OpenAiModelCatalog.Catalog catalog = null;
             String failure = "";
             try {
@@ -1258,9 +1279,7 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
             modelListOpen = true;
             releaseFieldFocusForModelList();
             setTestStatus("", false);
-        }, "universal-translator-model-list");
-        worker.setDaemon(true);
-        worker.start();
+        });
     }
 
     /**
@@ -1272,17 +1291,35 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
      * the 26.x copy was taken before that guard and lost it (C2-092).
      *
      * <p>Focus is not restored afterwards on purpose, matching 1.21: the player clicks the field
-     * they want, which is also the only way to be sure of which field they end up in.
+     * they want, which is also the only way to be sure of which field they end up in. Editing is
+     * handed back as soon as the overlay closes, so nothing has to be clicked to type again.
      */
     private void releaseFieldFocusForModelList() {
-        if (endpoint != null) {
-            FocusHelper.clear(endpoint);
-        }
-        if (customPrompt != null) {
-            FocusHelper.clear(customPrompt);
-        }
-        if (blockedKeywords != null) {
-            FocusHelper.clear(blockedKeywords);
+        syncFieldEditing();
+    }
+
+    /**
+     * Keeps the three fields from accepting characters while an overlay owns the keyboard, and hands
+     * them back the moment it closes.
+     *
+     * <p>Clearing a field's own focus needs an accessor the game renames at runtime, so resolving it
+     * by reflection found nothing and the guard was a no-op in every published client. The
+     * editability switch exists on every generation, so the characters are stopped at the field
+     * itself; re-applying it from {@link #extractRenderState} every frame is also what unfreezes the
+     * fields for the paths that dismiss an overlay without calling the method above (ESC, a click
+     * outside the list, a resize rebuilding the widgets).
+     */
+    private void syncFieldEditing() {
+        boolean overlayOwnsKeyboard = openSelection != SettingsSelectionList.Kind.NONE
+                || (activeTab == Tab.ENGINE && modelListOpen);
+        setFieldEditing(endpoint, !overlayOwnsKeyboard);
+        setFieldEditing(customPrompt, !overlayOwnsKeyboard);
+        setFieldEditing(blockedKeywords, !overlayOwnsKeyboard);
+    }
+
+    private static void setFieldEditing(EditBox field, boolean editable) {
+        if (field != null) {
+            field.setEditable(editable);
         }
     }
 
@@ -1301,7 +1338,7 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         final String keyValue = llmApiKey;
         testing = true;
         setTestStatus(tr("screen.universal_translator.engine.testing"), false);
-        Thread worker = new Thread(() -> {
+        ScreenWorkerPool.execute(() -> {
             String message;
             boolean error;
             try {
@@ -1330,7 +1367,8 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
                     // Validate the provider the screen is showing, not the one this snapshot was
                     // opened with: they differ until the form is saved, and answering for the old
                     // one told users the wrong thing about the service they had just switched to.
-                    original.withProvider(provider).validateProviderConfiguration();
+                    // Built on the running configuration for the same reason Save is.
+                    writeBackBase().withProvider(provider).validateProviderConfiguration();
                     message = tr("screen.universal_translator.engine.test_ok_config");
                     error = false;
                 }
@@ -1340,9 +1378,7 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
             }
             testing = false;
             setTestStatus(message, error);
-        }, "universal-translator-connection-test");
-        worker.setDaemon(true);
-        worker.start();
+        });
     }
 
     private void setTestStatus(String message, boolean error) {

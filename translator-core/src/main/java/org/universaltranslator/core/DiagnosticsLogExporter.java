@@ -2,11 +2,15 @@ package org.universaltranslator.core;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
@@ -15,6 +19,10 @@ import java.util.regex.Matcher;
 public final class DiagnosticsLogExporter {
     private static final DateTimeFormatter FILE_TIME =
             DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss", Locale.ROOT);
+    /** Prefix of every report this class writes, shared by the naming and the pruning below. */
+    private static final String FILE_PREFIX = "diagnostics-";
+    /** Reports kept in the directory; the oldest ones are deleted before a new one is written. */
+    private static final int MAXIMUM_RETAINED_EXPORTS = 5;
 
     /**
      * Credential-ish names. The suffix of {@code secret} is optional so that provider specific
@@ -51,6 +59,7 @@ public final class DiagnosticsLogExporter {
             throw new IOException("Diagnostics directory is unavailable");
         }
         Files.createDirectories(outputDirectory);
+        pruneOldExports(outputDirectory);
         String timestamp = LocalDateTime.now().format(FILE_TIME);
         Path output = uniqueFile(outputDirectory, timestamp);
         StringBuilder report = new StringBuilder(512);
@@ -118,12 +127,64 @@ public final class DiagnosticsLogExporter {
     }
 
     private static Path uniqueFile(Path directory, String timestamp) {
-        Path candidate = directory.resolve("diagnostics-" + timestamp + ".txt");
+        Path candidate = directory.resolve(FILE_PREFIX + timestamp + ".txt");
         int suffix = 2;
         while (Files.exists(candidate)) {
-            candidate = directory.resolve("diagnostics-" + timestamp + "-" + suffix + ".txt");
+            candidate = directory.resolve(FILE_PREFIX + timestamp + "-" + suffix + ".txt");
             suffix++;
         }
         return candidate;
+    }
+
+    /**
+     * Deletes the oldest reports of this class so repeated exports cannot fill the folder.
+     *
+     * <p>Nothing ever deleted them, so a player who exports on every retry leaves a growing pile of
+     * reports in the configuration directory, which launchers and cloud clients sync. Only names
+     * carrying {@link #FILE_PREFIX} are touched, one slot is left for the report the caller is about
+     * to write, and any failure here is swallowed: housekeeping must never fail an export.
+     *
+     * @param directory directory the reports are written into
+     */
+    private static void pruneOldExports(Path directory) {
+        List<Path> existing = new ArrayList<Path>();
+        try (DirectoryStream<Path> stream =
+                     Files.newDirectoryStream(directory, FILE_PREFIX + "*")) {
+            for (Path candidate : stream) {
+                if (Files.isRegularFile(candidate)) {
+                    existing.add(candidate);
+                }
+            }
+        } catch (IOException | RuntimeException unreadable) {
+            return;
+        }
+        int excess = existing.size() - (MAXIMUM_RETAINED_EXPORTS - 1);
+        if (excess <= 0) {
+            return;
+        }
+        Collections.sort(existing, new Comparator<Path>() {
+            @Override
+            public int compare(Path first, Path second) {
+                long left = lastModifiedMillis(first);
+                long right = lastModifiedMillis(second);
+                return left < right ? -1 : (left > right ? 1 : 0);
+            }
+        });
+        for (int index = 0; index < excess; index++) {
+            try {
+                Files.deleteIfExists(existing.get(index));
+            } catch (IOException ignored) {
+                // A read-only directory must not fail the export that called this.
+            }
+        }
+    }
+
+    /** Last modification time in milliseconds, or {@code 0} when it cannot be read. */
+    private static long lastModifiedMillis(Path candidate) {
+        try {
+            return Files.getLastModifiedTime(candidate).toMillis();
+        } catch (IOException unreadable) {
+            return 0L;
+        }
     }
 }

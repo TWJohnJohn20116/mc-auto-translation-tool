@@ -45,7 +45,8 @@ public final class LibreTranslateProvider implements TranslationProvider {
         body.append('}');
 
         String response = http.post(endpoint, body.toString(), (String) null);
-        String translated = JsonStrings.readStringField(response, "translatedText");
+        String translated = ProviderErrors.pathOrNull(
+                "LibreTranslate", response, "translatedText");
         // An empty translatedText is not a translation: this API answers one for "no language
         // detected", "format codes only" and "source equals target", and accepting it cached a
         // blank line that could never be requested again. The body excerpt names the provider's own

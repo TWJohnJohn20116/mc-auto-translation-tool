@@ -42,6 +42,33 @@ final class LegacyConfig {
     /** Serializes every writer of one configuration file; see {@link #save()}. */
     private static final java.util.concurrent.ConcurrentHashMap<Path, Object> SAVE_MONITORS =
             new java.util.concurrent.ConcurrentHashMap<Path, Object>();
+    /**
+     * The advanced keys as they were last read from disk, shared by every snapshot of one file.
+     *
+     * <p>{@code toProperties()} re-reads those keys so a settings screen holding an older snapshot
+     * cannot undo a change the diagnostics panel made meanwhile, and one Save rebuilds it four times
+     * (the three {@code withXxx} copies plus the write). Each rebuild was a full file open and
+     * {@code Properties.load} on the calling thread — the render thread for a Save, the client tick
+     * for F8 — which costs 5–50 ms per read once {@code config/} sits in a cloud-synced folder. One
+     * copy is enough: this class is the only writer, and the stamp below re-reads as soon as the
+     * file changes by any other means.
+     */
+    private static volatile DiskCopy diskCopy;
+
+    /** One read of the configuration file: its parsed contents plus the stamp they were read at. */
+    private static final class DiskCopy {
+        final Path file;
+        final long lastModified;
+        final long size;
+        final Properties properties;
+
+        DiskCopy(Path file, long lastModified, long size, Properties properties) {
+            this.file = file;
+            this.lastModified = lastModified;
+            this.size = size;
+            this.properties = properties;
+        }
+    }
     final boolean enabled;
     final boolean translateChat;
     final boolean translateOther;
@@ -610,13 +637,66 @@ final class LegacyConfig {
         return properties;
     }
 
+    /**
+     * The whole configuration file as it currently stands on disk, read at most once per revision.
+     *
+     * @param file configuration file; {@code null} reads nothing
+     * @return the parsed file, or {@code null} when it cannot be read right now
+     */
+    private static Properties diskProperties(Path file) {
+        if (file == null) {
+            return null;
+        }
+        long lastModified;
+        long size;
+        try {
+            lastModified = Files.getLastModifiedTime(file).toMillis();
+            size = Files.size(file);
+        } catch (IOException | RuntimeException missing) {
+            return null;
+        }
+        DiskCopy cached = diskCopy;
+        if (cached != null && cached.file.equals(file)
+                && cached.lastModified == lastModified && cached.size == size) {
+            return cached.properties;
+        }
+        Properties stored = new Properties();
+        try (InputStreamReader reader = new InputStreamReader(
+                Files.newInputStream(file), StandardCharsets.UTF_8)) {
+            stored.load(reader);
+        } catch (IOException | RuntimeException malformed) {
+            return null;
+        }
+        diskCopy = new DiskCopy(file, lastModified, size, stored);
+        return stored;
+    }
+
+    /** Drops the shared copy of the file; called when the client releases its configuration. */
+    static void clearCaches() {
+        diskCopy = null;
+    }
+
     private Properties toProperties() {
         Properties properties = new Properties();
         onlineProviderConfig.writeTo(properties);
         // Keep the advanced settings the diagnostics panel may have changed after this snapshot,
         // except for the ones this snapshot wrote itself (see ownedPromptKeys).
-        OnlineProviderConfig.preservePromptSettings(configFile.toPath(), properties,
-                ownedPromptKeys);
+        Properties stored = diskProperties(configFile.toPath());
+        if (stored == null) {
+            // Unreadable file: write this snapshot as it stands, and keep the trace the shared helper
+            // logs so a value the panel just wrote is not lost silently.
+            OnlineProviderConfig.preservePromptSettings(configFile.toPath(), properties,
+                    ownedPromptKeys);
+        } else {
+            for (String key : OnlineProviderConfig.promptKeys()) {
+                if (ownedPromptKeys.contains(key)) {
+                    continue;
+                }
+                if (stored.containsKey(key)) {
+                    properties.setProperty(key, stored.getProperty(key, ""));
+                }
+            }
+        }
         properties.setProperty("config-version", "6");
         properties.setProperty("enabled", Boolean.toString(enabled));
         properties.setProperty("translate-chat", Boolean.toString(translateChat));

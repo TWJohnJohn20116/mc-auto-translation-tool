@@ -127,8 +127,10 @@ public final class TranslationPrompt {
 
         public Settings(TranslationQuality quality, String customSystemPrompt) {
             this.quality = quality == null ? TranslationQuality.DEFAULT : quality;
-            String custom = customSystemPrompt == null ? "" : customSystemPrompt.trim();
-            this.customSystemPrompt = custom;
+            // Bounded here and not only in the screen: the settings file, an older install and any
+            // tool that writes the properties key reach this constructor without passing a text
+            // field, and every request copies the prompt it holds.
+            this.customSystemPrompt = bounded(customSystemPrompt, UiLimits.PROMPT_MAX_CHARS);
         }
 
         /** The configuration that behaves exactly like every build before this feature existed. */
@@ -275,12 +277,56 @@ public final class TranslationPrompt {
     }
 
     /**
+     * Cuts a stored prompt to {@code maximum} characters without splitting a surrogate pair.
+     *
+     * <p>This is the single bound the settings file and the screen share: {@link Settings} applies it
+     * to the value that comes out of the file and {@link #clampForEditor(String)} applies it before the
+     * value is escaped for the editor, so both sides agree on what "too long" means.
+     *
+     * @param stored stored prompt, possibly {@code null}
+     * @param maximum longest accepted length in characters
+     * @return the trimmed value, cut to {@code maximum}
+     */
+    private static String bounded(String stored, int maximum) {
+        if (stored == null) {
+            return "";
+        }
+        String trimmed = stored.trim();
+        if (trimmed.length() <= maximum) {
+            return trimmed;
+        }
+        int end = maximum;
+        if (Character.isHighSurrogate(trimmed.charAt(end - 1))) {
+            // Cutting between the halves of a surrogate pair produces a broken character.
+            end--;
+        }
+        DebugLog.global().log("prompt", "clamped", "from", String.valueOf(trimmed.length()),
+                "to", String.valueOf(end));
+        return trimmed.substring(0, end);
+    }
+
+    /**
+     * Trims a stored prompt down to the length the settings screen is allowed to keep.
+     *
+     * <p>The screen shows the escaped form and writes back whatever the field still holds, so it has to
+     * be handed a value that always fits: an unbounded one was cut by the field when displayed and the
+     * cut version was what got saved.
+     *
+     * @param stored stored prompt, possibly {@code null}
+     * @return the value to escape for display
+     */
+    public static String clampForEditor(String stored) {
+        return bounded(stored, UiLimits.PROMPT_MAX_CHARS);
+    }
+
+    /**
      * Turns the escape sequences a single-line editor produces into the characters they stand for, so
      * a prompt written in the in-game box reads the same as one written in
      * {@code universal-translator.properties} (where {@code Properties.load} does the same thing).
      *
      * <p>Single pass, and {@code \\} is an escape of its own: {@code \\n} stays a backslash followed
-     * by an n, which is what {@link #toEditorText(String)} emits for a stored {@code \n}. The old
+     * by an n, which is what {@link #toEditorText(String)} emits for a stored {@code \n}, and
+     * {@code \r} is the carriage return it emits for a stored one. The old
      * version replaced {@code \n} without ever escaping a backslash, so a prompt that wanted a
      * literal {@code \n} (a regex, a JSON example) lost a level of backslashes on every save, and
      * {@code \\n} silently became a line break.
@@ -297,6 +343,11 @@ public final class TranslationPrompt {
             char current = value.charAt(index);
             if (current == '\\' && index + 1 < value.length()) {
                 char next = value.charAt(index + 1);
+                if (next == 'r') {
+                    out.append('\r');
+                    index++;
+                    continue;
+                }
                 if (next == 'n') {
                     out.append('\n');
                     index++;
@@ -322,13 +373,16 @@ public final class TranslationPrompt {
      * older versions contain no doubled backslash, so they read back unchanged.
      *
      * @param value stored prompt, possibly {@code null}
-     * @return the text with backslashes escaped and line breaks written as {@code \n}
+     * @return the text with backslashes escaped and line breaks written as {@code \n} / {@code \r}
      */
     public static String toEditorText(String value) {
         if (value == null) {
             return "";
         }
-        return value.replace("\\", "\\\\").replace("\r\n", "\n").replace("\n", "\\n");
+        // A carriage return is escaped instead of being folded into the line break: normalizing
+        // "\r\n" to "\n" here made the round trip rewrite the stored prompt, which the javadoc above
+        // rules out, and the editor then showed the rewritten form.
+        return value.replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n");
     }
 
     /** {@code 繁體中文 (zh-TW)} style description; the source side says so when it is auto-detected. */

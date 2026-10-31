@@ -70,6 +70,20 @@ public final class TranslationRenderContext {
             };
     /** Cap on {@link #TRANSLATED_RESULTS}; one frame cannot legitimately need more. */
     private static final int MAX_FRAME_TRANSLATIONS = 512;
+    /**
+     * Inputs this frame already rendered unchanged. See {@link #rememberUnchanged}.
+     *
+     * <p>Kept apart from {@link #TRANSLATED_RESULTS} because the answer differs: an entry here says
+     * "the right output for this string is the string itself", which holds for every surface and
+     * every style, so no key has to be built and nothing is allocated to look one up.
+     */
+    private static final ThreadLocal<Set<String>> UNCHANGED_INPUTS =
+            new ThreadLocal<Set<String>>() {
+                @Override
+                protected Set<String> initialValue() {
+                    return new HashSet<String>();
+                }
+            };
     private static final AtomicBoolean LEAK_REPORTED = new AtomicBoolean();
 
     private static final int KIND_LATCH = 0;
@@ -155,6 +169,7 @@ public final class TranslationRenderContext {
         TEXT_INPUT_DEPTH.remove();
         LATCHED_AT.remove();
         TRANSLATED_RESULTS.remove();
+        UNCHANGED_INPUTS.remove();
     }
 
     /**
@@ -179,6 +194,34 @@ public final class TranslationRenderContext {
     /** True when {@code text} is a translation this bridge produced earlier in the same frame. */
     static boolean isTranslatedResult(String text) {
         return text != null && TRANSLATED_RESULTS.get().contains(text);
+    }
+
+    /**
+     * Records a string the render bridge found nothing to translate in.
+     *
+     * <p>A chat line or a scoreboard row is handed to the drawing hook and then to the measuring
+     * hook as the same component, and both hooks translate. Lines that stay as they are — already in
+     * the target language, a blocked keyword, no provider answer yet — therefore paid for two whole
+     * passes each frame. Remembering the input turns the second pass into one set lookup; the
+     * measuring hook draws the same bytes either way, so the width it reports does not change.
+     *
+     * <p>One frame of staleness is the only cost: a line the provider answers mid-frame keeps its
+     * original until the next client tick, which is when {@link #reset()} empties the set.
+     */
+    static void rememberUnchanged(String original) {
+        if (original == null) {
+            return;
+        }
+        Set<String> unchanged = UNCHANGED_INPUTS.get();
+        if (unchanged.size() >= MAX_FRAME_TRANSLATIONS) {
+            unchanged.clear();
+        }
+        unchanged.add(original);
+    }
+
+    /** True when {@code original} already rendered as itself earlier in the same frame. */
+    static boolean isUnchangedResult(String original) {
+        return original != null && UNCHANGED_INPUTS.get().contains(original);
     }
 
     private static boolean isLeaked(long latchedSince) {

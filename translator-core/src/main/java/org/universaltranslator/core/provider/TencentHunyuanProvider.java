@@ -80,13 +80,19 @@ public final class TencentHunyuanProvider implements TranslationProvider {
         Map<String, String> headers = TencentCloudV3Signer.headers(
                 SERVICE, HOST, ACTION, VERSION, secretId, secretKey, payload, timestamp);
         String response = http.post(ENDPOINT, payload, headers);
-        String translated = JsonStrings.readStringField(response, "Content");
+        // The reply is wrapped in "Response", so the path names it; a relay that answers without the
+        // wrapper still carries the field, so the bare path is the second read.
+        String translated = ProviderErrors.pathOrNull(
+                "Tencent Hunyuan", response, "Response.Content");
         if (translated == null || translated.trim().isEmpty()) {
-            String code = JsonStrings.readStringField(response, "Code");
-            String message = JsonStrings.readStringField(response, "Message");
-            throw new IllegalStateException("Tencent Hunyuan response did not contain translated content"
-                    + (code == null ? "" : " (" + code + ")")
-                    + (message == null ? "" : ": " + message));
+            translated = ProviderErrors.pathOrNull("Tencent Hunyuan", response, "Content");
+        }
+        if (translated == null || translated.trim().isEmpty()) {
+            // The shared builder, not a hand-rolled message: it is the one place that knows which
+            // codes are rate limits (so the request is retried), which are fatal (so the endpoint is
+            // paused) and what the reader can do about them.
+            throw BaiduTranslationProvider.providerError(
+                    "Tencent Hunyuan", response, "Code", "Message");
         }
         return TranslationOutputValidator.requireValid(request.getText(), translated);
     }

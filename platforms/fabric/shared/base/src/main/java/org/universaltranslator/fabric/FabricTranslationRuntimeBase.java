@@ -16,6 +16,7 @@ import org.universaltranslator.core.RecentUserText;
 import org.universaltranslator.core.TranslationResult;
 import org.universaltranslator.core.TranslationStatusLocalizer;
 import org.universaltranslator.core.DiagnosticsLogExporter;
+import org.universaltranslator.core.DebugLog;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -28,7 +29,9 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -114,6 +117,26 @@ public abstract class FabricTranslationRuntimeBase {
                     return thread;
                 }
             });
+    /**
+     * Serializes configuration writes off the client thread.
+     *
+     * <p>{@code FabricConfig.save()} rewrites the whole properties file, and the F8 toggles (master
+     * switch, vanilla screens, target language) called it straight from the key handler: one file
+     * write per key press on the tick thread, in a directory that may live on a synced drive. One
+     * daemon thread keeps the writes in press order, is created on the first toggle, and never
+     * holds the JVM open.
+     */
+    private static final ExecutorService SAVE_WRITER = Executors.newSingleThreadExecutor(
+            new ThreadFactory() {
+                @Override
+                public Thread newThread(Runnable runnable) {
+                    Thread thread = new Thread(runnable, "universal-translator-save-writer");
+                    thread.setDaemon(true);
+                    return thread;
+                }
+            });
+    /** How long {@link #shutdown()} waits for a queued write; the file itself is a few hundred bytes. */
+    private static final long SAVE_WRITER_SHUTDOWN_MILLIS = 2_000L;
 
     protected FabricTranslationRuntimeBase() {
     }
@@ -166,7 +189,7 @@ public abstract class FabricTranslationRuntimeBase {
                 // failure in either must not orphan a provider that may already hold resources.
                 createdProvider = provider;
                 TranslationStore store = config.diskCache
-                        ? new PersistentTranslationCache(config.cacheFile, 10_000)
+                        ? PersistentTranslationCache.shared(config.cacheFile, 10_000)
                         : new TranslationCache(10_000);
                 // The offline llama.cpp server is single threaded, so it always gets one worker no
                 // matter what the configuration asks for.
@@ -341,6 +364,15 @@ public abstract class FabricTranslationRuntimeBase {
         }
         if (active != null) {
             active.close();
+        }
+        // Wait for a queued configuration write before the process goes away: the writer thread is a
+        // daemon, so nothing else would finish it and the file could be left half written. The write
+        // is a few hundred bytes, and this is the game-closing path, not a per-frame one.
+        SAVE_WRITER.shutdown();
+        try {
+            SAVE_WRITER.awaitTermination(SAVE_WRITER_SHUTDOWN_MILLIS, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -673,7 +705,7 @@ public abstract class FabricTranslationRuntimeBase {
             }
             runtimeChanged = true;
             initialize(updated);
-            updated.save();
+            saveInBackground(updated);
             return homeSettingsState(updated);
         } catch (Exception failure) {
             if (runtimeChanged) {
@@ -684,6 +716,40 @@ public abstract class FabricTranslationRuntimeBase {
                 }
             }
             throw failure;
+        }
+    }
+
+    /**
+     * Writes one configuration on the save writer instead of the calling thread.
+     *
+     * <p>Called from the F8 handlers, which run on the client tick: the file write itself is small,
+     * but it re-reads the properties file first and lands in the player's config directory, and the
+     * runtime has already switched to the new configuration by this point, so the write can happen
+     * a moment later without changing what the player sees.
+     *
+     * <p>A writer that has already been shut down (game closing) takes the write synchronously, so
+     * no save is ever dropped.
+     */
+    static void saveInBackground(FabricConfig config) {
+        try {
+            SAVE_WRITER.execute(new Runnable() {
+                @Override
+                public void run() {
+                    writeConfig(config);
+                }
+            });
+        } catch (RejectedExecutionException shuttingDown) {
+            writeConfig(config);
+        }
+    }
+
+    private static void writeConfig(FabricConfig config) {
+        try {
+            config.save();
+        } catch (Exception failure) {
+            // The runtime keeps running the new configuration; a failed write leaves the previous
+            // file in place and the next load reports it. Nothing here may reach the render thread.
+            DebugLog.global().log("settings", "save-failed", failure.getClass().getSimpleName());
         }
     }
 

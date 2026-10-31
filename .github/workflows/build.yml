@@ -230,9 +230,15 @@ jobs:
           # 3) 離開碼必須取自 PIPESTATUS[0]，取 $? 會拿到 tee 的狀態而永遠是 0。
           grep -q 'PIPESTATUS\[0\]' "$action" \
             || { echo "::error::gradle-build/action.yml 必須用 PIPESTATUS[0] 取 Gradle 的離開碼"; exit 1; }
-          # 摘要腳本現在是全專案共用的一份（7 個 job 都呼叫它），先做語法檢查。
-          bash -n scripts/ci/write-build-summary.sh
-          echo "composite action 與摘要腳本檢查通過"
+          # scripts/ci 的每一支腳本都在執行路徑上（摘要、版本白名單、目標推導），但 PR 上以前只
+          # 檢查了摘要那一支：改壞 read-mod-version.sh 會全綠，合併後第一次 push main 才在
+          # publish-release 失敗，而那支是唯一的 Release 入口。
+          for script in scripts/ci/*.sh; do
+            bash -n "$script"
+          done
+          # py_compile 只寫到 __pycache__（.gitignore 已排除），不執行專案邏輯、不碰 Gradle。
+          python3 -m py_compile scripts/ci/*.py
+          echo "composite action 與 scripts/ci 腳本檢查通過"
 
       # scripts/*.py 的單元測試原本沒有任何 CI 入口（AGENTS.md 也禁止本機執行），於是
       # 「有測試」等於紙上覆蓋：600 KiB 分片尺寸、ZIP metadata、Forge 版本範圍這些契約
@@ -243,14 +249,26 @@ jobs:
           python-version: "3.12"
 
       - name: 執行腳本單元測試
-        run: python -m unittest discover -s scripts -p "test_*.py" -v
+        # scripts/ci 沒有 __init__.py，`discover -s scripts` 對非套件目錄直接 continue，所以
+        # derive-prepare-targets.py 的推導／錯誤路徑與 build-targets.json 的交叉比對永遠進不到
+        # 任何入口（prepare-release.yml 的註解卻宣稱那段「也要能被單獨測試」）。兩個起點都跑。
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s scripts -p "test_*.py" -v
+          python -m unittest discover -s scripts/ci -p "test_*.py" -v
 
   plan:
     name: 解析建置目標
     runs-on: ubuntu-24.04
+    # 其餘 job 都有上限（10～45 分鐘），只有這個 PR 必經 job 沒有：下面的 git fetch 卡在網路上時
+    # 會吃滿預設 360 分鐘，把 CI 總結 與整個 PR 一起吊在那裡。
+    timeout-minutes: 10
     outputs:
       targets: ${{ steps.resolve.outputs.targets }}
       forge_changed: ${{ steps.forge.outputs.changed }}
+      release_dir_exists: ${{ steps.resolve.outputs.release_dir_exists }}
+      # 五個 release-assets 步驟共用的唯一決策點（見 steps.resolve 的說明）。
+      release_verify: ${{ steps.resolve.outputs.release_verify }}
     steps:
       - name: 取出原始碼
         uses: actions/checkout@v7
@@ -274,10 +292,11 @@ jobs:
           if [[ "${EVENT_NAME:-}" == "workflow_dispatch" && -n "$requested" ]]; then
             # 名稱打錯時兩群 job 的建置步驟全部被 if 略過，每個 job 仍回報 success、CI 總結 綠燈
             # ——這正是 AGENTS.md 記載的假綠燈。legacy-targets.yml 與 prepare-release.yml 已經用
-            # ::error:: 擋掉未知名稱，這裡補上同一道關卡。清單直接從本檔的 matrix 取，所以
-            # 「驗證清單」與「matrix 名稱」不可能分叉。
+            # ::error:: 擋掉未知名稱，這裡補上同一道關卡。清單讀的是 scripts/ci/build-targets.json，
+            # 與下方 matrix 由 test_build_targets.py 交叉比對——先前是「用正則解析這份 YAML」，於是
+            # 排版一改（flow 風格、- name:）known 就變空集合，dispatch 這條官方省時路徑全壞。
             python3 - "$requested" <<'PY'
-          import re, sys
+          import json, sys
           from pathlib import Path
 
           requested = [name for name in sys.argv[1].split(",") if name]
@@ -285,21 +304,36 @@ jobs:
           if not requested:
               print("::error::targets 只給了逗號或空白，沒有任何目標名稱", file=sys.stderr)
               sys.exit(1)
-          section = None
-          known = set()
-          for line in Path(".github/workflows/build.yml").read_text(encoding="utf-8").splitlines():
-              header = re.match(r"^  ([A-Za-z][A-Za-z0-9_-]*):\s*$", line)
-              if header:
-                  section = header.group(1)
-              entry = re.match(r"^\s+- target:\s*(\S+)\s*$", line)
-              if entry and section in ("platform-build", "legacy-build"):
-                  known.add(entry.group(1))
+          groups = json.loads(
+              Path("scripts/ci/build-targets.json").read_text(encoding="utf-8"))
+          known = {entry["target"] for entries in groups.values() for entry in entries}
           unknown = [name for name in requested if name not in known and name not in keywords]
           if unknown:
               print("::error::不存在的目標：" + "、".join(unknown), file=sys.stderr)
               print("可用目標：" + "、".join(sorted(known | keywords)), file=sys.stderr)
               sys.exit(1)
           PY
+          fi
+
+          # 「驗已提交的 downloads/<mod_version>」只有在資產真的存在時才成立。用觸發事件近似會讓
+          # 升版後的第一次 push main 必然紅燈：mod_version 改成 1.5 時 downloads/1.5 還不存在，
+          # 而 publish-release 對完全相同的狀態印「跳過發布」。版本號由 read-mod-version.sh 取得
+          # （含字元白名單），目錄也用同一個值組，不用 gradle.properties 的原始字串。
+          release_dir_exists=false
+          if release_version="$(bash scripts/ci/read-mod-version.sh 2>/dev/null)" \
+              && [[ -d "downloads/$release_version" ]]; then
+            release_dir_exists=true
+          fi
+          echo "release_dir_exists=$release_dir_exists" >> "$GITHUB_OUTPUT"
+          # release-assets 的五個步驟都只讀這一個輸出，語意收斂在一處：明確要求 release 關鍵字時
+          # 一律驗（缺資產就是真錯誤，要紅）；否則只在非 PR 且目錄存在時驗。
+          if [[ "${EVENT_NAME:-}" == "workflow_dispatch" && ",$requested," == *",release,"* ]]; then
+            echo "release_verify=true" >> "$GITHUB_OUTPUT"
+          elif [[ "${EVENT_NAME:-}" != "pull_request" && -z "$requested" \
+              && "$release_dir_exists" == "true" ]]; then
+            echo "release_verify=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_verify=false" >> "$GITHUB_OUTPUT"
           fi
 
       # Forge／NeoForge 的建置要跑 Minecraft Mavenizer 與 ForgeGradle 的 decompile，
@@ -536,32 +570,31 @@ jobs:
     name: 驗證縮減後的發布 JAR
     needs: plan
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # 8 個 bundle 的選版驗證（1.13／1.14-1.15／1.16 是新接上的三個）與 31 顆可安裝資產的驗證
+    # 都在這一個 job 裡；20 分鐘是五個 bundle 時代的預算。
+    timeout-minutes: 30
     steps:
       - name: 取出原始碼
         uses: actions/checkout@v7
 
+      # 這四個步驟的條件都只讀 plan 的 release_verify：判斷收斂在 plan 一處，不再各自用觸發事件
+      # 近似「資產存在」。升版後、downloads/<新版本> 產生之前的 push main 會得到 false（步驟略過、
+      # job 仍 success），與 publish-release 對同一狀態的「跳過發布」一致。
       - name: 設定 Java 25
-        if: >-
-          contains(needs.plan.outputs.targets, ',release,') ||
-          (needs.plan.outputs.targets == '' && github.event_name != 'pull_request')
+        if: needs.plan.outputs.release_verify == 'true'
         uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "25"
 
       - name: 設定 Python
-        if: >-
-          contains(needs.plan.outputs.targets, ',release,') ||
-          (needs.plan.outputs.targets == '' && github.event_name != 'pull_request')
+        if: needs.plan.outputs.release_verify == 'true'
         uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
       - name: 設定 Gradle
-        if: >-
-          contains(needs.plan.outputs.targets, ',release,') ||
-          (needs.plan.outputs.targets == '' && github.event_name != 'pull_request')
+        if: needs.plan.outputs.release_verify == 'true'
         uses: gradle/actions/setup-gradle@v6
         with:
           # v6 的預設快取是 Gradle 的商業服務（gradle-actions-caching），這裡明確
@@ -575,24 +608,30 @@ jobs:
       # 目錄是「發布後」才存在的，掛在 PR 必經路徑等同讓改版本號與必經檢查互鎖。聚合任務
       # verifyPublishedRelease（根 build.gradle，dependsOn verifyPreparedReleaseAssets）留給 release
       # 流程明確呼叫，這裡是呼叫點之一（另一個是 prepare-release.yml 的收集後驗證）。
+      # 呼叫條件不能只看「非 PR 就驗」：升版後 downloads/<新版本> 還不存在的那一刻，這裡會跑
+      # verifyReleaseJars／prepareReleaseAssets 並必然失敗，把互鎖從 PR 搬到 push main。條件由
+      # plan 的 release_verify 給出（明確要求 release 或目錄真的存在）。
       - name: 驗證所有發布 JAR 與 Fabric 選版
         id: build
-        if: >-
-          contains(needs.plan.outputs.targets, ',release,') ||
-          (needs.plan.outputs.targets == '' && github.event_name != 'pull_request')
+        if: needs.plan.outputs.release_verify == 'true'
         uses: ./.github/actions/gradle-build
         with:
           # 逐一呼叫要驗的 fabric bundle：驗證器本體收斂在 gradle/fabric-bundle-aggregate-verify.gradle，
           # 但每個 bundle 專案各自編譯自己的 BundleResolutionVerifier 測試類別，所以要各自被叫到。
-          # 26.x 之前完全沒有 aggregate 覆蓋，是這次補上的重點。
+          # 清單必須與 settings.gradle 的 fabricReleaseBundles（8 筆）一致：第三輪把 1.13／1.14-1.15／
+          # 1.16 三份 bundle/build.gradle 接上驗證器，卻沒有加進呼叫面，於是那 17 個已發布的
+          # Minecraft 版本（1.13–1.16.5）沒有任何 CI 覆蓋——任務存在卻沒有呼叫點，比沒有任務更糟。
           # -PtargetPlatform 必須同時列出這些 bundle，settings.gradle 才會把它們 include 進來
           # （只列 fabric-1.21.x 時 :platform-fabric-26.x 會直接「專案不存在」）。
           # 先前只叫了 1.21.x 與 26.x，於是 1.17、1.17.1、1.18、1.18.1、1.18.2、1.19–1.19.4、
           # 1.20–1.20.6 這 17 個版本的選版正確性從來沒有被驗過（任務不在任務圖裡，連「略過」都算不上）。
           args: >-
             --no-daemon --max-workers=2
-            -PtargetPlatform=fabric-1.17-1.18.x,fabric-1.19.x,fabric-1.20.x,fabric-1.21.x,fabric-26.x
+            -PtargetPlatform=fabric-1.13.x,fabric-1.14-1.15.x,fabric-1.16.x,fabric-1.17-1.18.x,fabric-1.19.x,fabric-1.20.x,fabric-1.21.x,fabric-26.x
             verifyPublishedRelease
+            :platform-fabric-1.13.x:verifyPreparedReleaseBundle
+            :platform-fabric-1.14-1.15.x:verifyPreparedReleaseBundle
+            :platform-fabric-1.16.x:verifyPreparedReleaseBundle
             :platform-fabric-1.17-1.18.x:verifyPreparedReleaseBundle
             :platform-fabric-1.19.x:verifyPreparedReleaseBundle
             :platform-fabric-1.20.x:verifyPreparedReleaseBundle
@@ -602,8 +641,7 @@ jobs:
       - name: 上傳縮減後的發布 JAR
         if: >-
           success() && github.event_name != 'pull_request' &&
-          (needs.plan.outputs.targets == '' ||
-          contains(needs.plan.outputs.targets, ',release,'))
+          needs.plan.outputs.release_verify == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: release-assets

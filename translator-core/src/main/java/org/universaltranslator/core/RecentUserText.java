@@ -6,11 +6,21 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 /** Keeps recently typed client messages out of render-time translation. */
 public final class RecentUserText {
     private static final int MAX_ENTRIES = 128;
     private static final long RETAIN_MILLIS = 30L * 60L * 1_000L;
+    /**
+     * How often the render path is allowed to rebuild the table without the entries that expired.
+     *
+     * <p>Nothing used to remove an expired entry except {@link #remember(String)} on a full table, so
+     * one typed message kept the table non-empty for the rest of the session and the empty-table fast
+     * path below never ran again -- every drawn line then paid for a normalization plus a hash lookup
+     * for the whole session. Rebuilding is copy-on-write and only ever needed once a minute.
+     */
+    private static final long PRUNE_INTERVAL_MILLIS = 60_000L;
 
     /**
      * Prefixes that chat renderers prepend to the message body. The prefixed
@@ -54,20 +64,31 @@ public final class RecentUserText {
      */
     private static final class Retained {
         private static final Retained EMPTY = new Retained(
-                Collections.<String, Long>emptyMap(), Collections.<String>emptyList());
+                Collections.<String, Long>emptyMap(), Collections.<String>emptyList(),
+                Collections.<Integer, List<String>>emptyMap());
 
         /** Accepted forms, mapped to their expiry. */
         private final Map<String, Long> forms;
         /** The bare typed texts, so a suffix can be compared in place instead of by substring. */
         private final List<String> bodies;
+        /**
+         * {@link #bodies} bucketed by length. The suffix comparison can only ever match a body whose
+         * length equals the length of the tail, and walking every body for it turned one hash lookup
+         * into up to {@code MAX_SUFFIX_PROBES * MAX_ENTRIES} comparisons per drawn line per frame.
+         */
+        private final Map<Integer, List<String>> bodiesByLength;
 
-        private Retained(Map<String, Long> forms, List<String> bodies) {
+        private Retained(Map<String, Long> forms, List<String> bodies,
+                Map<Integer, List<String>> bodiesByLength) {
             this.forms = forms;
             this.bodies = bodies;
+            this.bodiesByLength = bodiesByLength;
         }
     }
 
-    private volatile Retained retained = Retained.EMPTY;
+    private final AtomicReference<Retained> retained = new AtomicReference<Retained>(Retained.EMPTY);
+    /** When {@link #pruneExpired(long)} may run again; see {@link #PRUNE_INTERVAL_MILLIS}. */
+    private volatile long nextPruneAtMillis;
 
     public void remember(String text) {
         String normalized = normalize(text);
@@ -77,7 +98,7 @@ public final class RecentUserText {
         long now = System.currentTimeMillis();
         long expiresAt = now + RETAIN_MILLIS;
         int maximumForms = MAX_ENTRIES * (PREFIXES.length + 1);
-        Retained current = retained;
+        Retained current = retained.get();
         Map<String, Long> forms = new LinkedHashMap<String, Long>(
                 current.forms.size() + PREFIXES.length + 2);
         forms.putAll(current.forms);
@@ -109,11 +130,21 @@ public final class RecentUserText {
         while (bodies.size() > MAX_ENTRIES) {
             bodies.remove(0);
         }
-        retained = new Retained(forms, bodies);
+        // The index is rebuilt from the bodies that survived the bound, so a lookup can never find a
+        // body that is no longer part of the published table.
+        retained.set(new Retained(forms, bodies, indexBodiesByLength(bodies)));
     }
 
     public boolean shouldPreserve(String renderedText) {
-        Retained snapshot = retained;
+        long now = System.currentTimeMillis();
+        if (now >= nextPruneAtMillis) {
+            // Expired entries are dropped here too, not only by remember() on a full table: without
+            // this the table stayed non-empty for the rest of the session after one typed message, so
+            // the empty-table fast path below never applied again and every drawn line paid for the
+            // normalization and the lookups.
+            pruneExpired(now);
+        }
+        Retained snapshot = retained.get();
         // The tables are empty for almost every frame of a normal session, so it is tested before the
         // normalization allocates a copy of the rendered line.
         if (snapshot.forms.isEmpty()) {
@@ -123,7 +154,6 @@ public final class RecentUserText {
         if (rendered.isEmpty()) {
             return false;
         }
-        long now = System.currentTimeMillis();
         // Fast path: the exact line this class was told about (including the prefixed forms built
         // in remember) is one hash lookup.
         if (isRetained(snapshot, rendered, now)) {
@@ -132,8 +162,41 @@ public final class RecentUserText {
         return matchesPrefixedForm(snapshot, rendered, now);
     }
 
+    /**
+     * Republishes the table without the entries that can no longer answer "yes".
+     *
+     * <p>Copy-on-write, so readers stay lock free; the compare-and-set publication means a message
+     * typed while this ran is never forgotten, because the newer table it published simply wins and
+     * the next round prunes again.
+     *
+     * @param now the time this call treats as the present
+     */
+    private void pruneExpired(long now) {
+        nextPruneAtMillis = now + PRUNE_INTERVAL_MILLIS;
+        Retained current = retained.get();
+        if (current.forms.isEmpty()) {
+            return;
+        }
+        Map<String, Long> forms = new LinkedHashMap<String, Long>(current.forms);
+        removeExpired(forms, now);
+        if (forms.isEmpty()) {
+            retained.compareAndSet(current, Retained.EMPTY);
+            return;
+        }
+        List<String> bodies = new ArrayList<String>(Math.min(current.bodies.size(), MAX_ENTRIES));
+        for (int index = 0; index < current.bodies.size(); index++) {
+            String body = current.bodies.get(index);
+            if (forms.containsKey(body)) {
+                bodies.add(body);
+            }
+        }
+        retained.compareAndSet(current,
+                new Retained(forms, bodies, indexBodiesByLength(bodies)));
+    }
+
     public void clear() {
-        retained = Retained.EMPTY;
+        retained.set(Retained.EMPTY);
+        nextPruneAtMillis = 0L;
     }
 
     /**
@@ -181,9 +244,16 @@ public final class RecentUserText {
         if (length <= 0) {
             return false;
         }
-        for (int index = 0; index < snapshot.bodies.size(); index++) {
-            String body = snapshot.bodies.get(index);
-            if (body.length() != length || !rendered.regionMatches(from, body, 0, length)) {
+        // Only a body of exactly this length can match, and the index keeps a handful of those at
+        // most. Scanning every retained body instead made this loop grow with the stored messages on
+        // every drawn line of every frame, on the render thread.
+        List<String> candidates = snapshot.bodiesByLength.get(Integer.valueOf(length));
+        if (candidates == null) {
+            return false;
+        }
+        for (int index = 0; index < candidates.size(); index++) {
+            String body = candidates.get(index);
+            if (!rendered.regionMatches(from, body, 0, length)) {
                 continue;
             }
             if (isRetained(snapshot, body, now)) {
@@ -205,6 +275,29 @@ public final class RecentUserText {
                 iterator.remove();
             }
         }
+    }
+
+    /**
+     * Buckets the bare typed texts by length, so a suffix comparison only has to look at the bodies
+     * that can possibly match the tail it was given.
+     *
+     * <p>Built from the list that is published, never mutated afterwards: the index and the list are
+     * two views of one immutable snapshot, so they cannot disagree.
+     */
+    private static Map<Integer, List<String>> indexBodiesByLength(List<String> bodies) {
+        Map<Integer, List<String>> byLength =
+                new LinkedHashMap<Integer, List<String>>(bodies.size() * 2 + 2);
+        for (int index = 0; index < bodies.size(); index++) {
+            String body = bodies.get(index);
+            Integer length = Integer.valueOf(body.length());
+            List<String> sameLength = byLength.get(length);
+            if (sameLength == null) {
+                sameLength = new ArrayList<String>(1);
+                byLength.put(length, sameLength);
+            }
+            sameLength.add(body);
+        }
+        return byLength;
     }
 
     /** Cheap prefilter shared by every drawn line: contained markers only, no allocation. */

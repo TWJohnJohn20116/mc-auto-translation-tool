@@ -40,7 +40,7 @@
       "26.3"
     ],
     "java": ">=25",
-    "fabric-api": "*",
+    "${fabricDependency}": "*",
     "universal_translator": ">=${version}"
   }
 }

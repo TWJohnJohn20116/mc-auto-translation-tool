@@ -25,8 +25,6 @@ import java.util.zip.ZipInputStream;
 public final class SafeArchiveExtractor {
     private static final int MAX_ENTRIES = 10_000;
     private static final long MAX_EXPANDED_BYTES = 1_073_741_824L;
-    /** Always kept free on the destination volume, so extraction cannot fill the partition. */
-    private static final long MINIMUM_FREE_SPACE_BYTES = 64L * 1024L * 1024L;
     /** One shared copy buffer for the whole extraction instead of one per archive entry. */
     private static final int COPY_BUFFER_BYTES = 64 * 1024;
     /** Upper bound on how many links may be chained before a link target is treated as broken. */
@@ -57,19 +55,21 @@ public final class SafeArchiveExtractor {
      * short of disk. Extraction then wrote the partition full and left the cleanup to whoever
      * noticed. Asking the volume first turns that into a refusal before anything is written.
      */
-    private static long expandedByteLimit(Path destination) {
-        long usable;
-        try {
-            usable = Files.getFileStore(destination).getUsableSpace();
-        } catch (IOException | RuntimeException unknown) {
-            return MAX_EXPANDED_BYTES;
-        }
-        if (usable <= 0L) {
+    private static long expandedByteLimit(Path destination) throws IOException {
+        long usable = DiskSpace.usable(destination);
+        if (usable < 0L) {
             // The platform cannot report free space; the fixed ceiling stays in force.
             return MAX_EXPANDED_BYTES;
         }
-        long fromDevice = usable - MINIMUM_FREE_SPACE_BYTES;
-        return fromDevice > 0L ? Math.min(MAX_EXPANDED_BYTES, fromDevice) : 0L;
+        long fromDevice = usable - DiskSpace.RESERVE_BYTES;
+        if (fromDevice <= 0L) {
+            // Reported as a disk shortage, not as a corrupt archive: the budget used to become zero
+            // here, so a phone with a full cache was told its engine archive exceeded the expanded
+            // size limit and the only actionable fact never reached the user.
+            throw new IOException("Not enough free space for the engine archive: "
+                    + DiskSpace.RESERVE_BYTES + " bytes must stay free, " + usable + " available");
+        }
+        return Math.min(MAX_EXPANDED_BYTES, fromDevice);
     }
 
     private static void extractZip(Path archive, Path root, long expandedLimit) throws IOException {

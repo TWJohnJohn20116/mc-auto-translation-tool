@@ -215,7 +215,9 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
             FabricTranslationRuntime.initialize(updated);
             lastRuntimeStatus = "";
             nextFailureNotificationAt = 0L;
-            updated.save();
+            // Same writer the runtime's own home toggles use: the press must not write the file on
+            // the tick thread, and the player already sees the new state.
+            FabricTranslationRuntimeBase.saveInBackground(updated);
             overlay("message.universal_translator.toggle",
                     text(updated.enabled
                             ? "value.universal_translator.enabled"

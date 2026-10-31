@@ -29,7 +29,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * that flush is in flight only set a dirty flag, and the writer re-snapshots the map once its write
  * finishes. There is no background thread, no timer and no pending-write queue, so the class cannot
  * leak a thread past its owner and nothing can grow without bound. The only deferred state is the
- * dirty flag plus the in-memory LRU map itself.
+ * dirty flag plus the in-memory LRU map itself. Durability therefore depends on the owner calling
+ * {@link #flush()} before it drops the store: a deferred burst has no other writer, so a store that
+ * is discarded without that call loses everything that had not reached either bound yet.
  *
  * <p>Once {@code maximumEntries} is reached an entry is dropped in insertion order, not in least
  * recently used order. Which entry a full cache discards is an implementation detail of this store
@@ -45,6 +47,17 @@ public final class PersistentTranslationCache implements TranslationStore {
     private static final int UNSAVED_ENTRIES_BEFORE_FLUSH = 64;
     /** Longest a changed entry may wait for the next rewrite, in milliseconds. */
     private static final long FLUSH_INTERVAL_MILLIS = 5_000L;
+    /**
+     * Bytes one stored entry may occupy in the file. A 64 character digest, one translated value,
+     * {@code =} and a line break -- counted with the escaping {@code Properties.store} applies, which
+     * writes every non-ASCII character of a Chinese or Japanese value as {@code \}{@code uXXXX}, so a
+     * value of about 160 characters is already close to this bound.
+     */
+    private static final long MAXIMUM_BYTES_PER_ENTRY = 1024L;
+    /** Length of a {@link #hash(String)} result, which is the only key shape this class writes. */
+    private static final int HASH_HEX_LENGTH = 64;
+    /** Longest {@link #flush()} waits for a read that is still in flight before giving up. */
+    private static final long LOAD_WAIT_MILLIS = 2_000L;
 
     /**
      * One state object per cache file path rather than one lock per instance. {@code initialize()} on
@@ -56,6 +69,15 @@ public final class PersistentTranslationCache implements TranslationStore {
      */
     private static final ConcurrentHashMap<String, PathState> PATH_LOCKS =
             new ConcurrentHashMap<String, PathState>();
+
+    /**
+     * One instance per cache file path, handed out by {@link #shared(Path, int)}. A settings change
+     * builds a replacement session while the previous one is still shutting down, and both of them
+     * used to parse the whole file again on their first lookup even though the path and the content
+     * were identical.
+     */
+    private static final ConcurrentHashMap<String, PersistentTranslationCache> SHARED =
+            new ConcurrentHashMap<String, PersistentTranslationCache>();
 
     private final Path file;
     /** Key of {@link #file} in {@link #PATH_LOCKS}, identical for every instance on that path. */
@@ -150,6 +172,36 @@ public final class PersistentTranslationCache implements TranslationStore {
                 return size() > maximumEntries;
             }
         };
+    }
+
+    /**
+     * The store for {@code file}, created on first use and then shared by every later caller.
+     *
+     * <p>Retiring a session on a settings change used to build a fresh instance, whose first lookup
+     * parsed the whole file again -- up to {@code maximumEntries} properties, tens of milliseconds on
+     * a network-synced configuration folder -- for a file that had not changed. {@link #PATH_LOCKS}
+     * already serializes the writers of one path, so one instance per path is the shape this class
+     * was built for; {@link #clear()} and the merge path already carry their state per path rather
+     * than per instance.
+     *
+     * <p>The caller that creates the instance decides {@code maximumEntries}; a later caller on the
+     * same path gets the existing instance. Entries are never removed from this map, exactly like
+     * {@link #PATH_LOCKS}, so the identity a caller received stays valid for the process.
+     *
+     * @param file cache file, not {@code null}
+     * @param maximumEntries entries to keep, as for {@link #PersistentTranslationCache(Path, int)}
+     * @return the store of that path
+     * @throws IOException never thrown today, kept because the constructor declares it
+     */
+    public static TranslationStore shared(Path file, final int maximumEntries) throws IOException {
+        String key = file.toAbsolutePath().normalize().toString();
+        PersistentTranslationCache existing = SHARED.get(key);
+        if (existing != null) {
+            return existing;
+        }
+        PersistentTranslationCache created = new PersistentTranslationCache(file, maximumEntries);
+        PersistentTranslationCache raced = SHARED.putIfAbsent(key, created);
+        return raced == null ? created : raced;
     }
 
     @Override
@@ -285,32 +337,39 @@ public final class PersistentTranslationCache implements TranslationStore {
             snapshot = snapshot();
         }
         // Deliberately not merged with the file: the user asked for the entries to be gone, so the
-        // empty snapshot must replace whatever is there instead of adopting it back.
-        persistBestEffort(snapshot, snapshotRevision, false);
-        PathState state = stateForPath();
-        synchronized (state.monitor) {
-            // Published so a session that is retired but not yet closed drops its own snapshot
-            // instead of merging every entry back into the file this clear just emptied.
-            state.clearEpoch++;
-            observedClearEpoch = state.clearEpoch;
-        }
+        // empty snapshot must replace whatever is there instead of adopting it back. The clear epoch
+        // is published by that same write, inside its path critical section: bumping it afterwards
+        // left a window in which another instance saw the new generation next to the old epoch and
+        // merged every deleted entry back into the file.
+        persistBestEffort(snapshot, snapshotRevision, false, true);
     }
 
     /**
      * Writes the entries {@link #put(String, String)} deferred. Called by the owning session before
      * the cache is dropped, so a clean shutdown persists a burst that never reached either bound.
+     *
+     * <p>This call is the only chance the deferred entries get: nothing else in this class writes
+     * them, so an owner that drops the store without it loses them without any log line. That holds
+     * whatever the state of the owner's own workers -- a worker still running can only add entries,
+     * and those are written by the next flush.
      */
     @Override
     public void flush() {
         Map<String, String> snapshot;
         long snapshotRevision;
         synchronized (this) {
-            if (!loaded || revision == 0L) {
+            if (!loaded) {
                 return;
             }
-            if (loading) {
-                // The file's own entries are what this write would drop, and the read that is still
-                // running is about to publish them. Losing one session's burst is the cheaper side.
+            // A read that is still running is not a reason to drop this session's burst: the file's
+            // own entries are what that read publishes, while what this write carries is the entries
+            // memory holds and the file does not. Waiting for it keeps the "the owner calls this once
+            // before dropping the store" contract of TranslationStore#flush, with a bounded wait so a
+            // read stuck on a slow filesystem cannot hang the shutdown that owns this store.
+            if (waitForLoadToFinish()) {
+                return;
+            }
+            if (revision == 0L) {
                 return;
             }
             if (flushing) {
@@ -328,6 +387,33 @@ public final class PersistentTranslationCache implements TranslationStore {
         flushLoop(snapshot, snapshotRevision);
     }
 
+    /**
+     * Waits for the deferred read to publish, so a writer never snapshots a map that is still missing
+     * the entries the file holds.
+     *
+     * <p>The caller holds this monitor; {@link Object#wait(long)} releases it, which is what lets
+     * {@link #ensureLoaded()} publish and wake this thread up.
+     *
+     * @return {@code true} when the caller must not write: it was interrupted, or the read outlived
+     *     {@link #LOAD_WAIT_MILLIS}
+     */
+    private boolean waitForLoadToFinish() {
+        long deadline = System.currentTimeMillis() + LOAD_WAIT_MILLIS;
+        while (loading) {
+            long remaining = deadline - System.currentTimeMillis();
+            if (remaining <= 0L) {
+                return true;
+            }
+            try {
+                wait(remaining);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return true;
+            }
+        }
+        return false;
+    }
+
     public int size() {
         ensureLoaded();
         synchronized (this) {
@@ -342,7 +428,7 @@ public final class PersistentTranslationCache implements TranslationStore {
     private void flushLoop(Map<String, String> snapshot, long snapshotRevision) {
         try {
             while (true) {
-                persistBestEffort(snapshot, snapshotRevision, true);
+                persistBestEffort(snapshot, snapshotRevision, true, false);
                 synchronized (this) {
                     if (!dirty) {
                         // Clearing the flag and releasing ownership in one critical section means a
@@ -419,6 +505,9 @@ public final class PersistentTranslationCache implements TranslationStore {
         }
         synchronized (this) {
             loading = false;
+            // A flush() that arrived while this read was in flight waits on this monitor; without the
+            // wake-up it would sit out its whole deadline and then drop the session's burst anyway.
+            notifyAll();
             if (fromFile == null || clearGeneration != readingGeneration) {
                 // The read failed, or the entries were cleared while it was in flight. Publishing
                 // now would put back everything the user deleted, which is the one thing the flag
@@ -459,12 +548,33 @@ public final class PersistentTranslationCache implements TranslationStore {
         PathState state = stateForPath();
         synchronized (state.monitor) {
             if (Files.exists(file)) {
+                long storedBytes = Files.size(file);
+                if (storedBytes > maximumEntries * MAXIMUM_BYTES_PER_ENTRY) {
+                    // Properties.load reads the whole file into a Hashtable and the map below copies it
+                    // once more, so a file this large costs two to three times its size in transient
+                    // objects -- on the first lookup of a session, i.e. on a render thread or a
+                    // worker. Nothing this class writes can reach that size within its entry cap, so
+                    // the file is treated like an unreadable one: memory keeps working, the file is
+                    // left as it is for a session that can read it, and it is logged once.
+                    throw new IOException("cache file exceeds the entry cap: " + storedBytes
+                            + " bytes for " + maximumEntries + " entries");
+                }
                 Properties properties = new Properties();
                 try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
                     properties.load(reader);
                 }
-                fromFile = new LinkedHashMap<String, String>(properties.size());
+                fromFile = new LinkedHashMap<String, String>(
+                        Math.min(properties.size(), maximumEntries));
                 for (String key : properties.stringPropertyNames()) {
+                    if (fromFile.size() >= maximumEntries) {
+                        break;
+                    }
+                    // hash() is the only writer of this file and it always produces a digest of exactly
+                    // this length, so any other key is debris of a truncated or half-written file.
+                    // Loading it would keep it in memory and let the next write carry it forward.
+                    if (key.length() != HASH_HEX_LENGTH) {
+                        continue;
+                    }
                     fromFile.put(key, properties.getProperty(key));
                 }
             }
@@ -497,11 +607,15 @@ public final class PersistentTranslationCache implements TranslationStore {
      *
      * @param mergeWithFile {@code false} when the caller deliberately emptied the cache and the file
      *     must be replaced rather than adopted
+     * @param bumpClearEpoch {@code true} when this write is the {@link #clear()} itself, so the epoch
+     *     that tells other instances "this was emptied on purpose" is published inside the same path
+     *     critical section as the write instead of after it
      */
     private void persistBestEffort(
             Map<String, String> snapshot,
             long snapshotRevision,
-            boolean mergeWithFile
+            boolean mergeWithFile,
+            boolean bumpClearEpoch
     ) {
         if (persistenceUnavailable()) {
             return;
@@ -510,6 +624,12 @@ public final class PersistentTranslationCache implements TranslationStore {
         synchronized (state.monitor) {
             if (snapshotRevision < persistedRevision) {
                 return;
+            }
+            if (bumpClearEpoch) {
+                // Bumped before the write so no other instance can observe the new generation next to
+                // the old epoch and merge the deleted entries back in.
+                state.clearEpoch++;
+                observedClearEpoch = state.clearEpoch;
             }
             Map<String, String> contents = snapshot;
             if (mergeWithFile && state.generation != observedGeneration) {
@@ -597,15 +717,29 @@ public final class PersistentTranslationCache implements TranslationStore {
             return new LinkedHashMap<String, String>();
         }
         Properties properties = new Properties();
-        try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-            properties.load(reader);
+        try {
+            // The same bound load() applies: the merge runs on the thread that is retiring a session,
+            // and it must not materialize a file that cannot be one this cache wrote.
+            if (Files.size(file) > maximumEntries * MAXIMUM_BYTES_PER_ENTRY) {
+                return null;
+            }
+            try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+                properties.load(reader);
+            }
         } catch (IOException unreadable) {
             return null;
         } catch (RuntimeException malformed) {
             return null;
         }
-        Map<String, String> existing = new LinkedHashMap<String, String>(properties.size());
+        Map<String, String> existing = new LinkedHashMap<String, String>(
+                Math.min(properties.size(), maximumEntries));
         for (String key : properties.stringPropertyNames()) {
+            if (existing.size() >= maximumEntries) {
+                break;
+            }
+            if (key.length() != HASH_HEX_LENGTH) {
+                continue;
+            }
             existing.put(key, properties.getProperty(key));
         }
         return existing;
