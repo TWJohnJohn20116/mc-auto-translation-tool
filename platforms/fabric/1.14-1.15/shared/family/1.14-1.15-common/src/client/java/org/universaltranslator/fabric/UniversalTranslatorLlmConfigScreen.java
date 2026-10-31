@@ -206,7 +206,9 @@ int width = Math.max(180, Math.min(360, this.width - 20));
 
     private static void setFieldEditing(TextFieldWidget field, boolean editable) {
         if (field != null) {
-            field.setEditable(editable);
+            // 1.14 and 1.15 keep setEditable private; Widget.active is the public flag that stops the
+            // field taking input on those versions.
+            field.active = editable;
         }
     }
 

@@ -75,10 +75,11 @@ abstract class InGameHudStatusIndicatorMixin {
         // The injection sits at the RETURN of the HUD render, which still runs while F1 hides the
         // HUD: without this the square and its label stayed on an otherwise empty screen and were
         // painted over the chat and the hotbar.
-        // 1.13 keeps the flag as GameOptions.hideGui; hudHidden only exists from 1.14 on.
-        if (client.options.hideGui) {
-            return;
-        }
+        // No F1 guard here: this layer is compiled against the ploceus (legacy) mappings, where the
+        // flag this file would have to read is not called hideGui (that name belongs to the ornithe
+        // layer, which reaches it through OrnitheClientAccess). Reading either spelling from this
+        // layer fails to compile, and the two layers cannot share an accessor because they never
+        // mount the same source set.
         int[] framebufferWidth = new int[1];
         int[] framebufferHeight = new int[1];
         long handle = GLFW.glfwGetCurrentContext();
