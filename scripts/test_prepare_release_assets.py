@@ -181,7 +181,9 @@ class PrepareReleaseAssetsTest(unittest.TestCase):
             self._fixture(release)
             assets = prepare_release(release, root / "assets", "1.2.3")
             self.assertEqual(
-                installable_manifest(asset.name for asset in assets),
+                # prepare_release 回的是「上傳到 Release 的全部資產」，含 SHA256SUMS.txt 與
+                # release-assets.txt 本身；清單描述的是可安裝 JAR，兩邊要落在同一個判準上。
+                installable_manifest(a.name for a in assets if a.name.endswith(".jar")),
                 installable_manifest(list_installable(release, "1.2.3")),
             )
 

@@ -360,7 +360,7 @@ tasks.register("validateDualLayerApiParity") {
         // grown an argument, which is how the misses this task exists for survived a green check. The
         // name pattern is a parameter because a mixin handler is called universalTranslator$... and $
         // is not part of \w; a comparison that ignored those would compare two empty sets.
-        def declaredMembers = { File source, String namePattern = "\\w+" ->
+        def declaredMembers = { File source, String namePattern ->
             def members = new TreeSet<String>()
             def lines = source.readLines("UTF-8")
             def declaration = ~("^(?:(?:public|private|protected|static|final|abstract|synchronized)" +
@@ -515,8 +515,8 @@ tasks.register("validateDualLayerApiParity") {
                     }
                     return
                 }
-                def leftMembers = declaredMembers(left)
-                def rightMembers = declaredMembers(right)
+                def leftMembers = declaredMembers(left, '\\w+')
+                def rightMembers = declaredMembers(right, '\\w+')
                 def onlyLeft = new TreeSet<String>(leftMembers)
                 onlyLeft.removeAll(rightMembers)
                 def onlyRight = new TreeSet<String>(rightMembers)
@@ -618,8 +618,8 @@ tasks.register("validateDualLayerApiParity") {
                     ? mirrorMemberExempt.get(pair[0]) : Collections.emptySet()
             // Mixin handler names contain a $, so both sides are read with the wider name pattern;
             // with \w the two mixin copies would compare as two empty sets and still pass.
-            def leftMembers = declaredMembers(left, "[\\w$]+")
-            def rightMembers = declaredMembers(right, "[\\w$]+")
+            def leftMembers = declaredMembers(left, '[\\w$]+')
+            def rightMembers = declaredMembers(right, '[\\w$]+')
             def onlyLeft = new TreeSet<String>(leftMembers)
             onlyLeft.removeAll(rightMembers)
             onlyLeft.removeAll(exempt)
