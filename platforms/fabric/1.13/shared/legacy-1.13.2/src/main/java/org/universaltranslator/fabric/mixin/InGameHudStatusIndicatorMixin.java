@@ -75,7 +75,8 @@ abstract class InGameHudStatusIndicatorMixin {
         // The injection sits at the RETURN of the HUD render, which still runs while F1 hides the
         // HUD: without this the square and its label stayed on an otherwise empty screen and were
         // painted over the chat and the hotbar.
-        if (client.options.hudHidden) {
+        // 1.13 keeps the flag as GameOptions.hideGui; hudHidden only exists from 1.14 on.
+        if (client.options.hideGui) {
             return;
         }
         int[] framebufferWidth = new int[1];

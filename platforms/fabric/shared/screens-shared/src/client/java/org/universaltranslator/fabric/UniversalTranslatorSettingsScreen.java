@@ -802,7 +802,11 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
 
     private static void setFieldEditing(TextFieldWidget field, boolean editable) {
         if (field != null) {
-            field.setEditable(editable);
+            // TextFieldWidget.setEditable is private on 1.13 and 1.14 (it only appears in the class
+            // file because the constructor calls it), so this layer cannot call it; `active` is the
+            // public Widget flag those versions do expose and it stops the field taking input just
+            // the same. 1.16+ accepts either, so one form serves every tree that mounts this file.
+            field.active = editable;
         }
     }
 
