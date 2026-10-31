@@ -76,7 +76,7 @@ tasks.register("verifyBundle") {
     dependsOn jar
     doLast {
         def archive = jar.archiveFile.get().asFile
-        def required = ["fabric.mod.json"] + supportedVersions.collect {
+        def required = ["fabric.mod.json", "assets/universal_translator/icon.png"] + supportedVersions.collect {
             "META-INF/jars/universal-translator-${it}.jar"
         }
         // One walk for the whole list: collect the entries that exist, then compare names. zipTree is
@@ -85,6 +85,7 @@ tasks.register("verifyBundle") {
         def present = [] as Set
         zipTree(archive).matching {
             include "fabric.mod.json"
+        include "assets/universal_translator/icon.png"
             include "META-INF/jars/universal-translator-*.jar"
         }.files.each { present.add(it.name) }
         def missing = required.findAll { !present.contains(it.tokenize('/').last()) }
