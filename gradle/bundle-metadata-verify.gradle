@@ -189,7 +189,7 @@ ext.verifyBundleMetadata = {
                 "${project.path}: shipped fabric.mod.json still contains ${leftoverPlaceholder.group()}; " +
                         "processResources does not expand that key (the release verifier rejects it too)")
     }
-    def expandedMetadata = new groovy.json.JsonSlurper().parse(expandedText)
+    def expandedMetadata = new groovy.json.JsonSlurper().parseText(expandedText)
     if (expandedMetadata.version != project.version.toString()) {
         throw new GradleException(
                 "${project.path}: shipped fabric.mod.json version ${expandedMetadata.version} != " +

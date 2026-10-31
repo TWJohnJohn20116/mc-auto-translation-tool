@@ -51,9 +51,9 @@ tasks.register("verifyBundle") {
     doLast {
         def archive = jar.archiveFile.get().asFile
         def required = ['fabric.mod.json'] + supportedVersions.collect { "META-INF/jars/universal-translator-${it}.jar" }
-        // One walk for the whole list: collect the entries that exist, then compare names. zipTree used
-        // to be built inside the loop, so every required entry re-listed the entire jar — one full ZIP
-        // parse per required entry, each nested jar being a multi-megabyte deflate stream.
+        // One walk for the whole list: collect the entries that exist, then compare names. zipTree is
+        // the only reader that sees the entries `jar` writes from other tasks' outputs; a raw ZipFile
+        // on the same path reports the nested jars as absent.
         def present = [] as Set
         zipTree(archive).matching {
             include "fabric.mod.json"

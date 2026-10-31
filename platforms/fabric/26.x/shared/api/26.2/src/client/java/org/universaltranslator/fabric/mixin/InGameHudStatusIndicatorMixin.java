@@ -33,7 +33,9 @@ abstract class InGameHudStatusIndicatorMixin {
             at = @At("RETURN"))
     private void universalTranslator$renderStatusIndicator(
             GuiGraphicsExtractor graphics, DeltaTracker deltaTracker, CallbackInfo callback) {
-        // 26.2 renamed the HUD-hidden flag from Gui.hideGui to Gui.hide.
-        HudIndicatorPainter.paint(graphics, Minecraft.getInstance().gui.hide);
+        // 26.2 and 26.3 render the HUD through Hud, which Gui skips entirely while F1 hides it, so
+        // there is no flag to read here: the HUD-hidden state lives on a member this layer no longer
+        // exposes as a field (Options.hideGui is gone and Gui.hide is not readable from the Hud side).
+        HudIndicatorPainter.paint(graphics, false);
     }
 }
