@@ -16,10 +16,10 @@ set of 31 directly installable 1.4 JARs: one row per file.
 | 1.18.2 | Forge 40.2.21 | 17 | No additional mod |
 | 1.19.2 | Forge 43.5.2 | 17 | No additional mod |
 | 1.20.1 | Forge 47.4.10 | 17 | No additional mod |
-| 1.21, 1.21.1, 1.21.3–1.21.5 | Forge family JAR (51.0.33–61.2.0) | 21 | No additional mod; 1.21.2 has no implementation |
-| 1.21.6–1.21.8 | Forge family JAR | 21 | No additional mod |
-| 1.21.9–1.21.11 | Forge family JAR | 21 | No additional mod |
-| 26.1–26.1.2 | Forge family JAR (62.0.9–65.1.1) | 25 | No additional mod |
+| 1.21, 1.21.1, 1.21.3–1.21.5 | Forge family JAR (1.21＝51.0.33, 1.21.1＝52.1.16, 1.21.3＝53.1.12, 1.21.4＝54.1.18, 1.21.5＝55.1.12) | 21 | No additional mod; 1.21.2 has no implementation |
+| 1.21.6–1.21.8 | Forge family JAR (1.21.6＝56.0.9, 1.21.7＝57.0.3, 1.21.8＝58.1.21) | 21 | No additional mod |
+| 1.21.9–1.21.11 | Forge family JAR (1.21.9＝59.0.5, 1.21.10＝60.1.13, 1.21.11＝61.2.0) | 21 | No additional mod |
+| 26.1–26.1.2 | Forge family JAR (26.1＝62.0.9, 26.1.1＝63.0.2, 26.1.2＝64.1.0) | 25 | No additional mod |
 | 26.2 | Forge 65.1.1 | 25 | No additional mod |
 | 1.20.1 | NeoForge 47.1.106 | 17 | No additional mod |
 | 1.20.4 | NeoForge 20.4.251 | 17 | No additional mod |
@@ -44,9 +44,11 @@ set of 31 directly installable 1.4 JARs: one row per file.
 Place the correct JAR in the game instance's `mods` folder. The server does not need this mod.
 The single Fabric JAR accepts only the versions listed one by one above and requires Fabric Loader
 ≥ 0.19.3 on that instance (the floor the bundle's `fabric.mod.json` declares); on an older Loader it
-fails during load with a dependency error. Forge family JARs declare a continuous range that is wider
-than their adapters, and the gaps in that range (1.21.2) have no implementation. Each NeoForge JAR
-covers exactly one game version, and there is no 1.20.2 or 1.20.3 download.
+fails during load with a dependency error. Forge family JARs declare a comma-separated union of exact
+version restrictions listing only the versions that have an implementation, so 1.21.2 is not in it and
+Forge refuses to load the JAR with a dependency error rather than loading it with a missing
+implementation. Each NeoForge JAR covers exactly one game version, and there is no 1.20.2, 1.20.3, or
+1.20.5 download.
 
 ## First-time setup
 

@@ -12,6 +12,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.universaltranslator.core.HudIndicatorContent;
 import org.universaltranslator.core.HudIndicatorCorner;
+import org.universaltranslator.core.HudLabelCache;
 import org.universaltranslator.core.HomeQuickSettingsState;
 import org.universaltranslator.core.HudIndicatorSettings;
 import org.universaltranslator.core.HudIndicatorVisibility;
@@ -19,6 +20,7 @@ import org.universaltranslator.core.OutgoingTranslationPreview;
 import org.universaltranslator.core.TranslationActivity;
 import org.universaltranslator.forge.ForgeMixinDiagnostics;
 import org.universaltranslator.forge.ForgeTranslationRuntime;
+import org.universaltranslator.forge.HudLabels;
 import org.universaltranslator.forge.TranslationRenderContext;
 
 /**
@@ -110,8 +112,24 @@ abstract class InGameHudStatusIndicatorMixin {
             int previewCenterX = screenWidth / 2;
             int previewY = Math.max(0, screenHeight - 60);
             TranslationRenderContext.pushTextInput();
-            Screen.drawCenteredString(pose, Minecraft.getInstance().font, Component.literal(outgoingPreview), previewCenterX, previewY, 0xFFFFFFFF);
-            TranslationRenderContext.popTextInput();
+            try {
+                // The preview only changes while a translation is landing, so the component is built
+                // once per distinct value instead of once per frame.
+                long previewNow = System.currentTimeMillis();
+                Object cachedPreview = HudLabels.preview(outgoingPreview, previewNow);
+                Component preview;
+                if (cachedPreview instanceof Component) {
+                    preview = (Component) cachedPreview;
+                } else {
+                    preview = Component.literal(outgoingPreview);
+                    HudLabels.rememberPreview(outgoingPreview, preview, previewNow);
+                }
+                Screen.drawCenteredString(pose, Minecraft.getInstance().font, preview, previewCenterX, previewY, 0xFFFFFFFF);
+            } finally {
+                // A throw inside the draw must not leave the depth latched: until the next tick's
+                // reset, every other line on screen would then be treated as local input.
+                TranslationRenderContext.popTextInput();
+            }
         }
 
         // The label is drawn in both states: the target language and the provider are settings, so
@@ -125,23 +143,52 @@ abstract class InGameHudStatusIndicatorMixin {
                 label = quickSettings.getProvider();
             } else if (content == HudIndicatorContent.ACTIVITY
                     && TranslationActivity.isTranslating()) {
-                label = Component.translatable(
-                        "value.universal_translator.hud_content.activity").getString();
+                // Resolved once per second instead of once per frame: the language-table lookup and
+                // the fresh String it returns were the whole per-frame cost of this branch.
+                long now = System.currentTimeMillis();
+                if (HudLabels.activityExpired(now)) {
+                    HudLabels.rememberActivity(Component.translatable(
+                            HudLabelCache.ACTIVITY_KEY).getString(), now);
+                }
+                label = HudLabels.activity();
             }
             if (label != null && !label.isEmpty()) {
                 Font font = Minecraft.getInstance().font;
-                Component text = Component.literal(label);
+                if (font == null) {
+                    // Minecraft drops its text renderer while resources reload (F3+T, a pack switch,
+                    // /reload) and the HUD still draws every frame: measuring or drawing through it
+                    // threw an NPE out of the render loop.
+                    return;
+                }
+                long now = System.currentTimeMillis();
+                Object cachedLabel = HudLabels.label(label, now);
+                Component text;
+                if (cachedLabel instanceof Component) {
+                    text = (Component) cachedLabel;
+                } else {
+                    text = Component.literal(label);
+                    HudLabels.rememberLabel(label, text, now);
+                }
                 TranslationRenderContext.pushTextInput();
-                int labelWidth = font.width(text);
-                // Beside the square, never over it: a 6px square cannot hold "zh-TW", and a label
-                // centred on a right-corner square would run off the screen edge.
-                int labelCenterX = corner.isRight()
-                        ? left - 2 - labelWidth / 2
-                        : right + 2 + labelWidth / 2;
-                // y is the top of the text line, so centre it against the square by hand.
-                int labelY = top + (size - 8) / 2;
-                Screen.drawCenteredString(pose, font, text, labelCenterX, labelY, 0xFFFFFFFF);
-                TranslationRenderContext.popTextInput();
+                try {
+                    // A glyph walk per frame, for a string that only changes when the language or the
+                    // font does: both are covered by the one-second slot.
+                    int labelWidth = HudLabels.width(label, now);
+                    if (labelWidth < 0) {
+                        labelWidth = font.width(text);
+                        HudLabels.rememberWidth(label, labelWidth, now);
+                    }
+                    // Beside the square, never over it: a 6px square cannot hold "zh-TW", and a label
+                    // centred on a right-corner square would run off the screen edge.
+                    int labelCenterX = corner.isRight()
+                            ? left - 2 - labelWidth / 2
+                            : right + 2 + labelWidth / 2;
+                    // y is the top of the text line, so centre it against the square by hand.
+                    int labelY = top + (size - 8) / 2;
+                    Screen.drawCenteredString(pose, font, text, labelCenterX, labelY, 0xFFFFFFFF);
+                } finally {
+                    TranslationRenderContext.popTextInput();
+                }
             }
         }
     }

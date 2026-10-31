@@ -62,10 +62,29 @@ public final class AzureOpenAiTranslationProvider implements TranslationProvider
             HttpJsonClient http,
             TranslationPrompt.Settings prompt
     ) {
+        this(endpoint, apiKey, deployment, apiVersion, http, prompt, TranslationTuning.DEFAULTS);
+    }
+
+    /**
+     * @param tuning throughput settings the delegate applies; {@code batch-size},
+     *               {@code batch-window-ms} and {@code api-min-request-interval-ms} reached this
+     *               provider for the first time here, because the delegate used to be built with
+     *               {@link TranslationTuning#DEFAULTS} no matter what the configuration said
+     */
+    AzureOpenAiTranslationProvider(
+            String endpoint,
+            String apiKey,
+            String deployment,
+            String apiVersion,
+            HttpJsonClient http,
+            TranslationPrompt.Settings prompt,
+            TranslationTuning tuning
+    ) {
         this.deployment = requireText("Azure OpenAI deployment", deployment);
         this.requestUrl = compose(endpoint, this.deployment, apiVersion);
         this.delegate = new OpenAiChatTranslationProvider(
-                requestUrl, apiKey, this.deployment, "azure-openai", http, prompt, "api-key", "");
+                requestUrl, apiKey, this.deployment, "azure-openai", http, prompt, "api-key", "",
+                JsonOutputMode.RESPONSE_FORMAT, tuning);
     }
 
     /**
@@ -131,16 +150,27 @@ public final class AzureOpenAiTranslationProvider implements TranslationProvider
         }
         String version = apiVersion == null || apiVersion.trim().isEmpty()
                 ? DEFAULT_API_VERSION : apiVersion.trim();
-        String url;
-        if (base.contains(DEPLOYMENTS_PATH)) {
-            url = base.endsWith(CHAT_PATH) || base.indexOf('?') >= 0 ? base : base + CHAT_PATH;
-            if (url.contains(VERSION_PARAMETER)) {
-                return url;
-            }
-        } else {
-            url = base + DEPLOYMENTS_PATH + deployment + CHAT_PATH;
+        // The query is separated before the path is inspected. A pasted "target URI" usually looks
+        // like ".../openai/deployments/dep?api-version=2024-10-21" — no /chat/completions — and the
+        // old test ("the string contains a '?'") took that as "already complete", requested the
+        // deployment root, and reported the resulting 404 as if the deployment name were wrong.
+        String path = base;
+        String query = "";
+        int queryStart = base.indexOf('?');
+        if (queryStart >= 0) {
+            path = base.substring(0, queryStart);
+            query = base.substring(queryStart);
         }
-        return url + (url.indexOf('?') < 0 ? "?" : "&") + VERSION_PARAMETER + version;
+        String url;
+        if (path.contains(DEPLOYMENTS_PATH)) {
+            url = path.endsWith(CHAT_PATH) ? path : path + CHAT_PATH;
+        } else {
+            url = path + DEPLOYMENTS_PATH + deployment + CHAT_PATH;
+        }
+        if (query.contains(VERSION_PARAMETER)) {
+            return url + query;
+        }
+        return url + query + (query.isEmpty() ? "?" : "&") + VERSION_PARAMETER + version;
     }
 
     private static String requireText(String name, String value) {

@@ -4,7 +4,6 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawableHelper;
 import net.minecraft.client.gui.hud.InGameHud;
-import net.minecraft.client.resource.language.I18n;
 import org.lwjgl.glfw.GLFW;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -18,6 +17,7 @@ import org.universaltranslator.core.HudIndicatorVisibility;
 import org.universaltranslator.core.OutgoingTranslationPreview;
 import org.universaltranslator.core.TranslationActivity;
 import org.universaltranslator.fabric.FabricTranslationRuntime;
+import org.universaltranslator.fabric.OrnitheClientAccess;
 import org.universaltranslator.fabric.TranslationRenderContext;
 
 /**
@@ -71,6 +71,14 @@ abstract class InGameHudStatusIndicatorMixin {
         }
         MinecraftClient client = MinecraftClient.getInstance();
         if (client == null || client.options == null) {
+            return;
+        }
+        // The injection sits at the RETURN of the HUD render, which still runs while F1 hides the
+        // HUD: without this the square and its label stayed on an otherwise empty screen and were
+        // painted over the chat and the hotbar. The flag cannot be read by name on this mapping set
+        // (see OrnitheClientAccess#hudHidden), so the read lives there with the rest of this layer's
+        // mapping-specific surface instead of being dropped here.
+        if (OrnitheClientAccess.hudHidden(client)) {
             return;
         }
         int[] framebufferWidth = new int[1];
@@ -134,7 +142,7 @@ abstract class InGameHudStatusIndicatorMixin {
             TranslationRenderContext.pushTextInput();
             try {
                 int previewY = Math.max(0, windowHeight - 60);
-                int previewX = windowWidth / 2 - font.getStringWidth(outgoingPreview) / 2;
+                int previewX = windowWidth / 2 - HudLabels.width(font, outgoingPreview) / 2;
                 font.drawWithShadow(outgoingPreview, (float) previewX, (float) previewY, 0xFFFFFFFF);
             } finally {
                 TranslationRenderContext.popTextInput();
@@ -153,7 +161,7 @@ abstract class InGameHudStatusIndicatorMixin {
         } else if (content == HudIndicatorContent.PROVIDER) {
             label = quickSettings.getProvider();
         } else if (content == HudIndicatorContent.ACTIVITY && TranslationActivity.isTranslating()) {
-            label = I18n.translate("value.universal_translator.hud_content.activity");
+            label = HudLabels.activity();
         }
         if (label == null || label.isEmpty()) {
             return;
@@ -163,10 +171,12 @@ abstract class InGameHudStatusIndicatorMixin {
         // own text back into the translation path.
         TranslationRenderContext.pushTextInput();
         try {
-            int labelWidth = font.getStringWidth(label);
+            int labelWidth = HudLabels.width(font, label);
             // Beside the square, never over it: a 6px square cannot hold "zh-TW", and a label
-            // centred on a right-corner square would run off the screen edge.
+            // centred on a right-corner square would run off the screen edge. Clamped afterwards,
+            // because the square can sit against either edge.
             int labelLeft = corner.isRight() ? left - 2 - labelWidth : right + 2;
+            labelLeft = Math.max(2, Math.min(windowWidth - labelWidth - 2, labelLeft));
             // y is the top of the text line, so centre it against the square by hand.
             int labelY = top + (size - 8) / 2;
             font.drawWithShadow(label, (float) labelLeft, (float) labelY, 0xFFFFFFFF);

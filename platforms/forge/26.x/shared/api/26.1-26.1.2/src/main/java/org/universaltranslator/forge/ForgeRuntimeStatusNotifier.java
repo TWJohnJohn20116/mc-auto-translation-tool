@@ -15,8 +15,17 @@ import org.universaltranslator.core.TranslationStatusLocalizer;
  */
 public final class ForgeRuntimeStatusNotifier {
     private static final long FAILURE_NOTIFICATION_COOLDOWN_MILLIS = 60_000L;
+    /**
+     * Minimum gap between two action-bar updates of a non-failure status.
+     *
+     * <p>The de-duplication below compares whole strings, and the offline engine reports its download
+     * progress in the status string, so the percentage changed every few tens of milliseconds: each
+     * change rewrote the action bar and pushed out whatever the player was being shown there.
+     */
+    private static final long STATUS_NOTIFICATION_INTERVAL_MILLIS = 1_000L;
     private static String lastRuntimeStatus = "";
     private static long nextFailureNotificationAt;
+    private static long nextStatusNotificationAt;
 
     private ForgeRuntimeStatusNotifier() {
     }
@@ -25,6 +34,7 @@ public final class ForgeRuntimeStatusNotifier {
     public static void reset() {
         lastRuntimeStatus = "";
         nextFailureNotificationAt = 0L;
+        nextStatusNotificationAt = 0L;
     }
 
     /** Reports the current provider status; call once per client tick with the current connection state. */
@@ -55,6 +65,12 @@ public final class ForgeRuntimeStatusNotifier {
                     Component.translatable("message.universal_translator.runtime_failed", localized));
         } else {
             nextFailureNotificationAt = 0L;
+            long now = System.currentTimeMillis();
+            if (now < nextStatusNotificationAt) {
+                // Progress-only change inside the throttle window: the next change re-announces.
+                return;
+            }
+            nextStatusNotificationAt = now + STATUS_NOTIFICATION_INTERVAL_MILLIS;
             client.gui.setOverlayMessage(
                     Component.translatable("message.universal_translator.runtime_status", localized), false);
         }

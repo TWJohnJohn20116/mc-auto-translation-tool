@@ -7,12 +7,14 @@ version = project.mod_version
 
 // Gradle itself runs on a modern JDK. Toolchains make compilation reproducible while
 // each module's existing options.release setting preserves its Java 8/17/21 bytecode target.
+// The prefix list itself is settings.gradle's gradle.ext.toolchainJavaFor, which the release launcher
+// of gradle/fabric-bundle-aggregate-verify.gradle reads too, so the compiler and the verifier cannot
+// be given different levels. scripts/ci/test_build_targets.py asserts the four target lists against
+// the same rule, so a list that disagrees with it fails on a PR instead of in setup-java.
 subprojects {
     def requestedToolchain = providers.gradleProperty("toolchainVersion").orNull
     def requiredToolchain = requestedToolchain == null
-            ? (project.name.startsWith("platform-fabric-26.") ||
-               project.name.startsWith("platform-forge-26.") ||
-               project.name.startsWith("platform-neoforge-26.") ? 25 : 21)
+            ? gradle.ext.toolchainJavaFor(project.name).toString().toInteger()
             : Integer.parseInt(requestedToolchain)
 
     pluginManager.withPlugin("java") {
@@ -23,6 +25,11 @@ subprojects {
         }
     }
 }
+
+// The bundle/aggregate metadata comparison lives in one script: each Fabric bundle applies it for its
+// own fabric.mod.json, and verifyReleaseAggregateMembership below uses the same comparison for the
+// fabric-all.jar metadata, which no other task reads.
+apply from: file("gradle/bundle-metadata-verify.gradle")
 
 tasks.register("validateMixinConfigs") {
     group = "verification"
@@ -50,6 +57,37 @@ tasks.register("validateMixinConfigs") {
                 throw new GradleException("Invalid Mixin JSON: ${relativePath(config)}", error)
             }
 
+            def relativeConfigPath = relativePath(config).replace('\\', '/')
+            // Declared keys Mixin understands. Anything else is ignored with a single WARN line, so a
+            // mistyped "clients"/"Client" quietly registers no hooks at all while every check stays green.
+            def knownKeys = [
+                    "required", "minVersion", "package", "refmap", "compatibilityLevel", "client",
+                    "server", "mixins", "injectors", "plugin", "verbose", "setSourceFile", "priority"
+            ] as Set
+            def unknownKeys = parsed.keySet().findAll { !knownKeys.contains(it.toString()) }
+            if (!unknownKeys.isEmpty()) {
+                throw new GradleException(
+                        "Unknown Mixin config key(s) ${unknownKeys.sort()} in ${relativeConfigPath}; " +
+                                "Mixin ignores unrecognised keys, so those sections would silently register " +
+                                "nothing. Known keys: ${knownKeys.sort()}"
+                )
+            }
+            ["client", "server", "mixins"].each { listKey ->
+                def value = parsed[listKey]
+                if (value != null && !(value instanceof List)) {
+                    throw new GradleException(
+                            "Mixin config key '${listKey}' must be a JSON array in ${relativeConfigPath}, got " +
+                                    "${value.getClass().simpleName}"
+                    )
+                }
+            }
+            if (parsed.required != null && !(parsed.required instanceof Boolean)) {
+                throw new GradleException(
+                        "Mixin config key 'required' must be a JSON boolean in ${relativeConfigPath}, got " +
+                                "${parsed.required.getClass().simpleName}"
+                )
+            }
+
             def level = parsed.compatibilityLevel
             if (level != null && !compatibilityLevels.contains(level)) {
                 throw new GradleException(
@@ -58,26 +96,33 @@ tasks.register("validateMixinConfigs") {
                 )
             }
 
-            def relativeConfigPath = relativePath(config).replace('\\', '/')
-            // Fabric's 1.20 family is shared by 1.20.5 and 1.20.6, which are compiled for Java 21, so
-            // its config carries JAVA_21; the Forge 1.20.1 tree still tops out at 17.
-            def maximumLevel = relativeConfigPath.contains("/1.16.5/") ? "JAVA_8" :
-                    (relativeConfigPath.contains("/1.18.2/") || relativeConfigPath.contains("/1.19.2/")
-                            || relativeConfigPath.contains("/1.20.1/")) ?
-                            (relativeConfigPath.contains("/fabric/1.20/shared/family/1.20.1/") ? "JAVA_21" : "JAVA_17") :
-                            "JAVA_21"
+            // Each tree is compiled for exactly one release, so the bounds are derived from
+            // settings.gradle's treeJavaRelease — the same table the compile options read — instead of
+            // being inferred from a version substring in the path or copied a second time here. Both
+            // copies used to be edited by hand, and neither change could make the other follow.
+            // Clamped at JAVA_21 because Mixin's CompatibilityLevel enum stops there (see the 26.x note
+            // below). First match wins; a config that matches no entry fails instead of falling back to
+            // a default, because a silent default is how both gaps appeared.
+            def mixinLevelOf = { Object release -> "JAVA_" + Math.min((release as Integer), 21) }
+            def levelBounds = gradle.ext.treeJavaRelease.collect { String prefix, List releases ->
+                // path prefix, maximum, minimum
+                [prefix, mixinLevelOf(releases[1]), mixinLevelOf(releases[0])]
+            }
+            def bounds = levelBounds.find { relativeConfigPath.startsWith(it[0].toString()) }
+            if (bounds == null) {
+                throw new GradleException(
+                        "No Mixin compatibilityLevel bounds are registered for ${relativeConfigPath}; add the " +
+                                "tree to treeJavaRelease in settings.gradle with the release it is compiled for"
+                )
+            }
+            def maximumLevel = bounds[1]
+            def minimumLevel = bounds[2]
             if (level != null && compatibilityLevels.indexOf(level) > compatibilityLevels.indexOf(maximumLevel)) {
                 throw new GradleException(
                         "Mixin compatibilityLevel '${level}' exceeds ${maximumLevel} for ${relativeConfigPath}"
                 )
             }
-            // Lower bound: a config declaring less than the class file version its platforms are compiled
-            // to makes Mixin refuse the target classes at runtime ("class file version 61 not supported"),
-            // and that only shows up when someone starts the game. 1.17-1.18 is compiled for Java 17.
-            def minimumLevel = (relativeConfigPath.contains("/fabric/1.17-1.18/")
-                    || relativeConfigPath.contains("/fabric/1.20/")) ? "JAVA_17" : null
-            if (minimumLevel != null && level != null
-                    && compatibilityLevels.indexOf(level) < compatibilityLevels.indexOf(minimumLevel)) {
+            if (level != null && compatibilityLevels.indexOf(level) < compatibilityLevels.indexOf(minimumLevel)) {
                 throw new GradleException(
                         "Mixin compatibilityLevel '${level}' is lower than ${minimumLevel} for ${relativeConfigPath}"
                 )
@@ -98,14 +143,507 @@ tasks.register("validateMixinConfigs") {
                                 "gap until the bundled Mixin exposes JAVA_22 or newer."
                 )
             }
-            if ((relativeConfigPath.contains("/forge/modern/1.16.5/") ||
-                    relativeConfigPath.contains("/forge/modern/1.18.2/") ||
-                    relativeConfigPath.contains("/forge/modern/1.19.2/")) &&
+            // Every forge/modern target shares one mixin dialect, so 1.20.1 belongs in this rule too:
+            // it is the most-used tree of the four and the source layer three NeoForge targets reuse,
+            // and leaving it out meant a single edited value could turn four published JARs from
+            // "skip a missing target" into "fail to load".
+            if (relativeConfigPath.contains("/forge/modern/") &&
                     parsed.injectors?.defaultRequire != 0) {
                 throw new GradleException(
                         "Legacy Forge Mixin hooks must remain tolerant (defaultRequire 0): ${relativeConfigPath}"
                 )
             }
+        }
+
+        // 1.19.3 and 1.19.4 moved two hooks onto hooks that no longer exist under the old name
+        // (SignEditScreen became AbstractSignEditScreen, ChatHud's render moved to the DrawContext
+        // generation), so the 1.19.3-1.19.4 family config lists the replacement classes while 1.19.2
+        // still lists the older ones. The two generations therefore disagree on exactly these pairs and
+        // on nothing else. That is the only record of which generation uses which implementation, and
+        // it was a comment-free split until now: rename one side or add a hook to one side and the
+        // other generation silently loses an injection, which `required: true` plus defaultRequire 1
+        // turns into a startup crash instead of a build error.
+        def supersededMixinPairs = [
+                "SignEditScreenMixin": "AbstractSignEditScreenMixin",
+                "ChatHudContextMixin" : "ChatHudRenderContextMixin"
+        ]
+        def familyBase = "platforms/fabric/1.19/shared/family/"
+        def clientHooks = { String family ->
+            def familyConfig = file(familyBase + family +
+                    "/src/main/resources/universal-translator.fabric.mixins.json")
+            if (!familyConfig.isFile()) {
+                throw new GradleException("Missing 1.19 Mixin config for ${family}: ${familyConfig}")
+            }
+            def parsedFamily = new groovy.json.JsonSlurper().parse(familyConfig)
+            return (parsedFamily.client ?: []).collect { it.toString() } as Set
+        }
+        def legacyHooks = clientHooks("1.19.2")
+        def replacedHooks = clientHooks("1.19.3-1.19.4")
+        def expectedReplacedHooks = legacyHooks.collect { key -> supersededMixinPairs.get(key) ?: key } as Set
+        if (replacedHooks != expectedReplacedHooks) {
+            throw new GradleException(
+                    "The 1.19.2 and 1.19.3-1.19.4 Mixin configs must differ by exactly " +
+                            "${supersededMixinPairs}: 1.19.2 lists ${legacyHooks.toList().sort()}, " +
+                            "1.19.3-1.19.4 lists ${replacedHooks.toList().sort()}")
+        }
+    }
+}
+
+tasks.register("validateResourcePackFormats") {
+    group = "verification"
+    description = "Rejects pack.mcmeta templates whose min_format is newer than their max_format."
+
+    doLast {
+        // Every numeric resource pack coordinate the version modules declare, keyed by the placeholder
+        // it fills. Only these can be read without evaluating a platform's build script, and they are
+        // the only values a pack.mcmeta template is ever expanded with.
+        def declaredFormats = [:]
+        fileTree("platforms") {
+            include "**/build.gradle"
+            exclude "**/build/**"
+            exclude "**/.gradle/**"
+        }.each { script ->
+            script.getText("UTF-8").readLines().each { line ->
+                def assignment = line =~ '^\\s*ext\\.(\\w+)\\s*=\\s*(\\d+)\\s*$'
+                if (assignment.matches()) {
+                    def name = assignment.group(1)
+                    if (!declaredFormats.containsKey(name)) {
+                        declaredFormats.put(name, new LinkedHashSet<Integer>())
+                    }
+                    declaredFormats.get(name).add(Integer.valueOf(assignment.group(2)))
+                }
+            }
+        }
+
+        def readBound = { String body, String key ->
+            def matcher = body =~ ('"' + key + '"\\s*:\\s*(\\[[^\\]]*\\]|\\d+)')
+            return matcher.find() ? matcher.group(1).trim() : null
+        }
+
+        // A bound is (major, minor): a bare integer is (value, 0), an array carries the minor
+        // explicitly. A bound that still holds a placeholder is reported by the NeoForge pack
+        // template check instead, so it answers null here and is not compared.
+        def parseBound = { String raw ->
+            def text = raw.replaceAll('[\\[\\]\\s]', '')
+            if (text.contains('$')) {
+                return null
+            }
+            def parts = text.split(',')
+            if (parts.length != 1 && parts.length != 2) {
+                return null
+            }
+            try {
+                return [Integer.parseInt(parts[0]),
+                        parts.length == 2 ? Integer.parseInt(parts[1]) : 0]
+            } catch (NumberFormatException ignored) {
+                return null
+            }
+        }
+
+        def failures = []
+        fileTree("platforms") {
+            include "**/src/**/pack.mcmeta"
+            exclude "**/build/**"
+            exclude "**/.gradle/**"
+        }.each { template ->
+            def body = template.getText("UTF-8")
+            def minRaw = readBound(body, "min_format")
+            def maxRaw = readBound(body, "max_format")
+            if (minRaw == null || maxRaw == null) {
+                return
+            }
+            // The placeholders both bounds share, and every value the modules declare under a name
+            // that ends with them: a template names the placeholder "resourcePackFormat" while the
+            // modules declare "forgeResourcePackFormat" / "neoforgeResourcePackFormat".
+            def placeholders = new TreeSet<String>()
+            [minRaw, maxRaw].each { bound ->
+                def matcher = bound =~ '\\$\\{(\\w+)\\}'
+                while (matcher.find()) {
+                    placeholders.add(matcher.group(1))
+                }
+            }
+            // The declared name capitalises the placeholder, and matching it case sensitively is what
+            // makes the comparison see anything: "forgeResourcePackFormat" does not end with
+            // "resourcePackFormat", so every 26.x template used to look like a template with no
+            // coordinate at all and its declared 101/107 were never compared.
+            def coordinateNames = { String placeholder ->
+                // "resourcePackFormat" is declared as "forgeResourcePackFormat": the tail is the same
+                // word with its first letter capitalised.
+                def capitalized = placeholder.isEmpty() ? placeholder : placeholder.substring(0, 1).toUpperCase() + placeholder.substring(1)
+                def matches = []
+                declaredFormats.keySet().each { String declaredName ->
+                    if (!declaredName.endsWith(capitalized)) {
+                        return
+                    }
+                    // "packFormat" is also the tail of "forgeResourcePackFormat", which carries the
+                    // resource pack format - a different number.
+                    def prefix = declaredName.substring(0, declaredName.length() - capitalized.length())
+                    if (placeholder == "packFormat" && prefix.endsWith("Resource")) {
+                        return
+                    }
+                    matches.add(declaredName)
+                }
+                return matches
+            }
+            def worlds = new TreeSet<Integer>()
+            placeholders.each { name ->
+                coordinateNames(name).each { declaredName ->
+                    worlds.addAll(declaredFormats.get(declaredName))
+                }
+            }
+            if (worlds.isEmpty() && !placeholders.isEmpty()) {
+                // A placeholder no module declares ships with the template unexpanded, so the game
+                // reads no usable format at all. Falling back to format 0 is what kept this check
+                // silent about exactly that case.
+                failures.add("${relativePath(template)} expands ${placeholders} but no module " +
+                        "declares a coordinate ending with it")
+                return
+            }
+            if (worlds.isEmpty()) {
+                // No coordinate at all: the bounds are literals, so there is one world to check.
+                worlds.add(Integer.valueOf(0))
+            }
+            worlds.each { value ->
+                def expandedMin = minRaw
+                def expandedMax = maxRaw
+                placeholders.each { name ->
+                    expandedMin = expandedMin.replace('${' + name + '}', String.valueOf(value))
+                    expandedMax = expandedMax.replace('${' + name + '}', String.valueOf(value))
+                }
+                def lower = parseBound(expandedMin)
+                def upper = parseBound(expandedMax)
+                // Compared as (major, minor) pairs, the ordering the game itself applies. A range that
+                // starts above where it ends accepts no format at all, which made the 26.x built-in
+                // pack - and with it every language file - unreadable while the build stayed green.
+                if (lower != null && upper != null
+                        && lower[0] * 1000 + lower[1] > upper[0] * 1000 + upper[1]) {
+                    failures.add("${relativePath(template)} declares min_format ${lower} above " +
+                            "max_format ${upper} for format ${value}")
+                }
+            }
+        }
+        if (!failures.isEmpty()) {
+            throw new GradleException(
+                    "pack.mcmeta accepts no game format at all: " + failures.join("; "))
+        }
+    }
+}
+
+tasks.register("validateDualLayerApiParity") {
+    group = "verification"
+    description = "Keeps the hand-maintained 26.x Forge and Fabric API layers structurally identical."
+
+    doLast {
+        // The 26.1-26.1.2 and 26.2 layers are hand-maintained copies of the same client body; the only
+        // difference allowed between them is how each generation names the HUD, the chat HUD and
+        // setScreen. Round after round of fixes landed in one copy only — the local-input guard report,
+        // a row bound, a type cast — so the members each file declares are compared here: a helper that
+        // exists in one layer and not the other is the shape every one of those misses took.
+        def pairs = [
+                ["platforms/forge/26.x/shared/api/26.1-26.1.2", "platforms/forge/26.x/shared/api/26.2"]
+        ]
+        // A file that legitimately exists in one layer only still has to be named here, or the next
+        // omission is indistinguishable from it. ForgeLocalTextGuard is 26.2's own copy on purpose:
+        // platforms/forge/26.x/shared.gradle mounts platforms/forge/shared/local-guard-1.18.2-plus
+        // for the 26.1-26.1.2 layer, and 26.2 reads the chat field through client.gui.screen().
+        def dualLayerFileExempt = [
+                "src/main/java/org/universaltranslator/forge/ForgeLocalTextGuard.java"
+        ] as Set
+        // The other permitted difference: 26.2 forwards the rendered-input report to its own
+        // ForgeLocalTextGuard, while 26.1-26.1.2 reads the chat field reflectively and has nothing to
+        // feed. Both copies keep the seam's signature, which is what the shared mixin calls.
+        def dualLayerBodyExempt = [
+                ("src/main/java/org/universaltranslator/forge/ForgeChatInputTracker.java"):
+                        ["trackRenderedInput"] as Set
+        ]
+        // Name plus parameter count: comparing bare names called two methods equal when one copy had
+        // grown an argument, which is how the misses this task exists for survived a green check. The
+        // name pattern is a parameter because a mixin handler is called universalTranslator$... and $
+        // is not part of \w; a comparison that ignored those would compare two empty sets.
+        def declaredMembers = { File source, String namePattern ->
+            def members = new TreeSet<String>()
+            def lines = source.readLines("UTF-8")
+            def declaration = ~("^(?:(?:public|private|protected|static|final|abstract|synchronized)" +
+                    "\\s+)+[\\w.<>\\[\\],\\s?]+?\\s(" + namePattern + ")\\s*\\(")
+            lines.eachWithIndex { String line, int index ->
+                def trimmed = line.trim()
+                if (trimmed.isEmpty() || trimmed.startsWith("//") || trimmed.startsWith("*")
+                        || trimmed.startsWith("/*")) {
+                    return
+                }
+                def matcher = declaration.matcher(trimmed)
+                if (!matcher.find()) {
+                    return
+                }
+                // The parameter list is scanned across wrapped lines and at the declaration's own
+                // parenthesis depth, so a comma inside a generic argument or a nested annotation is
+                // not an argument separator and a declaration that wraps is still counted once.
+                def depth = 0
+                def angles = 0
+                def separators = 0
+                def empty = true
+                def closed = false
+                def firstLine = trimmed.substring(matcher.end() - 1)
+                for (int lineIndex = index; lineIndex < lines.size() && !closed; lineIndex++) {
+                    def text = lineIndex == index ? firstLine : lines[lineIndex]
+                    for (int position = 0; position < text.length(); position++) {
+                        def character = text.substring(position, position + 1)
+                        if (character == "(") {
+                            depth++
+                        } else if (character == ")") {
+                            depth--
+                            if (depth == 0) {
+                                closed = true
+                                break
+                            }
+                        } else if (depth == 1) {
+                            if (character == "<") {
+                                angles++
+                            } else if (character == ">") {
+                                angles = Math.max(0, angles - 1)
+                            } else if (character == "," && angles == 0) {
+                                separators++
+                                empty = false
+                            } else if (!character.trim().isEmpty()) {
+                                empty = false
+                            }
+                        }
+                    }
+                }
+                // A declaration whose parameter list never closes inside the file is not a method.
+                if (!closed) {
+                    return
+                }
+                members.add(matcher.group(1) + "/" + (empty ? 0 : separators + 1))
+            }
+            return members
+        }
+
+        // Comments, whitespace and the renames between the generations are normalised away, then the
+        // remaining text of each member is compared verbatim. Signature comparison alone cannot see
+        // the failure this task exists for: both copies keep declaring the same members while one of
+        // them gets the fix, which is exactly how the guard report, the row bound and the type cast
+        // survived a green check.
+        def normaliseBody = { String text ->
+            def normalised = text
+                    .replaceAll('(?s)/\\*.*?\\*/', '')
+                    .replaceAll('//[^\\n]*', '')
+                    .replaceAll('(?m)^\\s*import\\s[^;]*;', '')
+                    .replaceAll('\\s+', '')
+            // 26.2 moved the HUD behind client.gui.hud, renamed Gui to Hud and moved setScreen.
+            normalised = normalised
+                    .replaceAll('gui\\.hud\\.', 'gui.')
+                    .replaceAll('gui\\.setScreen', 'setScreen')
+                    .replaceAll('\\.gui\\.screen\\(\\)', '.screen')
+                    .replaceAll('\\bHud\\b', 'Gui')
+            // 26.2 removed Options.hideGui and moved the HUD-hidden flag to Hud.isHidden, which its
+            // copies reach with @Shadow. Where the flag is read from is the only legitimate difference
+            // in this family, so the two spellings become one token and the @Shadow field that exists
+            // only to feed it is dropped; that leaves a fix to the painting itself visible in every
+            // copy. The whitespace has already been stripped, hence \\s* rather than \\s+.
+            normalised = normalised
+                    .replaceAll('Minecraft\\.getInstance\\(\\)\\.options\\.hideGui', 'HUD_HIDDEN')
+                    .replaceAll('this\\.isHidden', 'HUD_HIDDEN')
+                    .replaceAll('@Shadow\\s*private\\s*boolean\\s*isHidden;', '')
+            // 26.3 spells the key bindings with the GLFW constants where 26.2 used
+            // InputConstants.Type.KEYSYM/InputConstants.KEY_*. The key itself has to stay part of the
+            // comparison, so only the two API spellings are collapsed; a copy that binds a different
+            // key still differs.
+            normalised = normalised
+                    .replaceAll('InputConstants\\.Type\\.KEYBOARD', 'InputConstants.Type.KEYSYM')
+                    .replaceAll('GLFW\\.GLFW_KEY_', 'InputConstants.KEY_')
+            return normalised
+        }
+        def memberBodies = { File source ->
+            def text = source.getText("UTF-8").replaceAll('(?s)/\\*.*?\\*/', '')
+            def lines = text.split('\\r?\\n', -1) as List
+            def starts = []
+            def labels = []
+            def seen = [:]
+            def declaration = ~/^(?:(?:public|private|protected|static|final|abstract|synchronized)\s+)+[\w.<>\[\],\s?]+?\s(\w+)\s*\(/
+            lines.eachWithIndex { String line, int index ->
+                def trimmed = line.trim()
+                if (trimmed.isEmpty() || trimmed.startsWith("//") || trimmed.startsWith("*")
+                        || trimmed.startsWith("/*")) {
+                    return
+                }
+                def matcher = declaration.matcher(trimmed)
+                if (!matcher.find()) {
+                    return
+                }
+                def name = matcher.group(1)
+                def occurrence = seen.containsKey(name) ? seen.get(name) + 1 : 0
+                seen.put(name, occurrence)
+                starts.add(index)
+                labels.add(occurrence == 0 ? name : name + "#" + occurrence)
+            }
+            def bodies = new LinkedHashMap<String, String>()
+            // Everything before the first declaration - the class header and the fields - is one
+            // member, so a field that only one copy has is reported as well.
+            def prefixEnd = starts.isEmpty() ? lines.size() : starts[0]
+            bodies.put("<fields>", normaliseBody.call(lines.subList(0, prefixEnd).join("\n")))
+            for (int position = 0; position < starts.size(); position++) {
+                def from = starts[position]
+                def to = position + 1 < starts.size() ? starts[position + 1] : lines.size()
+                bodies.put(labels[position], normaliseBody.call(lines.subList(from, to).join("\n")))
+            }
+            return bodies
+        }
+
+        def failures = []
+        pairs.each { pair ->
+            // project.file(), not new File(): the latter resolves against the JVM working directory,
+            // which is the Gradle daemon's rather than this project's — on CI that made every shared
+            // file look present in one layer and absent in the other.
+            def leftRoot = project.file(pair[0])
+            def rightRoot = project.file(pair[1])
+            if (!leftRoot.isDirectory() || !rightRoot.isDirectory()) {
+                return
+            }
+            // Both directions: walking only the left layer could never see a file that exists in the
+            // right one alone, which is the other half of the same drift.
+            def relatives = new TreeSet<String>()
+            [leftRoot, rightRoot].each { File root ->
+                fileTree(root) {
+                    include "**/*.java"
+                    exclude "**/build/**"
+                }.files.each { source ->
+                    relatives.add(root.toPath().relativize(source.toPath()).toString().replace('\\', '/'))
+                }
+            }
+            relatives.each { String relative ->
+                def left = new File(leftRoot, relative)
+                def right = new File(rightRoot, relative)
+                def normalised = relative.replace('\\', '/')
+                if (!left.isFile() || !right.isFile()) {
+                    if (!dualLayerFileExempt.contains(normalised)) {
+                        failures.add("${normalised} exists in ${left.isFile() ? pair[0] : pair[1]} " +
+                                "but not in ${left.isFile() ? pair[1] : pair[0]}; add the missing file " +
+                                "or list it in dualLayerFileExempt with the layer that makes the " +
+                                "omission safe")
+                    }
+                    return
+                }
+                def leftMembers = declaredMembers(left, '\\w+')
+                def rightMembers = declaredMembers(right, '\\w+')
+                def onlyLeft = new TreeSet<String>(leftMembers)
+                onlyLeft.removeAll(rightMembers)
+                def onlyRight = new TreeSet<String>(rightMembers)
+                onlyRight.removeAll(leftMembers)
+                if (!onlyLeft.isEmpty() || !onlyRight.isEmpty()) {
+                    failures.add("${normalised} declares members only in ${pair[0]} ${onlyLeft} " +
+                            "and only in ${pair[1]} ${onlyRight}")
+                }
+                def exemptMembers = dualLayerBodyExempt.containsKey(normalised) ? dualLayerBodyExempt.get(normalised) : Collections.emptySet()
+                def leftBodies = memberBodies(left)
+                def rightBodies = memberBodies(right)
+                leftBodies.each { String member, String bodyText ->
+                    if (!rightBodies.containsKey(member)) {
+                        return
+                    }
+                    if (bodyText != rightBodies.get(member) && !exemptMembers.contains(member)) {
+                        failures.add("${normalised} has a different body for ${member} in the two " +
+                                "layers; the same fix has to land in both copies")
+                    }
+                }
+                rightBodies.each { String member, String bodyText ->
+                    if (!leftBodies.containsKey(member) && !exemptMembers.contains(member)) {
+                        failures.add("${normalised} declares ${member} only in ${pair[1]}")
+                    }
+                }
+            }
+        }
+        // The Fabric 26.x tree keeps the same class in three layers, one per generation, and those
+        // layers are mutually exclusive srcDirs — so a fix that lands in one copy compiles for that
+        // generation only. These two classes are the ones every HUD fix had to be repeated in
+        // (26251fc8 and 0beb783c each touched all three copies), and nothing compared them. Pairs of
+        // layer directories are the wrong shape here because 26.2 and 26.3 are thin override layers
+        // that also mount api/26.1-26.3 and api/26.2-26.3; the files are compared instead. The
+        // 26.1-26.1.2 / 26.2 pair is included because the two copies differ only in how the HUD is
+        // reached, which normaliseBody already collapses.
+        def fabricApi = "platforms/fabric/26.x/shared/api"
+        def fabricClient =
+                "src/client/java/org/universaltranslator/fabric/UniversalTranslatorFabricClient.java"
+        def fabricHudMixin =
+                "src/client/java/org/universaltranslator/fabric/mixin/InGameHudStatusIndicatorMixin.java"
+        def mirrorFilePairs = [
+                ["${fabricApi}/26.1-26.1.2/${fabricClient}", "${fabricApi}/26.2/${fabricClient}"],
+                ["${fabricApi}/26.2/${fabricClient}", "${fabricApi}/26.3/${fabricClient}"],
+                ["${fabricApi}/26.2/${fabricHudMixin}", "${fabricApi}/26.3/${fabricHudMixin}"],
+                ["${fabricApi}/26.1-26.1.2/${fabricHudMixin}", "${fabricApi}/26.2/${fabricHudMixin}"]
+        ]
+        // No member of a mirror pair differs today, and that is the state this task protects. A
+        // generation change that makes one legitimately different has to be named here, member by
+        // member, so that an unnamed difference keeps failing.
+        def mirrorExemptMembers = [:]
+        mirrorFilePairs.each { pair ->
+            def left = project.file(pair[0])
+            def right = project.file(pair[1])
+            if (!left.isFile() || !right.isFile()) {
+                failures.add("${left.isFile() ? pair[1] : pair[0]} is missing; the 26.x mirror pair " +
+                        "has to stay complete, otherwise one generation silently loses the class")
+                return
+            }
+            def exempt = mirrorExemptMembers.containsKey(pair[0])
+                    ? mirrorExemptMembers.get(pair[0]) : Collections.emptySet()
+            def leftBodies = memberBodies(left)
+            def rightBodies = memberBodies(right)
+            leftBodies.each { String member, String bodyText ->
+                if (!rightBodies.containsKey(member)) {
+                    if (!exempt.contains(member)) {
+                        failures.add("${pair[0]} declares ${member} but ${pair[1]} does not")
+                    }
+                } else if (bodyText != rightBodies.get(member) && !exempt.contains(member)) {
+                    failures.add("${member} differs between ${pair[0]} and ${pair[1]}; the same fix " +
+                            "has to land in both copies")
+                }
+            }
+            rightBodies.each { String member, String bodyText ->
+                if (!leftBodies.containsKey(member) && !exempt.contains(member)) {
+                    failures.add("${pair[1]} declares ${member} but ${pair[0]} does not")
+                }
+            }
+        }
+        // The tree's other two overridden files differ on purpose — 26.2 reaches the screen stack and
+        // the HUD through client.gui — so comparing their bodies is the wrong shape. Their member sets
+        // are not: a helper that lands in one generation and not the other is exactly how the fixes in
+        // 26251fc8 and 0beb783c reached half the versions. Only the set is compared here, never the
+        // body, and a generation that legitimately drops a member has to name it in the exempt map.
+        def mirrorMemberPairs = [
+                ["${fabricApi}/26.1-26.1.2/src/client/java/org/universaltranslator/fabric/FabricScreenOpener.java",
+                 "${fabricApi}/26.2-26.3/src/client/java/org/universaltranslator/fabric/FabricScreenOpener.java"],
+                ["${fabricApi}/26.1-26.1.2/src/client/java/org/universaltranslator/fabric/mixin/InGameHudContextMixin.java",
+                 "${fabricApi}/26.2-26.3/src/client/java/org/universaltranslator/fabric/mixin/InGameHudContextMixin.java"]
+        ]
+        def mirrorMemberExempt = [:]
+        mirrorMemberPairs.each { pair ->
+            def left = project.file(pair[0])
+            def right = project.file(pair[1])
+            if (!left.isFile() || !right.isFile()) {
+                failures.add("${left.isFile() ? pair[1] : pair[0]} is missing; the 26.x mirror pair " +
+                        "has to stay complete, otherwise one generation silently loses the class")
+                return
+            }
+            def exempt = mirrorMemberExempt.containsKey(pair[0])
+                    ? mirrorMemberExempt.get(pair[0]) : Collections.emptySet()
+            // Mixin handler names contain a $, so both sides are read with the wider name pattern;
+            // with \w the two mixin copies would compare as two empty sets and still pass.
+            def leftMembers = declaredMembers(left, '[\\w$]+')
+            def rightMembers = declaredMembers(right, '[\\w$]+')
+            def onlyLeft = new TreeSet<String>(leftMembers)
+            onlyLeft.removeAll(rightMembers)
+            onlyLeft.removeAll(exempt)
+            def onlyRight = new TreeSet<String>(rightMembers)
+            onlyRight.removeAll(leftMembers)
+            onlyRight.removeAll(exempt)
+            if (!onlyLeft.isEmpty() || !onlyRight.isEmpty()) {
+                failures.add("${pair[0]} and ${pair[1]} declare different members: only in the first " +
+                        "${onlyLeft}, only in the second ${onlyRight}")
+            }
+        }
+        if (!failures.isEmpty()) {
+            throw new GradleException("The 26.x API layers drifted apart: "
+                    + failures.join("; "))
         }
     }
 }
@@ -147,14 +685,31 @@ tasks.register("validateSharedPlatformLayouts") {
         }
 
         def requiredSharedFiles = [
+                // Every script that several trees apply, or that a whole tree is written around. They
+                // were the only files nobody checked: deleting or renaming one failed much later as
+                // "Could not find method" inside whichever project applied it next.
+                "gradle/jar-contents.gradle",
+                "gradle/fabric-bundle-aggregate-verify.gradle",
                 "platforms/fabric/legacy/shared.gradle",
                 "platforms/fabric/legacy/shared/common/src/main/resources/fabric.mod.json",
+                "platforms/fabric/1.0-1.8/shared.gradle",
+                "platforms/fabric/1.8-1.12/shared.gradle",
+                "platforms/fabric/1.13/ornithe.gradle",
+                "platforms/fabric/1.13/legacy.gradle",
+                "platforms/fabric/1.21/shared.gradle",
+                "platforms/fabric/modmenu/modmenu.gradle",
                 "platforms/fabric/26.x/shared.gradle",
                 "platforms/fabric/26.x/shared/common/src/main/resources/fabric.mod.json",
                 "platforms/forge/modern/shared.gradle",
                 "platforms/forge/modern/shared/common/src/main/resources/META-INF/mods.toml",
+                // One resource root per Forge tree; the 1.21 and modern entries were missing, so the
+                // already-published pack.mcmeta and mixin config of the 12 1.21 targets had no guard.
+                "platforms/forge/modern/shared/common/src/main/resources/pack.mcmeta",
                 "platforms/forge/shared.gradle",
                 "platforms/forge/shared/common/src/main/resources/META-INF/mods.toml",
+                "platforms/forge/1.21/shared.gradle",
+                "platforms/forge/1.21/shared/common/src/main/resources/pack.mcmeta",
+                "platforms/forge/1.21/shared/common/src/main/resources/universal-translator.forge.mixins.json",
                 "platforms/forge/26.x/shared.gradle",
                 "platforms/forge/26.x/shared/common/src/main/resources/pack.mcmeta",
                 "platforms/neoforge/shared.gradle",
@@ -253,6 +808,405 @@ tasks.register("validateSharedPlatformLayouts") {
                             duplicated.sort().join("\n")
             )
         }
+
+        // Minecraft 1.11 renamed lang/en_US.lang to lang/en_us.lang and 1.10 and earlier only read the
+        // uppercase name, so a single source directory cannot serve both ends of 1.8.9-1.12.2. Those
+        // trees generate the lowercase alias while they build; nothing else notices the rule being
+        // dropped, because the JAR still builds and the newer half of the range silently shows raw
+        // keys while the older half keeps working.
+        def lowerCaseLangAliasScripts = [
+                "platforms/fabric/1.8-1.12/shared.gradle",
+                "platforms/forge/legacy/1.12.2/build.gradle"
+        ]
+        def aliasProblems = lowerCaseLangAliasScripts.findAll { script ->
+            !file(script).getText("UTF-8").contains("name.toLowerCase(Locale.ROOT)")
+        }
+        if (!aliasProblems.isEmpty()) {
+            throw new GradleException(
+                    "These scripts serve Minecraft 1.11+, which reads lang/en_us.lang, but no longer " +
+                            "generate the lowercase alias of the uppercase source files:\n" +
+                            aliasProblems.join("\n")
+            )
+        }
+
+        // 1.13 switched to assets/<ns>/lang/*.json; a .lang directory mounted there is dead weight
+        // in every JAR and a second, silently ignored source for the same keys.
+        def legacyLangStillMounted = fileTree("platforms/fabric/1.13") {
+            include "*.gradle"
+        }.files.findAll { script ->
+            script.getText("UTF-8").readLines().any { line ->
+                if (line.trim().startsWith("//")) {
+                    return false
+                }
+                return line.contains("resources.srcDir") &&
+                        line.contains("platforms/shared/lang/legacy")
+            }
+        }
+        if (!legacyLangStillMounted.isEmpty()) {
+            throw new GradleException(
+                    "Fabric 1.13 only reads assets/**/lang/*.json; drop the platforms/shared/lang/legacy " +
+                            "mount from:\n" +
+                            legacyLangStillMounted.collect { relativePath(it) }.sort().join("\n")
+            )
+        }
+
+        // The four HUD label caches differ only in the translation call they wrap: the activity key
+        // and the refresh interval are the same value in all of them and live in HudLabelCache, which
+        // is what stopped the four copies from drifting apart by 1000L at a time.
+        def hudLabelCaches = [
+                "platforms/fabric/shared/hud-indicator/src/client/java/org/universaltranslator/fabric/mixin/HudLabels.java",
+                "platforms/fabric/1.20/shared/family/1.20.1/src/client/java/org/universaltranslator/fabric/mixin/HudIndicatorLabels.java",
+                "platforms/fabric/1.21/shared/common/src/client/java/org/universaltranslator/fabric/mixin/HudIndicatorLabels.java",
+                "platforms/forge/1.21/shared/common/src/main/java/org/universaltranslator/forge/HudStatusLabels.java"
+        ]
+        def ownRefreshConstant = ~/(?m)^\s*(?:private|public|protected)\s+static\s+final\s+long\s+\w*REFRESH\w*\s*=\s*\d+/
+        def hudProblems = hudLabelCaches.findAll { source ->
+            def text = file(source).getText("UTF-8")
+            if (!text.contains("HudLabelCache.REFRESH_MILLIS")) {
+                return true
+            }
+            if (!text.contains("HudLabelCache.ACTIVITY_KEY")) {
+                return true
+            }
+            return ownRefreshConstant.matcher(text).find()
+        }
+        if (!hudProblems.isEmpty()) {
+            throw new GradleException(
+                    "HUD label caches must take the activity key and the refresh interval from " +
+                            "HudLabelCache instead of declaring their own:\n" + hudProblems.join("\n"))
+        }
+
+        // The list above only proves that those four files agree. A fifth HUD label cache that spells
+        // the key out again is invisible to it: the build stays green and the new copy keeps
+        // resolving a key that no lang file has after the next rename, which is how the four copies
+        // drifted apart in the first place. So the literal is scanned for instead of enumerated; it
+        // may only appear where HudLabelCache itself defines it. Both directions throw, because an
+        // entry left behind after the last copy is fixed would let the gap reopen unnoticed.
+        def hudActivityKey = "value.universal_translator.hud_content.activity"
+        def hudActivityKeySources = [
+                "translator-core/src/main/java/org/universaltranslator/core/HudLabelCache.java"
+        ]
+        // Same reasoning for the interval, and the empty list is deliberate: no file may declare a
+        // HUD label interval of its own any more, so the next literal is a red light immediately
+        // instead of being waved through by an enumeration nobody remembered to extend.
+        def hudLabelRefreshLiterals = []
+        def hudOwnLabelRefresh = ~/(?m)^\s*(?:private|public|protected)\s+static\s+final\s+long\s+\w*(?:ACTIVITY|LABEL|HUD)\w*REFRESH\w*\s*=\s*\d+/
+        def hudActivityKeySites = new TreeSet<String>()
+        def hudLabelRefreshSites = new TreeSet<String>()
+        ["platforms", "translator-core/src/main/java"].each { String scanRoot ->
+            fileTree(scanRoot) {
+                include "**/*.java"
+                exclude "**/build/**"
+                exclude "**/.gradle/**"
+            }.files.findAll { it.isFile() }.each { File source ->
+                def text = source.getText("UTF-8")
+                def path = relativePath(source).replace('\\', '/')
+                if (text.contains(hudActivityKey)) {
+                    hudActivityKeySites.add(path)
+                }
+                if (hudOwnLabelRefresh.matcher(text).find()) {
+                    hudLabelRefreshSites.add(path)
+                }
+            }
+        }
+        def undeclaredKeySites = hudActivityKeySites.findAll { !hudActivityKeySources.contains(it) }.sort()
+        def staleKeySites = hudActivityKeySources.findAll { !hudActivityKeySites.contains(it) }.sort()
+        if (!undeclaredKeySites.isEmpty() || !staleKeySites.isEmpty()) {
+            throw new GradleException(
+                    "The HUD activity label key must be read from HudLabelCache.ACTIVITY_KEY; the raw " +
+                            "literal may only stay in the files hudActivityKeySources names.\n" +
+                            "Spelling it out outside that list: " +
+                            (undeclaredKeySites.isEmpty() ? "none" : undeclaredKeySites.join(", ")) + "\n" +
+                            "Listed but no longer spelling it, so drop the entry: " +
+                            (staleKeySites.isEmpty() ? "none" : staleKeySites.join(", ")))
+        }
+        def undeclaredRefreshSites = hudLabelRefreshSites.findAll {
+            !hudLabelRefreshLiterals.contains(it)
+        }.sort()
+        if (!undeclaredRefreshSites.isEmpty()) {
+            throw new GradleException(
+                    "A HUD label refresh interval is declared as a literal; read it from " +
+                            "HudLabelCache.REFRESH_MILLIS instead:\n" + undeclaredRefreshSites.join("\n"))
+        }
+
+        // A fully qualified name may exist more than once only in trees that never share a source
+        // set: one extra copy is a javac "duplicate class" failure for every target of that tree, and
+        // ForgeLocalTextGuard already did that once. The allowed copies are listed explicitly, since
+        // proving co-existence needs the whole srcDir graph of every target; this list is cheap and
+        // also catches a copy hidden as a second top-level class inside another file.
+        def singleCopyClasses = [
+                "org.universaltranslator.fabric.ScreenWorkers"            : [
+                        "platforms/fabric/1.0-1.12/shared/screens/src/main/java/org/universaltranslator/fabric/ScreenWorkers.java",
+                        "platforms/fabric/1.13/shared/screens/src/main/java/org/universaltranslator/fabric/ScreenWorkers.java",
+                        "platforms/fabric/1.14-1.15/shared/family/1.14-1.15-common/src/client/java/org/universaltranslator/fabric/ScreenWorkers.java",
+                        "platforms/fabric/legacy/shared/screens/1.16-1.18/src/client/java/org/universaltranslator/fabric/ScreenWorkers.java"],
+                "org.universaltranslator.fabric.ScreenWorkerPool"         : [
+                        "platforms/fabric/1.19/shared/screens/1.19-1.19.4/src/client/java/org/universaltranslator/fabric/ScreenWorkerPool.java",
+                        "platforms/fabric/1.21/shared/screens/1.20.1-1.21.11/src/client/java/org/universaltranslator/fabric/ScreenWorkerPool.java",
+                        "platforms/fabric/26.x/shared/api/26.1-26.3/src/client/java/org/universaltranslator/fabric/ScreenWorkerPool.java"],
+                "org.universaltranslator.forge.ScreenWorkers"             : [
+                        "platforms/forge/26.x/shared/common/src/main/java/org/universaltranslator/forge/ScreenWorkers.java",
+                        "platforms/forge/modern/1.16.5/src/main/java/org/universaltranslator/forge/UniversalTranslatorScreens.java"],
+                "org.universaltranslator.fabric.mixin.HudLabels"          : [
+                        "platforms/fabric/shared/hud-indicator/src/client/java/org/universaltranslator/fabric/mixin/HudLabels.java",
+                        // The pre-1.16 trees do not mount shared/hud-indicator (that directory is wired
+                        // into platforms/fabric/legacy/shared.gradle only), and each of them resolves the
+                        // activity label through a different HUD API, so each keeps its own copy. No two
+                        // of these share a source set: 1.13's legacy.gradle and ornithe.gradle mount
+                        // shared/common or legacy-1.13.2 respectively, never both.
+                        "platforms/fabric/1.0-1.8/shared/common/src/main/java/org/universaltranslator/fabric/mixin/HudLabels.java",
+                        "platforms/fabric/1.8-1.12/shared/common/src/main/java/org/universaltranslator/fabric/mixin/HudLabels.java",
+                        "platforms/fabric/1.13/shared/common/src/main/java/org/universaltranslator/fabric/mixin/HudLabels.java",
+                        "platforms/fabric/1.13/shared/legacy-1.13.2/src/main/java/org/universaltranslator/fabric/mixin/HudLabels.java",
+                        "platforms/fabric/1.14-1.15/shared/family/1.14-1.15-common/src/client/java/org/universaltranslator/fabric/mixin/HudLabels.java"],
+                "org.universaltranslator.fabric.mixin.HudIndicatorLabels" : [
+                        "platforms/fabric/1.20/shared/family/1.20.1/src/client/java/org/universaltranslator/fabric/mixin/HudIndicatorLabels.java",
+                        "platforms/fabric/1.21/shared/common/src/client/java/org/universaltranslator/fabric/mixin/HudIndicatorLabels.java"],
+                "org.universaltranslator.forge.HudStatusLabels"           : [
+                        "platforms/forge/1.21/shared/common/src/main/java/org/universaltranslator/forge/HudStatusLabels.java"],
+                "org.universaltranslator.forge.HomeButtonGeometry"        : [
+                        "platforms/forge/shared/common/src/main/java/org/universaltranslator/forge/HomeButtonGeometry.java"],
+                "org.universaltranslator.forge.ForgeConfigWriter"         : [
+                        "platforms/forge/shared/common/src/main/java/org/universaltranslator/forge/ForgeConfigWriter.java"],
+                "org.universaltranslator.forge.legacy.LegacyScreenWorkers": [
+                        "platforms/forge/shared/legacy-common/src/main/java/org/universaltranslator/forge/legacy/LegacyScreenWorkers.java"]
+        ]
+        def declaredTypes = [:]
+        ["platforms", "translator-core/src/main/java"].each { String scanRoot ->
+            fileTree(scanRoot) {
+                include "**/*.java"
+                exclude "**/build/**"
+                exclude "**/.gradle/**"
+            }.files.findAll { it.isFile() }.each { File source ->
+                def text = source.getText("UTF-8")
+                def packageMatcher = text =~ /(?m)^package\s+([\w.]+)\s*;/
+                def packageName = packageMatcher.find() ? packageMatcher.group(1) : ""
+                def typeMatcher = text =~ /(?m)^(?:(?:public|protected|private|final|abstract|static|strictfp|sealed|non-sealed)[ \t]+)*(?:class|interface|enum|record)[ \t]+(\w+)/
+                while (typeMatcher.find()) {
+                    def typeName = typeMatcher.group(1)
+                    def fqcn = packageName.isEmpty() ? typeName : packageName + "." + typeName
+                    def declaring = declaredTypes[fqcn]
+                    if (declaring == null) {
+                        declaring = new TreeSet<String>()
+                        declaredTypes[fqcn] = declaring
+                    }
+                    declaring.add(relativePath(source).replace('\\', '/'))
+                }
+            }
+        }
+        def copyProblems = []
+        singleCopyClasses.each { String fqcn, List<String> allowed ->
+            def declaring = declaredTypes[fqcn]
+            if (declaring == null) {
+                copyProblems.add("${fqcn} is declared nowhere, so this guard proves nothing")
+                return
+            }
+            def unexpected = declaring.findAll { !allowed.contains(it) }.sort()
+            if (!unexpected.isEmpty()) {
+                copyProblems.add("${fqcn} is also declared in ${unexpected.join(', ')}; add the copy to " +
+                        "the list only after checking it never shares a srcDir with the others")
+            }
+        }
+        if (!copyProblems.isEmpty()) {
+            throw new GradleException("Shared classes gained copies nobody declared:\n" +
+                    copyProblems.join("\n"))
+        }
+
+        // options.release is written out once per version module, while settings.gradle's
+        // treeJavaRelease is the table the Mixin bounds are derived from. Nothing compared the two, so
+        // a module could be moved to another release and the check kept validating the old bound —
+        // declaring JAVA_21 for a class file the compiler produced as 61, which Mixin only reports at
+        // run time. Every module that spells the number out has to agree with the tree it lives in.
+        def javaReleaseDeclaration = ~/(?m)^\s*(?:project\.)?ext\.(legacyJavaRelease|neoforgeJavaRelease|forgeJavaRelease)\s*=\s*(\d+)\s*$/
+        def neoforgeMetadataLayerDeclaration = ~/(?m)^\s*(?:project\.)?ext\.neoforgeMetadataLayer\s*=\s*["']([^"']+)["']/
+        def treePrefixes = gradle.ext.treeJavaRelease.keySet()
+                .collect { it.toString() }
+                .sort { String left, String right -> right.length() <=> left.length() }
+        def releaseMismatches = []
+        fileTree("platforms") {
+            include "**/build.gradle"
+            exclude "**/build/**"
+            exclude "**/.gradle/**"
+        }.files.findAll { it.isFile() }.sort { it.path <=> it.path }.each { File module ->
+            def relative = relativePath(module).replace('\\', '/')
+            def text = module.getText("UTF-8")
+            def declarations = text =~ javaReleaseDeclaration
+            if (!declarations.find()) {
+                return
+            }
+            // NeoForge modules live under platforms/neoforge/<generation>/versions/<version>, which is
+            // not a treeJavaRelease key; the table is keyed by the metadata layer those modules name.
+            def prefix = treePrefixes.find { relative.startsWith(it) }
+            if (prefix == null) {
+                def layer = text =~ neoforgeMetadataLayerDeclaration
+                if (layer.find()) {
+                    prefix = "platforms/neoforge/shared/metadata/${layer.group(1)}/".toString()
+                }
+            }
+            def bounds = prefix == null ? null : gradle.ext.treeJavaRelease.get(prefix)
+            declarations.reset()
+            while (declarations.find()) {
+                def key = declarations.group(1)
+                def value = declarations.group(2).toInteger()
+                if (bounds == null) {
+                    releaseMismatches.add(
+                            "${relative}: ${key} = ${value} cannot be checked, because no " +
+                                    "treeJavaRelease entry in settings.gradle covers ${prefix}; add " +
+                                    "the tree to that table")
+                } else if (value < (bounds[0] as int) || value > (bounds[1] as int)) {
+                    releaseMismatches.add(
+                            "${relative}: ${key} = ${value} is outside ${bounds} which " +
+                                    "settings.gradle's treeJavaRelease declares for ${prefix}")
+                }
+            }
+        }
+        // The range check above only proves a module sits between the two ends a tree declares, and
+        // both ends pass it: writing 1.20.5's 21 onto 1.20.4 shipped a class file a Java 17 client
+        // cannot load, and alternating the two releases across a tree stayed green as well. A tree with
+        // two ends therefore also has to be monotone in version order, use only those two values, and
+        // therefore flip once — which is the shape "1.20-1.20.4 are 17, 1.20.5+ are 21" has and none
+        // of those copies does.
+        gradle.ext.treeJavaRelease.each { String tree, Object ends ->
+            def lower = ends[0] as int
+            def upper = ends[1] as int
+            if (lower == upper) {
+                return
+            }
+            def moduleReleases = fileTree("${tree}versions") {
+                include "*/build.gradle"
+                exclude "**/build/**"
+            }.files.collect { File module ->
+                def text = module.getText("UTF-8")
+                def declarations = text =~ javaReleaseDeclaration
+                def declared = null
+                while (declarations.find()) {
+                    declared = declarations.group(2).toInteger()
+                }
+                return declared == null ? null : [module.parentFile.name, declared]
+            }.findAll { it != null }
+            // 1.20 < 1.20.1 < 1.20.10: padded segments compare as numbers without a version parser.
+            def orderKey = { Object version ->
+                version.toString().split('\\.').collect { String part ->
+                    part.isInteger() ? part.padLeft(4, '0') : part
+                }.join('.')
+            }
+            moduleReleases.sort { left, right -> orderKey(left[0]) <=> orderKey(right[0]) }
+            moduleReleases.each { entry ->
+                def declared = entry[1] as int
+                if (declared != lower && declared != upper) {
+                    releaseMismatches.add(
+                            "${tree}versions/${entry[0]}: Java release ${declared} is neither ${lower} " +
+                                    "nor ${upper}, the two ends settings.gradle's treeJavaRelease declares " +
+                                    "for ${tree}")
+                }
+            }
+            for (int index = 1; index < moduleReleases.size(); index++) {
+                def previous = moduleReleases[index - 1]
+                def current = moduleReleases[index]
+                if ((current[1] as int) < (previous[1] as int)) {
+                    releaseMismatches.add(
+                            "${tree}versions/${current[0]}: Java release ${current[1]} is lower than " +
+                                    "${previous[0]}'s ${previous[1]}; a generation boundary cannot move " +
+                                    "backwards")
+                }
+            }
+        }
+        if (!releaseMismatches.isEmpty()) {
+            throw new GradleException(
+                    "Compiled releases disagree with settings.gradle's treeJavaRelease:\n" +
+                            releaseMismatches.sort().join("\n"))
+        }
+
+        // Nine of the release targets are Forge versions that no scheduled workflow compiles: only the
+        // manual prepare-release.yml reaches them, so a versionFamilies/sourceLayers entry that misses
+        // one of them fails ten minutes into a release run instead of on a PR or the weekly schedule.
+        // The list is declared in settings.gradle; naming it in the check log is what keeps the gap
+        // from being rediscovered by whoever runs that release.
+        def releaseOnlyForgeTargets = (gradle.ext.releaseOnlyForgeTargets as List).collect { it.toString() }
+        if (!releaseOnlyForgeTargets.isEmpty()) {
+            logger.warn(
+                    "These Forge release targets are only compiled by prepare-release.yml, never by a " +
+                            "scheduled build, so their per-version wiring is verified at release time " +
+                            "only: ${releaseOnlyForgeTargets.join(', ')}")
+        }
+    }
+}
+
+// The guards below decide which files they inspect by looking for their anchor strings in each
+// candidate. That made the size of every check a property of today's sources: renaming the anchor (the
+// outgoing one even contains a caller's local variable name, shouldTranslateOutgoing(message)) took
+// the files out of the inspected set, so the guard passed over nothing and still reported success —
+// the very green CI that hid the re-entry loop and the overlapping labels. Two of them are therefore
+// driven by the set of files that carry the anchor: that set is compared against a declared list in
+// both directions, so a new implementation has to be named here and a declared file that loses its
+// anchor fails instead of dropping out of the scan. The lists below are what "this guard has to
+// inspect these files" means; they are not a filename filter.
+def anchorSubjectFiles = { String guardName, Collection anchors, Collection declared ->
+    def declaredPaths = declared.collect { it.toString() } as Set
+    def carrying = fileTree("platforms") {
+        include "**/*.java"
+        exclude "**/build/**"
+        exclude "**/.gradle/**"
+    }.files.findAll { File source ->
+        def text = source.getText("UTF-8")
+        anchors.every { text.contains(it) }
+    }.collect { relativePath(it).replace('\\', '/') } as Set
+    def undeclared = (carrying - declaredPaths).sort()
+    def missing = (declaredPaths - carrying).sort()
+    if (!undeclared.isEmpty() || !missing.isEmpty()) {
+        throw new GradleException(
+                "${guardName}: the files carrying ${anchors} are not the declared subjects of this " +
+                        "guard, so it is not inspecting what it is supposed to protect. Name the new " +
+                        "implementation in the declared list, or restore the anchor it lost:" +
+                        "\n  carrying the anchor but undeclared: " +
+                        (undeclared.isEmpty() ? "none" : undeclared.join(", ")) +
+                        "\n  declared but no longer carrying it: " +
+                        (missing.isEmpty() ? "none" : missing.join(", ")))
+    }
+    return carrying.collect { project.file(it) }
+}
+
+// Every screen that renders a selection list label belongs to this set, and these eight files are the
+// ones that carry SettingsSelectionList.displayName. LegacyConfigScreen carries the same anchor but
+// was outside the filename glob the colour rule used, so the one file whose colours that rule exists
+// for was the file it never inspected.
+def selectionColorSubjects = [
+        "platforms/fabric/1.0-1.12/shared/screens/src/main/java/org/universaltranslator/fabric/UniversalTranslatorConfigScreen.java",
+        "platforms/fabric/1.13/shared/screens/src/main/java/org/universaltranslator/fabric/UniversalTranslatorConfigScreen.java",
+        "platforms/fabric/26.x/shared/api/26.1-26.3/src/client/java/org/universaltranslator/fabric/UniversalTranslatorConfigScreen.java",
+        "platforms/fabric/shared/screens-shared/src/client/java/org/universaltranslator/fabric/UniversalTranslatorSettingsScreen.java",
+        "platforms/forge/26.x/shared/common/src/main/java/org/universaltranslator/forge/UniversalTranslatorConfigScreenBase.java",
+        "platforms/forge/modern/1.16.5/src/main/java/org/universaltranslator/forge/UniversalTranslatorScreens.java",
+        "platforms/forge/shared/legacy-common/src/main/java/org/universaltranslator/forge/legacy/LegacyConfigScreen.java",
+        "platforms/forge/shared/screens/1.18.2-1.21.11/src/main/java/org/universaltranslator/forge/UniversalTranslatorScreens.java"
+]
+
+// The layout rule has the same eight subjects for the wider anchor: every screen that draws the
+// settings animation, including the 1.8.9/1.12.2 one whose label offsets nobody compared.
+def settingsLabelSubjects = [
+        "platforms/fabric/1.0-1.12/shared/screens/src/main/java/org/universaltranslator/fabric/UniversalTranslatorConfigScreen.java",
+        "platforms/fabric/1.13/shared/screens/src/main/java/org/universaltranslator/fabric/UniversalTranslatorConfigScreen.java",
+        "platforms/fabric/26.x/shared/api/26.1-26.3/src/client/java/org/universaltranslator/fabric/UniversalTranslatorConfigScreen.java",
+        "platforms/fabric/shared/screens-shared/src/client/java/org/universaltranslator/fabric/UniversalTranslatorSettingsScreen.java",
+        "platforms/forge/26.x/shared/common/src/main/java/org/universaltranslator/forge/UniversalTranslatorConfigScreenBase.java",
+        "platforms/forge/modern/1.16.5/src/main/java/org/universaltranslator/forge/UniversalTranslatorScreens.java",
+        "platforms/forge/shared/legacy-common/src/main/java/org/universaltranslator/forge/legacy/LegacyConfigScreen.java",
+        "platforms/forge/shared/screens/1.18.2-1.21.11/src/main/java/org/universaltranslator/forge/UniversalTranslatorScreens.java"
+]
+def requireDeclaredAnchorSubjects = { String guardName, Collection anchors, Collection candidates, Collection declaredWithoutAnchor ->
+    def unaccounted = candidates.findAll { File candidate ->
+        def text = candidate.getText("UTF-8")
+        !anchors.every { text.contains(it) } &&
+                !declaredWithoutAnchor.contains(relativePath(candidate).replace('\\', '/'))
+    }
+    if (!unaccounted.isEmpty()) {
+        throw new GradleException(
+                "${guardName}: ${unaccounted.size()} candidate file(s) do not contain ${anchors}, " +
+                        "are not declared as an older-style file, and are therefore not inspected at " +
+                        "all. Either an anchor was renamed (restore it) or the file is a new one that " +
+                        "has to be added to the declared list:\n" +
+                        unaccounted.collect { relativePath(it) }.sort().join("\n")
+        )
     }
 }
 
@@ -262,16 +1216,10 @@ tasks.register("validateOpaqueSelectionTextColors") {
 
     doLast {
         def transparentRgb = ~/0x[0-9A-Fa-f]{6}\b/
-        def violations = fileTree("platforms") {
-            include "**/UniversalTranslatorConfigScreen.java"
-            include "**/UniversalTranslatorConfigScreenBase.java"
-            include "**/UniversalTranslatorSettingsScreen.java"
-            include "**/UniversalTranslatorScreens.java"
-            exclude "**/build/**"
-            exclude "**/.gradle/**"
-        }.files.findAll { source ->
-            def text = source.getText("UTF-8")
-            text.contains("SettingsSelectionList.displayName") && transparentRgb.matcher(text).find()
+        def candidates = anchorSubjectFiles("validateOpaqueSelectionTextColors",
+                ["SettingsSelectionList.displayName"], selectionColorSubjects)
+        def violations = candidates.findAll { source ->
+            transparentRgb.matcher(source.getText("UTF-8")).find()
         }
 
         if (!violations.isEmpty()) {
@@ -288,25 +1236,17 @@ tasks.register("validateNonOverlappingSettingsLabels") {
     description = "Prevents settings labels and compact status text from overlapping controls."
 
     doLast {
-        def settingsScreens = fileTree("platforms") {
-            include "**/UniversalTranslatorConfigScreen.java"
-            include "**/UniversalTranslatorConfigScreenBase.java"
-            include "**/UniversalTranslatorSettingsScreen.java"
-            include "**/UniversalTranslatorScreens.java"
-            include "**/LegacyConfigScreen.java"
-            exclude "**/build/**"
-            exclude "**/.gradle/**"
-        }.files.findAll { source ->
-            source.getText("UTF-8").contains("SettingsUiAnimation.openProgress")
-        }
-        def overlappingPositions = [
-                "layout.targetY - 11",
-                "layout.endpointY - 11",
-                "layout.saveY - 14"
-        ]
+        def settingsScreens = anchorSubjectFiles("validateNonOverlappingSettingsLabels",
+                ["SettingsUiAnimation.openProgress"], settingsLabelSubjects)
+        // The forbidden offsets stay a small constant set, but the spacing around them must not be
+        // part of the contract: the previous three exact spellings missed "targetY -11",
+        // "targetY - (11)" and every case where the offset was hoisted into a local — which is what a
+        // formatter or an extract-constant pass produces.
+        def forbiddenLabelOffsets = [11, 14]
+        def overlappingOffset = ~("layout\\.(?:targetY|endpointY|saveY)\\s*-\\s*\\(?\\s*(?:"
+                + forbiddenLabelOffsets.join("|") + ")\\b")
         def violations = settingsScreens.findAll { source ->
-            def text = source.getText("UTF-8")
-            overlappingPositions.any { text.contains(it) }
+            overlappingOffset.matcher(source.getText("UTF-8")).find()
         }
 
         if (!violations.isEmpty()) {
@@ -336,12 +1276,17 @@ tasks.register("validateOpaqueDiagnosticsTextColors") {
 
     doLast {
         def transparentRgb = ~/0x[0-9A-Fa-f]{6}\b/
-        def violations = fileTree("platforms") {
+        def candidates = fileTree("platforms") {
             include "**/*DiagnosticsScreen.java"
             include "**/UniversalTranslatorScreens.java"
             exclude "**/build/**"
             exclude "**/.gradle/**"
-        }.files.findAll { source ->
+        }.files
+        // Every diagnostics screen carries the anchor today, so nothing may be skipped: a screen that
+        // loses it (or a new one that never had it) stops being inspected and this fails instead.
+        requireDeclaredAnchorSubjects("validateOpaqueDiagnosticsTextColors",
+                ["diagnostics.note"], candidates, [])
+        def violations = candidates.findAll { source ->
             def text = source.getText("UTF-8")
             text.contains("diagnostics.note") && transparentRgb.matcher(text).find()
         }
@@ -360,20 +1305,55 @@ tasks.register("validateOutgoingTranslationReentryGuards") {
     description = "Prevents translated Forge and NeoForge chat messages from being intercepted again."
 
     doLast {
-        def outgoingClients = fileTree("platforms") {
-            include "**/UniversalTranslatorForgeClient.java"
-            include "**/UniversalTranslatorNeoForgeClient.java"
-            exclude "**/build/**"
-            exclude "**/.gradle/**"
-        }.files.findAll { source ->
-            def text = source.getText("UTF-8")
-            text.contains("shouldTranslateOutgoing(message)") &&
-                    text.contains("sendCompletedMessage(")
-        }
+        // Seventeen files carry the anchor, and the two the filename glob used to miss are the ones
+        // nothing else covers: FabricClientBootstrapBase is the single re-entry implementation every
+        // Fabric version project mounts, and LegacyClientEvents is what the 1.8.9/1.12.2 assets ship.
+        // Deleting the finally block of either left `check` green while the same code in the fifteen
+        // Forge clients failed it, so the subjects are declared and compared with what the anchor
+        // actually finds.
+        def outgoingClientSubjects = [
+                "platforms/fabric/shared/base/src/main/java/org/universaltranslator/fabric/FabricClientBootstrapBase.java",
+                "platforms/forge/1.21/shared/1.21-1.21.5/src/main/java/org/universaltranslator/forge/UniversalTranslatorForgeClient.java",
+                "platforms/forge/1.21/shared/1.21.6-1.21.8/src/main/java/org/universaltranslator/forge/UniversalTranslatorForgeClient.java",
+                "platforms/forge/1.21/shared/1.21.9-1.21.11/src/main/java/org/universaltranslator/forge/UniversalTranslatorForgeClient.java",
+                "platforms/forge/26.x/shared/api/26.1-26.1.2/src/main/java/org/universaltranslator/forge/UniversalTranslatorForgeClient.java",
+                "platforms/forge/26.x/shared/api/26.2/src/main/java/org/universaltranslator/forge/UniversalTranslatorForgeClient.java",
+                "platforms/forge/modern/1.16.5/src/main/java/org/universaltranslator/forge/UniversalTranslatorForgeClient.java",
+                "platforms/forge/modern/1.18.2/src/main/java/org/universaltranslator/forge/UniversalTranslatorForgeClient.java",
+                "platforms/forge/modern/1.19.2/src/main/java/org/universaltranslator/forge/UniversalTranslatorForgeClient.java",
+                "platforms/forge/modern/1.20.1/src/main/java/org/universaltranslator/forge/UniversalTranslatorForgeClient.java",
+                "platforms/forge/shared/legacy-common/src/main/java/org/universaltranslator/forge/legacy/LegacyClientEvents.java",
+                "platforms/neoforge/shared/entrypoints/1.20.2-1.20.4/src/main/java/org/universaltranslator/forge/UniversalTranslatorNeoForgeClient.java",
+                "platforms/neoforge/shared/entrypoints/1.21.2-1.21.8/src/main/java/org/universaltranslator/forge/UniversalTranslatorNeoForgeClient.java",
+                "platforms/neoforge/shared/entrypoints/1.21.9-1.21.11/src/main/java/org/universaltranslator/forge/UniversalTranslatorNeoForgeClient.java",
+                "platforms/neoforge/shared/entrypoints/26.1-26.1.2/src/main/java/org/universaltranslator/forge/UniversalTranslatorNeoForgeClient.java",
+                "platforms/neoforge/shared/entrypoints/26.2/src/main/java/org/universaltranslator/forge/UniversalTranslatorNeoForgeClient.java",
+                "platforms/neoforge/shared/entrypoints/common/src/main/java/org/universaltranslator/forge/UniversalTranslatorNeoForgeClient.java"
+        ]
+        // Two shapes carry the guard. The Forge clients, the NeoForge clients and the Fabric base class
+        // set a boolean before the re-send and clear it in a finally block — static in the clients,
+        // an instance field in the base class every Fabric client extends. The 1.8.9/1.12.2 client
+        // keeps no flag: it remembers the outgoing line inside the runtime on both paths. That second
+        // shape is named here instead of being inferred, so a third one cannot appear unguarded.
+        def outgoingGuardShapes = [
+                ("platforms/forge/shared/legacy-common/src/main/java/org/universaltranslator/forge/legacy/LegacyClientEvents.java"):
+                        ["protectOutgoingMessage(": 2]
+        ]
+        def outgoingClients = anchorSubjectFiles("validateOutgoingTranslationReentryGuards",
+                ["shouldTranslateOutgoing(message)", "sendCompletedMessage("], outgoingClientSubjects)
+        def resendGuard = ~/if\s*\(\s*resendingTranslatedMessage\b/
         def violations = outgoingClients.findAll { source ->
             def text = source.getText("UTF-8")
-            !text.contains("private static boolean resendingTranslatedMessage;") ||
-                    !text.contains("if (resendingTranslatedMessage\n") ||
+            def anchorCounts = outgoingGuardShapes.get(relativePath(source).replace('\\', '/'))
+            if (anchorCounts != null) {
+                return anchorCounts.any { String anchor, Integer minimum ->
+                    text.count(anchor) < minimum
+                }
+            }
+            def declaresFlag = text.contains("private static boolean resendingTranslatedMessage;") ||
+                    text.contains("private boolean resendingTranslatedMessage;")
+            return !declaresFlag ||
+                    !resendGuard.matcher(text).find() ||
                     !text.contains("resendingTranslatedMessage = true;") ||
                     !text.contains("} finally {") ||
                     !text.contains("resendingTranslatedMessage = false;")
@@ -393,7 +1373,12 @@ def releaseArtifacts = fileTree(releaseDirectory) {
     include "*.jar", "*.jar.part-*"
 }
 
-def pythonCmd = System.getProperty("os.name").toLowerCase().contains("windows") ? "python" : "python3"
+// Resolved lazily instead of during configuration: reading os.name at configuration time is both a
+// configuration-cache blocker and an input Gradle cannot see, and the value only matters when the
+// interpreter is actually forked.
+def pythonCmd = providers.systemProperty("os.name").map { String name ->
+    name.toLowerCase().contains("windows") ? "python" : "python3"
+}
 
 tasks.register("testJarVerifier", Exec) {
     group = "verification"
@@ -403,7 +1388,9 @@ tasks.register("testJarVerifier", Exec) {
             file("scripts/release_layout.py"),
             file("scripts/test_verify_release_jars.py")
     )
-    commandLine pythonCmd, file("scripts/test_verify_release_jars.py")
+    doFirst {
+        commandLine pythonCmd.get(), file("scripts/test_verify_release_jars.py")
+    }
 }
 
 tasks.register("testReleaseAssetPreparer", Exec) {
@@ -414,7 +1401,9 @@ tasks.register("testReleaseAssetPreparer", Exec) {
             file("scripts/release_layout.py"),
             file("scripts/test_prepare_release_assets.py")
     )
-    commandLine pythonCmd, file("scripts/test_prepare_release_assets.py")
+    doFirst {
+        commandLine pythonCmd.get(), file("scripts/test_prepare_release_assets.py")
+    }
 }
 
 tasks.register("verifyReleaseJars", Exec) {
@@ -435,7 +1424,7 @@ tasks.register("verifyReleaseJars", Exec) {
         jars = (jars + splitJars).unique { it.absolutePath }
                 .sort { left, right -> left.name <=> right.name }
         commandLine(
-                [pythonCmd, file("scripts/verify_release_jars.py"),
+                [pythonCmd.get(), file("scripts/verify_release_jars.py"),
                  "--checksum-file", new File(releaseDirectory, "SHA256SUMS.txt"),
                  "--require-complete-checksums"] + jars
         )
@@ -454,9 +1443,13 @@ tasks.register("prepareReleaseAssets", Exec) {
             file("docs/en/THIRD_PARTY_OFFLINE.md")
     )
     inputs.files(releaseArtifacts)
+    // --version reaches the script but was not declared, so a version bump that had not produced
+    // downloads/<new version> yet left the input set unchanged (both directories empty) and Gradle
+    // reused the previous build/release-assets output while the checksum verifier ran against it.
+    inputs.property("version", project.mod_version)
     outputs.dir(preparedReleaseDirectory)
     commandLine(
-            pythonCmd, file("scripts/prepare_release_assets.py"),
+            pythonCmd.get(), file("scripts/prepare_release_assets.py"),
             "--release-dir", releaseDirectory,
             "--output-dir", preparedReleaseDirectory.get().asFile,
             "--version", project.mod_version
@@ -502,6 +1495,19 @@ tasks.register("validateNeoForgeModuleCoordinates") {
             def matcher = text =~ /(?m)^\s*ext\.${name}\s*=\s*(.+)$/
             matcher.find() ? matcher.group(1).trim() : null
         }
+        // A coordinate may name a property instead of a literal ("minecraft_neoforge_1_20_1_version"),
+        // which keeps one source of truth in gradle.properties. Resolve that indirection before
+        // comparing against the directory name; a missing property stays unresolved and is reported.
+        def resolvedCoordinate = { String raw ->
+            def value = raw.trim()
+            if (value.length() >= 2
+                    && (value.startsWith('"') || value.startsWith("'"))
+                    && value.endsWith(value.substring(0, 1))) {
+                return value.substring(1, value.length() - 1)
+            }
+            def resolved = findProperty(value)
+            resolved == null ? "unresolved:${value}" : resolved.toString()
+        }
 
         def problems = []
         modules.each { module ->
@@ -516,9 +1522,10 @@ tasks.register("validateNeoForgeModuleCoordinates") {
             }
 
             def declaredVersion = coordinateValue(text, "neoforgeMinecraftVersion")
-            if (declaredVersion != null && unquote(declaredVersion) != directoryVersion) {
+            def resolvedVersion = declaredVersion == null ? null : resolvedCoordinate(declaredVersion)
+            if (resolvedVersion != null && resolvedVersion != directoryVersion) {
                 problems.add(
-                        "${relative}: neoforgeMinecraftVersion '${unquote(declaredVersion)}' " +
+                        "${relative}: neoforgeMinecraftVersion '${resolvedVersion}' " +
                                 "does not match its directory '${directoryVersion}'".toString())
             }
 
@@ -526,6 +1533,21 @@ tasks.register("validateNeoForgeModuleCoordinates") {
             if (entryLayer != null &&
                     !file("platforms/neoforge/shared/entrypoints/${unquote(entryLayer)}").isDirectory()) {
                 problems.add("${relative}: neoforgeEntryLayer does not resolve".toString())
+            }
+            // Declaring the entrypoint layer is not the same as mounting it: 1.20.1 keeps a hand-written
+            // source set (it cannot apply neoforge/shared.gradle without re-running the Mavenizer), so it
+            // takes its @Mod and client from the Forge 1.20.1 tree and an edit under
+            // entrypoints/1.20.2-1.20.4 never reaches that JAR. A module that opts out has to name the
+            // Forge tree it uses instead, so the "the three 1.20.x targets share one layer" reading stops
+            // being an assumption.
+            def entryLayerMounted = coordinateValue(text, "neoforgeEntryLayerMounted")
+            if (entryLayerMounted != null && unquote(entryLayerMounted) == "false") {
+                def forgeEntrySource = "platforms/forge/modern/${directoryVersion}/src/main/java"
+                if (!file(forgeEntrySource).isDirectory() || !text.contains(forgeEntrySource)) {
+                    problems.add(
+                            "${relative}: neoforgeEntryLayerMounted is false but the module does not mount " +
+                                    "${forgeEntrySource} for its @Mod entrypoint".toString())
+                }
             }
 
             def metadataLayer = coordinateValue(text, "neoforgeMetadataLayer")
@@ -545,6 +1567,15 @@ tasks.register("validateNeoForgeModuleCoordinates") {
                 if (names.isEmpty()) {
                     problems.add("${relative}: neoforgeForgeLayers lists no layers".toString())
                 }
+                // shared.gradle reads neoforgeForgeLayers.last() to pick the runtime/draw-context
+                // variant, so a third entry silently changes which one .last() returns while the
+                // layer itself still resolves. Exactly [common, <one family>] is the only shape the
+                // rest of the wiring understands.
+                if (!names.isEmpty() && (names.size() != 2 || names[0] != "common")) {
+                    problems.add(
+                            "${relative}: neoforgeForgeLayers must be [\"common\", <one family layer>], " +
+                                    "got ${names}".toString())
+                }
                 names.each { name ->
                     if (forgeRoot != null && !file("${unquote(forgeRoot)}/${name}").isDirectory()) {
                         problems.add("${relative}: Forge layer '${name}' does not resolve".toString())
@@ -559,6 +1590,78 @@ tasks.register("validateNeoForgeModuleCoordinates") {
                         problems.add("${relative}: extra root '${extra}' does not resolve".toString())
                     }
                 }
+            }
+
+            // A mixin config that sits in the jar but is not registered by the loader metadata loads
+            // no hooks at all — the game starts, the mod is "loaded", and nothing is translated with
+            // not one error in the log. The registration line is hand-written in 19 toml files, so it
+            // is cross-checked here instead of being trusted.
+            def declaredMetadataLayerName = metadataLayer == null ? null : unquote(metadataLayer)
+            fileTree(module.parentFile) {
+                include "src/main/resources/META-INF/*.toml"
+            }.files.each { toml ->
+                def registeredConfigs = (toml.getText("UTF-8") =~
+                        /(?m)^\s*config\s*=\s*"([^"]+)"\s*$/).collect { it[1] }
+                registeredConfigs.each { configName ->
+                    def shipped = declaredMetadataLayerName == null ? null : file(
+                            "platforms/neoforge/shared/metadata/${declaredMetadataLayerName}" +
+                                    "/src/main/resources/${configName}")
+                    if (shipped == null || !shipped.isFile()) {
+                        problems.add(
+                                ("${relative}: " + relativePath(toml) + " registers '${configName}' but the " +
+                                        "'${declaredMetadataLayerName}' metadata layer does not ship that file")
+                                        .toString())
+                    }
+                }
+            }
+            // 1.20.1 registers through the jar manifest instead of a [[mixins]] block, and keeps its
+            // config in its own resources directory.
+            def manifestConfigs = (text =~ /MixinConfigs"\s*:\s*"([^"]+)"/).collect { it[1] }
+            def mixinTaskConfigs = (text =~ /(?m)^\s*config\s+"([^"]+)"\s*$/).collect { it[1] }
+            if (!manifestConfigs.isEmpty()) {
+                manifestConfigs.each { configName ->
+                    if (!new File(module.parentFile, "src/main/resources/${configName}").isFile()) {
+                        problems.add(
+                                "${relative}: manifest MixinConfigs names '${configName}' but the module " +
+                                        "does not ship it".toString())
+                    }
+                }
+                if (!mixinTaskConfigs.isEmpty()
+                        && !mixinTaskConfigs.every { manifestConfigs.contains(it) }) {
+                    problems.add(
+                            "${relative}: mixin { config } ${mixinTaskConfigs} disagrees with the manifest " +
+                                    "MixinConfigs ${manifestConfigs}".toString())
+                }
+            }
+        }
+
+        // Every registered version also has a minecraft_neoforge_<version>_version property in
+        // gradle.properties, and only 1.20.1 reads it: the other eighteen spell the version out as a
+        // literal, so editing the property changed nothing and no check looked at it — the same
+        // "authoritative-looking second copy" the mod_version warning is about. The keys stay where a
+        // version bump is looked for, and each one is now compared with the module that owns that
+        // version, so a key that disagrees fails instead of silently doing nothing.
+        modules.each { module ->
+            def relative = relativePath(module).replace('\\', '/')
+            def directoryVersion = module.parentFile.name
+            def key = "minecraft_neoforge_${directoryVersion.replace('.', '_').replace('-', '_')}_version"
+            def declaredKeyValue = findProperty(key)
+            if (declaredKeyValue != null && declaredKeyValue.toString() != directoryVersion) {
+                problems.add(
+                        ("${relative}: gradle.properties' ${key} is ${declaredKeyValue} but the module " +
+                                "compiles ${directoryVersion}; the literal in the module wins, so the " +
+                                "key is a second source of truth that only this check notices").toString())
+            }
+        }
+        def registeredVersions = modules.collect { it.parentFile.name } as Set
+        project.properties.keySet().findAll { Object name ->
+            name.toString().startsWith("minecraft_neoforge_") && name.toString().endsWith("_version")
+        }.each { Object name ->
+            def value = findProperty(name.toString())
+            if (value != null && !registeredVersions.contains(value.toString())) {
+                problems.add(
+                        ("gradle.properties: ${name} = ${value} names no NeoForge version module; a key " +
+                                "for a version nobody builds is a knob that changes nothing").toString())
             }
         }
 
@@ -582,28 +1685,53 @@ tasks.register("validateNeoForgeModuleCoordinates") {
             }
             matcher.group(1)
         }
+        // Every key a map declares has to be understood by the regex that reads it. A re-laid-out map
+        // (array value where a string is expected, a key spelled with a nested map, a trailing entry on
+        // the closing line) used to parse to fewer entries than it declares and the cross-check then
+        // reported "cannot resolve the expected Forge layer", which points at the NeoForge module that
+        // is correct instead of at the map that changed shape.
+        def requireShape = { File source, String mapName, String body, int parsed, String expectedShape ->
+            def declared = (body =~ /(?m)^\s*"([^"]+)"\s*:/).size()
+            if (parsed != declared) {
+                throw new GradleException(
+                        "${mapName} in ${relativePath(source)} is not in the expected ${expectedShape} " +
+                                "shape: ${parsed} of ${declared} keys parsed")
+            }
+        }
 
         // Map variable names follow the shape of the map they hold so the three trees stay
         // distinguishable: "<key>By<value>" reads left to right.
+        def body121 = mapBody(file("platforms/forge/1.21/shared.gradle"), "versionFamilies")
+        def parsedFamilies = 0
         def familyByVersion = [:]
-        (mapBody(file("platforms/forge/1.21/shared.gradle"), "versionFamilies") =~
-                /"([^"]+)"\s*:\s*\[([^\]]*)\]/).each { match ->
+        (body121 =~ /"([^"]+)"\s*:\s*\[([^\]]*)\]/).each { match ->
             def family = match[1]
+            parsedFamilies++
             (match[2] =~ /"([^"]+)"/).each { version -> familyByVersion[version[1]] = family }
         }
+        requireShape(file("platforms/forge/1.21/shared.gradle"), "versionFamilies", body121,
+                parsedFamilies, '"<family>": ["<version>", ...]')
 
+        def body26 = mapBody(file("platforms/forge/26.x/shared.gradle"), "sourceLayers")
+        def parsed26 = 0
         def layerByVersion26 = [:]
-        (mapBody(file("platforms/forge/26.x/shared.gradle"), "sourceLayers") =~
-                /"([^"]+)"\s*:\s*"([^"]+)"/).each { match ->
+        (body26 =~ /"([^"]+)"\s*:\s*"([^"]+)"/).each { match ->
+            parsed26++
             layerByVersion26[match[1]] = match[2]
         }
+        requireShape(file("platforms/forge/26.x/shared.gradle"), "sourceLayers", body26, parsed26,
+                '"<version>": "<layer>"')
 
+        def bodyModern = mapBody(file("platforms/forge/modern/shared.gradle"), "sourceLayers")
+        def parsedModern = 0
         def layerByVersionModern = [:]
-        (mapBody(file("platforms/forge/modern/shared.gradle"), "sourceLayers") =~
-                /"([^"]+)"\s*:\s*\[([^\]]*)\]/).each { match ->
+        (bodyModern =~ /"([^"]+)"\s*:\s*\[([^\]]*)\]/).each { match ->
+            parsedModern++
             def layers = (match[2] =~ /"([^"]+)"/).collect { it[1] }
             layerByVersionModern[match[1]] = layers.join("/")
         }
+        requireShape(file("platforms/forge/modern/shared.gradle"), "sourceLayers", bodyModern,
+                parsedModern, '"<version>": ["<layer>", ...]')
 
         def versionParts = { String value ->
             value.tokenize('.').collect { (it ==~ /\d+/) ? it.toInteger() : 0 }
@@ -697,10 +1825,70 @@ tasks.register("verifyPreparedReleaseAssets", Exec) {
         def jars = fileTree(directory).matching { include "*.jar" }.files
                 .sort { left, right -> left.name <=> right.name }
         commandLine(
-                [pythonCmd, file("scripts/verify_release_jars.py"),
+                [pythonCmd.get(), file("scripts/verify_release_jars.py"),
                  "--checksum-file", new File(directory, "SHA256SUMS.txt"),
                  "--require-complete-checksums"] + jars
         )
+    }
+}
+
+// fabric-all.jar is the only asset that carries the awkward generations of the three legacy bundles,
+// and their own aggregate verification runs only when those projects are part of the build
+// (settings.gradle includes a project only when -PtargetPlatform or a task path names it). The entry
+// names can be checked without configuring any of them, so the seventeen 1.13-1.16.x versions are not
+// left to a warning that only fires inside a task nobody schedules.
+tasks.register("verifyReleaseAggregateMembership") {
+    group = "verification"
+    description = "Checks that the Fabric aggregate JAR carries one implementation per release version."
+    dependsOn("prepareReleaseAssets")
+    def aggregate = preparedReleaseDirectory.map { directory ->
+        new File(directory.asFile, "MCAutoTranslationTool-${project.mod_version}-fabric-all.jar")
+    }
+    inputs.file(aggregate)
+    doLast {
+        def archive = aggregate.get()
+        if (!archive.isFile()) {
+            throw new GradleException("Missing release aggregate ${archive}; run :prepareReleaseAssets first.")
+        }
+        def carried = [] as List
+        def metadata = null
+        new java.util.zip.ZipFile(archive).withCloseable { zip ->
+            zip.entries().each { entry ->
+                def name = entry.name
+                if (name.startsWith("META-INF/jars/universal-translator-") && name.endsWith(".jar")) {
+                    carried.add(name.tokenize('/').last()
+                            .replace("universal-translator-", "")
+                            .replace(".jar", ""))
+                }
+            }
+            def metadataEntry = zip.getEntry("fabric.mod.json")
+            if (metadataEntry == null) {
+                throw new GradleException("${archive.name} has no fabric.mod.json")
+            }
+            metadata = new groovy.json.JsonSlurper().parse(
+                    new InputStreamReader(zip.getInputStream(metadataEntry), "UTF-8"))
+        }
+        // The aggregate's own metadata is what Fabric Loader reads to pick a nested implementation,
+        // and nothing used to read it: a jars[] entry or a depends.minecraft entry that disagrees with
+        // the packed files ships a version the Loader either cannot select or refuses to load. The
+        // same comparison the ten bundles use applies here, and it needs no rebuilt downloads/.
+        project.ext.verifyBundleMetadataAgainst(metadata, carried)
+        // settings.gradle's fabricReleaseVersions is the code-side answer and changes with the code,
+        // while the aggregate is rebuilt only when downloads/<mod_version> is regenerated. Nothing else
+        // compares the two: prepare-release.yml only counts the JARs its own target list names, so
+        // adding a version to settings.gradle without regenerating downloads/ shipped an aggregate with
+        // no implementation for it and every check stayed green. A warning is not a gate, and this task
+        // is the release-side half — it was taken out of `check` by C2-163 and its only caller runs it
+        // once downloads/<mod_version> exists, so failing here cannot become the old interlock.
+        def expected = (gradle.ext.fabricReleaseVersions as List).collect { it.toString() }
+        def absent = expected.findAll { !carried.contains(it) }
+        if (!absent.isEmpty()) {
+            throw new GradleException(
+                    "${archive.name} does not carry ${absent.join(', ')} from settings.gradle's " +
+                            "fabricReleaseVersions: downloads/${project.mod_version} predates that " +
+                            "version list. Re-run prepare-release.yml before publishing, otherwise " +
+                            "those Minecraft versions ship without an implementation.")
+        }
     }
 }
 
@@ -712,17 +1900,191 @@ tasks.register("verifyPreparedReleaseAssets", Exec) {
 tasks.register("verifyPublishedRelease") {
     group = "verification"
     description = "Validates downloads/<mod_version> and the reduced release asset set (release flows only)."
-    dependsOn("verifyPreparedReleaseAssets")
+    dependsOn("verifyPreparedReleaseAssets", "verifyReleaseAggregateMembership")
+}
+
+// The resource invariants that one audit round had to restore by hand — the 57 fabric.mod.json
+// authors values that had lost their non-ASCII part, six .lang files missing 26 keys while carrying 11
+// dead ones, three .lang files named in the wrong case — had no gate at all: not one task in `check`
+// reads a metadata or a language file, so copying a template for a new version could undo all of it
+// with a green CI. This task is that gate. It reads the files as text, so no platform project has to
+// be evaluated and ${...} placeholders never need expanding.
+tasks.register("validateResourceMetadata") {
+    group = "verification"
+    description = "Checks the shared fabric.mod.json authors value, the legacy .lang key sets and the one mod-list icon."
+
+    // The one canonical value; the launcher, Modrinth and CurseForge all show it verbatim.
+    def expectedAuthors = "我小张7272635"
+    def langRoot = file("platforms/shared/lang")
+    def jsonLangDir = new File(langRoot, "json/assets/universal_translator/lang")
+    def legacyLangDirs = ["legacy", "legacy-forge"].collect {
+        new File(langRoot, "${it}/assets/universal_translator/lang")
+    }
+    def metadataFiles = fileTree(rootDir) {
+        include "platforms/**/src/**/fabric.mod.json"
+        exclude "**/build/**"
+        exclude "**/.gradle/**"
+    }
+    inputs.files(metadataFiles)
+    inputs.dir(langRoot)
+
+    // The mod-list icon has one source. Ten Fabric bundles used to carry byte-identical copies of
+    // it (4,004 bytes, same SHA-256 each), so a redraw meant editing eleven files and every copy
+    // that fell behind stayed green — no task in `check` ever read a PNG. gradle/bundle-icon.gradle
+    // feeds all ten bundles from platforms/shared/lang/json, and both standalone Forge 1.8.9/1.12.2
+    // builds copy the same entry, so this gate checks the two facts that keep it that way: exactly
+    // one copy exists and it is a PNG, and every metadata file that names an icon names that copy.
+    def iconRelative = "assets/universal_translator/icon.png"
+    def iconFiles = fileTree(rootDir) {
+        include "platforms/**/${iconRelative}"
+        exclude "**/build/**"
+        exclude "**/.gradle/**"
+    }
+    // Forge picks its mod-list logo from two different places: mods.toml's `logoFile` (1.13+, read
+    // from the JAR root) and mcmod.info's `logoFile` (1.8.9/1.12.2). Both name the same image, so
+    // both are read here instead of trusting the copy-paste that produced them.
+    def logoMetadataFiles = fileTree(rootDir) {
+        include "platforms/**/src/**/META-INF/*.toml"
+        include "platforms/**/src/**/mcmod.info"
+        exclude "**/build/**"
+        exclude "**/.gradle/**"
+    }
+    inputs.files(iconFiles)
+    inputs.files(logoMetadataFiles)
+
+    // A .lang line is `key=value`; MC's reader skips blank lines and `#` comments, and so does this.
+    def readLang = { File source ->
+        def entries = [:]
+        source.getText("UTF-8").readLines().each { line ->
+            def trimmed = line.trim()
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                return
+            }
+            def separator = trimmed.indexOf("=")
+            if (separator > 0) {
+                entries.put(trimmed.substring(0, separator).trim(), trimmed.substring(separator + 1))
+            }
+        }
+        return entries
+    }
+
+    doLast {
+        def problems = []
+        metadataFiles.each { metadata ->
+            def authors = metadata.getText("UTF-8") =~ /(?s)"authors"\s*:\s*\[(.*?)\]/
+            if (!authors.find()) {
+                problems << "${metadata}: no authors array"
+                return
+            }
+            if (authors.group(1).replaceAll("\\s", "") != "\"${expectedAuthors}\"") {
+                problems << "${metadata}: authors is ${authors.group(1).trim()}, expected [\"${expectedAuthors}\"]"
+            }
+        }
+        ["en_us", "zh_cn", "zh_tw"].each { locale ->
+            def jsonFile = new File(jsonLangDir, "${locale}.json")
+            if (!jsonFile.isFile()) {
+                problems << "${jsonFile}: missing"
+                return
+            }
+            def reference = new groovy.json.JsonSlurper().parse(jsonFile, "UTF-8")
+            def seen = []
+            legacyLangDirs.each { directory ->
+                if (!directory.isDirectory()) {
+                    problems << "${directory}: missing"
+                    return
+                }
+                def wanted = (locale + ".lang").toLowerCase(Locale.ROOT)
+                def matching = directory.listFiles().findAll {
+                    it.isFile() && it.name.toLowerCase(Locale.ROOT) == wanted
+                }
+                if (matching.isEmpty()) {
+                    problems << "${directory}: no ${locale}.lang, so MC finds none of those keys"
+                }
+                matching.each { candidate ->
+                    def entries = readLang(candidate)
+                    def missing = reference.keySet() - entries.keySet()
+                    def extra = entries.keySet() - reference.keySet()
+                    if (!missing.isEmpty()) {
+                        problems << "${candidate}: ${missing.size()} keys missing from ${jsonFile.name} " +
+                                "(${missing.take(5).join(', ')})"
+                    }
+                    if (!extra.isEmpty()) {
+                        problems << "${candidate}: ${extra.size()} keys not in ${jsonFile.name} " +
+                                "(${extra.take(5).join(', ')})"
+                    }
+                    // Every copy of one locale has to be the same text. legacy and legacy-forge serve
+                    // the same Minecraft versions from two directories, and the only comparison they
+                    // ever had was a human diff; a name in the other case is a third copy.
+                    if (!seen.isEmpty()) {
+                        def firstFile = seen.get(0).get(0)
+                        def firstEntries = seen.get(0).get(1)
+                        def drifted = entries.findAll { key, value ->
+                            firstEntries.containsKey(key) && firstEntries.get(key) != value
+                        }.keySet()
+                        if (!drifted.isEmpty()) {
+                            problems << "${candidate}: ${drifted.size()} values differ from ${firstFile.name} " +
+                                    "(${drifted.take(5).join(', ')})"
+                        }
+                    }
+                    seen << [candidate, entries]
+                }
+            }
+        }
+        // One icon file next to a real PNG, and every declaration pointing at that one file.
+        def iconCopies = iconFiles.files
+        if (iconCopies.size() != 1) {
+            problems << "expected exactly 1 ${iconRelative} under platforms/, found " +
+                    "${iconCopies.size()}: " + iconCopies.collect { it }.join(", ")
+        }
+        def iconFile = new File(langRoot, "json/${iconRelative}")
+        if (!iconFile.isFile()) {
+            problems << "${iconFile}: missing, and it is the one image every declaring mod ships"
+        } else {
+            def signature = new byte[8]
+            iconFile.withInputStream { stream -> stream.read(signature) }
+            def signatureHex = signature.encodeHex().toString()
+            if (signatureHex != "89504e470d0a1a0a") {
+                problems << "${iconFile}: not a PNG (signature ${signatureHex})"
+            }
+        }
+        metadataFiles.each { metadata ->
+            def declared = metadata.getText("UTF-8") =~ /"icon"\s*:\s*"([^"]*)"/
+            if (declared.find() && declared.group(1) != iconRelative) {
+                problems << "${metadata}: icon is ${declared.group(1)}, expected ${iconRelative}"
+            }
+        }
+        logoMetadataFiles.each { metadata ->
+            def text = metadata.getText("UTF-8")
+            def declared = null
+            if (metadata.name.endsWith(".toml")) {
+                def tomlLogo = text =~ /(?m)^[ \t]*logoFile[ \t]*=[ \t]*"([^"]*)"/
+                declared = tomlLogo.find() ? tomlLogo.group(1) : null
+            } else {
+                def infoLogo = text =~ /"logoFile"\s*:\s*"([^"]*)"/
+                declared = infoLogo.find() ? infoLogo.group(1) : null
+            }
+            if (declared != null && !declared.endsWith(iconRelative)) {
+                problems << "${metadata}: logoFile is ${declared}, expected a path ending in ${iconRelative}"
+            }
+        }
+        if (!problems.isEmpty()) {
+            throw new GradleException(
+                    "Resource metadata drifted (authors, legacy language keys or the mod-list icon):\n" + problems.join("\n"))
+        }
+    }
 }
 
 tasks.named("check") {
     dependsOn(
+            "validateDualLayerApiParity",
             "validateMixinConfigs",
             "validateNeoForgeModuleCoordinates",
             "validateNonOverlappingSettingsLabels",
             "validateOutgoingTranslationReentryGuards",
             "validateOpaqueDiagnosticsTextColors",
             "validateOpaqueSelectionTextColors",
+            "validateResourceMetadata",
+            "validateResourcePackFormats",
             "validateSharedPlatformLayouts"
     )
 }

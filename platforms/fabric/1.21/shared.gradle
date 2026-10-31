@@ -10,6 +10,12 @@ requiredProperties.each { propertyName ->
     }
 }
 
+// The loader requirement under the name gradle/bundle-metadata-verify.gradle reads when it derives a
+// bundle's floor from its weakest member. The 1.16-1.20 members declare legacyLoaderVersion
+// themselves; this tree stores the same fact as fabricLoaderVersion, and without the alias the floor
+// check would find an empty member list and pass without comparing anything for all twelve releases.
+ext.legacyLoaderVersion = project.ext.fabricLoaderVersion.toString()
+
 def sourceLayers = [
         "1.21"   : ["runtime/pre-1.21.9", "draw/1.21-1.21.5", "text-renderer/1.21-1.21.1", "input/pre-1.21.9"],
         "1.21.1" : ["runtime/pre-1.21.9", "draw/1.21-1.21.5", "text-renderer/1.21-1.21.1", "input/pre-1.21.9"],
@@ -25,8 +31,14 @@ def sourceLayers = [
         "1.21.11": ["runtime/1.21.9-plus", "draw/1.21.6-plus", "text-renderer/1.21.11", "input/1.21.9-plus"]
 ]
 
+// Groovy's String.minus removes the first occurrence of the substring, not a prefix, so this only
+// worked while the project name contained "platform-fabric-" exactly once. Strip the prefix
+// explicitly and print the project path with the derived value so a mis-registration is traceable.
 def sourceVersion = project.ext.has("fabricSourceVersion") ?
-        project.ext.fabricSourceVersion.toString() : project.name - "platform-fabric-"
+        project.ext.fabricSourceVersion.toString() :
+        (project.name.startsWith("platform-fabric-")
+                ? project.name.substring("platform-fabric-".length())
+                : project.name)
 // Layer names that are mount flags only: the code they pull in lives in
 // platforms/fabric/shared/*, so this tree has no directory of that name. Kept as an explicit list
 // so the srcDir loop below can tell "flag" from "typo" — previously every name was also treated as
@@ -39,18 +51,20 @@ def sharedFlagLayers = [
 ] as Set
 def layers = sourceLayers[sourceVersion]
 if (layers == null) {
-    throw new GradleException("No Fabric 1.21 source layers are registered for ${sourceVersion}")
+    throw new GradleException(
+            "No Fabric 1.21 source layers are registered for ${sourceVersion} (project ${project.path})")
 }
 
 def sharedRoot = rootProject.file("platforms/fabric/1.21/shared")
-def archiveVersion = project.ext.has("fabricArchiveVersion") ?
-        project.ext.fabricArchiveVersion : project.ext.fabricMinecraftVersion
 
 version = project.mod_version
 group = project.maven_group
 
 base {
-    archivesName = "mc-auto-translation-tool-fabric-${archiveVersion}"
+    // One source for the file name: the Minecraft version this target compiles against. It used to
+    // take a fabricArchiveVersion override so one unpublished project could be named after a version
+    // span; that project now sets its own archivesName after applying this script instead.
+    archivesName = "mc-auto-translation-tool-fabric-${project.ext.fabricMinecraftVersion}"
 }
 
 repositories {
@@ -82,6 +96,33 @@ sourceSets {
         resources.srcDir new File(sharedRoot, "common/src/main/resources")
         resources.srcDir rootProject.file("platforms/shared/lang/json")
     }
+}
+
+// The client source directories below are hard-coded instead of coming from sourceLayers, so none of
+// them was covered by the layer check inside sourceSets. Renaming screens/1.20.1-1.21.11 (also matched
+// by a string prefix in platforms/fabric/legacy/shared.gradle) would have left all twelve 1.21 targets
+// compiling without their settings screens and every task still green.
+def requiredSharedDirs = [
+        new File(sharedRoot, "common/src/client/java"),
+        new File(sharedRoot, "screens/1.20.1-1.21.11/src/client/java"),
+        rootProject.file("platforms/fabric/shared/settings/modern/src/main/java"),
+        rootProject.file("platforms/fabric/shared/common/src/client/java"),
+        rootProject.file("platforms/fabric/shared/base/src/main/java"),
+        rootProject.file("platforms/fabric/shared/runtime-common/src/client/java"),
+        rootProject.file("platforms/fabric/shared/draw-context/src/client/java"),
+        rootProject.file("platforms/fabric/shared/client-1.20-1.21/src/client/java"),
+        rootProject.file("platforms/fabric/shared/text-renderer-1.20-1.21/src/client/java"),
+        rootProject.file("platforms/fabric/shared/title-screen-1.19-1.21/src/client/java"),
+        rootProject.file("platforms/fabric/shared/mixin-1.20-1.21/src/client/java"),
+        rootProject.file("platforms/fabric/shared/legacy-common/src/client/java"),
+        rootProject.file("platforms/fabric/shared/rendered-common/src/client/java"),
+        rootProject.file("platforms/fabric/shared/screens-shared/src/client/java")
+]
+def missingSharedDirs = requiredSharedDirs.findAll { !it.isDirectory() }
+if (!missingSharedDirs.isEmpty()) {
+    throw new GradleException(
+            "Missing shared Fabric source directories for ${sourceVersion}: " +
+                    missingSharedDirs.collect { relativePath(it) }.join(", "))
 }
 
 loom {
@@ -152,6 +193,48 @@ sourceSets {
     }
 }
 
+// The twelve fabric.mod.json files are hand-maintained, one per version, and differ only in the two
+// entries that describe the release itself: "fabricloader" and "minecraft". Only the loader one is
+// rewritten below, so the rest of the 36 lines were copied by hand and nothing compared them: adding
+// 1.21.12 meant copying all of them, and an edit to one file (an entrypoint, a dependency, the java
+// floor) could leave the other eleven behind with every task still green. Compare the tree here, at
+// configuration time and without adding a task, so the copies may differ only in those two values and
+// each one has to name its own release.
+def versionsMetadataRoot = rootProject.file("platforms/fabric/1.21/versions")
+def canonicalMetadata = null
+def canonicalMetadataName = null
+versionsMetadataRoot.listFiles()?.findAll { it.isDirectory() }?.sort { it.name }?.each { versionDir ->
+    def metadataFile = new File(versionDir, "src/main/resources/fabric.mod.json")
+    if (!metadataFile.isFile()) {
+        throw new GradleException(
+                "${relativePath(metadataFile)} is missing: every registered 1.21 version keeps one " +
+                        "fabric.mod.json of its own")
+    }
+    def parsedMetadata = new groovy.json.JsonSlurper().parseText(metadataFile.getText("UTF-8")) as Map
+    def parsedDepends = (parsedMetadata.depends ?: [:]) as Map
+    if (parsedDepends.get("minecraft") != versionDir.name) {
+        throw new GradleException(
+                "${relativePath(metadataFile)} declares minecraft ${parsedDepends.get('minecraft')} " +
+                        "but lives under versions/${versionDir.name}/")
+    }
+    def shape = new LinkedHashMap(parsedMetadata)
+    def shapeDepends = new LinkedHashMap(parsedDepends)
+    shapeDepends.remove("fabricloader")
+    shapeDepends.remove("minecraft")
+    shape.remove("depends")
+    shape.put("depends", shapeDepends)
+    if (canonicalMetadata == null) {
+        canonicalMetadata = shape
+        canonicalMetadataName = versionDir.name
+    } else if (shape != canonicalMetadata) {
+        throw new GradleException(
+                "${relativePath(metadataFile)} differs from versions/${canonicalMetadataName}/" +
+                        "src/main/resources/fabric.mod.json in more than the version-dependent " +
+                        "'fabricloader'/'minecraft' entries; the twelve 1.21 metadata files have to " +
+                        "stay one shape or one of them silently ships a different mod")
+    }
+}
+
 processResources {
     inputs.property "version", project.version
     // The declared loader floor is derived from the loader this target is actually compiled
@@ -160,20 +243,48 @@ processResources {
     // other eleven declared ">=0.19.3", so the same tree advertised two different minimums and
     // nothing compared the number with the property. Rewriting the line here keeps the value honest
     // for every version, including any future one that reuses the global loader_version key.
-    inputs.property "loaderFloor", project.ext.fabricLoaderVersion
+    // Read once into a local so the filter below never touches `project` at execution time.
+    def loaderFloor = project.ext.fabricLoaderVersion.toString()
+    def loaderFloorLine = /"fabricloader": ">=[^"]*"/
+    def sourceMetadata = fileTree(projectDir) {
+        include "src/main/resources/fabric.mod.json"
+        exclude "**/build/**"
+    }
+    inputs.property "loaderFloor", loaderFloor
+    // The filter only rewrites a line that still has exactly this shape. A reformatted fabric.mod.json
+    // (a multi-line depends block, a tab, four spaces before the value) made the replaceAll miss in
+    // silence and the hand-written floor shipped instead — that is the drift this block exists to
+    // remove, so the shape is asserted before the filter runs.
+    doFirst {
+        sourceMetadata.files.each { metadata ->
+            if (!(metadata.getText("UTF-8") =~ loaderFloorLine).find()) {
+                throw new GradleException(
+                        "${project.path}: ${metadata.name} has no single-line " +
+                                "'\"fabricloader\": \">=…\"' entry, so the declared loader floor cannot be " +
+                                "rewritten from fabricLoaderVersion")
+            }
+        }
+    }
     filesMatching("fabric.mod.json") {
         expand "version": project.version
         filter { line ->
-            line.replaceAll(
-                    /"fabricloader": ">=[^"]*"/,
-                    "\"fabricloader\": \">=${project.ext.fabricLoaderVersion}\"")
+            line.replaceAll(loaderFloorLine, "\"fabricloader\": \">=${loaderFloor}\"")
         }
     }
 }
 
+def javaReleaseTarget = gradle.ext.treeJavaTarget("platforms/fabric/1.21/")
+// Handed to the class-file gate applied below, so the bytecode is checked against the same number the
+// compiler is given instead of a second copy of it.
+ext.fabricReleaseJava = javaReleaseTarget
+// The same number under the name gradle/bundle-metadata-verify.gradle reads (legacyJavaRelease), so
+// the bundle floor check compares against real members instead of an empty list.
+ext.legacyJavaRelease = javaReleaseTarget.toString()
 tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
-    options.release = 21
+    // Read from settings.gradle's treeJavaRelease so the compile target and the Mixin bounds derived
+    // from that same table cannot disagree.
+    options.release = javaReleaseTarget
 }
 
 java {
@@ -181,6 +292,10 @@ java {
 }
 
 apply from: rootProject.file("gradle/jar-contents.gradle")
+apply from: rootProject.file("gradle/fabric-release-jar-verify.gradle")
+// A mixin class that no shipped mixins.json lists is compiled, shipped and never applied, and
+// required:true never complains about that direction.
+apply from: rootProject.file("gradle/fabric-mixin-config-verify.gradle")
 
 ext.modmenuApiFamily = "yarn"
 ext.modmenuClientSourceSet = "client"

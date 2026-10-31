@@ -13,7 +13,12 @@ package org.universaltranslator.core;
  */
 public interface TranslationStreamListener {
     /**
-     * Called once per generated fragment, always with the accumulated translation.
+     * Called while the answer is being generated, always with the accumulated translation.
+     *
+     * <p>It is not called for every fragment: the providers publish at most once per
+     * {@code PARTIAL_TEXT_STEP_CHARS} characters, so an answer shorter than that step arrives in one
+     * closing callback and nothing before it. <strong>The last call always carries the complete
+     * translation</strong>, which is what a preview that only ever replaces its text can rely on.
      *
      * @param partialText translation of the current request as it stands, never {@code null} and
      *                    never empty

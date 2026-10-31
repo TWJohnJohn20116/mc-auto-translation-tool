@@ -5,6 +5,7 @@ import org.universaltranslator.core.TranslationDisplayMode;
 import org.universaltranslator.core.TranslationQuality;
 import org.universaltranslator.core.TranslationStats;
 import org.universaltranslator.core.DebugLog;
+import org.universaltranslator.core.PersistentTranslationCache;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.HudIndicatorColor;
 import org.universaltranslator.core.HudIndicatorContent;
@@ -36,8 +37,63 @@ import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Properties;
 import java.util.Set;
+import java.util.UUID;
 
 final class LegacyConfig {
+    /** Serializes every writer of one configuration file; see {@link #save()}. */
+    private static final java.util.concurrent.ConcurrentHashMap<Path, Object> SAVE_MONITORS =
+            new java.util.concurrent.ConcurrentHashMap<Path, Object>();
+    /**
+     * The advanced keys as they were last read from disk, shared by every snapshot of one file.
+     *
+     * <p>{@code toProperties()} re-reads those keys so a settings screen holding an older snapshot
+     * cannot undo a change the diagnostics panel made meanwhile, and one Save rebuilds it four times
+     * (the three {@code withXxx} copies plus the write). Each rebuild was a full file open and
+     * {@code Properties.load} on the calling thread — the render thread for a Save, the client tick
+     * for F8 — which costs 5–50 ms per read once {@code config/} sits in a cloud-synced folder. One
+     * copy is enough: this class is the only writer, and the stamp below re-reads as soon as the
+     * file changes by any other means.
+     */
+    private static volatile DiskCopy diskCopy;
+    /**
+     * How many saves this process has staged for writing, on any configuration file.
+     *
+     * <p>A cached copy is only trusted while this has not moved since it was read. {@link #save()}
+     * drops the copy inside the same monitor as the write, but a reader can read the entry just
+     * before that drop and stat the file just after the replace — and a filesystem whose timestamp
+     * granularity is coarser than that gap (FAT 2 s, some SMB and cloud-sync directories 1 s) reports
+     * the same (mtime, size) for a same-length rewrite. Counting the saves invalidates exactly that
+     * entry, without distrusting a correct one for a fixed window after every save.
+     */
+    private static volatile long saveCounter;
+
+    /**
+     * The last configuration this process loaded, or {@code null} before the first success.
+     *
+     * <p>{@link LegacyTranslationRuntime#shutdown()} drops the live copy when a load fails, which is
+     * exactly the case where the player needs the settings screen to repair the file; only the
+     * successful path of {@link #load(File)} writes this, so it can never present a configuration
+     * that was never readable.
+     */
+    private static volatile LegacyConfig lastLoaded;
+
+    /** One read of the configuration file: its parsed contents plus the stamp they were read at. */
+    private static final class DiskCopy {
+        final Path file;
+        final long lastModified;
+        final long size;
+        final Properties properties;
+        /** {@link LegacyConfig#saveCounter} as it stood when this copy was read. */
+        final long saveCount;
+
+        DiskCopy(Path file, long lastModified, long size, long saveCount, Properties properties) {
+            this.file = file;
+            this.lastModified = lastModified;
+            this.size = size;
+            this.saveCount = saveCount;
+            this.properties = properties;
+        }
+    }
     final boolean enabled;
     final boolean translateChat;
     final boolean translateOther;
@@ -197,6 +253,10 @@ final class LegacyConfig {
         return Collections.unmodifiableSet(claimed);
     }
 
+    static LegacyConfig lastLoaded() {
+        return lastLoaded;
+    }
+
     static LegacyConfig load(File configDirectory) throws IOException {
         if (!configDirectory.exists() && !configDirectory.mkdirs()) {
             throw new IOException("Could not create config directory: " + configDirectory);
@@ -210,9 +270,17 @@ final class LegacyConfig {
             }
         }
         Properties stored = new Properties();
+        boolean recovered = false;
         try (InputStreamReader reader = new InputStreamReader(
                 new FileInputStream(file), StandardCharsets.UTF_8)) {
             stored.load(reader);
+        } catch (IOException | RuntimeException malformed) {
+            // Same isolation as the modern Forge config: one unreadable byte used to disable
+            // translation for the whole session, and the broken file stayed in place for the next
+            // launch and for the settings screen that is the only way to repair it.
+            recovered = true;
+            stored = new Properties();
+            quarantine(file, malformed);
         }
         Properties properties = defaults();
         properties.putAll(stored);
@@ -226,9 +294,16 @@ final class LegacyConfig {
         properties.setProperty("config-version", "6");
         LocalConfigSecurity.restrictToOwner(file.toPath());
         LegacyConfig loaded = new LegacyConfig(
-                properties, file, new File(configDirectory, "universal-translator-cache.properties"));
-        if (migrated) {
-            loaded.save();
+                properties, file, new File(configDirectory, PersistentTranslationCache.FILE_NAME));
+        if (migrated || recovered) {
+            try {
+                loaded.save();
+            } catch (IOException unwritable) {
+                // Reading must not require a writable directory; failing here disabled translation
+                // over an optional write-back.
+                DebugLog.global().log("config", "write", "skipped",
+                        "reason", String.valueOf(unwritable.getClass().getSimpleName()));
+            }
         }
         // The statistics file sits next to the configuration. Reading it here is the one place every
         // platform passes through at startup, so no runtime has to know about statistics.
@@ -236,6 +311,7 @@ final class LegacyConfig {
                 file.toPath().resolveSibling(TranslationStats.FILE_NAME));
         DebugLog.global().configure(
                 file.toPath().resolveSibling(DebugLog.FILE_NAME), loaded.debugLog());
+        lastLoaded = loaded;
         return loaded;
     }
 
@@ -414,18 +490,66 @@ final class LegacyConfig {
         return configFile.toPath();
     }
 
+    /**
+     * Moves an unreadable configuration aside so the next launch starts from the defaults.
+     *
+     * <p>Renamed rather than deleted: the file may hold nothing but an edit the player can repair by
+     * hand, and the diagnostics page can point at the copy.
+     */
+    private static void quarantine(File file, Exception cause) {
+        try {
+            File backup = new File(file.getParentFile(), file.getName() + ".corrupt-"
+                    + System.currentTimeMillis());
+            Files.move(file.toPath(), backup.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            DebugLog.global().log("config", "quarantined",
+                    "file", String.valueOf(backup.getName()),
+                    "reason", String.valueOf(cause.getClass().getSimpleName()));
+        } catch (IOException | RuntimeException unquarantinable) {
+            // Nothing else can be done here; the defaults still let the session run.
+            DebugLog.global().log("config", "quarantine", "failed",
+                    "reason", String.valueOf(unquarantinable.getClass().getSimpleName()));
+        }
+    }
+
     void save() throws IOException {
         Path file = configFile.toPath();
-        Path temporary = file.resolveSibling(file.getFileName().toString() + ".tmp");
+        // One writer at a time per configuration file; see the note in the modern Forge config.
+        // Two paths do reach save() together (the settings screen's Save and the F8 toggle).
+        Path lockKey = file.toAbsolutePath();
+        Object monitor;
+        synchronized (SAVE_MONITORS) {
+            monitor = SAVE_MONITORS.get(lockKey);
+            if (monitor == null) {
+                monitor = new Object();
+                SAVE_MONITORS.put(lockKey, monitor);
+            }
+        }
+        synchronized (monitor) {
+            writeAtomically(file);
+            // What is on disk is now this snapshot, so no cached copy can be newer than it.
+            diskCopy = null;
+        }
+    }
+
+    private void writeAtomically(Path file) throws IOException {
+        // Merge before the generation moves. The merge read can then still be answered by the copy
+        // withXxx() just built — this process has not touched the file since — where bumping first
+        // made the stamp differ and forced one open plus Properties.load on every single save.
+        Properties staged = toProperties();
+        // Advance the generation only now, and still before the move below: a reader that stats the
+        // new file must never pick up the older count and trust a stale copy.
+        saveCounter++;
+        // Unique per attempt, so two writers can never delete each other's temporary file.
+        Path temporary = file.resolveSibling(
+                file.getFileName().toString() + "." + UUID.randomUUID() + ".tmp");
         try {
-            Files.deleteIfExists(temporary);
             Files.createFile(temporary);
             LocalConfigSecurity.restrictToOwner(temporary);
             try (OutputStreamWriter writer = new OutputStreamWriter(
                     Files.newOutputStream(temporary,
                             StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING),
                     StandardCharsets.UTF_8)) {
-                toProperties().store(writer,
+                staged.store(writer,
                         "MC Auto Translation Tool - online translation may send selected game, mod, and modpack text to this endpoint");
             }
             try {
@@ -479,6 +603,10 @@ final class LegacyConfig {
 
     String editorModel(String selectedProvider) {
         return onlineProviderConfig.llmEditorSettings(selectedProvider).model();
+    }
+
+    String editorApiVersion(String selectedProvider) {
+        return onlineProviderConfig.llmEditorApiVersion(selectedProvider);
     }
 
     boolean allows(TextKind kind) {
@@ -552,13 +680,73 @@ final class LegacyConfig {
         return properties;
     }
 
+    /**
+     * The whole configuration file as it currently stands on disk, read at most once per revision.
+     *
+     * @param file configuration file; {@code null} reads nothing
+     * @return the parsed file, or {@code null} when it cannot be read right now
+     */
+    private static Properties diskProperties(Path file) {
+        if (file == null) {
+            return null;
+        }
+        long lastModified;
+        long size;
+        try {
+            lastModified = Files.getLastModifiedTime(file).toMillis();
+            size = Files.size(file);
+        } catch (IOException | RuntimeException missing) {
+            return null;
+        }
+        DiskCopy cached = diskCopy;
+        long saves = saveCounter;
+        // save() already drops the copy under the monitor that performs the write, so this is the
+        // second line of defence rather than the first: the counter catches the reader that read the
+        // entry before the drop and reached the file after the replace. What no reader can catch is
+        // another process's same-length rewrite inside one timestamp tick, and a clock cannot tell
+        // those apart either.
+        if (cached != null && cached.saveCount == saves && cached.file.equals(file)
+                && cached.lastModified == lastModified && cached.size == size) {
+            return cached.properties;
+        }
+        Properties stored = new Properties();
+        try (InputStreamReader reader = new InputStreamReader(
+                Files.newInputStream(file), StandardCharsets.UTF_8)) {
+            stored.load(reader);
+        } catch (IOException | RuntimeException malformed) {
+            return null;
+        }
+        diskCopy = new DiskCopy(file, lastModified, size, saves, stored);
+        return stored;
+    }
+
+    /** Drops the shared copy of the file; called when the client releases its configuration. */
+    static void clearCaches() {
+        diskCopy = null;
+        saveCounter = 0L;
+    }
+
     private Properties toProperties() {
         Properties properties = new Properties();
         onlineProviderConfig.writeTo(properties);
         // Keep the advanced settings the diagnostics panel may have changed after this snapshot,
         // except for the ones this snapshot wrote itself (see ownedPromptKeys).
-        OnlineProviderConfig.preservePromptSettings(configFile.toPath(), properties,
-                ownedPromptKeys);
+        Properties stored = diskProperties(configFile.toPath());
+        if (stored == null) {
+            // Unreadable file: write this snapshot as it stands, and keep the trace the shared helper
+            // logs so a value the panel just wrote is not lost silently.
+            OnlineProviderConfig.preservePromptSettings(configFile.toPath(), properties,
+                    ownedPromptKeys);
+        } else {
+            for (String key : OnlineProviderConfig.promptKeys()) {
+                if (ownedPromptKeys.contains(key)) {
+                    continue;
+                }
+                if (stored.containsKey(key)) {
+                    properties.setProperty(key, stored.getProperty(key, ""));
+                }
+            }
+        }
         properties.setProperty("config-version", "6");
         properties.setProperty("enabled", Boolean.toString(enabled));
         properties.setProperty("translate-chat", Boolean.toString(translateChat));

@@ -3,6 +3,7 @@ package org.universaltranslator.fabric;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.loader.api.FabricLoader;
 import org.universaltranslator.core.LogMessages;
+import org.universaltranslator.core.ShutdownBudget;
 import org.universaltranslator.core.TranslationResult;
 import org.universaltranslator.core.TranslationStatusLocalizer;
 
@@ -26,12 +27,24 @@ import org.universaltranslator.core.TranslationStatusLocalizer;
  */
 public abstract class FabricClientBootstrapBase implements ClientModInitializer {
     private static final long FAILURE_NOTIFICATION_COOLDOWN_MILLIS = 60_000L;
+    /**
+     * The thread a blocked session close runs on.
+     *
+     * <p>Also the marker the stop hook reads: five generations already start this thread themselves
+     * and hand it the hook, so a hook that finds itself on it runs the close inline instead of
+     * nesting a second one.
+     */
+    private static final String TEARDOWN_THREAD_NAME = "universal-translator-stop";
 
     private boolean connectedLastTick;
     private int joinHintTicks = -1;
     private String lastRuntimeStatus = "";
     private long nextFailureNotificationAt;
     private boolean resendingTranslatedMessage;
+    /** Raw runtime status the two fields below were derived from; see {@link #notifyRuntimeStatus}. */
+    private String localizedStatusSource;
+    private String localizedStatusText = "";
+    private boolean localizedStatusFailure;
 
     protected FabricClientBootstrapBase() {
     }
@@ -96,19 +109,71 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
     protected abstract boolean toggleKeyPressed();
 
     /**
-     * True when {@code screen} is a chat screen.
+     * The names {@code ChatScreen} is known by, one per naming scheme this mod ships against.
      *
-     * <p>Answered by class name rather than {@code instanceof}: this base is compiled once for every
+     * <p>Answered by class rather than {@code instanceof}: this base is compiled once for every
      * generation from 1.14 to 26.3, and a compile-time {@code ChatScreen} reference would tie it to
-     * one generation's package. The trees that can name the class (the Ornithe ones) still override
-     * this with an exact {@code instanceof} check.
+     * one generation's package. A bare name comparison is not enough either, because the game remaps
+     * the class: {@code net.minecraft.class_408} in a production 1.14+ client, the yarn name in a
+     * development client, and 26.x's Mojmap package. Every shipped generation overrides
+     * {@link #isChatScreen(Object)} with an exact {@code instanceof}, but the generation that forgot
+     * to — eight of the thirteen client layers — left the chat-screen guard answering {@code false}
+     * for the whole session, so the list below is resolved once and answers for them.
      *
      * <p>Used by {@link #openSettingsFor(Object)}: while the chat screen is open, the settings key
      * belongs to the chat box, not to this mod.
      */
+    private static final String[] CHAT_SCREEN_TYPES = {
+            "net.minecraft.client.gui.screen.ChatScreen",
+            "net.minecraft.client.gui.screens.ChatScreen",
+            "net.minecraft.class_408",
+    };
+    /**
+     * The resolved form of {@link #CHAT_SCREEN_TYPES}; {@code null} until the first lookup.
+     *
+     * <p>Resolved without initializing the classes and cached for the life of the process: the
+     * entries are {@code Class} objects the class loader already holds, so there is no per-session
+     * state to release.
+     */
+    private static volatile Class<?>[] chatScreenTypes;
+
+    private static Class<?>[] chatScreenTypes() {
+        Class<?>[] resolved = chatScreenTypes;
+        if (resolved != null) {
+            return resolved;
+        }
+        java.util.List<Class<?>> found = new java.util.ArrayList<Class<?>>(CHAT_SCREEN_TYPES.length);
+        ClassLoader loader = FabricClientBootstrapBase.class.getClassLoader();
+        for (String name : CHAT_SCREEN_TYPES) {
+            try {
+                found.add(Class.forName(name, false, loader));
+            } catch (ClassNotFoundException absent) {
+                // Not one of this tree's names: try the next one.
+            } catch (LinkageError unreadable) {
+                // A name that resolves but cannot be linked is equally not an answer here.
+            }
+        }
+        resolved = found.toArray(new Class<?>[found.size()]);
+        chatScreenTypes = resolved;
+        return resolved;
+    }
+
+    /**
+     * True when {@code screen} is a chat screen.
+     *
+     * <p>Tries the resolved {@code ChatScreen} classes first and keeps the name comparison as the
+     * last resort for a tree where none of them resolves. Used by
+     * {@link #openSettingsFor(Object)}: while the chat screen is open, the settings key belongs to
+     * the chat box, not to this mod.
+     */
     protected boolean isChatScreen(Object screen) {
         if (screen == null) {
             return false;
+        }
+        for (Class<?> type : chatScreenTypes()) {
+            if (type.isInstance(screen)) {
+                return true;
+            }
         }
         String name = screen.getClass().getName();
         return name.endsWith(".ChatScreen") || name.endsWith(".ChatScreenBase");
@@ -148,7 +213,33 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
         registerStopHook(new Runnable() {
             @Override
             public void run() {
-                FabricTranslationRuntime.shutdown();
+                // Flush a queued settings write first: the teardown below can spend seconds closing
+                // the session, and a write queued behind it would never be finished.
+                FabricTranslationRuntimeBase.drainPendingSaves();
+                // The 1.8–1.13 trees already run this hook on a teardown thread of their own, so the
+                // close stays inline there and one shutdown keeps one thread. Every other generation
+                // calls the hook on the client thread, where the same close blocks "close the game"
+                // for up to five seconds with no upper bound, so it gets the bounded wait those trees
+                // already used — the budget the older copies took from ShutdownBudget. The one
+                // generation that registers this hook itself (1.16/1.16.1) therefore names its hook
+                // thread something else, or the check above would swallow its bound.
+                if (TEARDOWN_THREAD_NAME.equals(Thread.currentThread().getName())) {
+                    FabricTranslationRuntime.shutdown();
+                    return;
+                }
+                final Thread teardown = new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        FabricTranslationRuntime.shutdown();
+                    }
+                }, TEARDOWN_THREAD_NAME);
+                teardown.setDaemon(false);
+                teardown.start();
+                try {
+                    teardown.join(ShutdownBudget.HOOK_JOIN_MILLIS);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
             }
         });
         registerSendMessageHooks();
@@ -177,11 +268,13 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
         if (connected && joinHintTicks > 0 && --joinHintTicks == 0) {
             chat("message.universal_translator.join_hint");
         }
-        while (toggleKeyPressed()) {
+        // One toggle per tick: the body below rebuilds the provider, the session and the file, so a
+        // loop over a leftover press count repeated all three that many times on the client thread.
+        if (toggleKeyPressed()) {
             toggleFromKey();
         }
         notifyRuntimeStatus(connected);
-        while (openSettingsKeyPressed()) {
+        if (openSettingsKeyPressed()) {
             openSettingsFor(currentScreen());
         }
     }
@@ -197,7 +290,7 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
         FabricConfig previous = null;
         boolean runtimeChanged = false;
         try {
-            previous = FabricConfig.load(FabricLoader.getInstance().getConfigDir());
+            previous = liveConfig();
             FabricConfig updated = previous.withEnabled(!previous.enabled);
             if (updated.enabled) {
                 updated.validateProviderConfiguration();
@@ -206,7 +299,9 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
             FabricTranslationRuntime.initialize(updated);
             lastRuntimeStatus = "";
             nextFailureNotificationAt = 0L;
-            updated.save();
+            // Same writer the runtime's own home toggles use: the press must not write the file on
+            // the tick thread, and the player already sees the new state.
+            FabricTranslationRuntimeBase.saveInBackground(updated);
             overlay("message.universal_translator.toggle",
                     text(updated.enabled
                             ? "value.universal_translator.enabled"
@@ -247,10 +342,26 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
             return;
         }
         try {
-            openSettings(parent, FabricConfig.load(FabricLoader.getInstance().getConfigDir()));
+            openSettings(parent, liveConfig());
         } catch (Exception exception) {
             error(LogMessages.SETTINGS_OPEN_FAILED, exception);
         }
+    }
+
+    /**
+     * The configuration to build the next screen or toggle from.
+     *
+     * <p>The runtime already publishes the snapshot it is running, which is the one that was last
+     * written, so the settings key and the toggle key no longer re-read the file: {@code load()}
+     * creates a directory, stats the file, parses it, applies the POSIX restriction (an exception
+     * path on Windows), attaches the statistics file and reconfigures the debug log, all on the
+     * client thread and all visible as a frame hitch when {@code config/} sits on a network drive.
+     * Before the first {@code initialize} — a failed start — there is no snapshot, and the file is
+     * then the only answer.
+     */
+    private static FabricConfig liveConfig() throws java.io.IOException {
+        FabricConfig live = FabricTranslationRuntime.diagnosticsConfig();
+        return live != null ? live : FabricConfig.load(FabricLoader.getInstance().getConfigDir());
     }
 
     /**
@@ -258,6 +369,11 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
      *
      * <p>Failures are rate limited to one chat line per minute; recoveries reuse the overlay so a
      * flapping provider cannot flood the chat.
+     *
+     * <p>The localization and the failure classification are memoized per distinct raw status: both
+     * walk a table of twenty Chinese phrases, and {@link #toggleFromKey} clears
+     * {@link #lastRuntimeStatus} so the very next tick re-ran the whole scan for a status that had
+     * not changed at all.
      */
     final void notifyRuntimeStatus(boolean connected) {
         String current = connected ? FabricTranslationRuntime.status() : "";
@@ -272,8 +388,8 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
             nextFailureNotificationAt = 0L;
             return;
         }
-        String localized = TranslationStatusLocalizer.localize(current, this::translateKey);
-        if (TranslationStatusLocalizer.isFailure(current)) {
+        String localized = localizeStatus(current);
+        if (localizedStatusFailure) {
             long now = System.currentTimeMillis();
             if (now < nextFailureNotificationAt) {
                 return;
@@ -284,6 +400,18 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
             nextFailureNotificationAt = 0L;
             overlay("message.universal_translator.runtime_status", localized);
         }
+    }
+
+    /** Localized form of {@code raw}, reusing the previous answer when the raw status repeats. */
+    private String localizeStatus(String raw) {
+        if (raw.equals(localizedStatusSource)) {
+            return localizedStatusText;
+        }
+        String text = TranslationStatusLocalizer.localize(raw, this::translateKey);
+        localizedStatusSource = raw;
+        localizedStatusText = text;
+        localizedStatusFailure = TranslationStatusLocalizer.isFailure(raw);
+        return text;
     }
 
     /**

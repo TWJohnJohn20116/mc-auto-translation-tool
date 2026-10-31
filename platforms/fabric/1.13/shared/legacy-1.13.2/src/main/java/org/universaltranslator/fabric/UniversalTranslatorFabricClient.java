@@ -4,6 +4,7 @@ import net.fabricmc.api.ClientModInitializer;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.client.gui.screen.Screen;
+import org.universaltranslator.core.ShutdownBudget;
 
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -27,6 +28,16 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
     private static volatile Runnable stopHook;
     /** Set once the runtime has been shut down, so the JVM hook cannot run the body twice. */
     private static volatile boolean shutdownRequested;
+    /**
+     * Upper bound on how long the JVM shutdown hook waits for the teardown before letting it exit.
+     *
+     * <p>{@link ShutdownBudget#HOOK_JOIN_MILLIS} covers the configuration write and the store flush,
+     * which the close now does before it waits for its workers: a join shorter than the flush returned
+     * while the store was still being written, and no later path writes the burst it carries. What the
+     * bound does not cover is the wait for workers parked in a provider read, which at exit costs time
+     * and saves nothing.
+     */
+    private static final long SHUTDOWN_JOIN_MILLIS = ShutdownBudget.HOOK_JOIN_MILLIS;
 
     private UniversalTranslatorFabricClient() {
     }
@@ -39,12 +50,16 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
      */
     public static void tickFromMixin() {
         Runnable hook = tickHook;
-        if (hook == null) {
+        if (hook == null || shutdownRequested) {
             return;
         }
         try {
             hook.run();
         } catch (RuntimeException failure) {
+            LOGGER.log(Level.SEVERE, "MC Auto Translation Tool tick failed", failure);
+        } catch (Error failure) {
+            // A drifted NoSuchMethodError out of the status notifier is an Error, so it used to escape
+            // through MinecraftClient.tick()V and take the game down over one line of HUD text.
             LOGGER.log(Level.SEVERE, "MC Auto Translation Tool tick failed", failure);
         }
     }
@@ -55,19 +70,52 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
             return;
         }
         shutdownRequested = true;
+        // The screens' shared pool is dropped here so a closed game does not keep two daemon threads
+        // (and whatever request they are waiting on) alive.
+        ScreenWorkers.shutdown();
+        // Dropped here, not just flagged: the tick mixin keeps calling tickFromMixin() on every
+        // tick after this point, and a hook left in place kept resetting the render context and
+        // re-running the status notifier against a runtime with no session.
+        tickHook = null;
         Runnable hook = stopHook;
+        stopHook = null;
         if (hook == null) {
+            // Nothing to tear down, but a queued settings write still has to land.
+            FabricTranslationRuntimeBase.drainPendingSaves();
             return;
         }
+        // Bounded wait instead of running the teardown inline: it closes the coordinator (which
+        // settles open requests, shuts its workers down and waits up to 5 s for them) and then
+        // flushes the whole cache store, so running it on the JVM shutdown hook made "close the
+        // game" wait for all of that with no upper bound. The join budget is longer than that close
+        // on purpose, so the flush is not cut short; a teardown that still outlives it is ended by
+        // the JVM exiting.
+        final Runnable teardownBody = hook;
+        final Thread teardown = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                // Inside the joined thread so the join budget covers it: a settings write queued
+                // behind a session close that spends its whole budget on a parked worker is exactly
+                // the burst this drain exists to save, and on the hook thread it ran outside every
+                // bound there is.
+                FabricTranslationRuntimeBase.drainPendingSaves();
+                teardownBody.run();
+            }
+        }, "universal-translator-stop");
+        teardown.setDaemon(false);
+        teardown.start();
         try {
-            hook.run();
-        } catch (RuntimeException failure) {
-            LOGGER.log(Level.SEVERE, "MC Auto Translation Tool shutdown failed", failure);
+            teardown.join(SHUTDOWN_JOIN_MILLIS);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
         }
     }
 
     @Override
     public void onInitializeClient() {
+        // A fresh initialization (a client that re-enters after a full shutdown) must be able to
+        // shut down again: the flag describes one stopped hook, not the whole process.
+        shutdownRequested = false;
         INSTANCE.onInitializeClient();
     }
 

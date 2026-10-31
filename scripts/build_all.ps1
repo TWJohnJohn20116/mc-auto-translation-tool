@@ -5,8 +5,8 @@
 # 目標清單的權威來源是 .github/workflows/prepare-release.yml 的 TARGETS_JSON（48 個發布目標）。
 # 下面的分組只是把那 48 個目標依 JDK 分群後的結果：
 #   JDK 25 -> 26.x（fabric-26.x bundle + 4 forge + 4 neoforge）
-#   JDK 21 -> 8 個 fabric bundle／1.13–1.21 與其餘 forge／neoforge
-#   JDK 17 -> forge 1.16.5–1.20.1 與 neoforge-1.20.1
+#   JDK 21 -> 8 個 fabric bundle／1.13–1.21、其餘 forge／neoforge，以及 forge modern 1.16.5–1.20.1
+#             與 neoforge-1.20.1（根 build.gradle 的 subprojects 對它們要求的 toolchain 也是 21）
 #   JDK 8  -> platforms/forge/legacy 的 1.8.9、1.12.2（各自獨立 Gradle 建置）
 # 改動任一份清單時，prepare-release.yml、settings.gradle 與這裡必須一起改。
 $ErrorActionPreference = "Continue"
@@ -27,20 +27,20 @@ $manifest = "-Ploom_version_manifests=https://piston-meta.mojang.com/mc/game/ver
 Set-Location $root
 
 # JDK 也改成「先看 JAVA_HOME_<major>_X64，再從 Adoptium／ForgeGradle 的 Mavenizer 快取找」，
-# 不再寫死帶 build 號的目錄名。
+# 不再寫死帶 build 號的目錄名。解析延遲到每個分組之前才做，缺 JDK 只會影響需要它的那一組。
 $jdkSearchRoots = @(
     (Join-Path $env:ProgramFiles "Eclipse Adoptium"),
     (Join-Path $env:GRADLE_USER_HOME "caches\minecraftforge\forgegradle\mavenizer\caches")
 )
-$jdk = @{}
-foreach ($major in @(25, 21, 17, 8)) {
+function Resolve-Jdk {
+    param([int]$Major)
     $candidates = @()
-    $fromEnv = [Environment]::GetEnvironmentVariable("JAVA_HOME_${major}_X64")
+    $fromEnv = [Environment]::GetEnvironmentVariable("JAVA_HOME_${Major}_X64")
     if ($fromEnv) { $candidates += $fromEnv }
     foreach ($searchRoot in $jdkSearchRoots) {
         if ($searchRoot -and (Test-Path $searchRoot)) {
             $candidates += @(Get-ChildItem -Path $searchRoot -Directory -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -match "(^|-)jdk-?$major[._]" } |
+                Where-Object { $_.Name -match "(^|-)jdk-?$Major[._]" } |
                 Sort-Object Name -Descending |
                 ForEach-Object { $_.FullName })
         }
@@ -49,15 +49,10 @@ foreach ($major in @(25, 21, 17, 8)) {
         Where-Object { $_ -and (Test-Path (Join-Path $_ "bin\java.exe")) } |
         Select-Object -First 1
     if (-not $resolved) {
-        throw "找不到 JDK $major；請設定 JAVA_HOME_${major}_X64，或把它裝在 $($jdkSearchRoots -join ' / ')。"
+        throw "找不到 JDK $Major；請設定 JAVA_HOME_${Major}_X64，或把它裝在 $($jdkSearchRoots -join ' / ')。"
     }
-    $jdk[$major] = $resolved
+    return $resolved
 }
-
-$j25 = $jdk[25]
-$j21 = $jdk[21]
-$j17 = $jdk[17]
-$j8 = $jdk[8]
 
 function Invoke-TargetBuild {
     param(
@@ -71,8 +66,14 @@ function Invoke-TargetBuild {
     $taskArgs = @("--max-workers=8", "-x", "test", "-PtargetPlatform=$TargetPlatform", $manifest) + $Tasks
     Write-Host "==== $Name ===="
     $sw = [Diagnostics.Stopwatch]::StartNew()
+    # $LASTEXITCODE 只反映上一個「原生」命令，不會被 PowerShell 重置；先設成 -1，
+    # 這樣 gradlew 根本沒被執行時（路徑錯、被執行原則擋下）就不會沿用上一次成功建置的 0。
+    $global:LASTEXITCODE = -1
     & "$root\gradlew.bat" @taskArgs *> $log
     $code = $LASTEXITCODE
+    if ($null -eq $code -or $code -lt 0) {
+        throw "gradlew 沒有被執行（$Name），看不到離開碼；詳細輸出見 $log"
+    }
     $sw.Stop()
     Add-Content -Path (Join-Path $logDir "summary.txt") -Value ("{0,-28} exit={1} {2:n1}s" -f $Name, $code, $sw.Elapsed.TotalSeconds)
     Write-Host ("{0} exit={1} {2:n1}s" -f $Name, $code, $sw.Elapsed.TotalSeconds)
@@ -82,6 +83,7 @@ function Invoke-TargetBuild {
 $failed = 0
 
 # === JDK 25: 26.x platforms (Fabric + Forge + NeoForge) ===
+$j25 = Resolve-Jdk 25
 $jdk25Platforms = "fabric-26.x,forge-26.1,forge-26.1.1,forge-26.1.2,forge-26.2," +
     "neoforge-26.1,neoforge-26.1.1,neoforge-26.1.2,neoforge-26.2"
 $jdk25Tasks = @(
@@ -98,6 +100,7 @@ $jdk25Tasks = @(
 $failed += Invoke-TargetBuild "jdk25-combined" $j25 $jdk25Platforms $jdk25Tasks
 
 # === JDK 21: 1.13 through 1.21 platforms (Fabric + Forge + NeoForge merged) ===
+$j21 = Resolve-Jdk 21
 # fabric-1.16.x is the bundle project, which is what prepare-release.yml ships; building
 # platform-fabric-1.16.5 produced a single-version JAR that _assemble_* then treated as the bundle.
 $jdk21Platforms = "fabric-1.13.x,fabric-1.14-1.15.x,fabric-1.16.x,fabric-1.17-1.18.x,fabric-1.19.x,fabric-1.20.x,fabric-1.21.x," +
@@ -121,16 +124,21 @@ $jdk21Tasks = @(
 )
 $failed += Invoke-TargetBuild "jdk21-combined" $j21 $jdk21Platforms $jdk21Tasks
 
-# === JDK 17: Forge Modern & NeoForge 1.20.1 ===
-$jdk17Platforms = "forge-1.16.5,forge-1.18.2,forge-1.19.2,forge-1.20.1,neoforge-1.20.1"
-$jdk17Tasks = @(
+# === JDK 21: Forge Modern & NeoForge 1.20.1 ===
+# 這一組先前用 JDK 17，但根 build.gradle 的 subprojects 對 platform-forge-1.16.5／1.18.2／1.19.2／
+# 1.20.1 與 platform-neoforge-1.20.1 要求的 toolchain 是 21（只有 26.x 的前綴是 25），
+# options.release 才負責 8／17 的位元碼目標。用 17 等於讓 Gradle 去找一個 21 的工具鏈。
+$j21Modern = Resolve-Jdk 21
+$jdk21ModernPlatforms = "forge-1.16.5,forge-1.18.2,forge-1.19.2,forge-1.20.1,neoforge-1.20.1"
+$jdk21ModernTasks = @(
     ":platform-forge-1.16.5:build", ":platform-forge-1.18.2:build",
     ":platform-forge-1.19.2:build", ":platform-forge-1.20.1:build",
     ":platform-neoforge-1.20.1:build"
 )
-$failed += Invoke-TargetBuild "jdk17-forge-modern" $j17 $jdk17Platforms $jdk17Tasks
+$failed += Invoke-TargetBuild "jdk21-forge-modern" $j21Modern $jdk21ModernPlatforms $jdk21ModernTasks
 
 # === JDK 8: Legacy 1.8.9 & 1.12.2 (Parallel) ===
+$j8 = Resolve-Jdk 8
 Write-Host "==== legacy-parallel (1.8.9 & 1.12.2) ===="
 $swLegacy = [Diagnostics.Stopwatch]::StartNew()
 $job89 = Start-Job -ScriptBlock {

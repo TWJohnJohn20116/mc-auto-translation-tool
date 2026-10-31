@@ -28,7 +28,8 @@ def implementationJars = supportedVersions.collectEntries { gameVersion ->
 
 processResources {
     inputs.property "version", project.version
-    filesMatching("fabric.mod.json") { expand "version": project.version }
+    inputs.property "fabricDependency", gradle.ext.fabricApiModId
+    filesMatching("fabric.mod.json") { expand "version": project.version, "fabricDependency": gradle.ext.fabricApiModId }
 }
 
 jar {
@@ -37,32 +38,35 @@ jar {
 }
 ext.jarLicenseName = "LICENSE_universal_translator_bundle"
 apply from: rootProject.file("gradle/jar-contents.gradle")
+// The mod-list icon: one file under platforms/shared/lang/json, not a copy per bundle.
+apply from: rootProject.file("gradle/bundle-icon.gradle")
+// The reverse check every bundle needs: the presence checks below only prove that everything in
+// supportedVersions was packed, and the jar block builds that list from the same variable, so they
+// cannot see a fabric.mod.json that declares versions nobody builds. That is exactly how this
+// bundle came to advertise 38 Minecraft versions while shipping 26 implementations. The comparison
+// itself lives in one script so the four bundles cannot drift apart again.
+ext.bundleSupportedVersions = supportedVersions
+apply from: rootProject.file("gradle/bundle-metadata-verify.gradle")
 
 tasks.register("verifyBundle") {
     dependsOn jar
     doLast {
         def archive = jar.archiveFile.get().asFile
-        (['fabric.mod.json'] + supportedVersions.collect { "META-INF/jars/universal-translator-${it}.jar" }).each { path ->
-            if (!zipTree(archive).matching { include path }.files) throw new GradleException("Missing bundle entry: ${path}")
+        def required = ['fabric.mod.json', 'assets/universal_translator/icon.png'] + supportedVersions.collect { "META-INF/jars/universal-translator-${it}.jar" }
+        // One walk for the whole list: collect the entries that exist, then compare names. zipTree is
+        // the only reader that sees the entries `jar` writes from other tasks' outputs; a raw ZipFile
+        // on the same path reports the nested jars as absent.
+        def present = [] as Set
+        zipTree(archive).matching {
+            include "fabric.mod.json"
+        include "assets/universal_translator/icon.png"
+            include "META-INF/jars/universal-translator-*.jar"
+        }.files.each { present.add(it.name) }
+        def missing = required.findAll { !present.contains(it.tokenize('/').last()) }
+        if (!missing.isEmpty()) {
+            throw new GradleException("Missing bundle entries: ${missing}")
         }
-        // The reverse direction. Presence checks above only prove that everything in
-        // supportedVersions was packed; they cannot see a fabric.mod.json that declares versions
-        // nobody builds. That is exactly how this bundle came to advertise 38 Minecraft versions
-        // while shipping 26 implementations: the Loader then treats 1.0.0-1.2.5 and the four
-        // unmappable 1.6/1.7 builds as supported and fails them at resolution time.
-        def metadata = new groovy.json.JsonSlurper().parse(file("src/main/resources/fabric.mod.json"))
-        def declaredJars = metadata.jars.collect { entry ->
-            entry.file.tokenize('/').last()
-                    .replace('universal-translator-', '')
-                    .replace('.jar', '')
-        }
-        def declaredMinecraft = metadata.depends.minecraft
-        if (declaredJars != supportedVersions) {
-            throw new GradleException("fabric.mod.json jars ${declaredJars} != supportedVersions ${supportedVersions}")
-        }
-        if (declaredMinecraft != supportedVersions) {
-            throw new GradleException("fabric.mod.json depends.minecraft ${declaredMinecraft} != supportedVersions ${supportedVersions}")
-        }
+        verifyBundleMetadata()
         println "Verified ${archive.name}: all ${supportedVersions.size()} legacy Fabric implementations present"
     }
 }

@@ -43,15 +43,49 @@ requiredCoordinates.each { coordinate ->
 
 def sharedRoot = rootProject.file("platforms/neoforge/shared")
 def entryLayer = new File(sharedRoot, "entrypoints/${project.ext.neoforgeEntryLayer}")
-if (!entryLayer.isDirectory()) {
+if (!new File(entryLayer, "src/main/java").isDirectory()) {
+    // A directory without src/main/java contributes no @Mod class, and a srcDir that does not exist is
+    // ignored in silence: the jar then ships no entrypoint at all and the loader reports "no mod
+    // entrypoint" for a module whose build was green.
     throw new GradleException(
-            "Unknown NeoForge entry layer '${project.ext.neoforgeEntryLayer}'")
+            "NeoForge entry layer '${project.ext.neoforgeEntryLayer}' has no src/main/java under ${sharedRoot}")
+}
+
+// Which entrypoint layers compile the shared client body (entrypoints/common), and the per-layer
+// directories that hold it. Every registered layer must appear here even when the list is empty:
+// a layer missing from the map used to mean it had to re-implement the shared client on its own,
+// with nothing pointing that out.
+def entryLayerSharedDirs = [
+        "1.20.2-1.20.4" : [],
+        "1.20.6"        : ["entrypoints/common"],
+        "1.21-1.21.1"   : ["entrypoints/common"],
+        "1.21.2-1.21.8" : [],
+        "1.21.9-1.21.11": [],
+        "26.1-26.1.2"   : [],
+        "26.2"          : []
+]
+if (!entryLayerSharedDirs.containsKey(project.ext.neoforgeEntryLayer)) {
+    throw new GradleException(
+            "NeoForge entry layer '${project.ext.neoforgeEntryLayer}' is not listed in " +
+                    "entryLayerSharedDirs of platforms/neoforge/shared.gradle")
+}
+def entryLayerShared = entryLayerSharedDirs[project.ext.neoforgeEntryLayer].collect {
+    new File(sharedRoot, it)
+}
+def missingEntryShares = entryLayerShared.findAll { !new File(it, "src/main/java").isDirectory() }
+if (!missingEntryShares.isEmpty()) {
+    throw new GradleException(
+            "Missing shared NeoForge entrypoint directories: " +
+                    missingEntryShares.collect { it.name }.join(", "))
 }
 
 def metadataLayer = new File(sharedRoot, "metadata/${project.ext.neoforgeMetadataLayer}")
-if (!metadataLayer.isDirectory()) {
+if (!new File(metadataLayer, "src/main/resources/universal-translator.neoforge.mixins.json").isFile()) {
+    // processResources copies this directory with from(), which is silent when the file is absent, so
+    // the 19 toml files kept pointing at a MixinConfigs entry that no jar contained.
     throw new GradleException(
-            "Unknown NeoForge metadata layer '${project.ext.neoforgeMetadataLayer}'")
+            "NeoForge metadata layer '${project.ext.neoforgeMetadataLayer}' does not ship " +
+                    "universal-translator.neoforge.mixins.json under ${sharedRoot}")
 }
 
 def forgeSharedRoot = rootProject.file(project.ext.neoforgeForgeSharedRoot)
@@ -109,6 +143,48 @@ if (!missingSharedLayers.isEmpty()) {
     throw new GradleException("Missing Forge shared layers: " + missingSharedLayers.join(", "))
 }
 
+// A template that holds a placeholder the module never supplies used to reach the jar unchanged, so
+// pack.mcmeta shipped as "\"pack_format\": ${packFormat}" — not valid JSON, which makes the whole
+// built-in resource pack (and with it every language file) unreadable while the build stays green.
+// Checked against the sources so the failure names the coordinate, not "template evaluation failed".
+def packTemplates = []
+packTemplates.add(new File(metadataLayer, "src/main/resources/pack.mcmeta"))
+forgeLayers.each { packTemplates.add(new File(it, "src/main/resources/pack.mcmeta")) }
+forgeExtraRoots.each { packTemplates.add(new File(it, "src/main/resources/pack.mcmeta")) }
+def missingPackCoordinates = []
+packTemplates.findAll { it.isFile() }.each { template ->
+    def body = template.getText("UTF-8")
+    if (body.contains('${packFormat}') && !project.ext.has("neoforgePackFormat")) {
+        missingPackCoordinates.add("neoforgePackFormat (${relativePath(template)})".toString())
+    }
+    if (body.contains('${resourcePackFormat}') && !project.ext.has("neoforgeResourcePackFormat")) {
+        missingPackCoordinates.add("neoforgeResourcePackFormat (${relativePath(template)})".toString())
+    }
+}
+if (!missingPackCoordinates.isEmpty()) {
+    throw new GradleException(
+            "${project.path} ships a pack.mcmeta template with unexpanded placeholders; declare " +
+                    missingPackCoordinates.join(", "))
+}
+
+// The value the 26.x template expands is the client's resource pack format, which only exists inside the
+// client jar (version.json); the 26.x modules declared the data pack format instead, so the pack was
+// incompatible with its own client and every language file went unreadable while the build stayed green.
+def resourcePackFormats26 = [
+        "26.1"  : 84,
+        "26.1.1": 84,
+        "26.1.2": 84,
+        "26.2"  : 88
+]
+def expectedResourcePackFormat26 = resourcePackFormats26[project.ext.neoforgeMinecraftVersion]
+if (expectedResourcePackFormat26 != null && project.ext.has("neoforgeResourcePackFormat")
+        && project.ext.neoforgeResourcePackFormat != expectedResourcePackFormat26) {
+    throw new GradleException(
+            "NeoForge ${project.ext.neoforgeMinecraftVersion} declares neoforgeResourcePackFormat " +
+                    "${project.ext.neoforgeResourcePackFormat}, but its client's version.json resource " +
+                    "format is ${expectedResourcePackFormat26}")
+}
+
 version = project.mod_version
 group = project.maven_group
 
@@ -127,8 +203,10 @@ sourceSets {
         java.srcDir new File(rootProject.file("platforms/forge/shared"),
                 "rendered-1.19.2-plus/src/main/java")
         // ForgeLocalTextGuard moved to a shared Forge layer too; NeoForge reuses the Forge layers,
-        // so it needs it explicitly. NeoForge 26.2 keeps its own copy (client.gui.screen()).
-        if (project.ext.neoforgeEntryLayer != "26.2") {
+        // so it needs it explicitly. Both 26.x layers keep their own copy instead (26.2 reaches the
+        // chat field through client.gui.screen(), 26.1-26.1.2 through client.screen), and their Forge
+        // api layers already supply it.
+        if (!(project.ext.neoforgeEntryLayer in ["26.1-26.1.2", "26.2"])) {
             java.srcDir new File(rootProject.file("platforms/forge/shared"),
                     "local-guard-1.18.2-plus/src/main/java")
         }
@@ -141,10 +219,8 @@ sourceSets {
         java.srcDir new File(entryLayer, "src/main/java")
         // UniversalTranslatorNeoForgeClient is identical for the 1.20.6 and 1.21-1.21.1 entrypoint
         // layers; the other layers differ in how they read the client state, so they keep their own.
-        if (project.ext.neoforgeEntryLayer in ["1.20.6", "1.21-1.21.1"]) {
-            java.srcDir new File(rootProject.file("platforms/neoforge/shared"),
-                    "entrypoints/common/src/main/java")
-        }
+        // The mapping lives in entryLayerSharedDirs above so a new layer cannot silently omit it.
+        entryLayerShared.each { shared -> java.srcDir new File(shared, "src/main/java") }
         forgeLayers.each { layer -> java.srcDir new File(layer, "src/main/java") }
         forgeExtraRoots.each { extra -> java.srcDir new File(extra, "src/main/java") }
         forgeScreenRoots.each { root -> java.srcDir new File(root, "src/main/java") }
@@ -186,16 +262,20 @@ tasks.named("processResources", ProcessResources).configure {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 
     inputs.property "version", project.version
+    // One expansion covering every format coordinate the module declares. Registering a separate
+    // content filter per coordinate meant the first one also ran over a template holding the other
+    // placeholder, which SimpleTemplateEngine reports as MissingPropertyException.
+    def packFormatValues = [:]
     if (project.ext.has("neoforgePackFormat")) {
-        inputs.property "packFormat", project.ext.neoforgePackFormat
-        filesMatching("pack.mcmeta") {
-            expand "packFormat": project.ext.neoforgePackFormat
-        }
+        packFormatValues["packFormat"] = project.ext.neoforgePackFormat
     }
     if (project.ext.has("neoforgeResourcePackFormat")) {
-        inputs.property "resourcePackFormat", project.ext.neoforgeResourcePackFormat
+        packFormatValues["resourcePackFormat"] = project.ext.neoforgeResourcePackFormat
+    }
+    if (!packFormatValues.isEmpty()) {
+        packFormatValues.each { key, value -> inputs.property(key.toString(), value) }
         filesMatching("pack.mcmeta") {
-            expand "resourcePackFormat": project.ext.neoforgeResourcePackFormat
+            expand packFormatValues
         }
     }
     filesMatching("META-INF/neoforge.mods.toml") {
@@ -208,7 +288,22 @@ tasks.named("processResources", ProcessResources).configure {
 
 apply from: rootProject.file("gradle/jar-contents.gradle")
 
+// The class-file gate the Fabric and Forge trees run. These nineteen release targets had none: the
+// bytecode level rested on this module's neoforgeJavaRelease alone, and a tree-wide toolchain change
+// would have shipped without anything reading the produced jar back. No remapJar exists here, so the
+// gate inspects jar, whose entries are this project's own compiled classes. ModDevGradle also writes
+// compile options of its own, so the gate keeps only the class-header half here.
+ext.fabricReleaseJava = project.ext.neoforgeJavaRelease
+ext.fabricReleaseJarSkipReleaseCheck = true
+apply from: rootProject.file("gradle/fabric-release-jar-verify.gradle")
+
 tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
     options.release = project.ext.neoforgeJavaRelease
 }
+
+// The reverse mixin check the Fabric trees already run: a @Mixin class that no shipped mixins.json names
+// compiles into the JAR, ships, and is never applied, and `required: true` only requires that every name
+// it lists exists. It found this family after the fact — the committed 1.20.1/1.20.4/1.20.6 NeoForge JARs
+// carried InGameHudStatusIndicatorMixin unlisted — so the metadata layers are checked here from now on.
+apply from: rootProject.file("gradle/fabric-mixin-config-verify.gradle")

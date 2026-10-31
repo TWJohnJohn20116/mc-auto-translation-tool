@@ -76,16 +76,30 @@ public final class TargetLanguage {
 
     public static String nextPreset(String language) {
         String canonical = canonicalize(language);
+        if (isAuto(canonical)) {
+            // AUTO is the source-detection sentinel and never a target, so cycling used to answer
+            // "auto" for ever and the hotkey did nothing at all. A target of auto means "nothing
+            // chosen", which is the same default translationInstruction() falls back to.
+            return SIMPLIFIED_CHINESE;
+        }
         for (int index = 0; index < PRESETS.length; index++) {
             if (PRESETS[index].equals(canonical)) {
                 return PRESETS[(index + 1) % PRESETS.length];
             }
         }
-        return SIMPLIFIED_CHINESE;
+        // A code the presets do not contain came from a hand-edited setting, so it belongs to the
+        // player: cycling used to answer with the first preset, which the caller then saved, and the
+        // original value was gone. Only a value with nothing left in it falls back to the default.
+        return canonical.isEmpty() ? SIMPLIFIED_CHINESE : canonical;
     }
 
     public static String displayName(String language) {
         String canonical = canonicalize(language);
+        if (canonical.isEmpty() || isAuto(canonical)) {
+            // AUTO is the source-detection sentinel and never a target, so a hand-edited
+            // target-language=auto shows as "not set" instead of the bare code.
+            return "未设置";
+        }
         if (SIMPLIFIED_CHINESE.equals(canonical)) {
             return "简体中文";
         }
@@ -121,6 +135,12 @@ public final class TargetLanguage {
 
     public static String translationInstruction(String language) {
         String canonical = canonicalize(language);
+        if (isAuto(canonical)) {
+            // AUTO tells the provider to detect the source language; it is not a target, and the prompt
+            // it produced ("translate the user text to auto") was rejected by every model. A target of
+            // auto means "nothing chosen", which is the default target, not a broken instruction.
+            canonical = SIMPLIFIED_CHINESE;
+        }
         if (SIMPLIFIED_CHINESE.equals(canonical)) {
             return "Simplified Chinese (zh-CN). Use Simplified Chinese characters";
         }

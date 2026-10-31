@@ -1,5 +1,6 @@
 package org.universaltranslator.core.provider;
 
+import org.universaltranslator.core.TranslationOutputValidator;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationRequest;
 import org.universaltranslator.core.net.CryptoSupport;
@@ -63,12 +64,28 @@ public final class YoudaoTranslationProvider implements TranslationProvider {
         }
         String response = http.postForm(endpoint, CryptoSupport.formEncode(fields),
                 Collections.<String, String>emptyMap());
-        String translated = parseTranslatedText(response);
+        // errorCode is checked first: a warning code can come back with a translation array, and
+        // "the text happened to be there" is not the same as "the request succeeded".
+        String errorCode = ProviderErrors.pathOrNull("Youdao", response, "errorCode");
+        if (errorCode != null && !errorCode.trim().isEmpty() && !"0".equals(errorCode.trim())) {
+            throw BaiduTranslationProvider.providerError(
+                    "Youdao", response, "errorCode", "msg");
+        }
+        String translated;
+        try {
+            translated = parseTranslatedText(response);
+        } catch (IllegalArgumentException malformed) {
+            // The reply is not the provider's document at all, which another attempt can answer
+            // differently. The reader's exception travels in the message rather than as the cause:
+            // the fallback decision reads an IllegalArgumentException inside the chain as "this
+            // request cannot succeed" and therefore refused exactly these failures.
+            throw ProviderErrors.unreadable("Youdao", response, malformed.getMessage());
+        }
         if (translated == null || translated.trim().isEmpty()) {
             throw BaiduTranslationProvider.providerError(
                     "Youdao", response, "errorCode", "msg");
         }
-        return translated;
+        return TranslationOutputValidator.requireValid(request.getText(), translated);
     }
 
     /** Joins one {@code translation[]} element per requested line, in order. */

@@ -13,9 +13,11 @@ requiredProperties.each { propertyName ->
 // Fabric API's mod id is `fabric-api` — that is what the 1.21 and 26.x fabric.mod.json declare, and
 // what Fabric Loader matches against `depends`. It used to be written out per version, and eighteen
 // of them said `fabric` while the 1.19.2+ ones said `fabric-api`; the two spellings cannot both be
-// right, so the value now has one default and a version only overrides it if it really differs.
+// right. The default below is now the only definition — the twenty-eight version scripts that repeated
+// the same value are gone, because they made this branch unreachable — and it reads
+// settings.gradle's gradle.ext.fabricApiModId. A version overrides it only if it really differs.
 if (!project.ext.has("legacyFabricDependency")) {
-    project.ext.legacyFabricDependency = "fabric-api"
+    project.ext.legacyFabricDependency = project.gradle.ext.fabricApiModId
 }
 
 def sourceLayers = [
@@ -74,6 +76,18 @@ def layers = sourceLayers[gameVersion]
 if (layers == null) {
     throw new GradleException("No Fabric legacy source layers are registered for ${gameVersion}")
 }
+// Layer names that are mount flags only: the code they pull in lives in platforms/fabric/shared/*,
+// so this tree has no client source directory of that name. Kept as an explicit list so the srcDir
+// loop below can tell "flag" from "typo" — every name used to be treated as a path as well, which
+// silently added four non-existent source directories to twenty-one projects and would have produced
+// a duplicate class the day one of those directories appeared.
+def sharedFlagLayers = [
+        "family/1.16-common",
+        "family/1.16.0-1.16.4",
+        "family/1.16.5",
+        "family/1.17",
+        "rendered/1.19.2-plus"
+] as Set
 
 def sharedRoot = rootProject.file("platforms/fabric/legacy/shared")
 def rootForLayer = { layer ->
@@ -251,9 +265,28 @@ if (splitEnvironment) {
                 java.srcDir rootProject.file("platforms/fabric/shared/mixin-1.14-1.16/src/client/java")
             }
             layers.each { layer ->
-                java.srcDir new File(rootForLayer(layer), "${layer}/src/client/java")
+                def layerDir = new File(rootForLayer(layer), "${layer}/src/client/java")
+                if (layerDir.directory) {
+                    java.srcDir layerDir
+                } else if (!sharedFlagLayers.contains(layer)) {
+                    // Neither a directory nor a known mount flag: a typo, or a layer whose sources were
+                    // never added. Gradle ignores a missing srcDir in silence, so the project would
+                    // build without the code the table promised.
+                    throw new GradleException(
+                            "Source layer '${layer}' of ${gameVersion} has no directory under " +
+                                    "${rootForLayer(layer)} and is not one of the shared flag layers " +
+                                    sharedFlagLayers)
+                }
             }
         }
+    }
+    // Two of the six shared HUD/input mixins hook targets that 1.19.3 removed: ChatHud.render's
+    // (MatrixStack;I) became (MatrixStack;III), and SignEditScreen.render moved to
+    // AbstractSignEditScreen. The 1.19.3-1.19.4 family layer carries its own pair for those, so
+    // compiling these two as well only put dead classes and refmap entries into the released jars —
+    // and no config may name them (the targets are gone, so `required: true` would refuse to start).
+    if (gameVersion.startsWith("1.19.3") || gameVersion.startsWith("1.19.4")) {
+        sourceSets.client.java.exclude "**/SignEditScreenMixin.java", "**/ChatHudContextMixin.java"
     }
 } else {
     sourceSets {
@@ -338,13 +371,26 @@ if (splitEnvironment) {
                 java.srcDir rootProject.file("platforms/fabric/shared/mixin-1.14-1.16/src/client/java")
             }
             layers.each { layer ->
-                java.srcDir new File(rootForLayer(layer), "${layer}/src/client/java")
+                def layerDir = new File(rootForLayer(layer), "${layer}/src/client/java")
+                if (layerDir.directory) {
+                    java.srcDir layerDir
+                } else if (!sharedFlagLayers.contains(layer)) {
+                    throw new GradleException(
+                            "Source layer '${layer}' of ${gameVersion} has no directory under " +
+                                    "${rootForLayer(layer)} and is not one of the shared flag layers " +
+                                    sharedFlagLayers)
+                }
             }
         }
     }
 }
 
 processResources {
+    // fabric.mod.json is the only resource with non-ASCII content ("authors"), and Copy.expand reads
+    // the template with the platform default charset unless this is set: on a Windows dev box the
+    // UTF-8 author name would be decoded as CP950/CP936 and written back with replacement characters,
+    // so the same commit produced a different jar locally than on CI.
+    filteringCharset = "UTF-8"
     inputs.properties(
             "version": project.version,
             "minecraftVersion": gameVersion,
@@ -377,6 +423,17 @@ java {
 }
 
 apply from: rootProject.file("gradle/jar-contents.gradle")
+// A mixin class that no shipped mixins.json lists is compiled, shipped and never applied — the
+// failure mode 1.19.3-1.19.4 shipped with — and required:true never complains about the reverse.
+apply from: rootProject.file("gradle/fabric-mixin-config-verify.gradle")
+
+// verify_release_jars.py derives its class-file ceiling from the published file name, and a platform
+// artifact is called mc-auto-translation-tool-fabric-<mc version>-<mod version>.jar, which never
+// matches its RELEASE_JAR pattern — _expected_class_major() then returned null and the Java 8/17/21
+// gate was skipped for every target that uses this script. Stage a copy under the published name
+// (same bytes; the build output keeps its own name) and verify that.
+def stagedReleaseJar = layout.buildDirectory.file(
+        "verify-release/MCAutoTranslationTool-${project.version}-mc${gameVersion}-fabric.jar")
 
 tasks.register("verifyBuiltJar", Exec) {
     group = "verification"
@@ -386,10 +443,16 @@ tasks.register("verifyBuiltJar", Exec) {
     inputs.file(rootProject.file("scripts/verify_release_jars.py"))
     doFirst {
         def pythonCmd = System.getProperty("os.name").toLowerCase().contains("windows") ? "python" : "python3"
+        def released = tasks.named("remapJar").get().archiveFile.get().asFile
+        def staged = stagedReleaseJar.get().asFile
+        staged.parentFile.mkdirs()
+        released.withInputStream { input ->
+            staged.withOutputStream { output -> output << input }
+        }
         commandLine(
                 pythonCmd,
                 rootProject.file("scripts/verify_release_jars.py"),
-                tasks.named("remapJar").get().archiveFile.get().asFile
+                staged
         )
     }
 }

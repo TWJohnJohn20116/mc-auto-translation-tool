@@ -8,6 +8,7 @@ ext.forgeVersion = "64.1.0"
 ext.forgeLoaderMajor = "64"
 ext.forgeMinecraftNextVersion = "26.2"
 ext.forgeUseEventBusValidator = true
-ext.forgeResourcePackFormat = 101
+// Resource pack format from the client's version.json (26.1.2 = 84.0), not the data pack format (101).
+ext.forgeResourcePackFormat = 84
 
 apply from: rootProject.file("platforms/forge/26.x/shared.gradle")

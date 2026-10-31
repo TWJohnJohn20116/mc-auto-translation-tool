@@ -4,7 +4,12 @@ def versionFamilies = [
         "1.21.9-1.21.11": ["1.21.9", "1.21.10", "1.21.11"]
 ]
 
-def gameVersion = project.name - "platform-forge-"
+// Groovy's String.minus removes the first occurrence of the substring, not a prefix, so this only
+// derived the right version while the project name contained "platform-forge-" exactly once. Strip the
+// prefix explicitly so the value the versionFamilies lookup uses cannot differ from the directory name.
+def gameVersion = project.name.startsWith("platform-forge-")
+        ? project.name.substring("platform-forge-".length())
+        : project.name
 def family = versionFamilies.find { entry -> entry.value.contains(gameVersion) }?.key
 if (family == null) {
     throw new GradleException("No Forge 1.21 source family is registered for ${project.name}")
@@ -55,5 +60,8 @@ sourceSets {
     }
 }
 
-project.ext.forgeJavaRelease = 21
+// The release this tree compiles for comes from settings.gradle's treeJavaRelease — the same table the
+// Mixin compatibilityLevel bounds are derived from — instead of being a second copy of the number that
+// the bounds would not follow.
+project.ext.forgeJavaRelease = gradle.ext.treeJavaTarget("platforms/forge/1.21/")
 apply from: rootProject.file("platforms/forge/shared.gradle")

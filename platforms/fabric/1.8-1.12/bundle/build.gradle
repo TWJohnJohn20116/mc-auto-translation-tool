@@ -28,7 +28,8 @@ def implementationJars = supportedVersions.collectEntries { gameVersion ->
 
 processResources {
     inputs.property "version", project.version
-    filesMatching("fabric.mod.json") { expand "version": project.version }
+    inputs.property "fabricDependency", gradle.ext.fabricApiModId
+    filesMatching("fabric.mod.json") { expand "version": project.version, "fabricDependency": gradle.ext.fabricApiModId }
 }
 
 jar {
@@ -37,14 +38,32 @@ jar {
 }
 ext.jarLicenseName = "LICENSE_universal_translator_bundle"
 apply from: rootProject.file("gradle/jar-contents.gradle")
+// The mod-list icon: one file under platforms/shared/lang/json, not a copy per bundle.
+apply from: rootProject.file("gradle/bundle-icon.gradle")
+// The reverse direction: a fabric.mod.json that declares a version this jar does not ship would
+// pass every presence check below, and the Loader then fails that version at resolution time.
+ext.bundleSupportedVersions = supportedVersions
+apply from: rootProject.file("gradle/bundle-metadata-verify.gradle")
 
 tasks.register("verifyBundle") {
     dependsOn jar
     doLast {
         def archive = jar.archiveFile.get().asFile
-        (['fabric.mod.json'] + supportedVersions.collect { "META-INF/jars/universal-translator-${it}.jar" }).each { path ->
-            if (!zipTree(archive).matching { include path }.files) throw new GradleException("Missing bundle entry: ${path}")
+        def required = ['fabric.mod.json', 'assets/universal_translator/icon.png'] + supportedVersions.collect { "META-INF/jars/universal-translator-${it}.jar" }
+        // One walk for the whole list: collect the entries that exist, then compare names. zipTree is
+        // the only reader that sees the entries `jar` writes from other tasks' outputs; a raw ZipFile
+        // on the same path reports the nested jars as absent.
+        def present = [] as Set
+        zipTree(archive).matching {
+            include "fabric.mod.json"
+        include "assets/universal_translator/icon.png"
+            include "META-INF/jars/universal-translator-*.jar"
+        }.files.each { present.add(it.name) }
+        def missing = required.findAll { !present.contains(it.tokenize('/').last()) }
+        if (!missing.isEmpty()) {
+            throw new GradleException("Missing bundle entries: ${missing}")
         }
+        verifyBundleMetadata()
         println "Verified ${archive.name}: all ${supportedVersions.size()} Minecraft 1.8.9-1.12.2 implementations present"
     }
 }

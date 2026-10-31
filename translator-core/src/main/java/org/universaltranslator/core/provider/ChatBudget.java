@@ -79,4 +79,37 @@ final class ChatBudget {
         int requested = Math.min(length * 2 + 32, ceiling);
         return Math.max(minimum, requested);
     }
+
+    /**
+     * Per-entry allowance in a batch completion budget for the reply's JSON key, its quotes and the
+     * separator between entries.
+     */
+    static final int BATCH_REPLY_ENTRY_TOKENS = 12;
+
+    /**
+     * Completion budget for one batch reply, in prompt tokens rather than characters.
+     *
+     * <p>Sizing a batch from the JSON <em>character</em> count of the request overestimated by about
+     * four times on ASCII text, so every batch asked for the declared ceiling, an endpoint with a
+     * smaller output cap refused it, and the batch path paid for that refusal on every batch of the
+     * session. The prompt estimate is the number the context arithmetic already trusts, scaled by
+     * three: a CJK answer costs about one token per character while the same meaning in ASCII costs
+     * a quarter of that per character, which puts a translation near three times its prompt estimate
+     * — under it truncates the reply, and a truncated JSON saves nothing.
+     *
+     * <p>{@code max_tokens} is an upper bound rather than a reservation, so a generous value costs
+     * nothing for a model that stops early.
+     *
+     * @param requestBody the JSON request that was built
+     * @param entries number of texts the reply has to carry
+     * @param ceiling largest value the endpoint accepts
+     * @param minimum smallest value worth sending
+     * @return completion tokens to ask for
+     */
+    static int batchCompletionBudget(String requestBody, int entries, int ceiling, int minimum) {
+        int escaping = requestBody == null ? 0 : Math.max(0, requestBody.length() / 16);
+        int requested = estimatePromptTokens(requestBody) * 3
+                + BATCH_REPLY_ENTRY_TOKENS * Math.max(1, entries) + escaping + 32;
+        return Math.max(minimum, Math.min(requested, ceiling));
+    }
 }

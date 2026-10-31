@@ -28,6 +28,9 @@ public enum HudIndicatorVisibility {
 
     private final String configName;
 
+    /** Cached once: {@code values()} clones the whole array on every call. */
+    private static final HudIndicatorVisibility[] VALUES = values();
+
     HudIndicatorVisibility(String configName) {
         this.configName = configName;
     }
@@ -40,7 +43,7 @@ public enum HudIndicatorVisibility {
     public static HudIndicatorVisibility fromConfig(String value) {
         if (value != null) {
             String normalized = value.trim().toLowerCase(java.util.Locale.ROOT).replace('_', '-');
-            for (HudIndicatorVisibility visibility : values()) {
+            for (HudIndicatorVisibility visibility : VALUES) {
                 if (visibility.configName.equals(normalized)) {
                     return visibility;
                 }

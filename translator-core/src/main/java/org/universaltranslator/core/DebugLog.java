@@ -90,9 +90,19 @@ public final class DebugLog {
     private static final DateTimeFormatter TIMESTAMP =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS", Locale.ROOT);
 
+    /** The credential names {@link #NAMED_SECRET} and {@link #NAMED_SECRET_SPACED} match. */
+    private static final String[] CREDENTIAL_NAMES = {
+            "key", "secret", "token", "password", "credential"
+    };
+
     private static final DebugLog INSTANCE = new DebugLog();
 
     private final Object lock = new Object();
+    /**
+     * Held only around the file system calls themselves, never together with {@link #lock}, so a
+     * caller that queues a line cannot end up waiting for a disk write.
+     */
+    private final Object writeLock = new Object();
     private volatile Path file;
     private volatile boolean enabled;
     /** Whether {@link #configure} has run; until then events are kept for {@link #prelude}. */
@@ -100,7 +110,15 @@ public final class DebugLog {
     private final StringBuilder pending = new StringBuilder(1024);
     private int pendingLines;
     private int droppedLines;
-    private boolean directoryReady;
+    /** Characters lost because a batch could not be written; reported in the next batch. */
+    private int droppedCharacters;
+    private volatile boolean directoryReady;
+    /**
+     * Whether owner-only permissions were applied to the current file. The log carries per-request
+     * text previews, so it is the same material the configuration file is restricted for; the try is
+     * repeated once per file instead of once per batch, and a rotation creates a new file.
+     */
+    private volatile boolean permissionsApplied;
     private Thread flusher;
     private final StringBuilder prelude = new StringBuilder(512);
     private String streamProvider;
@@ -137,17 +155,26 @@ public final class DebugLog {
      * @param debugEnabled whether the setting is on
      */
     public void configure(Path logFile, boolean debugEnabled) {
+        String previousBatch;
+        Path previousTarget;
+        String batch;
+        Path target;
         synchronized (lock) {
             boolean wasEnabled = enabled && file != null;
+            previousBatch = null;
+            previousTarget = null;
             if (wasEnabled) {
                 // Whatever is still queued belongs to the file that is being replaced.
                 sealStreamLocked();
-                flushLocked();
+                previousTarget = file;
+                previousBatch = takeBatchLocked();
             }
             pending.setLength(0);
             pendingLines = 0;
             droppedLines = 0;
+            droppedCharacters = 0;
             directoryReady = false;
+            permissionsApplied = false;
             streamProvider = null;
             streamEvent = null;
             streamCount = 0;
@@ -155,20 +182,37 @@ public final class DebugLog {
             file = logFile;
             enabled = debugEnabled && logFile != null;
             configured = true;
+            batch = null;
+            target = null;
             if (!enabled) {
                 prelude.setLength(0);
-                return;
-            }
-            if (!wasEnabled) {
-                if (prelude.length() > 0) {
-                    appendPendingLocked(prelude);
-                    prelude.setLength(0);
+            } else {
+                if (!wasEnabled) {
+                    if (prelude.length() > 0) {
+                        appendPendingLocked(prelude);
+                        prelude.setLength(0);
+                    }
+                    appendLineLocked(TIMESTAMP.format(LocalDateTime.now())
+                            + " session debug logging enabled");
                 }
-                appendLineLocked(TIMESTAMP.format(LocalDateTime.now())
-                        + " session debug logging enabled");
+                target = file;
+                batch = takeBatchLocked();
             }
-            flushLocked();
-            startFlusherLocked();
+            // A flusher parked for the next interval has to notice the new file, or the fact that
+            // the log was turned off, without waiting for it.
+            lock.notifyAll();
+        }
+        // The file system calls happen after the monitor was released so that no caller waits on
+        // the disk; both batches belong to the file that was current when they were taken.
+        writeBatch(previousBatch, previousTarget);
+        writeBatch(batch, target);
+        if (enabled) {
+            // Started last, so the header written above cannot be overtaken by a later batch.
+            synchronized (lock) {
+                if (enabled) {
+                    startFlusherLocked();
+                }
+            }
         }
     }
 
@@ -195,7 +239,9 @@ public final class DebugLog {
             if (writable) {
                 appendLineLocked(line.toString());
                 if (pendingLines >= FLUSH_BATCH_LINES) {
-                    flushLocked();
+                    // Only the flusher writes, so a caller on the render thread signals a ready
+                    // batch instead of writing it and blocking the frame on the disk.
+                    lock.notifyAll();
                 }
             } else {
                 // The configuration is read before configure(...) can run, so a record made now is
@@ -207,9 +253,20 @@ public final class DebugLog {
 
     /** Writes everything queued so far; the tail of a session is otherwise held for one interval. */
     public void flush() {
+        String batch;
+        Path target;
         synchronized (lock) {
             sealStreamLocked();
-            flushLocked();
+            target = file;
+            batch = takeBatchLocked();
+        }
+        try {
+            writeBatch(batch, target);
+        } catch (RuntimeException | Error failed) {
+            // Every platform calls this on its shutdown path, so a failure here has to stay inside
+            // the log: the queue was already taken and the batch is reported by the next one.
+            recordDroppedCharacters(batch == null ? 0 : batch.length());
+            DebugLog.global().logFailure("debug-log", failed);
         }
     }
 
@@ -264,9 +321,16 @@ public final class DebugLog {
         if (!enabled) {
             return;
         }
+        // A failure message can be an entire provider error page, a captive portal or the request
+        // itself echoed back, so it is flattened and bounded like a preview: the same file promises
+        // at most MAXIMUM_PREVIEW_CHARS of text per request, and one unbounded line also used to eat
+        // a whole queue slot and push the lines that explain the failure out of the batch.
+        String message = failure == null || failure.getMessage() == null
+                ? "" : failure.getMessage();
         log("failure", "provider", provider, "reason", TranslationStats.reasonOf(failure),
                 "error", failure == null ? "unknown" : failure.getClass().getSimpleName(),
-                "message", failure == null ? "" : failure.getMessage());
+                "message", TextPreview.oneLine(message, MAXIMUM_PREVIEW_CHARS),
+                "message-length", Integer.toString(message.length()));
     }
 
     /**
@@ -328,9 +392,44 @@ public final class DebugLog {
             return "";
         }
         String redacted = DiagnosticsLogExporter.sanitize(value);
-        redacted = NAMED_SECRET.matcher(redacted).replaceAll("$1[key hidden]");
-        redacted = NAMED_SECRET_SPACED.matcher(redacted).replaceAll("$1[key hidden]");
-        return LONG_BASE64.matcher(redacted).replaceAll("[key hidden]");
+        // Each rule below can only match a shape the value does not have in most log lines: a
+        // credential name next to '=' or ':' or whitespace, and a run of at least 32 token
+        // characters. Skipping a scan that cannot match leaves the result byte for byte identical,
+        // and one request line carries eight numeric fields that used to pay for four passes each.
+        if (mentionsCredentialName(redacted)) {
+            if (redacted.indexOf('=') >= 0 || redacted.indexOf(':') >= 0) {
+                redacted = NAMED_SECRET.matcher(redacted).replaceAll("$1[key hidden]");
+            }
+            if (containsWhitespace(redacted)) {
+                redacted = NAMED_SECRET_SPACED.matcher(redacted).replaceAll("$1[key hidden]");
+            }
+        }
+        if (redacted.length() >= 32) {
+            redacted = LONG_BASE64.matcher(redacted).replaceAll("[key hidden]");
+        }
+        return redacted;
+    }
+
+    /** Whether any of the credential names the two patterns look for occurs in the value. */
+    private static boolean mentionsCredentialName(String value) {
+        for (String word : CREDENTIAL_NAMES) {
+            int last = value.length() - word.length();
+            for (int index = 0; index <= last; index++) {
+                if (value.regionMatches(true, index, word, 0, word.length())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean containsWhitespace(String value) {
+        for (int index = 0; index < value.length(); index++) {
+            if (Character.isWhitespace(value.charAt(index))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -376,10 +475,13 @@ public final class DebugLog {
         if (text == null) {
             return null;
         }
-        String single = text.replace('\r', ' ').replace('\n', ' ');
-        return single.length() <= MAXIMUM_PREVIEW_CHARS
-                ? single
-                : single.substring(0, MAXIMUM_PREVIEW_CHARS) + "...";
+        // Cutting between the halves of a surrogate pair leaves an unpaired one, which the UTF-8
+        // encoder turns into '?', so the shared preview drops the pair instead of splitting it.
+        String single = TextPreview.oneLine(text, MAXIMUM_PREVIEW_CHARS);
+        if (text.length() <= MAXIMUM_PREVIEW_CHARS) {
+            return single;
+        }
+        return single + "...";
     }
 
     /** Queues one already formatted line. Caller holds {@link #lock}. */
@@ -413,9 +515,13 @@ public final class DebugLog {
 
     /** Starts the single daemon thread that drains the queue. Caller holds {@link #lock}. */
     private void startFlusherLocked() {
-        if (flusher != null) {
+        if (flusher != null && flusher.isAlive()) {
             return;
         }
+        // A thread that left drainLoop through anything other than its two own exits keeps its
+        // reference here while doing nothing, and this guard used to read that as "still running":
+        // every later configure() then returned early and the log stayed silent for the session.
+        flusher = null;
         Thread thread = new Thread(new Runnable() {
             @Override
             public void run() {
@@ -429,72 +535,134 @@ public final class DebugLog {
 
     private void drainLoop() {
         while (true) {
+            String batch;
+            Path target;
             synchronized (lock) {
                 if (!enabled || file == null) {
                     flusher = null;
                     return;
                 }
                 sealStreamLocked();
-                flushLocked();
-            }
-            try {
-                // Outside the monitor: the point of the queue is that no caller ever waits here.
-                Thread.sleep(FLUSH_INTERVAL_MILLIS);
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                synchronized (lock) {
-                    flusher = null;
+                target = file;
+                batch = takeBatchLocked();
+                if (batch == null) {
+                    try {
+                        lock.wait(FLUSH_INTERVAL_MILLIS);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        flusher = null;
+                        return;
+                    }
                 }
-                return;
+            }
+            // Outside the monitor: the point of the queue is that no caller ever waits here.
+            try {
+                writeBatch(batch, target);
+            } catch (RuntimeException | Error failed) {
+                // The write is the one step of this loop that is not a simple state change, and an
+                // escaping throwable used to kill the only writer: the queue then filled up and every
+                // later line was dropped, so the log the user switched on to report a problem stopped
+                // for the rest of the process while the setting still read "on".
+                recordDroppedCharacters(batch == null ? 0 : batch.length());
+                DebugLog.global().logFailure("debug-log", failed);
             }
         }
     }
 
-    /** Writes the queue as one batch. Caller holds {@link #lock}. */
-    private void flushLocked() {
-        if (pending.length() == 0 && droppedLines == 0) {
-            return;
+    /**
+     * Takes the queue as one batch. Caller holds {@link #lock}.
+     *
+     * @return the text to write, or {@code null} when there is nothing to write
+     */
+    private String takeBatchLocked() {
+        if (pending.length() == 0 && droppedLines == 0 && droppedCharacters == 0) {
+            return null;
         }
         if (file == null || !enabled) {
             pending.setLength(0);
             pendingLines = 0;
             droppedLines = 0;
-            return;
+            droppedCharacters = 0;
+            return null;
         }
-        if (droppedLines > 0) {
+        if (droppedLines > 0 || droppedCharacters > 0) {
             pending.append(TIMESTAMP.format(LocalDateTime.now()))
-                    .append(" log-buffer dropped-lines=").append(droppedLines)
-                    .append(System.lineSeparator());
+                    .append(" log-buffer dropped-lines=").append(droppedLines);
+            if (droppedCharacters > 0) {
+                pending.append(" dropped-chars=").append(droppedCharacters);
+            }
+            pending.append(System.lineSeparator());
             droppedLines = 0;
+            droppedCharacters = 0;
         }
         String batch = pending.toString();
         pending.setLength(0);
         pendingLines = 0;
-        appendBatchLocked(batch);
+        return batch;
     }
 
-    private void appendBatchLocked(String batch) {
-        Path target = file;
-        if (target == null || batch.isEmpty()) {
+    /**
+     * Writes one batch and owns the state of the target file.
+     *
+     * <p>Called without {@link #lock}, so the render thread and the translation workers never wait
+     * for the disk; {@link #writeLock} keeps a single writer on the file, which is what the rotation
+     * decision depends on.
+     */
+    private void writeBatch(String batch, Path target) {
+        if (target == null || batch == null || batch.isEmpty()) {
             return;
         }
         byte[] bytes = batch.getBytes(StandardCharsets.UTF_8);
-        try {
-            if (!directoryReady) {
-                Path directory = target.getParent();
-                if (directory != null) {
-                    Files.createDirectories(directory);
+        synchronized (writeLock) {
+            try {
+                if (!directoryReady) {
+                    Path directory = target.getParent();
+                    if (directory != null) {
+                        Files.createDirectories(directory);
+                    }
+                    directoryReady = true;
                 }
-                directoryReady = true;
+            } catch (IOException | RuntimeException unusableDirectory) {
+                // A read-only or full configuration directory is not a translation failure.
+                recordDroppedCharacters(batch.length());
+                return;
             }
-            // One stat for the whole batch: the rotation decision used to cost exists+size per line.
-            if (sizeOf(target) + bytes.length > MAXIMUM_BYTES) {
-                Files.move(target, target.resolveSibling(ROTATED_FILE_NAME),
-                        StandardCopyOption.REPLACE_EXISTING);
+            try {
+                // One stat for the whole batch: the rotation decision used to cost exists+size per line.
+                if (sizeOf(target) + bytes.length > MAXIMUM_BYTES) {
+                    Files.move(target, target.resolveSibling(ROTATED_FILE_NAME),
+                            StandardCopyOption.REPLACE_EXISTING);
+                    // The append below creates a new file, which starts with the default mode.
+                    permissionsApplied = false;
+                }
+            } catch (IOException | RuntimeException unrotated) {
+                // A log viewer holding the rotated file must not cost the batch: appending past the
+                // size bound is a smaller loss than a silent gap in the support log.
             }
-            Files.write(target, bytes, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-        } catch (IOException | RuntimeException ignored) {
-            // A read-only or full configuration directory is not a translation failure.
+            try {
+                Files.write(target, bytes, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                if (!permissionsApplied) {
+                    // Readable by every account on a shared POSIX home directory, the log quotes up
+                    // to MAXIMUM_PREVIEW_CHARS of what the player and the provider said. Once per
+                    // file: setPosixFilePermissions costs two system calls on every batch otherwise.
+                    permissionsApplied = LocalConfigSecurity.restrictToOwner(target);
+                }
+            } catch (IOException | RuntimeException unwritable) {
+                // Named in the next batch instead of vanishing: the queue was already emptied.
+                recordDroppedCharacters(batch.length());
+            }
+        }
+    }
+
+    /**
+     * Reports a lost batch in the next one.
+     *
+     * <p>Called from the writer, so this is the only place that takes {@link #lock} after
+     * {@link #writeLock}; no path takes them in the other order.
+     */
+    private void recordDroppedCharacters(int characters) {
+        synchronized (lock) {
+            droppedCharacters += characters;
         }
     }
 

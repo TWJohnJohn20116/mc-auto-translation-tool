@@ -56,11 +56,14 @@ sourceSets {
         resources.srcDir new File(sharedRoot, "src/main/resources")
         resources.srcDir new File(bothRoot, "src/main/resources")
         resources.srcDir rootProject.file("platforms/shared/lang/json")
-        resources.srcDir rootProject.file("platforms/shared/lang/legacy")
+        // Minecraft 1.13+ only reads assets/<ns>/lang/*.json, so platforms/shared/lang/legacy is dead weight here.
     }
 }
 
 processResources {
+    // expand() reads the template with the platform default charset unless this is set, so a jar
+    // built on a Windows dev box decoded the UTF-8 fabric.mod.json differently than CI did.
+    filteringCharset = "UTF-8"
     inputs.properties(
             "version": project.version,
             "minecraftVersion": gameVersion,
@@ -77,14 +80,29 @@ processResources {
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
-    options.release = 8
+    // Read from settings.gradle's treeJavaRelease instead of repeating 8: the number this tree compiles
+    // for is the table the Mixin bounds come from, and a literal here cannot follow it.
+    options.release = gradle.ext.treeJavaTarget("platforms/fabric/1.13/")
 }
 
+// options.release already pins both the language level and the API table for every JavaCompile task
+// in this project, so repeating the 1.8 pair here only gave "what does this build target" a second,
+// contradicting answer.
 java {
-    sourceCompatibility = JavaVersion.VERSION_1_8
-    targetCompatibility = JavaVersion.VERSION_1_8
     withSourcesJar()
 }
 
 apply from: rootProject.file("gradle/jar-contents.gradle")
+// A mixin class that no shipped mixins.json lists is compiled, shipped and never applied — the
+// failure mode 1.19.3-1.19.4 shipped with — and required:true never complains about the reverse.
+// These versions are nested inside the mc1.13.x release JAR, so this is the only place that sees
+// the class-to-config mapping before it ships.
+apply from: rootProject.file("gradle/fabric-mixin-config-verify.gradle")
+
+// 1.13.0/1.13.1 are nested inside the mc1.13.x release JAR, and nothing read the produced classes back:
+// options.release was the whole story. The header half is the proof that the shipped bytecode really is
+// Java 8. Loom/Ornithe writes compile options of its own, so the declared-release half stays off here.
+ext.fabricReleaseJava = gradle.ext.treeJavaTarget("platforms/fabric/1.13/")
+ext.fabricReleaseJarSkipReleaseCheck = true
+apply from: rootProject.file("gradle/fabric-release-jar-verify.gradle")
 

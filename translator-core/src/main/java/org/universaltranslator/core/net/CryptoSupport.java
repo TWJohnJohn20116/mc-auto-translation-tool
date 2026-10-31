@@ -82,10 +82,22 @@ public final class CryptoSupport {
     }
 
     public static String rfc1123(Date value) {
-        SimpleDateFormat format = new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss z", Locale.US);
-        format.setTimeZone(TimeZone.getTimeZone("GMT"));
-        return format.format(value);
+        return RFC1123.get().format(value);
     }
+
+    /**
+     * One formatter per thread: constructing a {@code SimpleDateFormat} (locale and time zone
+     * lookups included) costs more than the formatting itself, and the MT providers stamp every
+     * translated line. A formatter is not thread safe, which is why it cannot be one static field.
+     */
+    private static final ThreadLocal<SimpleDateFormat> RFC1123 = new ThreadLocal<SimpleDateFormat>() {
+        @Override
+        protected SimpleDateFormat initialValue() {
+            SimpleDateFormat format = new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss z", Locale.US);
+            format.setTimeZone(TimeZone.getTimeZone("GMT"));
+            return format;
+        }
+    };
 
     public static byte[] utf8(String value) {
         return (value == null ? "" : value).getBytes(StandardCharsets.UTF_8);

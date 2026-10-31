@@ -36,10 +36,14 @@ jobs:
   plan:
     name: 解析版本與目標
     runs-on: ubuntu-24.04
+    # 與 build.yml 的 plan 同值。這一支卡住時佔的是 concurrency: prepare-release（不取消），
+    # 後面所有發布都會排隊等它吃滿預設的 360 分鐘。
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.resolve.outputs.version }}
       matrix: ${{ steps.resolve.outputs.matrix }}
       full: ${{ steps.resolve.outputs.full }}
+      target_count: ${{ steps.resolve.outputs.target_count }}
     steps:
       - name: 取出原始碼
         uses: actions/checkout@v7
@@ -56,11 +60,8 @@ jobs:
           # 兩者不一致時（例如 version=1.5 而 mod_version=1.4），收集步驟會用
           # "*-<version>.jar" 找不到任何產物，48 個 build-target 全部建完（10～20 分鐘）才在
           # 最後一步集體失敗，assemble 也跟著不執行。這裡在幾秒內就擋下來。
-          mod_version="$(sed -n 's/^mod_version=//p' gradle.properties | head -n 1)"
-          if [[ -z "$mod_version" ]]; then
-            echo "::error::gradle.properties 讀不到 mod_version" >&2
-            exit 1
-          fi
+          # 讀取與字元白名單都在 scripts/ci/read-mod-version.sh，與 publish-release.yml 共用。
+          mod_version="$(bash scripts/ci/read-mod-version.sh)"
           version="${REQUESTED_VERSION:-}"
           if [[ -z "$version" ]]; then
             version="$mod_version"
@@ -90,10 +91,10 @@ jobs:
             {"target": "mc1.20.x-fabric", "project": "platform-fabric-1.20.x", "jar_dir": "platforms/fabric/1.20/bundle", "java": "21"},
             {"target": "mc1.21.x-fabric", "project": "platform-fabric-1.21.x", "jar_dir": "platforms/fabric/1.21/bundle", "java": "21"},
             {"target": "mc26.x-fabric", "project": "platform-fabric-26.x", "jar_dir": "platforms/fabric/26.x/bundle", "java": "25"},
-            {"target": "mc1.16.5-forge", "project": "platform-forge-1.16.5", "jar_dir": "platforms/forge/modern/1.16.5", "java": "17"},
-            {"target": "mc1.18.2-forge", "project": "platform-forge-1.18.2", "jar_dir": "platforms/forge/modern/1.18.2", "java": "17"},
-            {"target": "mc1.19.2-forge", "project": "platform-forge-1.19.2", "jar_dir": "platforms/forge/modern/1.19.2", "java": "17"},
-            {"target": "mc1.20.1-forge", "project": "platform-forge-1.20.1", "jar_dir": "platforms/forge/modern/1.20.1", "java": "17"},
+            {"target": "mc1.16.5-forge", "project": "platform-forge-1.16.5", "jar_dir": "platforms/forge/modern/1.16.5", "java": "21"},
+            {"target": "mc1.18.2-forge", "project": "platform-forge-1.18.2", "jar_dir": "platforms/forge/modern/1.18.2", "java": "21"},
+            {"target": "mc1.19.2-forge", "project": "platform-forge-1.19.2", "jar_dir": "platforms/forge/modern/1.19.2", "java": "21"},
+            {"target": "mc1.20.1-forge", "project": "platform-forge-1.20.1", "jar_dir": "platforms/forge/modern/1.20.1", "java": "21"},
             {"target": "mc1.21-forge", "project": "platform-forge-1.21", "jar_dir": "platforms/forge/1.21/versions/1.21", "java": "21"},
             {"target": "mc1.21.1-forge", "project": "platform-forge-1.21.1", "jar_dir": "platforms/forge/1.21/versions/1.21.1", "java": "21"},
             {"target": "mc1.21.3-forge", "project": "platform-forge-1.21.3", "jar_dir": "platforms/forge/1.21/versions/1.21.3", "java": "21"},
@@ -135,15 +136,9 @@ jobs:
 
           # -PtargetPlatform 吃的是平台名稱（forge-1.21.7、fabric-1.13.x），不是發布資產名稱
           # （mc1.21.7-forge）。這裡從目標名稱推導；推錯會在 settings 評估階段就失敗。
-          TARGETS_JSON="$(printf '%s' "$TARGETS_JSON" | python3 -c '
-          import json, re, sys
-          targets = json.load(sys.stdin)
-          for entry in targets:
-              if not entry.get("standalone"):
-                  game, loader = re.match(r"mc(.+)-(forge|neoforge|fabric)$", entry["target"]).groups()
-                  entry["platform"] = f"{loader}-{game}"
-          print(json.dumps(targets))
-          ')"
+          # 推導邏輯在 scripts/ci/derive-prepare-targets.py：寫在 run 內的 Python 需要單引號
+          # heredoc，會觸發 shellcheck SC2016，而那段程式碼也要能被單獨測試。
+          TARGETS_JSON="$(python3 scripts/ci/derive-prepare-targets.py "$TARGETS_JSON")"
           export TARGETS_JSON
 
           if [[ -z "$requested" ]]; then
@@ -151,12 +146,23 @@ jobs:
           import json, os
           targets = json.loads(os.environ["TARGETS_JSON"])
           print("matrix=" + json.dumps({"include": targets}))
+          # 目標數由這份清單自己算，不要讓 workflow 裡另外寫一個 48。
+          print("target_count=" + str(len(targets)))
           PY
-            echo "要準備 $version 的全部 48 個目標"
+            echo "要準備 $version 的全部目標"
           else
             python3 - "$requested" >> "$GITHUB_OUTPUT" <<'PY'
           import json, os, sys
           requested = [name for name in sys.argv[1].split(",") if name]
+          # targets 只打了逗號或空白時 requested 是空清單：既不報錯也不選任何目標，於是照樣輸出
+          # matrix={"include": []}，build-target 在展開階段就以 GitHub 的「Matrix vector … does not
+          # contain any values」失敗（訊息完全不提 targets），assemble 也永遠不會執行。另外兩支
+          # workflow 早就擋掉這個輸入（build.yml 的 ::error::、legacy-targets.yml 的哨兵），
+          # prepare-release 是唯一漏掉的第三支。
+          if not requested:
+              print("::error::targets 只給了逗號或空白，沒有指定任何目標；留空才會執行全部目標",
+                    file=sys.stderr)
+              sys.exit(1)
           targets = json.loads(os.environ["TARGETS_JSON"])
           known = {entry["target"] for entry in targets}
           unknown = [name for name in requested if name not in known]
@@ -166,8 +172,9 @@ jobs:
               sys.exit(1)
           selected = [entry for entry in targets if entry["target"] in requested]
           print("matrix=" + json.dumps({"include": selected}))
+          print("target_count=" + str(len(selected)))
           PY
-            echo "只建置指定的目標：$requested（不會開 PR）"
+            echo "只建置指定的目標：$requested（不會開 PR，也不會動 downloads/）"
           fi
 
   build-target:
@@ -209,27 +216,25 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           # 用版本號精確比對，避免撿到舊版本殘留的 JAR（本機建置目錄常常有）。
-          # 依序找：整合包的 release-assets、Forge 1.16.5-1.20.1 的 release、其餘的 libs。
-          jar=""
+          # 三個目錄全部掃描：bundle 的 release-assets 與 libs 可能同時存在，只取「第一個命中的
+          # 目錄」會讓「同一顆同時存在於兩個目錄」這種佈局錯誤默默過關（_assemble_*.py 已複製
+          # 同一套邏輯，本機執行時真的會踩到）。
+          candidates=()
           for dir in "$JAR_DIR/build/release-assets" "$JAR_DIR/build/release" "$JAR_DIR/build/libs"; do
             [[ -d "$dir" ]] || continue
             mapfile -t found < <(find "$dir" -maxdepth 1 -type f -name "*-$VERSION.jar" \
               ! -name '*-dev.jar' ! -name '*-sources.jar' | sort)
-            if [[ "${#found[@]}" -eq 1 ]]; then
-              jar="${found[0]}"
-              break
-            fi
-            if [[ "${#found[@]}" -gt 1 ]]; then
-              echo "在 $dir 找到多個版本為 $VERSION 的 JAR，無法決定要用哪一個：" >&2
-              printf '%s\n' "${found[@]}" >&2
-              exit 1
+            if [[ "${#found[@]}" -gt 0 ]]; then
+              candidates+=("${found[@]}")
             fi
           done
-          if [[ -z "$jar" ]]; then
-            echo "在 $JAR_DIR 找不到版本 $VERSION 的 JAR，以下是找到的檔案：" >&2
+          if [[ "${#candidates[@]}" -ne 1 ]]; then
+            echo "在 $JAR_DIR 找到 ${#candidates[@]} 顆版本為 $VERSION 的 JAR，必須剛好 1 顆：" >&2
+            printf '%s\n' "${candidates[@]:-}" >&2
             find "$JAR_DIR/build" -maxdepth 3 -name '*.jar' 2>/dev/null | sort | head -50 >&2 || true
             exit 1
           fi
+          jar="${candidates[0]}"
           cp "$jar" "dist/$ASSET_NAME"
           ls -l "dist/$ASSET_NAME"
 
@@ -254,6 +259,10 @@ jobs:
     steps:
       - name: 取出原始碼
         uses: actions/checkout@v7
+        with:
+          # 需要完整的 ref 歷史：下面要用 origin/release/prepare-<version> 的實際 commit 當
+          # --force-with-lease 的預期值，並確認那個分支上只有本 workflow 產生的 commit。
+          fetch-depth: 0
 
       - name: 設定 Python
         uses: actions/setup-python@v7
@@ -269,12 +278,31 @@ jobs:
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --dir dist
           find dist -type f -name '*.jar' | sort
 
+      - name: 確認 plan 至少選了一個目標
+        env:
+          TARGET_COUNT: ${{ needs.plan.outputs.target_count }}
+        run: |
+          set -euo pipefail
+          # 第二道防線：plan 的空輸入守衛被改掉時，這裡仍然不會讓「0 顆 JAR 也算彙整成功」成立。
+          if [[ -z "${TARGET_COUNT:-}" || "$TARGET_COUNT" -le 0 ]]; then
+            echo "plan 沒有選到任何目標（target_count=${TARGET_COUNT:-}），不彙整" >&2
+            exit 1
+          fi
+
       - name: 收集到 downloads 並產生 checksum
         env:
           VERSION: ${{ needs.plan.outputs.version }}
+          FULL: ${{ needs.plan.outputs.full }}
         run: |
           set -euo pipefail
-          target_dir="downloads/$VERSION"
+          if [[ "$FULL" == "true" ]]; then
+            target_dir="downloads/$VERSION"
+          else
+            # 煙霧測試（只指定部分目標）永遠不碰 downloads/：先前它會先 rm -rf downloads/<version>
+            # 再只寫入那幾顆，於是「驗證通過」只描述了 2 顆，而版控裡的目標目錄已經被刪掉，
+            # 之後一個 git add -A 就會把殘缺佈局提交進去。
+            target_dir="build/partial-release/$VERSION"
+          fi
           # 整個目錄重新產生，避免舊版本殘留的檔案或分片（沿用 scripts/tools/_assemble_*.py）。
           rm -rf "$target_dir"
           mkdir -p "$target_dir"
@@ -313,14 +341,20 @@ jobs:
       - name: 用專案的驗證器檢查
         env:
           VERSION: ${{ needs.plan.outputs.version }}
+          FULL: ${{ needs.plan.outputs.full }}
         run: |
           set -euo pipefail
-          target_dir="downloads/$VERSION"
+          if [[ "$FULL" == "true" ]]; then
+            target_dir="downloads/$VERSION"
+          else
+            target_dir="build/partial-release/$VERSION"
+          fi
           # 被分片的 JAR 要用邏輯名稱餵給驗證器，它自己會把分片接回來（同 build.gradle 的作法）。
           mapfile -t jars < <(
             {
               find "$target_dir" -maxdepth 1 -type f -name '*.jar'
-              find "$target_dir" -maxdepth 1 -type f -name '*.jar.part-aa' | sed 's/\.part-aa$//'
+              while IFS= read -r part; do printf '%s\n' "${part%.part-aa}"; done \
+                < <(find "$target_dir" -maxdepth 1 -type f -name '*.jar.part-aa')
             } | sort
           )
           echo "驗證 ${#jars[@]} 顆邏輯 JAR"
@@ -329,10 +363,11 @@ jobs:
             --require-complete-checksums \
             "${jars[@]}"
 
-      - name: 檢查目標數量是否為 48
+      - name: 檢查目標數量是否符合 plan 的清單
         if: needs.plan.outputs.full == 'true'
         env:
           VERSION: ${{ needs.plan.outputs.version }}
+          EXPECTED_COUNT: ${{ needs.plan.outputs.target_count }}
         run: |
           set -euo pipefail
           target_dir="downloads/$VERSION"
@@ -342,10 +377,32 @@ jobs:
               find "$target_dir" -maxdepth 1 -type f -name '*.jar.part-aa'
             } | wc -l
           )"
-          if [[ "$count" -ne 48 ]]; then
-            echo "發布目錄必須剛好有 48 顆目標 JAR，實際 $count 顆" >&2
+          # 這個數字來自 plan 的 TARGETS_JSON 長度，不是另外手寫的常數：新增或移除一個目標時
+          # 只改 JSON，這裡跟著走（先前寫死 48，訊息還會誤導成「建置少了／多了」）。
+          if [[ "$count" -ne "$EXPECTED_COUNT" ]]; then
+            echo "發布目錄必須剛好有 $EXPECTED_COUNT 顆目標 JAR，實際 $count 顆" >&2
             exit 1
           fi
+
+      - name: 產生可安裝清單（release-assets.txt）
+        if: needs.plan.outputs.full == 'true'
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          # downloads/<版本>/release-assets.txt 是四份 README 與官網唯一的「真實檔名」權威：
+          # 31 個可安裝檔名只有 prepare_release_assets.py 推得出來（fabric-all 加四個 Forge
+          # 家族合併），而 downloads/ 只由這支 workflow 提交，所以在這裡用同一支腳本、只留清單。
+          # 少了這一步，網站測試裡「有 manifest 就以它為權威」的分支永遠走不到。
+          # --manifest-only 只讀檔名（外加 FORGE_FAMILIES）就推出同一份清單；先前是整支腳本跑一遍，
+          # 於是 48 顆 JAR 在這裡被完整解壓、fabric-all.jar 被重建，而那份產物立刻被丟掉，
+          # 同一個版本隨後又在 build.yml 與 publish-release.yml 各重建一次。
+          python3 scripts/prepare_release_assets.py \
+            --release-dir "downloads/$VERSION" \
+            --version "$VERSION" \
+            --manifest-only > "$RUNNER_TEMP/release-assets.txt"
+          cp "$RUNNER_TEMP/release-assets.txt" "downloads/$VERSION/release-assets.txt"
+          echo "可安裝清單 $(grep -c . "downloads/$VERSION/release-assets.txt") 行"
 
       - name: 移除舊版本的 downloads 目錄
         if: needs.plan.outputs.full == 'true'
@@ -376,7 +433,34 @@ jobs:
             exit 0
           fi
           git commit -m "chore(release): 準備 $VERSION 的發布資產"
-          git push --force-with-lease origin "$branch"
+          # 「重跑」是這支 workflow 最常見的情境，而 actions/checkout 預設 fetch-depth: 1 不會建立
+          # refs/remotes/origin/release/prepare-<version>，於是 --force-with-lease 的語意變成
+          # 「遠端不得存在這個 ref」：分支一存在，push 必被拒（! [rejected] ... stale info）。
+          # 這裡先 fetch，再用明確的預期 SHA 當 lease；同時確認遠端分支上只有本 workflow 產生的
+          # commit——AGENTS.md 要求在 release PR 裡人工補 CHANGELOG 區段、四份 README 的下載連結與
+          # website/app/page.tsx 的版本文案，那些 commit 不能被下一次重跑無聲覆蓋。
+          lease=()
+          if git ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null 2>&1; then
+            # main 一起抓：下面的守衛要比對「main 之後的 commit」，不能假設 origin/main 已經存在。
+            git fetch --no-tags origin "refs/heads/$branch:refs/remotes/origin/$branch" \
+              "refs/heads/main:refs/remotes/origin/main"
+            remote_sha="$(git rev-parse "refs/remotes/origin/$branch")"
+            # 比較基準必須是 origin/main，不能是 `--not --remotes=origin`：上一行剛把 $remote_sha
+            # 建成 refs/remotes/origin/$branch，那個旗標於是把要比對的 commit 自己也排除掉，集合
+            # 恆為空、守衛永遠放行，重跑就無聲覆蓋分支上的人工 commit（AGENTS.md 要求在 release
+            # PR 裡手改 CHANGELOG／README／website，那些 commit 正是受害者）。逐個 commit 比對
+            # author 而不只比對 subject，才不會把別人的同名 commit 當成自己人。
+            bot_commit="$(printf 'github-actions[bot]\t%s' "chore(release): 準備 $VERSION 的發布資產")"
+            unexpected="$(git log --format='%an%x09%s' "$remote_sha" --not refs/remotes/origin/main \
+              | grep -vxF -- "$bot_commit" || true)"
+            if [[ -n "$unexpected" ]]; then
+              echo "::error::$branch 上有非本 workflow 產生的 commit（author 與 subject 以 tab 分隔），不覆蓋：" >&2
+              printf '%s\n' "$unexpected" >&2
+              exit 1
+            fi
+            lease=(--force-with-lease="refs/heads/$branch:$remote_sha")
+          fi
+          git push "${lease[@]}" origin "$branch"
           # 不要用 `gh pr create ... || echo`：那會讓建立失敗（權限、暫時性 API 錯誤）變成
           # 綠燈，2026-10-21 與 2026-10-21 之後各發生一次，兩次都是人工補開 PR。
           if gh pr view "$branch" --json number >/dev/null 2>&1; then

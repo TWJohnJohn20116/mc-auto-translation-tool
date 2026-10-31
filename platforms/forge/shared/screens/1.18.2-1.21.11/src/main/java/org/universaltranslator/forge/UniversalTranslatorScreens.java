@@ -139,9 +139,15 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     private Button targetLanguageButton;
     private Button outgoingTargetLanguageButton;
     private String status = "";
-    /** Result of the engine tab's connection test; written by its worker thread. */
-    private volatile String testStatus = "";
-    private volatile boolean testStatusIsError;
+    /**
+     * Result of the engine tab's connection test, written by its worker thread.
+     *
+     * <p>One reference rather than two independent fields: the message and its error flag are one
+     * line on screen, and a reader that picked up the new message next to the previous flag painted
+     * a failure in green (or the reverse). A single volatile reference publishes both at once, while
+     * the writer runs on a worker and {@code render()} reads it.
+     */
+    private volatile TestStatus testStatus = TestStatus.EMPTY;
     // volatile because the fetch/test workers clear them and the render thread reads them as a
     // re-entry guard. Without it a worker could clear the flag without the render thread ever
     // observing the write, and the tab's "fetch models" and "test" buttons stayed dead for the life
@@ -154,6 +160,36 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     private volatile int modelPage;
     private long animationStartedNanos = System.nanoTime();
     private SettingsSelectionList.Kind openSelection = SettingsSelectionList.Kind.NONE;
+    /**
+     * Last computed layout, keyed on the window size it was computed for.
+     *
+     * <p>One frame of the HUD tab asks for it through a dozen accessors and the engine tab asks for
+     * it twice per row, and every one of those used to re-run the shared geometry maths and allocate
+     * a 14-field object on the render thread. The geometry is a pure function of the window size, so
+     * a size-keyed single slot is exact.
+     */
+    private Layout cachedLayout;
+    private int cachedLayoutWidth = -1;
+    private int cachedLayoutHeight = -1;
+    /** How long a localized runtime status may be reused. Matches the runtime's own cache window. */
+    private static final long STATUS_CACHE_MILLIS = 200L;
+    private String cachedLocalizedStatus = "";
+    private boolean cachedStatusIsFailure;
+    private long cachedStatusAt;
+    /**
+     * Reused probe client.
+     *
+     * <p>The type only carries two timeouts, so it holds no connection state; building one per
+     * button press was allocation on the client thread for no benefit.
+     */
+    private final HttpJsonClient probeClient = new HttpJsonClient(5000, 15000);
+
+    /** Daemon workers for the screen actions that must not run on the client thread. */
+    private static final ExecutorService SCREEN_WORKERS = Executors.newFixedThreadPool(2, task -> {
+        Thread thread = new Thread(task, "universal-translator-screen-worker");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     /** The preview panel is a miniature of Minecraft's 320x240 minimum logical screen. */
     private static final int HUD_PREVIEW_SCREEN_WIDTH = 320;
@@ -284,7 +320,8 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                 layout.totalWidth, 20, translatable("screen.universal_translator.blocked_keywords")));
         blockedKeywords.setMaxLength(UiLimits.KEYWORDS_MAX_CHARS);
         blockedKeywords.setValue(blockedKeywordsValue);
-        hint(blockedKeywords, translatable("screen.universal_translator.blocked_keywords_hint"));
+        hint(blockedKeywords, translatable("screen.universal_translator.blocked_keywords_hint",
+                UiLimits.KEYWORDS_MAX_ENTRIES, UiLimits.KEYWORD_MAX_CHARS));
 
         // --- Tab 3: Engine (引擎) ---
         // The engine rows are centred in the free band (see engineRow) so the tab does not sit in
@@ -343,13 +380,14 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         }).bounds(layout.right, engineRow(5), layout.buttonWidth, 20).build());
 
         String promptValue = customPrompt == null
-                ? TranslationPrompt.toEditorText(original.customSystemPrompt())
+                ? TranslationPrompt.toEditorText(
+                        TranslationPrompt.clampForEditor(original.customSystemPrompt()))
                 : customPrompt.getValue();
         int promptApplyWidth = Math.max(48, layout.buttonWidth - 24);
         customPrompt = addRenderableWidget(new EditBox(font, left, engineRow(4),
                 layout.totalWidth - promptApplyWidth - 8,
                 20, translatable("screen.universal_translator.diagnostics.prompt")));
-        customPrompt.setMaxLength(UiLimits.PROMPT_MAX_CHARS);
+        customPrompt.setMaxLength(UiLimits.PROMPT_EDITOR_MAX_CHARS);
         customPrompt.setValue(promptValue);
         applyPromptButton = addRenderableWidget(ButtonSpec.of(
                 translatable("screen.universal_translator.diagnostics.prompt_apply"),
@@ -408,68 +446,82 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         }).bounds(x, y, width, 20).build();
     }
 
+    /** Sets a button's label, tolerating the controls a partly built screen has not created yet. */
+    private static void setMessage(Button button, Component message) {
+        if (button != null) {
+            button.setMessage(message);
+        }
+    }
+
+    /** Turns a button on or off, tolerating the same partly built state as {@link #setMessage}. */
+    private static void setActive(Button button, boolean active) {
+        if (button != null) {
+            button.active = active;
+        }
+    }
+
     private void refreshLabels() {
-        uiStyleButton.setMessage(translatable("screen.universal_translator.option.ui_style",
+        setMessage(uiStyleButton, translatable("screen.universal_translator.option.ui_style",
                 tr(animatedUi ? "value.universal_translator.ui_animated"
                         : "value.universal_translator.ui_classic")));
-        hudIndicatorButton.setMessage(translatable("screen.universal_translator.option.hud_indicator",
+        setMessage(hudIndicatorButton, translatable("screen.universal_translator.option.hud_indicator",
                 onOff(hudIndicator)));
-        hudCornerButton.setMessage(translatable("screen.universal_translator.option.hud_corner",
+        setMessage(hudCornerButton, translatable("screen.universal_translator.option.hud_corner",
                 cornerLabel(hudIndicatorCorner)));
-        hudSizeButton.setMessage(translatable("screen.universal_translator.option.hud_size",
+        setMessage(hudSizeButton, translatable("screen.universal_translator.option.hud_size",
                 Integer.toString(hudIndicatorSize)));
-        hudMarginButton.setMessage(translatable("screen.universal_translator.option.hud_margin",
+        setMessage(hudMarginButton, translatable("screen.universal_translator.option.hud_margin",
                 Integer.toString(hudIndicatorMargin)));
-        hudColorButton.setMessage(translatable("screen.universal_translator.option.hud_color",
+        setMessage(hudColorButton, translatable("screen.universal_translator.option.hud_color",
                 hudColorLabel(hudIndicatorColor)));
-        hudContentButton.setMessage(translatable("screen.universal_translator.option.hud_content",
+        setMessage(hudContentButton, translatable("screen.universal_translator.option.hud_content",
                 hudContentLabel(hudIndicatorContent)));
-        hudVisibilityButton.setMessage(translatable("screen.universal_translator.option.hud_visibility",
+        setMessage(hudVisibilityButton, translatable("screen.universal_translator.option.hud_visibility",
                 hudVisibilityLabel(hudIndicatorVisibility)));
-        enabledButton.setMessage(translatable("screen.universal_translator.option.automatic", onOff(enabled)));
-        cacheButton.setMessage(translatable("screen.universal_translator.option.cache", onOff(diskCache)));
-        chatButton.setMessage(translatable("screen.universal_translator.option.chat", onOff(translateChat)));
-        otherButton.setMessage(translatable("screen.universal_translator.option.other", onOff(translateOther)));
-        providerButton.setMessage(translatable("screen.universal_translator.option.provider",
+        setMessage(enabledButton, translatable("screen.universal_translator.option.automatic", onOff(enabled)));
+        setMessage(cacheButton, translatable("screen.universal_translator.option.cache", onOff(diskCache)));
+        setMessage(chatButton, translatable("screen.universal_translator.option.chat", onOff(translateChat)));
+        setMessage(otherButton, translatable("screen.universal_translator.option.other", onOff(translateOther)));
+        setMessage(providerButton, translatable("screen.universal_translator.option.provider",
                 TranslationProviderCatalog.displayName(provider, key -> tr(key))));
         String modelValue = llmModel == null || llmModel.trim().isEmpty()
                 ? tr("screen.universal_translator.engine.key_unset") : llmModel.trim();
-        modelPickButton.setMessage(translatable("screen.universal_translator.engine.model", modelValue));
-        testConnectionButton.setMessage(translatable("screen.universal_translator.engine.test"));
-        checkSettingsButton.setMessage(translatable(LIBRETRANSLATE_PROVIDER.equalsIgnoreCase(provider)
+        setMessage(modelPickButton, translatable("screen.universal_translator.engine.model", modelValue));
+        setMessage(testConnectionButton, translatable("screen.universal_translator.engine.test"));
+        setMessage(checkSettingsButton, translatable(LIBRETRANSLATE_PROVIDER.equalsIgnoreCase(provider)
                 ? "screen.universal_translator.engine.test"
                 : "screen.universal_translator.engine.check"));
-        displayButton.setMessage(translatable("screen.universal_translator.option.display",
+        setMessage(displayButton, translatable("screen.universal_translator.option.display",
                 tr(displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED
                         ? "value.universal_translator.display_bilingual"
                         : "value.universal_translator.display_translated")));
-        mixedTextButton.setMessage(translatable("screen.universal_translator.option.mixed",
+        setMessage(mixedTextButton, translatable("screen.universal_translator.option.mixed",
                 onOff(translateEnglishOnly)));
-        colorButton.setMessage(translatable("screen.universal_translator.option.color",
+        setMessage(colorButton, translatable("screen.universal_translator.option.color",
                 colorLabel(translatedTextColor)));
-        downloadButton.setMessage(translatable("screen.universal_translator.option.download", onOff(offlineAutoDownload)));
-        modelButton.setMessage(translatable("screen.universal_translator.option.model", offlineModel.displayName()));
-        fallbackButton.setMessage(translatable("screen.universal_translator.option.fallback", onOff(apiFallback)));
+        setMessage(downloadButton, translatable("screen.universal_translator.option.download", onOff(offlineAutoDownload)));
+        setMessage(modelButton, translatable("screen.universal_translator.option.model", offlineModel.displayName()));
+        setMessage(fallbackButton, translatable("screen.universal_translator.option.fallback", onOff(apiFallback)));
         refreshQualityLabel();
         refreshWorkersLabel();
         refreshBatchLabel();
-        vanillaButton.setMessage(translatable("screen.universal_translator.option.vanilla", onOff(translateVanilla)));
-        playerNamesButton.setMessage(translatable("screen.universal_translator.option.player_names",
+        setMessage(vanillaButton, translatable("screen.universal_translator.option.vanilla", onOff(translateVanilla)));
+        setMessage(playerNamesButton, translatable("screen.universal_translator.option.player_names",
                 onOff(translatePlayerNames)));
-        targetLanguageButton.setMessage(translatable("screen.universal_translator.option.target_preset",
+        setMessage(targetLanguageButton, translatable("screen.universal_translator.option.target_preset",
                 TargetLanguage.displayName(targetLanguage)));
-        outgoingButton.setMessage(translatable("screen.universal_translator.option.outgoing",
+        setMessage(outgoingButton, translatable("screen.universal_translator.option.outgoing",
                 onOff(translateOutgoing)));
-        outgoingTargetLanguageButton.setMessage(translatable(
+        setMessage(outgoingTargetLanguageButton, translatable(
                 "screen.universal_translator.option.outgoing_target",
                 TargetLanguage.displayName(outgoingTargetLanguage)));
-        outgoingTargetLanguageButton.active = translateOutgoing;
-        hudCornerButton.active = hudIndicator;
-        hudSizeButton.active = hudIndicator;
-        hudMarginButton.active = hudIndicator;
-        hudColorButton.active = hudIndicator;
-        hudContentButton.active = hudIndicator;
-        hudVisibilityButton.active = hudIndicator;
+        setActive(outgoingTargetLanguageButton, translateOutgoing);
+        setActive(hudCornerButton, hudIndicator);
+        setActive(hudSizeButton, hudIndicator);
+        setActive(hudMarginButton, hudIndicator);
+        setActive(hudColorButton, hudIndicator);
+        setActive(hudContentButton, hudIndicator);
+        setActive(hudVisibilityButton, hudIndicator);
         refreshTabButtons();
     }
 
@@ -525,16 +577,19 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
      */
     private void applyPromptSettings() {
         refreshQualityLabel();
+        ForgeConfig base = currentConfig();
         try {
             String prompt = customPrompt == null
-                    ? original.customSystemPrompt()
-                    : TranslationPrompt.fromEditorText(customPrompt.getValue());
-            ForgeConfig updated = original.withPromptSettings(quality, prompt);
+                    ? base.customSystemPrompt()
+                    : TranslationPrompt.clampEditorText(customPrompt.getValue());
+            ForgeConfig updated = base.withPromptSettings(quality, prompt);
             if (updated.enabled) {
                 updated.validateProviderConfiguration();
             }
             ForgeTranslationRuntime.initialize(updated);
-            updated.save();
+            // Waits for the queued F8 / Home writes before writing: the Save is the last user action
+            // and a snapshot queued earlier must never land after it.
+            ForgeConfigWriter.saveNow(updated);
             setTestStatus(tr("screen.universal_translator.diagnostics.settings_saved"), false);
         } catch (Exception exception) {
             setTestStatus(tr("screen.universal_translator.diagnostics.settings_failed",
@@ -621,10 +676,24 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         return literal(active ? "§b§l[ " + label + " ]" : "§7" + label);
     }
 
+    /**
+     * The configuration this screen edits from, taken from the runtime when it has one.
+     *
+     * <p>{@code withSettings} copies every key it does not own from the object it is given, so
+     * saving from the constructor snapshot silently reverted whatever another path had written
+     * while the screen was open: an F8 toggle, a Home-key target-language change. The constructor
+     * value is the fallback for the window before the first configuration load.
+     */
+    private ForgeConfig currentConfig() {
+        ForgeConfig live = ForgeTranslationRuntime.diagnosticsConfig();
+        return live == null ? original : live;
+    }
+
     private void saveAndApply() {
+        ForgeConfig base = currentConfig();
         boolean runtimeChanged = false;
         try {
-            ForgeConfig updated = original.withSettings(enabled, translateChat, translateOther,
+            ForgeConfig updated = base.withSettings(enabled, translateChat, translateOther,
                     translateVanilla, translateOutgoing, translatePlayerNames,
                     blockedKeywords.getValue(), targetLanguage, outgoingTargetLanguage, displayMode,
                     translateEnglishOnly, translatedTextColor, provider, endpoint.getValue(),
@@ -637,7 +706,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                     // Save writes the engine tab's prompt controls too, so applying the prompt
                     // and then saving cannot silently restore the value the screen
                     // was opened with.
-                    .withPromptSettings(quality, TranslationPrompt.fromEditorText(
+                    .withPromptSettings(quality, TranslationPrompt.clampEditorText(
                             customPrompt == null ? "" : customPrompt.getValue()))
                     .withTranslationTuning(workers, batchSize);
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
@@ -649,19 +718,43 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
             }
             runtimeChanged = true;
             ForgeTranslationRuntime.initialize(updated);
-            updated.save();
+            ForgeConfigWriter.saveNow(updated);
             status = tr("status.universal_translator.saved");
             onClose();
         } catch (Exception exception) {
             if (runtimeChanged) {
                 try {
-                    ForgeTranslationRuntime.initialize(original);
+                    // Roll back to the configuration that was running before this save, not to the
+                    // snapshot the screen opened with: something else may have changed it since,
+                    // and restoring the old snapshot left the runtime disagreeing with the file.
+                    ForgeTranslationRuntime.initialize(base);
                 } catch (Exception restoreFailure) {
                     exception.addSuppressed(restoreFailure);
                 }
             }
             status = tr("status.universal_translator.save_failed", exception.getMessage());
         }
+    }
+
+    /**
+     * The runtime status as the status line shows it, reused for {@link #STATUS_CACHE_MILLIS}.
+     *
+     * <p>{@code status()} builds a string out of the provider status and the session's last failure,
+     * and localizing it walks a dozen comparisons plus an {@code I18n} lookup. Both ran once per
+     * frame while the screen was open, even with nothing changing; the window is one fifth of the
+     * runtime's own diagnostics cache, so a change is still on screen before anyone can read it.
+     */
+    private String localizedStatus() {
+        long now = System.currentTimeMillis();
+        if (now - cachedStatusAt < STATUS_CACHE_MILLIS) {
+            return cachedLocalizedStatus;
+        }
+        String raw = ForgeTranslationRuntime.status();
+        cachedLocalizedStatus = TranslationStatusLocalizer.localize(raw,
+                UniversalTranslatorConfigScreenBase::tr);
+        cachedStatusIsFailure = TranslationStatusLocalizer.isFailure(raw);
+        cachedStatusAt = now;
+        return cachedLocalizedStatus;
     }
 
     protected final float renderSettingsBefore(ForgeScreenCanvas graphics) {
@@ -691,19 +784,19 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         }
         graphics.centered(title, width / 2, 16,
                 animatedUi ? SettingsUiAnimation.pulseColor(now) : 0xFFFFFFFF);
-        String rawStatus = ForgeTranslationRuntime.status();
-        String localized = TranslationStatusLocalizer.localize(rawStatus,
-                UniversalTranslatorConfigScreenBase::tr);
+        String localized = localizedStatus();
         int belowSave = layout.saveY + 24;
         int messageY = belowSave <= height - 10 ? belowSave : SettingsScreenLayout.COMPACT_STATUS_Y;
+        // Read the worker's result once, so the message and its colour come from the same write.
+        TestStatus engineTest = testStatus;
         if (!status.isEmpty()) {
             graphics.centered(literal(status), width / 2, messageY, 0xFFFF5555);
-        } else if (!testStatus.isEmpty()) {
-            graphics.centered(literal(testStatus), width / 2, messageY,
-                    testStatusIsError ? 0xFFFF5555 : 0xFF55FF55);
+        } else if (!engineTest.message.isEmpty()) {
+            graphics.centered(literal(engineTest.message), width / 2, messageY,
+                    engineTest.error ? 0xFFFF5555 : 0xFF55FF55);
         } else if (!localized.isEmpty()) {
             graphics.centered(literal(localized), width / 2, messageY,
-                    TranslationStatusLocalizer.isFailure(rawStatus) ? 0xFFFF5555 : 0xFF55FF55);
+                    cachedStatusIsFailure ? 0xFFFF5555 : 0xFF55FF55);
         } else {
             if (activeTab == Tab.OUTGOING) {
                 graphics.centered(translatable("screen.universal_translator.info.outgoing_hint"),
@@ -801,7 +894,19 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     }
 
     /**
-     * Closes the open overlay on ESC instead of letting the key reach the screen.
+     * Whether a full-screen overlay of this screen currently owns the keyboard.
+     *
+     * <p>Both overlays cover the form completely, so a key that reaches the focused field behind one
+     * types into a field the player cannot see: the prompt, the endpoint or the blocked keywords,
+     * which the next Save then writes. Version layers gate their own key and character callbacks on
+     * this.
+     */
+    protected final boolean isOverlayOpen() {
+        return modelListOpen || openSelection != SettingsSelectionList.Kind.NONE;
+    }
+
+    /**
+     * ESC closes the open overlay instead of letting the key reach the screen.
      *
      * <p>Version-neutral seam like {@link #handleSelectionClick(double, double)}: the per-version
      * screens call it from their own {@code keyPressed} bridge, so this class never mentions a
@@ -1117,17 +1222,25 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         final String keyValue = llmApiKey;
         fetchingModels = true;
         setTestStatus(tr("screen.universal_translator.llm.fetching"), false);
-        Thread worker = new Thread(() -> {
+        startWorker("universal-translator-model-list", () -> {
             OpenAiModelCatalog.Catalog catalog = null;
             String failure = "";
             try {
                 catalog = OpenAiModelCatalog.fetchCatalog(provider, endpointValue, keyValue);
             } catch (Exception error) {
                 failure = describe(error);
+            } finally {
+                // Released in finally, not after the catch: a LinkageError or an OutOfMemoryError
+                // skipped the old assignment and left the tab's buttons dead for the whole session.
+                fetchingModels = false;
             }
-            fetchingModels = false;
             if (!failure.isEmpty()) {
                 setTestStatus(tr("screen.universal_translator.llm.fetch_failed", failure), true);
+                return;
+            }
+            if (catalog == null) {
+                // fetchCatalog answers null for a body it cannot read instead of throwing.
+                setTestStatus(tr("screen.universal_translator.engine.test_not_json"), true);
                 return;
             }
             if (!catalog.jsonBody()) {
@@ -1142,9 +1255,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
             modelPage = 0;
             modelListOpen = true;
             setTestStatus("", false);
-        }, "universal-translator-model-list");
-        worker.setDaemon(true);
-        worker.start();
+        });
     }
 
     /**
@@ -1162,7 +1273,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         final String keyValue = llmApiKey;
         testing = true;
         setTestStatus(tr("screen.universal_translator.engine.testing"), false);
-        Thread worker = new Thread(() -> {
+        startWorker("universal-translator-connection-test", () -> {
             String message;
             boolean error;
             try {
@@ -1174,14 +1285,15 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                         message = tr("screen.universal_translator.engine.test_need_model");
                         error = true;
                     } else {
-                        ProviderProbe.probe(provider, endpointValue, keyValue, model);
+                        ProviderProbe.probe(provider, endpointValue, keyValue, model,
+                                original.editorApiVersion(provider));
                         message = tr("screen.universal_translator.engine.test_ok_probe", model);
                         error = false;
                     }
                 } else if (libre) {
                     String url = libreLanguagesUrl(endpointValue);
                     EndpointPolicy.requireSafeEndpoint(url);
-                    String body = new HttpJsonClient(5000, 15000).get(URI.create(url),
+                    String body = probeClient.get(URI.create(url),
                             Collections.<String, String>emptyMap());
                     // The languages catalog is JSON; anything else means this is not LibreTranslate.
                     JsonStrings.parse(body);
@@ -1191,7 +1303,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                     // Validate the provider the screen is showing, not the one this snapshot was
                     // opened with: they differ until the form is saved, and answering for the old
                     // one told users the wrong thing about the service they had just switched to.
-                    original.withProvider(provider).validateProviderConfiguration();
+                    currentConfig().withProvider(provider).validateProviderConfiguration();
                     message = tr("screen.universal_translator.engine.test_ok_config");
                     error = false;
                 }
@@ -1201,14 +1313,41 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
             }
             testing = false;
             setTestStatus(message, error);
-        }, "universal-translator-connection-test");
-        worker.setDaemon(true);
-        worker.start();
+        });
+    }
+
+    /**
+     * Runs one screen action on the shared worker pool instead of starting a thread per click.
+     *
+     * <p>Each press used to build a {@code Thread}: a thread object, its thread-locals and a
+     * reserved stack, several times per session, all under one fixed name so a stack dump could not
+     * tell two of them apart. Two workers cover the actions a screen can overlap (fetch, test,
+     * export) and keep a long download from blocking a quick probe.
+     */
+    static void startWorker(String name, Runnable job) {
+        try {
+            SCREEN_WORKERS.execute(job);
+        } catch (RuntimeException rejected) {
+            // Only reachable once the pool has been shut down; the screen keeps its last status.
+            DebugLog.global().log("screens", "worker", "rejected", "name", name);
+        }
+    }
+
+    /** One coherent "engine test" line: the message and the colour it is drawn in. */
+    private static final class TestStatus {
+        static final TestStatus EMPTY = new TestStatus("", false);
+
+        final String message;
+        final boolean error;
+
+        TestStatus(String message, boolean error) {
+            this.message = message == null ? "" : message;
+            this.error = error;
+        }
     }
 
     private void setTestStatus(String message, boolean error) {
-        testStatus = message;
-        testStatusIsError = error;
+        testStatus = new TestStatus(message, error);
     }
 
     private static String describe(Exception error) {
@@ -1360,10 +1499,18 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     }
 
     private Layout layout() {
+        Layout cached = cachedLayout;
+        if (cached != null && cachedLayoutWidth == width && cachedLayoutHeight == height) {
+            return cached;
+        }
         SettingsScreenLayout.Geometry geometry = SettingsScreenLayout.calculate(width, height, 5);
-        return new Layout(geometry.left(), geometry.right(), geometry.totalWidth(), geometry.buttonWidth(),
+        Layout built = new Layout(geometry.left(), geometry.right(), geometry.totalWidth(), geometry.buttonWidth(),
                 geometry.top(), geometry.rowStep(), geometry.targetY(), geometry.endpointY(), geometry.saveY(),
                 geometry.tabY(), geometry.tabWidth(), geometry.tabGap(), geometry.contentTop(), geometry.contentRowStep());
+        cachedLayout = built;
+        cachedLayoutWidth = width;
+        cachedLayoutHeight = height;
+        return built;
     }
 
     private static final class Layout {
@@ -1403,10 +1550,6 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
 
         private int contentRow(int index) {
             return contentTop + contentRowStep * index;
-        }
-
-        private int row(int index) {
-            return top + rowStep * index;
         }
     }
 }
@@ -1581,7 +1724,7 @@ abstract class UniversalTranslatorDiagnosticsScreenBase extends Screen {
         try {
             ForgeConfig updated = live.withDebugLog(debugEnabled);
             ForgeTranslationRuntime.initialize(updated);
-            updated.save();
+            ForgeConfigWriter.saveNow(updated);
             Path configFile = updated.configFile();
             DebugLog.global().configure(
                     configFile.resolveSibling(DebugLog.FILE_NAME), debugEnabled);
@@ -1805,8 +1948,9 @@ abstract class UniversalTranslatorLlmConfigScreenBase extends Screen {
     private static final int ESCAPE_KEY = 256;
 
     private final UniversalTranslatorConfigScreenBase parent;
-    private final String initialEndpoint;
-    private final String initialModel;
+    private String initialEndpoint;
+    private String initialModel;
+    private String initialApiKey = "";
     private final boolean hasStoredKey;
     private EditBox endpoint;
     private EditBox model;
@@ -1832,6 +1976,18 @@ abstract class UniversalTranslatorLlmConfigScreenBase extends Screen {
 
     @Override
     protected final void init() {
+        // init() also runs on every resize (window drag, F11, GUI scale). Re-applying the
+        // constructor snapshot silently discarded whatever had been typed, and the API key field had
+        // no value at all - so a pasted key vanished on the first resize.
+        if (endpoint != null) {
+            initialEndpoint = endpoint.getValue();
+        }
+        if (model != null) {
+            initialModel = model.getValue();
+        }
+        if (apiKey != null) {
+            initialApiKey = apiKey.getValue();
+        }
         int formWidth = Math.max(180, Math.min(360, width - 20));
         int left = (width - formWidth) / 2;
         int top = Math.max(42, (height - 174) / 2);
@@ -1846,6 +2002,7 @@ abstract class UniversalTranslatorLlmConfigScreenBase extends Screen {
         apiKey = addRenderableWidget(new EditBox(font, left, top + 72, formWidth, 20,
                 translatable("screen.universal_translator.llm.api_key")));
         apiKey.setMaxLength(UiLimits.SECRET_MAX_CHARS);
+        apiKey.setValue(initialApiKey);
         int gap = 8;
         int buttonWidth = (formWidth - gap) / 2;
         addRenderableWidget(ButtonSpec.of(translatable("screen.universal_translator.llm.save"),
@@ -1884,6 +2041,15 @@ abstract class UniversalTranslatorLlmConfigScreenBase extends Screen {
             status = translatable("error.universal_translator.llm_required").getString();
             return;
         }
+        try {
+            // The same policy the connection test applies. Saving without it wrote an arbitrary
+            // scheme, host and port into the endpoint every later translation request goes to.
+            EndpointPolicy.requireSafeEndpoint(endpointValue);
+        } catch (RuntimeException rejected) {
+            status = describe(rejected);
+            statusIsError = true;
+            return;
+        }
         String enteredKey = apiKey.getValue().trim();
         String keyValue = enteredKey.isEmpty()
                 ? parent.llmApiKey() : ("-".equals(enteredKey) ? "" : enteredKey);
@@ -1906,15 +2072,18 @@ abstract class UniversalTranslatorLlmConfigScreenBase extends Screen {
                 ? parent.llmApiKey() : ("-".equals(enteredKey) ? "" : enteredKey);
         fetching = true;
         setStatus(tr("screen.universal_translator.llm.fetching"), false);
-        Thread worker = new Thread(() -> {
+        UniversalTranslatorConfigScreenBase.startWorker("universal-translator-model-list", () -> {
             List<String> models = Collections.emptyList();
             String failure = "";
             try {
                 models = OpenAiModelCatalog.fetch(endpointValue, keyValue);
             } catch (Exception error) {
                 failure = describe(error);
+            } finally {
+                // Released in finally so an Error cannot leave the fetch button dead for the
+                // whole life of this screen.
+                fetching = false;
             }
-            fetching = false;
             if (!failure.isEmpty()) {
                 setStatus(tr("screen.universal_translator.llm.fetch_failed", failure), true);
                 return;
@@ -1927,9 +2096,7 @@ abstract class UniversalTranslatorLlmConfigScreenBase extends Screen {
             modelPage = 0;
             modelListOpen = true;
             setStatus("", false);
-        }, "universal-translator-model-list");
-        worker.setDaemon(true);
-        worker.start();
+        });
     }
 
     private void setStatus(String message, boolean error) {

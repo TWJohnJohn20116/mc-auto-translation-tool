@@ -43,12 +43,14 @@ public final class CoreSelfTest {
         stylesCompletedTranslations();
         plansPerRunStyling();
         validatesSmallModelOutputs();
+        roundTripsTheCustomPromptEditor();
         preservesRecentUserMessages();
         cachesDynamicTemplates();
         deduplicatesConcurrentRequests();        deduplicatesRefreshedProtectedLiterals();
         separatesRequestsWithDifferentProtectedLiterals();
         completesQueuedRequestsWhenClosed();
         fallsBackToOriginalOnFailure();
+        translatesHanTextForATraditionalTarget();
         enforcesSafeEndpoints();
         handlesJsonStrings();
         updatesRenderLookupsWithoutBlocking();
@@ -58,12 +60,14 @@ public final class CoreSelfTest {
         publishesOutgoingTranslationWhileItIsGenerated();
         boundsOutgoingPreviewState();
         exposesRenderTranslationFailures();
+        stopsRetryingAProviderThatRepeatsTheSource();
         sanitizesProviderLabelsForLogs();
         protectsLiteralsOffTheRenderThread();
         boundsBusyLobbyTranslationWork();
         rateLimitsBusyLobbyWithoutStarvingTooltips();
         doesNotTranslateCompletedOutputAgain();
         persistsOnlyHashedCacheKeys();
+        flushesDespiteAnUnfinishedLoad();
         ignoresMalformedPersistentCache();
         protectsPlayerNames();
         protectsNetworkAddresses();
@@ -85,6 +89,7 @@ public final class CoreSelfTest {
         reportsOfflineStartupDiagnostics();
         matchesTencentCloudOfficialSignatureVector();
         keepsOriginalTextInBilingualMode();
+        keepsPartlyTranslatedLinesInBilingualMode();
         fallsBackFromOfflineToApi();
         verifiesDownloadedFileHashes();
         reportsVerifiedDownloadProgress();
@@ -279,7 +284,10 @@ public final class CoreSelfTest {
         assertEquals("zh", TargetLanguage.libreTranslateCode("zh-CN"));
         assertTrue(TargetLanguage.translationInstruction("zh-TW")
                 .contains("Traditional Chinese characters"));
-        assertFalse(LanguageHeuristics.shouldTranslate("金幣：123", "zh-TW"));
+        // A Traditional Chinese target must still translate Simplified input: the Han shortcut only
+        // applies when the target itself is Simplified, otherwise Simplified-to-Traditional never happens.
+        assertTrue(LanguageHeuristics.shouldTranslate("金幣：123", "zh-TW"));
+        assertFalse(LanguageHeuristics.shouldTranslate("金幣：123", "zh-CN"));
         assertTrue(LanguageHeuristics.shouldTranslate("Coins: 123", "zh-TW"));
     }
 
@@ -384,10 +392,19 @@ public final class CoreSelfTest {
                 OfflineModel.QUALITY.expectedBytes(),
                 1_500L,
                 "离线模型失败 https://secret.example/translate api-key=abc123\n重试中");
-        String output = String.join("\n", snapshot.displayLines());
-        assertTrue(output.contains("离线模型：Quality"));
-        assertTrue(output.contains("模型文件：已安装并且大小正确"));
-        assertTrue(output.contains("运行服务：离线模型 + API 回退"));
+        // The screens resolve language keys, so the assertions name the keys they would look up. The
+        // method they used to call was a second, hard-coded copy with no producer: a line added to it
+        // turned this test green while every diagnostics screen kept showing the old page.
+        UiTranslator translator = new UiTranslator() {
+            @Override
+            public String translate(String key, Object... arguments) {
+                return key + (arguments.length == 0 ? "" : "=" + java.util.Arrays.toString(arguments));
+            }
+        };
+        String output = String.join("\n", snapshot.localizedLines(translator));
+        assertTrue(output.contains("screen.universal_translator.diagnostics.offline_model"));
+        assertTrue(output.contains("value.universal_translator.model_valid"));
+        assertTrue(output.contains("value.universal_translator.provider_offline_fallback"));
         assertFalse(output.contains("secret.example"));
         assertFalse(output.contains("https://"));
         assertFalse(output.contains("abc123"));
@@ -409,6 +426,140 @@ public final class CoreSelfTest {
                 translated = session.lookup("Coins: 42", TextKind.SCOREBOARD_LINE);
             } while ("Coins: 42".equals(translated) && System.currentTimeMillis() < deadline);
             assertEquals("Coins: 42 \u00a78| \u00a7f\u91d1\u5e01: 42", translated);
+        }
+    }
+
+    /**
+     * Bilingual mode remembers the lines it could already answer, including a partly translated list.
+     *
+     * <p>An item tooltip is rebuilt from its components on every frame while its lines arrive one
+     * request at a time, so honouring only the answers of a fully translated list looked all of the
+     * other lines up again every frame for as long as the tooltip stayed open.
+     */
+    private static void keepsPartlyTranslatedLinesInBilingualMode() throws Exception {
+        final CountDownLatch release = new CountDownLatch(1);
+        final AtomicInteger calls = new AtomicInteger();
+        TranslationProvider provider = new TranslationProvider() {
+            @Override
+            public String id() {
+                return "bilingual-lines-test";
+            }
+
+            @Override
+            public String translate(TranslationRequest request) throws Exception {
+                calls.incrementAndGet();
+                String text = request.getText();
+                // Prefix match, not equality: the render path protects digit runs before the request
+                // leaves, so the provider can see "Coins: 42" or a protected form of it, and the
+                // translation has to keep whatever tail the request carried.
+                if (text.startsWith("Coins:")) {
+                    return "\u91d1\u5e01:" + text.substring("Coins:".length());
+                }
+                // Held back until the test releases it: the frames in between are the partly
+                // translated list, which is the state this memo has to honour.
+                release.await(5L, TimeUnit.SECONDS);
+                return "\u5728\u7ebf\u73a9\u5bb6";
+            }
+        };
+        try (RenderTranslationSession session = new RenderTranslationSession(
+                provider, "auto", "zh-CN", new TranslationCache(100), 2,
+                TranslationDisplayMode.ORIGINAL_AND_TRANSLATED)) {
+            // The third line is already Chinese, so it never reaches the provider and never counts as
+            // an answered line: the list stays partly translated for good.
+            List<String> lines = Arrays.asList(
+                    "Coins: 42", "Players online", "\u670d\u52a1\u5668\u516c\u544a");
+            assertEquals(lines, session.lookupLines(lines, TextKind.TOOLTIP));
+            assertReadOnly(session.lookupLines(lines, TextKind.TOOLTIP));
+
+            List<String> partly = lines;
+            long deadline = System.currentTimeMillis() + 2000L;
+            do {
+                Thread.sleep(10L);
+                partly = session.lookupLines(lines, TextKind.TOOLTIP);
+            } while (partly.equals(lines) && System.currentTimeMillis() < deadline);
+            assertEquals(3, partly.size());
+            // Only the outcome of the memo is pinned here: the answered line may still show its own
+            // text on the frame this loop stops at (the publish happens on the coordinator thread),
+            // while the unanswered line must keep its own text and the list must never grow.
+            assertEquals("Players online", partly.get(1));
+            assertReadOnly(partly);
+
+            // The answered line is served from the memo, so the frames that follow submit nothing and
+            // the unanswered line is not looked up again either while its request is still out.
+            int callsWhilePartlyTranslated = calls.get();
+            for (int index = 0; index < 5; index++) {
+                assertEquals(partly, session.lookupLines(lines, TextKind.TOOLTIP));
+            }
+            assertEquals(callsWhilePartlyTranslated, calls.get());
+
+            release.countDown();
+            List<String> translated = partly;
+            deadline = System.currentTimeMillis() + 2000L;
+            do {
+                Thread.sleep(10L);
+                translated = session.lookupLines(lines, TextKind.TOOLTIP);
+            } while (translated.equals(partly) && System.currentTimeMillis() < deadline);
+            assertEquals(3, translated.size());
+            assertEquals("Players online \u00a78| \u00a7f\u5728\u7ebf\u73a9\u5bb6", translated.get(1));
+            assertEquals("\u670d\u52a1\u5668\u516c\u544a", translated.get(2));
+            assertReadOnly(translated);
+            // Same three lines again: the memo carries the outcome, so this is the hit path.
+            assertEquals(translated, session.lookupLines(lines, TextKind.TOOLTIP));
+            assertReadOnly(session.lookupLines(lines, TextKind.TOOLTIP));
+
+            // A list whose every line is answered is served by the memo alone.
+            List<String> both = Arrays.asList("Coins: 42", "Players online");
+            assertEquals(Arrays.asList(
+                    "Coins: 42 \u00a78| \u00a7f\u91d1\u5e01: 42",
+                    "Players online \u00a78| \u00a7f\u5728\u7ebf\u73a9\u5bb6"), session.lookupLines(both, TextKind.TOOLTIP));
+            assertReadOnly(session.lookupLines(both, TextKind.TOOLTIP));
+            // The empty list is an exit of its own and has to be read-only as well, which is why the
+            // helper cannot probe it with set(0, ...).
+            assertTrue(session.lookupLines(Collections.<String>emptyList(), TextKind.TOOLTIP).isEmpty());
+            assertReadOnly(session.lookupLines(Collections.<String>emptyList(), TextKind.TOOLTIP));
+        } finally {
+            release.countDown();
+        }
+    }
+
+    /**
+     * A provider that answers with the source text is asked once, not once every thirty seconds.
+     *
+     * <p>"Java Edition", "Hypixel Network" and an item lore line such as "Requires Java 17" are the
+     * strings a model hands back untouched, and the correct answer for them is no answer at all. The
+     * verdict is final for the session: remembering it is what stops one scoreboard line from costing
+     * a paid request every {@code FAILURE_RETRY_MILLIS} for as long as the world stays loaded, and
+     * what keeps the failure line out of the HUD.
+     */
+    private static void stopsRetryingAProviderThatRepeatsTheSource() throws Exception {
+        final AtomicInteger calls = new AtomicInteger();
+        TranslationProvider echo = new TranslationProvider() {
+            @Override
+            public String id() {
+                return "unchanged-output-test";
+            }
+
+            @Override
+            public String translate(TranslationRequest request) {
+                calls.incrementAndGet();
+                return request.getText();
+            }
+        };
+        try (RenderTranslationSession session = new RenderTranslationSession(
+                echo, "auto", "zh-CN", 100, 1)) {
+            assertEquals("Java Edition", session.lookup("Java Edition", TextKind.OTHER));
+            long deadline = System.currentTimeMillis() + 2000L;
+            while (calls.get() == 0 && System.currentTimeMillis() < deadline) {
+                Thread.sleep(10L);
+            }
+            assertEquals(1, calls.get());
+            Thread.sleep(80L);
+            for (int index = 0; index < 20; index++) {
+                assertEquals("Java Edition", session.lookup("Java Edition", TextKind.OTHER));
+            }
+            Thread.sleep(80L);
+            assertEquals(1, calls.get());
+            assertTrue(session.lastFailureStatus().isEmpty());
         }
     }
 
@@ -583,6 +734,18 @@ public final class CoreSelfTest {
         assertEquals("Hello __UT_999__ world", text.getOriginal());
         java.util.List<?> segments = text.getSegments();
         assertFalse(segments.isEmpty());
+        // The generator, the parser and the leak detector share one grammar
+        // (ProtectedText.TOKEN_SOURCE), so the token the generator writes has to be the token the
+        // detector sees. Two copies let a rewrite of the spelling turn the detector into a silent
+        // no-op: a echoed token then passed validation and was cached.
+        ProtectedText generated = ProtectedText.parse("123");
+        String token = generated.getTemplate();
+        assertTrue(token.startsWith(ProtectedText.TOKEN_PREFIX));
+        assertTrue(token.endsWith(ProtectedText.TOKEN_SUFFIX));
+        assertTrue(TranslationOutputValidator.containsInternalArtifact(token));
+        assertTrue(TranslationOutputValidator.containsInternalArtifact(
+                token.toLowerCase(java.util.Locale.ROOT)));
+        assertEquals("123", generated.restore(token));
     }
 
     private static void handlesJsonStrings() {
@@ -635,6 +798,10 @@ public final class CoreSelfTest {
                 provider, "auto", "zh-CN", 100, 1)) {
             java.util.List<String> original = Arrays.asList("Players online", "Coins");
             assertEquals(original, session.lookupLines(original, TextKind.TOOLTIP));
+            // The same answer is shared by several frames, so it must not be editable: the first
+            // frame used to hand back a mutable list and a memo hit an unmodifiable one, so a caller
+            // that edited the result kept working for one frame and threw from the next.
+            assertReadOnly(session.lookupLines(original, TextKind.TOOLTIP));
             long deadline = System.currentTimeMillis() + 2000L;
             java.util.List<String> translated;
             do {
@@ -642,8 +809,28 @@ public final class CoreSelfTest {
                 translated = session.lookupLines(original, TextKind.TOOLTIP);
             } while (original.equals(translated) && System.currentTimeMillis() < deadline);
             assertEquals(Arrays.asList("在线玩家", "金币"), translated);
+            assertReadOnly(translated);
             assertEquals(1, provider.calls.get());
         }
+    }
+
+    /**
+     * Asserts that a list handed to a render bridge cannot be edited by it.
+     *
+     * <p>An empty answer has no index to overwrite, and {@code set(0, ...)} on it throws
+     * {@link IndexOutOfBoundsException} rather than {@link UnsupportedOperationException}, so the
+     * exit an empty list takes is probed through {@code add} and {@code remove} instead. All three
+     * together are what "read-only" has to mean: a list that refuses {@code set} but accepts
+     * {@code add} still hands its caller a list it can grow.
+     */
+    private static void assertReadOnly(java.util.List<String> lines) {
+        assertThrows(UnsupportedOperationException.class, () -> lines.add("mutated"));
+        if (lines.isEmpty()) {
+            assertThrows(UnsupportedOperationException.class, () -> lines.remove(0));
+            return;
+        }
+        assertThrows(UnsupportedOperationException.class, () -> lines.set(0, "mutated"));
+        assertThrows(UnsupportedOperationException.class, () -> lines.remove(0));
     }
 
     private static void exposesRenderTranslationFailures() throws Exception {
@@ -740,6 +927,31 @@ public final class CoreSelfTest {
         assertFalse(persisted.contains("Server secret text"));
         PersistentTranslationCache second = new PersistentTranslationCache(file, 10);
         assertEquals("\u670d\u52a1\u5668\u6587\u672c", second.get("Server secret text"));
+    }
+
+    /**
+     * A shutdown flush is the only chance the deferred entries get, so it writes even when the
+     * deferred read has not published yet.
+     *
+     * <p>The read can be stuck on a network-synced configuration folder while the world is being
+     * changed, so the wait for it stays bounded; what changed is that reaching the bound no longer
+     * drops the burst. The file's own entries are folded in first, so the write can only add to it.
+     */
+    private static void flushesDespiteAnUnfinishedLoad() throws Exception {
+        Path directory = Files.createTempDirectory("universal-translator-flush-");
+        Path file = directory.resolve("cache.properties");
+        PersistentTranslationCache first = new PersistentTranslationCache(file, 10);
+        first.put("Server secret text", "\u670d\u52a1\u5668\u6587\u672c");
+        first.flush();
+        // A session whose deferred read has not published: memory holds only what this session
+        // translated itself, while the file still holds everything the previous session wrote.
+        PersistentTranslationCache second = new PersistentTranslationCache(file, 10);
+        second.simulateLoadInFlightForTest(20L);
+        second.put("Burst text", "\u7a81\u53d1\u6587\u672c");
+        second.flush();
+        PersistentTranslationCache third = new PersistentTranslationCache(file, 10);
+        assertEquals("\u7a81\u53d1\u6587\u672c", third.get("Burst text"));
+        assertEquals("\u670d\u52a1\u5668\u6587\u672c", third.get("Server secret text"));
     }
 
     private static void protectsPlayerNames() {
@@ -1146,6 +1358,32 @@ public final class CoreSelfTest {
         assertFalse(multiLine.getTemplate().contains("\u2022"));
         assertEquals("\u2022 \u52dd\u5229: 0\n\u2022 \u5931\u6557: 1",
                 multiLine.restore("__UT_0__\u52dd\u5229: __UT_1__\n__UT_2__\u5931\u6557: __UT_3__"));
+        // A scoreboard and a tab list put a formatting code or an indent in front of the bullet. The
+        // bullet branch was anchored at the very first character of the line, so "§7◆" was split into
+        // a format code plus an unprotected decoration glyph that the model could replace.
+        String[] decoratedBullets = {
+                "\u00a77\u25c6 Wins: 0",
+                " \u25c6 Wins: 0",
+                "Wins: 0\n\u00a7e\u25c6 Losses: 1",
+                // A tab list writes the code, then the space, then the symbol. The run only allowed
+                // spacing in front of the first code, so a decoration below it was left translatable
+                // again and the model replaced the glyph.
+                "\u00a77 \u25c6 Wins: 0",
+                "Wins: 0\n\u00a77 \u25c6 Wins",
+                "\u00a78 \u00a7l\u25ba Home"
+        };
+        for (int index = 0; index < decoratedBullets.length; index++) {
+            ProtectedText decorated = ProtectedText.parse(decoratedBullets[index]);
+            assertFalse(decorated.getTemplate().contains("\u25c6"));
+            assertFalse(decorated.getTemplate().contains("\u25ba"));
+            assertEquals(decoratedBullets[index], decorated.restore(decorated.getTemplate()));
+        }
+        // The placeholder branch has to win over the bullet branch: "\u00a77%player%" is a format code
+        // and a placeholder, not a format code plus a decoration run that eats the "%".
+        ProtectedText codeAndPlaceholder = ProtectedText.parse("\u00a77%player%");
+        assertEquals("\u00a77%player%",
+                codeAndPlaceholder.restore(codeAndPlaceholder.getTemplate()));
+        assertFalse(codeAndPlaceholder.getTemplate().contains("player"));
     }
 
     private static void skipsAlreadyChineseAndNonTextValues() {
@@ -1314,6 +1552,54 @@ public final class CoreSelfTest {
                 "Minecraft server interface text from auto to zh-CN. Return only the translation. __UT_0__"));
         assertThrows(IllegalArgumentException.class, () -> TranslationOutputValidator.requireValid(
                 "Welcome", "游戏服务器界面文本从自动翻译为中文，不要解释"));
+        // "翻译引擎" is how a model correctly renders "Translation Engine", so it must not be read as an
+        // echoed instruction: a rejected line fails, retries every thirty seconds and never shows a
+        // translation at all.
+        assertEquals("翻译引擎", TranslationOutputValidator.requireValid(
+                "Translation engine", "翻译引擎"));
+        assertEquals("翻译引擎", TranslationOutputValidator.requireDisplaySafe(
+                "Translation engine", "翻译引擎"));
+        // The three prompt sentences that are also plain English imperatives are the very answer an
+        // English target needs for "只返回译文", so a whole answer that is one of them is a translation;
+        // a longer answer carrying one is still an echo (asserted above).
+        assertEquals("Return only the translation", TranslationOutputValidator.requireValid(
+                "只返回译文", "Return only the translation"));
+        assertEquals("Output translated text only", TranslationOutputValidator.requireDisplaySafe(
+                "只輸出譯文", "Output translated text only"));
+        assertTrue(LanguageHeuristics.shouldTranslate("Return only the translation", "zh-CN"));
+        assertFalse(LanguageHeuristics.shouldTranslate(
+                "Translate the user text to Simplified Chinese", "zh-CN"));
+        // "你是一个翻译引擎" is an ordinary mod-UI string and "You are a translation engine" is the
+        // only correct English rendering of it, so that answer is a translation. Judging it as an
+        // echoed instruction failed the line for good and bought the same refusal every thirty
+        // seconds; a longer answer carrying the sentence is still an echo (asserted above).
+        assertEquals("You are a translation engine", TranslationOutputValidator.requireValid(
+                "你是一个翻译引擎", "You are a translation engine"));
+        assertTrue(LanguageHeuristics.shouldTranslate("You are a translation engine", "zh-CN"));
+        // Every prompt asks the model to preserve punctuation, so the answer arrives carrying the
+        // source's own full stop. Comparing the bare sentence only rejected that answer forever, and
+        // a rejection buys the same answer again every thirty seconds.
+        assertEquals("Return only the translation.", TranslationOutputValidator.requireValid(
+                "只返回译文。", "Return only the translation."));
+        assertTrue(LanguageHeuristics.shouldTranslate("Return only the translation.", "zh-CN"));
+        // An answer identical to its source is a provider that did nothing. Accepting it cached the
+        // source as that line's own translation and repainted it in the translated colour.
+        assertThrows(TranslationOutputValidator.UnchangedOutputException.class,
+                () -> TranslationOutputValidator.requireValid("Welcome aboard", "Welcome aboard"));
+        // The verdict is a type of its own, not just any rejection: the session and the coordinator
+        // route this one to "this text needs no translation" and every other rejection to the retry
+        // table, and a plain IllegalArgumentException would buy the same unchanged answer again
+        // every thirty seconds for as long as the line stays on screen.
+        assertThrows(TranslationOutputValidator.UnchangedOutputException.class,
+                () -> TranslationOutputValidator.requireValid("Java Edition", "Java Edition"));
+        assertThrows(TranslationOutputValidator.UnchangedOutputException.class,
+                () -> TranslationOutputValidator.requireValid("GG WP", "GG WP"));
+        // ... while an identical Han answer is a real translation, and a short reply is a real answer.
+        assertEquals("日本語", TranslationOutputValidator.requireValid("日本語", "日本語"));
+        assertEquals("OK", TranslationOutputValidator.requireValid("OK", "OK"));
+        // A lone token is carried over verbatim often enough that judging it would reject real
+        // translations and put the line into the retry loop for good.
+        assertEquals("VIP", TranslationOutputValidator.requireValid("VIP", "VIP"));
         // A restored protected value may itself look like an internal token: a player is allowed to
         // be named __UT_0__, and the segment path never sends tokens to a provider, so the
         // two-argument form has to accept the value it just restored.
@@ -1335,8 +1621,56 @@ public final class CoreSelfTest {
         assertThrows(IllegalArgumentException.class,
                 () -> TranslationOutputValidator.requireValid("OK", "\u3000\u3000"));
         assertEquals("你好", TranslationOutputValidator.requireValid("Welcome back", "你好"));
+        // The prompt promises the same number of lines, so a reply that lost one is a lost line in the
+        // item description or the book page, kept for good once it is cached.
+        assertThrows(IllegalArgumentException.class, () -> TranslationOutputValidator.requireValid(
+                "line one\nline two\nline three", "第一行\n第二行"));
+        assertThrows(IllegalArgumentException.class,
+                () -> TranslationOutputValidator.requireDisplaySafe("line one\nline two", "第一行"));
+        assertEquals("第一行\n第二行\n第三行", TranslationOutputValidator.requireValid(
+                "line one\nline two\nline three", "第一行\n第二行\n第三行"));
+        // The list path joins lines with a break between them, so a list whose last item is empty
+        // arrives with a trailing break. Counting the untrimmed source made that text look one line
+        // shorter than it is and rejected it for good.
+        assertEquals("第一行\n", TranslationOutputValidator.requireDisplaySafe("Line one\n", "第一行\n"));
         assertFalse(LanguageHeuristics.shouldTranslate(
                 "Minecraft server interface text from auto to zh-CN", "zh-CN"));
+    }
+
+    private static void roundTripsTheCustomPromptEditor() {
+        // The editor shows the escaped form, so one bound has to cover the stored prompt and another the
+        // field: sizing the field with the stored limit made the widget cut the escaped text and the
+        // next save wrote the cut version back, which lost half of a multi-line prompt without a word.
+        String stored = "line one\r\nline two \\n literal";
+        assertEquals(stored,
+                TranslationPrompt.fromEditorText(TranslationPrompt.toEditorText(stored)));
+        String overlong = repeat("a", UiLimits.PROMPT_MAX_CHARS + 10);
+        assertEquals(UiLimits.PROMPT_MAX_CHARS, TranslationPrompt.clampForEditor(overlong).length());
+        // The settings file is a second way in, and it has no text field: the bound has to hold there
+        // too, otherwise every request copies and bills the whole stored prompt.
+        assertEquals(UiLimits.PROMPT_MAX_CHARS,
+                new TranslationPrompt.Settings(null, overlong).customSystemPrompt().length());
+        assertTrue(TranslationPrompt.toEditorText(TranslationPrompt.clampForEditor(overlong)).length()
+                <= UiLimits.PROMPT_EDITOR_MAX_CHARS);
+        // The cut must not land between the halves of a surrogate pair.
+        String splitPair = repeat("a", UiLimits.PROMPT_MAX_CHARS - 1) + "\ud83d\ude00" + "tail";
+        String clampedPair = TranslationPrompt.clampForEditor(splitPair);
+        assertEquals(UiLimits.PROMPT_MAX_CHARS - 1, clampedPair.length());
+        assertFalse(Character.isHighSurrogate(clampedPair.charAt(clampedPair.length() - 1)));
+        // The field is sized for the escaped form, so it accepts more characters than the stored limit
+        // and the save path used to write exactly what the field held: a plain-text prompt of 8000
+        // characters reached the properties file unchanged, was cut to PROMPT_MAX_CHARS the next time
+        // the screen opened, and the save after that wrote the cut version back. Decoding before the
+        // cut is the single decision point that keeps those two lengths from drifting apart.
+        String plainText = repeat("a", 6000);
+        assertEquals(UiLimits.PROMPT_MAX_CHARS, TranslationPrompt.clampEditorText(plainText).length());
+        assertEquals(UiLimits.PROMPT_MAX_CHARS,
+                TranslationPrompt.clampEditorText(TranslationPrompt.toEditorText(plainText)).length());
+        // A prompt whose escaped form is longer than the stored limit while the prompt itself is not
+        // has to survive untouched: 4003 characters with 800 line breaks need 4803 escaped ones.
+        String multiline = repeat("line\n", 800) + "end";
+        assertEquals(multiline,
+                TranslationPrompt.clampEditorText(TranslationPrompt.toEditorText(multiline)));
     }
 
     private static void preservesRecentUserMessages() {
@@ -1458,6 +1792,35 @@ public final class CoreSelfTest {
                     .get(2, TimeUnit.SECONDS);
             assertTrue(result.isFailure());
             assertEquals("Server restarting", result.getTranslatedText());
+        }
+    }
+
+    /**
+     * A Traditional Chinese target has to convert Simplified input, so with Han protection on the Han
+     * text is the content to translate there and not a value to carry over. Protecting it as well left
+     * the template without a single letter, so the line was answered "nothing to translate" and the
+     * preset never converted anything on a default installation.
+     */
+    private static void translatesHanTextForATraditionalTarget() throws Exception {
+        KindRecordingProvider converter = new KindRecordingProvider();
+        try (TranslationCoordinator coordinator = new TranslationCoordinator(
+                converter, new TranslationCache(100), 1)) {
+            TranslationResult converted = coordinator.translate(
+                    "\u91d1\u5e63\uff1a123", "auto", "zh-TW", TextKind.SCOREBOARD_LINE,
+                    Collections.<String>emptyList(), true).get(2, TimeUnit.SECONDS);
+            assertTrue(converted.isTranslated());
+            assertEquals(1, converter.calls.get());
+        }
+        // The same line towards the Simplified preset already holds the script it asks for, so it must
+        // still cost no request at all.
+        KindRecordingProvider skipped = new KindRecordingProvider();
+        try (TranslationCoordinator coordinator = new TranslationCoordinator(
+                skipped, new TranslationCache(100), 1)) {
+            TranslationResult unchanged = coordinator.translate(
+                    "\u91d1\u5e63\uff1a123", "auto", "zh-CN", TextKind.SCOREBOARD_LINE,
+                    Collections.<String>emptyList(), true).get(2, TimeUnit.SECONDS);
+            assertFalse(unchanged.isTranslated());
+            assertEquals(0, skipped.calls.get());
         }
     }
 
@@ -1727,6 +2090,7 @@ public final class CoreSelfTest {
         Path file = Files.createTempFile("universal-translator-stats", ".properties");
         Files.deleteIfExists(file);
         Path temporary = file.resolveSibling(file.getFileName().toString() + ".tmp");
+        Path corrupt = file.resolveSibling(file.getFileName().toString() + ".corrupt");
         try {
             TranslationStats first = TranslationStats.isolated();
             first.attach(file);
@@ -1763,6 +2127,17 @@ public final class CoreSelfTest {
             third.attach(file);
             assertCount(0L, third.snapshot().requests());
 
+            // A read that failed must not turn into a write of zeroes over material that is still
+            // there. The unparseable copy is kept aside under ".corrupt" instead, and only then does
+            // the next flush write a fresh file: that file cannot be parsed on the next launch
+            // either, so latching the write path off would leave the counters in memory for good.
+            assertEquals(malformed, new String(Files.readAllBytes(corrupt), StandardCharsets.UTF_8));
+            assertTrue(!Files.exists(file));
+            third.recordSuccess("offline-llama:1", 5L);
+            third.flush();
+            assertTrue(Files.exists(file));
+            assertCount(1L, third.snapshot().requests());
+
             // An unwritable target and an unattached accumulator are both no-ops, not failures.
             TranslationStats unattached = TranslationStats.isolated();
             unattached.attach(null);
@@ -1772,6 +2147,7 @@ public final class CoreSelfTest {
         } finally {
             Files.deleteIfExists(file);
             Files.deleteIfExists(temporary);
+            Files.deleteIfExists(corrupt);
         }
     }
 

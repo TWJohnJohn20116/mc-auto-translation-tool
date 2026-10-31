@@ -1,5 +1,6 @@
 package org.universaltranslator.core.provider;
 
+import org.universaltranslator.core.DebugLog;
 import org.universaltranslator.core.TranslationPrompt;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationProviderCatalog;
@@ -24,6 +25,22 @@ import java.util.Set;
 /** Immutable, whitelisted online-provider settings shared by every loader/version. */
 public final class OnlineProviderConfig {
     private static final String CUSTOM_HEADER_PREFIX = "custom-api-header.";
+    /**
+     * Range of {@code api-read-timeout-ms}, which also decides how long a stream may deliver nothing:
+     * a user who raises it for a slow endpoint must not keep losing the stream at a fixed 180 s.
+     */
+    private static final int DEFAULT_READ_TIMEOUT_MILLIS = 120000;
+    private static final int MINIMUM_READ_TIMEOUT_MILLIS = 1000;
+    private static final int MAXIMUM_READ_TIMEOUT_MILLIS = 300000;
+    /**
+     * Range of {@code api-connect-timeout-ms}.
+     *
+     * <p>Named so the diagnostics line reports the same range {@code create()} enforces: two literal
+     * copies of 250/60000 would let the report and the clamp drift apart.
+     */
+    private static final int DEFAULT_CONNECT_TIMEOUT_MILLIS = 5000;
+    private static final int MINIMUM_CONNECT_TIMEOUT_MILLIS = 250;
+    private static final int MAXIMUM_CONNECT_TIMEOUT_MILLIS = 60000;
     /**
      * The quality key, as a constant the platform configuration classes reuse.
      *
@@ -150,7 +167,8 @@ public final class OnlineProviderConfig {
         // Off by default: the trace records text previews, so it is only written when asked for.
         putDefault(properties, DEBUG_LOG_KEY, "false");
         putDefault(properties, "api-connect-timeout-ms", "5000");
-        putDefault(properties, "api-read-timeout-ms", "120000");
+        putDefault(properties, "api-read-timeout-ms",
+                Integer.toString(DEFAULT_READ_TIMEOUT_MILLIS));
         putDefault(properties, "api-max-attempts", "3");
         putDefault(properties, "api-min-request-interval-ms", "60");
         // Throughput settings. They are clamped rather than rejected, so a hand-edited typo falls
@@ -250,6 +268,20 @@ public final class OnlineProviderConfig {
         return new LlmEditorSettings(value(keys[0]), value(keys[1]), value(keys[2]));
     }
 
+    /**
+     * The {@code api-version} the translation path would use for the selected provider.
+     *
+     * <p>Only Azure OpenAI addresses its resource with a version query, and the value lives in a key
+     * its settings screens never show: {@link #create} builds the provider from
+     * {@code azure-openai-api-version}, so a connection test that could only reach the pinned default
+     * disagreed with the translation it was checking. Every other provider answers {@code null},
+     * which means "there is no version to pass".
+     */
+    public String llmEditorApiVersion(String provider) {
+        String selected = provider == null ? "" : provider.trim().toLowerCase(java.util.Locale.ROOT);
+        return "azure-openai".equals(selected) ? value("azure-openai-api-version") : null;
+    }
+
     /** Selected translation quality mode; an unknown value falls back to the historical prompt. */
     public TranslationQuality translationQuality() {
         return TranslationQuality.fromConfig(value(QUALITY_KEY));
@@ -304,12 +336,18 @@ public final class OnlineProviderConfig {
      *
      * <p>The worker count is carried for the round trip only; no provider reads
      * {@link TranslationTuning#workers()}, because concurrency is decided by the platform's thread
-     * pool. Batching is the only thing a provider takes from here, through
+     * pool. Batching is what a provider takes from here, through
      * {@link TranslationTuning#batching()}, {@link TranslationTuning#batchSize()} and
-     * {@link TranslationTuning#batchWindowMillis()}.
+     * {@link TranslationTuning#batchWindowMillis()}, plus the request interval the batch layer has
+     * to pace its own retries and per-line repairs with — those requests are sent from inside one
+     * translation call, so the gate {@link ResilientTranslationProvider} owns never sees them.
      */
     public TranslationTuning tuning() {
-        return new TranslationTuning(translationWorkers(), batchSize(), batchWindowMillis());
+        return new TranslationTuning(translationWorkers(), batchSize(), batchWindowMillis(),
+                integer("api-min-request-interval-ms",
+                        TranslationTuning.DEFAULT_REQUEST_INTERVAL_MILLIS,
+                        TranslationTuning.MINIMUM_REQUEST_INTERVAL_MILLIS,
+                        TranslationTuning.MAXIMUM_REQUEST_INTERVAL_MILLIS));
     }
 
     /**
@@ -340,6 +378,11 @@ public final class OnlineProviderConfig {
      * value is silently replaced rather than reported at load time, so without these lines a
      * surprising worker count or a batch that never forms would be impossible to explain.
      *
+     * <p>The retry, interval and timeout keys are reported for the same reason and with more force:
+     * none of them has an in-game control, so the file is the only place they can be typed, and a typo
+     * in one of them was invisible everywhere — the effective value silently became the default and the
+     * only symptom was "the setting does nothing".
+     *
      * @param configFile configuration file to read; {@code null} reports the defaults
      */
     public static List<String> effectiveSettingsLines(Path configFile) {
@@ -356,7 +399,7 @@ public final class OnlineProviderConfig {
             }
         }
         OnlineProviderConfig config = from(stored);
-        List<String> lines = new ArrayList<String>(3);
+        List<String> lines = new ArrayList<String>(7);
         // The label used to read "Translation workers", which presented a platform setting as if it
         // were the provider's concurrency. Nothing inside a provider reads it — the platform runtime
         // decides how many threads call in — so the line now says where the value is actually used.
@@ -374,6 +417,33 @@ public final class OnlineProviderConfig {
                 config.batchWindowMillis(), TranslationTuning.DEFAULT_BATCH_WINDOW_MILLIS,
                 TranslationTuning.MINIMUM_BATCH_WINDOW_MILLIS,
                 TranslationTuning.MAXIMUM_BATCH_WINDOW_MILLIS));
+        lines.add(settingLine("Connect timeout (ms)", "api-connect-timeout-ms",
+                stored.getProperty("api-connect-timeout-ms"),
+                config.integer("api-connect-timeout-ms", DEFAULT_CONNECT_TIMEOUT_MILLIS,
+                        MINIMUM_CONNECT_TIMEOUT_MILLIS, MAXIMUM_CONNECT_TIMEOUT_MILLIS),
+                DEFAULT_CONNECT_TIMEOUT_MILLIS, MINIMUM_CONNECT_TIMEOUT_MILLIS,
+                MAXIMUM_CONNECT_TIMEOUT_MILLIS));
+        lines.add(settingLine("Read timeout (ms)", "api-read-timeout-ms",
+                stored.getProperty("api-read-timeout-ms"),
+                config.integer("api-read-timeout-ms", DEFAULT_READ_TIMEOUT_MILLIS,
+                        MINIMUM_READ_TIMEOUT_MILLIS, MAXIMUM_READ_TIMEOUT_MILLIS),
+                DEFAULT_READ_TIMEOUT_MILLIS, MINIMUM_READ_TIMEOUT_MILLIS,
+                MAXIMUM_READ_TIMEOUT_MILLIS));
+        lines.add(settingLine("Attempts per request", "api-max-attempts",
+                stored.getProperty("api-max-attempts"),
+                config.integer("api-max-attempts", TranslationTuning.DEFAULT_ATTEMPTS,
+                        TranslationTuning.MINIMUM_ATTEMPTS, TranslationTuning.MAXIMUM_ATTEMPTS),
+                TranslationTuning.DEFAULT_ATTEMPTS, TranslationTuning.MINIMUM_ATTEMPTS,
+                TranslationTuning.MAXIMUM_ATTEMPTS));
+        lines.add(settingLine("Minimum request interval (ms)", "api-min-request-interval-ms",
+                stored.getProperty("api-min-request-interval-ms"),
+                config.integer("api-min-request-interval-ms",
+                        TranslationTuning.DEFAULT_REQUEST_INTERVAL_MILLIS,
+                        TranslationTuning.MINIMUM_REQUEST_INTERVAL_MILLIS,
+                        TranslationTuning.MAXIMUM_REQUEST_INTERVAL_MILLIS),
+                TranslationTuning.DEFAULT_REQUEST_INTERVAL_MILLIS,
+                TranslationTuning.MINIMUM_REQUEST_INTERVAL_MILLIS,
+                TranslationTuning.MAXIMUM_REQUEST_INTERVAL_MILLIS));
         return lines;
     }
 
@@ -507,9 +577,13 @@ public final class OnlineProviderConfig {
             stored.load(reader);
         } catch (IOException unreadable) {
             // A file that cannot be read is not a reason to fail a save; the snapshot is written as
-            // it stands, exactly as it was before this method existed.
+            // it stands, exactly as it was before this method existed. Leaving no trace was the
+            // problem: a value the diagnostics panel had just written was silently overwritten by the
+            // stale snapshot and nothing said why.
+            logUnreadable(configFile, unreadable);
             return;
         } catch (RuntimeException malformed) {
+            logUnreadable(configFile, malformed);
             return;
         }
         for (String key : PROMPT_KEYS) {
@@ -520,6 +594,18 @@ public final class OnlineProviderConfig {
                 target.setProperty(key, stored.getProperty(key, ""));
             }
         }
+    }
+
+    /**
+     * Leaves one trace line when a save could not re-read the keys this method protects.
+     *
+     * <p>Without it the protection disappears exactly when it is needed — a locked or truncated file —
+     * and the user only sees that a value they just changed came back.
+     */
+    private static void logUnreadable(Path configFile, Throwable cause) {
+        DebugLog.global().log("prompt-keys-not-refreshed",
+                "file", String.valueOf(configFile.getFileName()),
+                "cause", cause.getClass().getSimpleName());
     }
 
     /**
@@ -551,9 +637,12 @@ public final class OnlineProviderConfig {
 
     public TranslationProvider create(String provider) {
         String selected = provider == null ? "" : provider.trim().toLowerCase(java.util.Locale.ROOT);
+        int readTimeoutMillis = integer("api-read-timeout-ms", DEFAULT_READ_TIMEOUT_MILLIS,
+                MINIMUM_READ_TIMEOUT_MILLIS, MAXIMUM_READ_TIMEOUT_MILLIS);
         HttpJsonClient http = new HttpJsonClient(
-                integer("api-connect-timeout-ms", 5000, 250, 60000),
-                integer("api-read-timeout-ms", 120000, 1000, 300000));
+                integer("api-connect-timeout-ms", DEFAULT_CONNECT_TIMEOUT_MILLIS,
+                        MINIMUM_CONNECT_TIMEOUT_MILLIS, MAXIMUM_CONNECT_TIMEOUT_MILLIS),
+                readTimeoutMillis);
         TranslationProvider raw;
         if ("libretranslate".equals(selected)) {
             raw = new LibreTranslateProvider(value("libretranslate-endpoint"), value("api-key"), http);
@@ -596,24 +685,28 @@ public final class OnlineProviderConfig {
         } else if ("azure-openai".equals(selected)) {
             raw = new AzureOpenAiTranslationProvider(value("azure-openai-endpoint"),
                     value("azure-openai-api-key"), value("azure-openai-model"),
-                    value("azure-openai-api-version"), http, promptSettings());
+                    value("azure-openai-api-version"), http, promptSettings(), tuning());
         } else if ("deepl".equals(selected)) {
             raw = new DeepLTranslationProvider(value("deepl-endpoint"), value("deepl-api-key"),
                     value("deepl-model"), http);
         } else if ("gemini".equals(selected)) {
             raw = new GeminiTranslationProvider(value("gemini-endpoint"), value("gemini-api-key"),
-                    value("gemini-model"), http, promptSettings());
+                    value("gemini-model"), http, promptSettings(), tuning());
         } else if ("claude".equals(selected)) {
             raw = new ClaudeTranslationProvider(value("claude-endpoint"), value("claude-api-key"),
-                    value("claude-model"), http, promptSettings());
+                    value("claude-model"), http, promptSettings(), tuning());
         } else if ("custom-http-json".equals(selected)) {
             raw = custom(http);
         } else {
             throw new IllegalArgumentException("Unsupported online translation provider: " + provider);
         }
         return new ResilientTranslationProvider(raw,
-                integer("api-max-attempts", 3, 1, 5),
-                integer("api-min-request-interval-ms", 60, 0, 60000));
+                integer("api-max-attempts", TranslationTuning.DEFAULT_ATTEMPTS,
+                        TranslationTuning.MINIMUM_ATTEMPTS, TranslationTuning.MAXIMUM_ATTEMPTS),
+                integer("api-min-request-interval-ms",
+                        TranslationTuning.DEFAULT_REQUEST_INTERVAL_MILLIS,
+                        TranslationTuning.MINIMUM_REQUEST_INTERVAL_MILLIS,
+                        TranslationTuning.MAXIMUM_REQUEST_INTERVAL_MILLIS));
     }
 
     private TranslationProvider openAi(
@@ -626,6 +719,13 @@ public final class OnlineProviderConfig {
         String apiKey = value(apiKeyKey);
         if (!"openai-compatible".equals(providerId)) {
             ProviderSupport.requireCredential(providerId + " API key", apiKey);
+        }
+        if ("volcengine-ark".equals(providerId) && value(modelKey).isEmpty()) {
+            // Ark's model field is an inference-endpoint id that only the account owner can create,
+            // so there is no default to ship; saying "model is required" would send the user looking
+            // for a model name that does not exist in this API.
+            throw new IllegalArgumentException("Volcengine Ark 需要在火山方舟控制台建立推理接入点，"
+                    + "并把该接入点的 ID 填入 volcengine-ark-model（它不是模型名称）");
         }
         return new OpenAiChatTranslationProvider(
                 value(endpointKey), apiKey, value(modelKey), providerId, http, promptSettings(),

@@ -35,7 +35,7 @@ flowchart TD
 
     subgraph Layer4 [第 4 層：打包聚合層 Bundle Layer]
         SubBundle["次級 Bundle (例: fabric-1.21.x, fabric-1.20.x)<br/>內部巢狀打包各版本 JAR (META-INF/jars)"]
-        AllBundle["超級聚合 Bundle<br/>MCAutoTranslationTool-fabric-all.jar (51 版本合一)"]
+        AllBundle["超級聚合 Bundle<br/>MCAutoTranslationTool-&lt;mod_version&gt;-fabric-all.jar (51 版本合一)"]
     end
 
     subgraph Layer5 [第 5 層：建置與自動化工具 Scripts]
@@ -61,28 +61,34 @@ flowchart TD
 | `platforms/forge/legacy/1.8.9/` | 舊版 Forge | 1.8.9 | Forge | **Java 8** | Gradle 4.9 (FG 2.1) |
 | `platforms/forge/legacy/1.12.2/` | 舊版 Forge | 1.12.2 | Forge | **Java 8** | Gradle 4.9 (FG 2.3) |
 | `platforms/fabric/1.0-1.8/` | 古早 Fabric | 1.3.1 ~ 1.8.8 (26 個版本) | Ornithe Fabric | **Java 8** | Loom Ornithe |
-| `platforms/fabric/1.8-1.12/` | 中期 Fabric | 1.8.9 ~ 1.12.2 (12 個版本) | Ornithe Fabric | **Java 8** | Loom Ornithe |
+| `platforms/fabric/1.8-1.12/` | 中期 Fabric | 1.8.9 ~ 1.12.2 (15 個版本) | Ornithe Fabric | **Java 8** | Loom Ornithe |
 | `platforms/fabric/1.13/` | 扁平化轉折 | 1.13, 1.13.1, 1.13.2 | Ornithe / LegacyFabric | **Java 8** | Loom Ornithe |
 | `platforms/fabric/1.14-1.15/` | 官方早期 Loom | 1.14.0 ~ 1.15.2 (8 個版本) | Fabric Loom | **Java 8** | Fabric Loom 1.17 |
-| `platforms/fabric/1.16/versions/1.16.5/`| 經典 1.16.5 | 1.16.5 | Fabric Loom | **Java 8** | Fabric Loom 1.17 |
+| `platforms/fabric/1.16/versions/`（1.16–1.16.5 共 6 個）| 1.16 家族 | 1.16 ~ 1.16.5 (6 個版本) | Fabric Loom | **Java 8** | Fabric Loom 1.17 |
 | `platforms/fabric/1.17-1.18/`| 現代轉折版 | 1.17.0 ~ 1.18.2 (5 個版本) | Fabric Loom | **Java 17**| Fabric Loom 1.17 |
 | `platforms/fabric/1.19/` | 1.19 家族 | 1.19.0 ~ 1.19.4 (5 個版本) | Fabric Loom | **Java 17**| Fabric Loom 1.17 |
-| `platforms/fabric/1.20/` | 1.20 家族 | 1.20.0 ~ 1.20.6 (6 個版本) | Fabric Loom | **Java 17/21**| Fabric Loom 1.17 |
+| `platforms/fabric/1.20/` | 1.20 家族 | 1.20.0 ~ 1.20.6 (7 個版本) | Fabric Loom | **Java 17/21**| Fabric Loom 1.17 |
 | `platforms/fabric/1.21/` | 當前主流 | 1.21.0 ~ 1.21.11 (12 個版本)| Fabric Loom | **Java 21**| Fabric Loom 1.17 |
-| `platforms/fabric/26.x/` | 快照/未來版 | 26.1, 26.1.1, 26.1.2, 26.2, 26.3 | Fabric Loom | **Java 25**| Fabric Loom 1.17 |
+| `platforms/fabric/26.x/` | 已發布（26.1–26.3） | 26.1, 26.1.1, 26.1.2, 26.2, 26.3 | Fabric Loom | **Java 25**| Fabric Loom 1.17 |
 | `platforms/forge/modern/` | 現代過渡 Forge | 1.16.5, 1.18.2, 1.19.2, 1.20.1 | Forge | **Java 8/17** | ForgeGradle 5.1 |
 | `platforms/forge/1.21/` | 現代 Forge 1.21 | 1.21.0 ~ 1.21.11 | Forge | **Java 21**| ForgeGradle 6 / NeoDev |
-| `platforms/forge/26.x/` | 未來 Forge | 26.1 ~ 26.2 | Forge | **Java 25**| ForgeGradle / NeoDev |
+| `platforms/forge/26.x/` | 已發布（26.1–26.2） | 26.1 ~ 26.2 | Forge | **Java 25**| ForgeGradle / NeoDev |
 | `platforms/neoforge/` | NeoForge 獨立系列 | 1.20.1, 1.20.x, 1.21.x, 26.x | NeoForge | **Java 17/21/25**| ModDev Gradle |
+
+> 本文件只做速查：每個 bundle 的版本數以 `docs/Zh-cn/BUILDING.md` 對應章節為權威（該檔逐 bundle 說明，
+> 新增版本時只改那裡），目錄路徑與目錄內容以 `settings.gradle` 的 `projectDir` 及實際目錄為權威；
+> 共用層的掛載關係以各層的 `*.gradle`（例如 `platforms/fabric/legacy/shared.gradle`）為權威。
+> 本文件只在整批增減時跟著動。
+
 ---
 
 ## 3. 常見架構疑問解答 (FAQ)
 
-### Q1: 為什麼專案根目錄有 `legacy/`，但 `platforms/fabric/` 底下又有一個 `legacy/`？
-* **根目錄的 `legacy/`（Forge 1.8.9 與 1.12.2）**：
-  Minecraft 1.8.9 與 1.12.2 的 Forge 官方外掛（ForgeGradle 2.x）是 2016 年前後的古老產物，**強制依賴 Gradle 4.9 且與 Gradle 8.x 完全不相容**。因此它們不能作為根專案的 subproject，必須獨立放在根目錄自成一個 Gradle 專案（擁有自己的 `gradlew` 與 `build.gradle`）。
+### Q1: 為什麼 `platforms/forge/legacy/` 與 `platforms/fabric/legacy/` 都要各自獨立成層？
+* **`platforms/forge/legacy/`（Forge 1.8.9 與 1.12.2）**：
+  Minecraft 1.8.9 與 1.12.2 的 Forge 官方外掛（ForgeGradle 2.x）是 2016 年前後的古老產物，**強制依賴 Gradle 4.x 且與 Gradle 8.x 完全不相容**。因此它們不能作為根專案的 subproject，而是分別放在 `platforms/forge/legacy/1.8.9/` 與 `platforms/forge/legacy/1.12.2/`，各自自立一個 Gradle 專案（擁有自己的 `gradlew` 與 `build.gradle`，不在根專案的 `settings.gradle` 裡）。根目錄本身**沒有** `legacy/` 這個目錄。
 * **`platforms/fabric/legacy/`**：
-  這是 Fabric 體系中的過渡期專案（1.16.5、1.19.2、1.20.1），以及存放 `shared/` 跨版本 API 轉接層的代碼庫，它依然受根專案的 Gradle 8.14 統一管理。
+  這裡只放 `shared/`（`shared.gradle`）跨版本 API 轉接層，本身沒有任何版本專案。1.16.5、1.19.2、1.20.1 的專案目錄分別在 `platforms/fabric/1.16/versions/1.16.5`、`platforms/fabric/1.19/versions/1.19.2`、`platforms/fabric/1.20/versions/1.20.1`（見 `settings.gradle` 的 `projectDir`），它們依然受根專案的 Gradle 8.14 統一管理。
 
 ---
 
@@ -90,7 +96,7 @@ flowchart TD
 **完全不需要！** 專案採用了 **Gradle sourceSets 階層疊加** 機制：
 1. **純邏輯層**：全部寫在 `translator-core/`。翻譯演算法、字串過濾、正則匹配改動時，**全平台 60+ 版本自動同步生效**。
 2. **UI 與渲染層**：
-   - `platforms/fabric/legacy/shared/`：將 1.14 至 1.20.6 依照 Minecraft 的 GUI 繪製 API 變革劃分為 `rendered/1.16.5`、`rendered/1.19.2-plus`、`chat-hud/1.20-1.20.4` 等模組。
+   - `platforms/fabric/legacy/shared/` 只是這一層的根目錄：`common/`（共用資源與工具）、`family/1.16.5-1.19.2/`（1.16.2–1.19.2 共用的那一份）、`rendered/1.16.5/`（1.16.2–1.18.2 的渲染入口）、`screen-base/{1.16.0-1.16.4,1.16.5,1.17,1.17.1-1.18.1,1.18.2}/`、`screens/1.16-1.18/`；1.19.2 以後的分支與 `chat-hud/` 不在這一層（分別在 `platforms/fabric/1.19/shared/` 與 `platforms/fabric/1.20/shared/`），`rendered/1.19.2-plus` 只是掛載旗標、程式碼在 `platforms/fabric/shared/rendered-common/`。實際掛載關係以 `platforms/fabric/legacy/shared.gradle` 的 `sourceLayers` 為權威。
    - 子專案（例如 `platforms/fabric/1.20/versions/1.20.4`）內部只有 `fabric.mod.json` 與版本相依性宣告，其 Java 代碼是在編譯時直接掛載共用目錄的 sourceSet。
 3. **Forge 共用層**：
    - `platforms/forge/shared/` 封裝了現代 Forge 的 Client Mod 事件與 Mixin 進入點，1.16.5 至 1.20.1 共用同一套客戶端代碼。
@@ -115,7 +121,7 @@ Fabric Loader 原生支援 `META-INF/jars/` 巢狀 JAR 解壓機制：
        ...
    ]
    ```
-3. 最終透過 `scripts/prepare_release_assets.py`，將所有 Fabric 家族（1.13 至 26.3 共 51 個版本的子模組）聚合為單一 `MCAutoTranslationTool-fabric-all.jar`。玩家只要下載這一個 JAR，不論玩 1.14、1.16、1.20 或 1.21，Fabric Loader 就會自動精確加載對應的位元碼。前提是該實例的 **Fabric Loader ≥ 0.19.3**——bundle 的 `fabric.mod.json` 就是這樣宣告 `fabricloader` 下限，低於此版本的 Loader 會在載入階段擋下整個模組。
+3. 最終透過 `scripts/prepare_release_assets.py`，將所有 Fabric 家族（1.13 至 26.3 共 51 個版本的子模組）聚合為單一 `MCAutoTranslationTool-<mod_version>-fabric-all.jar`。玩家只要下載這一個 JAR，不論玩 1.14、1.16、1.20 或 1.21，Fabric Loader 就會自動精確加載對應的位元碼。前提是該實例的 **Fabric Loader ≥ 0.19.3**——bundle 的 `fabric.mod.json` 就是這樣宣告 `fabricloader` 下限，低於此版本的 Loader 會在載入階段擋下整個模組。
 
 ---
 

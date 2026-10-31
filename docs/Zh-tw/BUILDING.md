@@ -146,7 +146,7 @@ Fabric Loader 會選擇相符實作，建置會驗證全部六個選擇。
 ./gradlew :platform-fabric-1.20.1:build
 ```
 
-輸出位於 `platforms/fabric/legacy/1.20.1/build/libs/`。
+輸出位於 `platforms/fabric/1.20/versions/1.20.1/build/libs/`。`platforms/fabric/legacy/` 只放跨版本共用層；1.16.5／1.19.2／1.20.1 的專案分別在 `platforms/fabric/1.16/versions/1.16.5`、`platforms/fabric/1.19/versions/1.19.2`、`platforms/fabric/1.20/versions/1.20.1`（見 `settings.gradle` 的 `projectDir`）。
 
 ## 1.20.1 Forge
 
@@ -284,7 +284,7 @@ $env:GRADLE_USER_HOME = "D:\Gradle\cache"
 
 ## 1.12.2 Forge
 
-需要完整 JDK 8。進入 `legacy/forge-1.12.2/` 後執行：
+需要完整 JDK 8。這個目標與 1.8.9 各自是獨立 Gradle 建置（有自己的 wrapper 與 `build.gradle`，不在根專案的 `settings.gradle` 裡）。進入 `platforms/forge/legacy/1.12.2/` 後執行：
 
 ```bash
 ./gradlew build
@@ -294,7 +294,7 @@ Wrapper 固定為 Gradle 4.10.3，ForgeGradle 固定為 3.0.197，Forge 固定�
 
 ## 1.8.9 Forge
 
-需要完整 JDK 8。進入 `legacy/forge-1.8.9/` 後執行：
+需要完整 JDK 8。進入 `platforms/forge/legacy/1.8.9/` 後執行：
 
 ```bash
 ./gradlew build
@@ -309,11 +309,14 @@ Wrapper 固定為 Gradle 2.14.1，ForgeGradle 使用 2.1 系列，Forge 固定�
 
 ## 發佈 JAR 驗證與縮減
 
-根檢查會驗證所有已追蹤的發佈 JAR 與 SHA-256：
+下面的 `<mod_version>` 換成 `gradle.properties` 的現行值；`downloads/` 只保留現行版本的目錄。
 
-```bash
-./gradlew check
-```
+PR 必經的 `./gradlew check` **不驗發佈資產**：它需要 `downloads/<mod_version>`，而那個目錄是發佈後
+才存在的，把它掛回 `check` 會讓「改版本號」與「必經檢查」互鎖（C2-163）。發佈資產的驗證入口是三個：
+`./gradlew verifyReleaseJars` 驗證任意已建置的 JAR（ZIP/metadata/Mixin/refmap/選版）；
+`./gradlew verifyPreparedReleaseAssets` 驗證 `downloads/<版本>` 的 48 顆與縮減後的 31 顆；
+`./gradlew verifyPublishedRelease` 是上面兩者的聚合，由 `prepare-release.yml` 與 `build.yml` 的
+`release-assets` job 明確呼叫（後者在 `downloads/<mod_version>` 不存在時整步略過）。
 
 也可以直接驗證任意建置產物：
 
@@ -325,16 +328,26 @@ python3 scripts/verify_release_jars.py path/to/mod.jar
 Forge 舊版執行階段映射、版本一致性、checksum 內容及覆蓋範圍。Fabric/Forge 1.16.5、
 1.19.2 與 1.20.1 的 `build` 任務也會驗證其產生的 JAR。
 
-發佈流程會將 48 個發佈建置產物縮減為 31 個可直接安裝的 JAR：51 個 Fabric 實作會
+驗證與縮減是兩件事：驗證只確認產物結構正確，縮減才改變產物數量。發佈流程會將 48 個發佈建置產物縮減為 31 個可直接安裝的 JAR：51 個 Fabric 實作會
 放進一個由 Loader 自動選版的 JAR；四組 Forge 版本在 payload 相容時擴寬範圍；
 Forge／NeoForge 1.20.1 保留為分別驗證的載入器專用 JAR。不同 API 仍維持獨立：
 
 ```bash
 python3 scripts/prepare_release_assets.py \
-  --release-dir downloads/1.4 \
+  --release-dir downloads/<mod_version> \
   --output-dir build/release-assets \
-  --version 1.4
+  --version <mod_version>
 ```
+
+發佈目標與 source-only bundle 是兩種不同的東西，混成一類就會寫出與實際產出相反的說明：
+
+| 類別 | 內容 | 是否隨正式版發佈 |
+| --- | --- | --- |
+| 發佈目標（48 個） | Fabric 1.13–26.3（連續）、Forge 1.8.9／1.12.2／1.16.5／1.18.2／1.19.2／1.20.1／1.21、1.21.1、1.21.3–1.21.11／26.1–26.2（缺口版本由 `mods.toml` 拒絕載入）、NeoForge 1.20.1、1.20.4、1.20.6、1.21、1.21.1–1.21.11、26.1–26.2（每版一顆；1.20.2、1.20.3、1.20.5 沒有目標） | 是，縮減為 31 個可安裝 JAR |
+| source-only bundle（2 個） | `fabric-1.0-1.8.x`（1.3.1–1.8.8 當中的 26 個版本）與 `fabric-1.8-1.12.x`（1.8.9–1.12.2，15 個版本） | 否，只在 `legacy-targets.yml` 建置，從不出現在 `downloads/<版本>/` |
+
+所以 `fabric-all` 只含 1.13–26.3 的 51 個精確實作；1.3.1–1.12.2 的玩家要自行建置這兩個 bundle。
+要把覆蓋範圍寫進 CHANGELOG 或 README 時引用這一節，不要另寫一份數字。
 
 ## 核心自我測試
 

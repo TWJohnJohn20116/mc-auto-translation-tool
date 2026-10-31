@@ -4,6 +4,11 @@ import java.util.function.Function;
 
 /** Shared values and compact two-column geometry for in-place settings lists. */
 public final class SettingsSelectionList {
+    /** Tightest row step the compressed list uses; below this a row stops being a usable target. */
+    private static final int MINIMUM_ROW_STEP = 8;
+    /** Tightest button the compressed list draws, for the same reason. */
+    private static final int MINIMUM_BUTTON_HEIGHT = 8;
+
     public enum Kind {
         NONE,
         PROVIDER,
@@ -60,6 +65,15 @@ public final class SettingsSelectionList {
         int rowStep = Math.max(12, Math.min(22, (bottomLimit - top) / rows));
         int buttonHeight = Math.max(11, Math.min(20, rowStep - 2));
         int panelTop = Math.max(8, top - 28);
+        // The last row has to end inside the screen, not only inside the panel: the provider list is
+        // twenty entries (ten rows), and the old step was derived from a bottom limit that could sit
+        // past the bottom edge, so the final option was drawn — and clicked — outside the window.
+        // Compressing the step keeps every row reachable instead of trading one row for another.
+        while (rows > 1 && rowStep > MINIMUM_ROW_STEP
+                && top + (rows - 1) * rowStep + buttonHeight + 4 > screenHeight) {
+            rowStep--;
+            buttonHeight = Math.max(MINIMUM_BUTTON_HEIGHT, Math.min(buttonHeight, rowStep - 1));
+        }
         // Derive the panel bottom from the rows actually drawn so the background always
         // encloses the buttons, even at sub-240 heights where the rows overflow.
         int lastRowBottom = top + (rows - 1) * rowStep + buttonHeight;

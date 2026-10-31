@@ -7,8 +7,18 @@ package org.universaltranslator.core;
  * copy. They live here because the value is a product decision, not a per-version one.
  */
 public final class UiLimits {
-    /** Longest custom prompt the settings screen accepts, in characters. */
+    /** Longest custom prompt the settings screen stores, in characters. */
     public static final int PROMPT_MAX_CHARS = 4096;
+
+    /**
+     * Longest custom prompt the settings screen shows in its single-line editor, in characters.
+     *
+     * <p>The editor text is the escaped form: every backslash and every line break becomes two
+     * characters, so a stored prompt at the limit needs up to twice the field. Sizing the field with
+     * {@link #PROMPT_MAX_CHARS} made the widget cut the escaped text and the next save wrote the cut
+     * version back, which lost half of a multi-line prompt with no message.
+     */
+    public static final int PROMPT_EDITOR_MAX_CHARS = 2 * PROMPT_MAX_CHARS + 32;
 
     /**
      * Longest keyword text the blocklist field accepts, in characters.
@@ -25,7 +35,13 @@ public final class UiLimits {
      */
     public static final int KEYWORDS_MAX_ENTRIES = TranslationBlocklist.MAX_KEYWORDS;
 
-    /** Longest single keyword that still matches; longer entries are cut to this length. */
+    /**
+     * Longest single keyword that still matches; longer entries are cut to this length.
+     *
+     * <p>Both this and {@link #KEYWORDS_MAX_ENTRIES} are handed to the blocklist hint as its two
+     * format arguments, so the numbers the nine language files print follow the limits instead of
+     * being written out by hand and left behind when a limit moves.
+     */
     public static final int KEYWORD_MAX_CHARS = TranslationBlocklist.MAX_KEYWORD_LENGTH;
 
     /** Longest endpoint URL the settings screen accepts, in characters. */

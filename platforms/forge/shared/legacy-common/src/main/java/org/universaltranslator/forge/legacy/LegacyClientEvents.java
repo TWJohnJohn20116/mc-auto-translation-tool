@@ -21,6 +21,7 @@ import org.universaltranslator.core.HudIndicatorContent;
 import org.universaltranslator.core.HudIndicatorCorner;
 import org.universaltranslator.core.HomeQuickSettingsState;
 import org.universaltranslator.core.HudIndicatorSettings;
+import org.universaltranslator.core.HudLabelCache;
 import org.universaltranslator.core.OutgoingTranslationPreview;
 import org.universaltranslator.core.TranslationActivity;
 import org.universaltranslator.core.TranslationResult;
@@ -36,9 +37,45 @@ public final class LegacyClientEvents {
     private static final Logger LOGGER = LogManager.getLogger("MCAutoTranslationTool");
     // RenderGameOverlayEvent's element type, resolved once: 1.8.9 has a public field, 1.12.2 a getter.
     private static boolean elementTypeResolved;
+    /** One warning per session when the overlay element type cannot be read. */
+    private static final java.util.concurrent.atomic.AtomicBoolean elementTypeWarningIssued =
+            new java.util.concurrent.atomic.AtomicBoolean();
     private static Method elementTypeGetter;
     private static Field elementTypeField;
     private static final long FAILURE_NOTIFICATION_COOLDOWN_MILLIS = 60_000L;
+    /**
+     * Minimum gap between two action-bar messages.
+     *
+     * <p>The offline engine reports download and load progress inside its status string, so the
+     * percent changes tens of times per second. De-duplicating on the whole string meant every one
+     * of those overwrote the action bar — the player's own {@code /title actionbar} was pushed off
+     * within a few hundred milliseconds, and the bar flickered instead of showing progress. The same
+     * window is applied by {@code ForgeRuntimeStatusNotifier} in the 1.21, 26.x and modern trees.
+     */
+    private static final long STATUS_NOTIFICATION_INTERVAL_MILLIS = 1_000L;
+    /**
+     * The activity label last resolved from the language table, and when.
+     *
+     * <p>The indicator is painted from every {@code RenderGameOverlayEvent} pass, so resolving this
+     * label per frame cost an {@code I18n.format} call — varargs array, language-table lookup and a
+     * fresh string — sixty times a second for as long as a translation was running. The interval and
+     * the key are the ones the other twelve trees share through {@code HudLabelCache}. One value and
+     * one timestamp need no clearing, the same reasoning the sibling caches use.
+     */
+    private static String activityText;
+    private static long activityResolvedAt;
+    /**
+     * Title-screen button geometry.
+     *
+     * <p>Right-aligned, 132 wide, 4 from the edge: the same decision every Forge tree makes (see
+     * {@code HomeButtonGeometry} in the shared 1.21 layer). This tree is a standalone Gradle build
+     * that only mounts {@code translator-core} and this directory, so the numbers live here as named
+     * constants instead of as literals inside the widget call.
+     */
+    private static final int HOME_BUTTON_WIDTH = 132;
+    private static final int HOME_BUTTON_HEIGHT = 20;
+    private static final int HOME_BUTTON_TOP = 6;
+    private static final int HOME_BUTTON_MARGIN = 4;
     private static final LegacyClientEvents INSTANCE = new LegacyClientEvents();
     private static final KeyBinding OPEN_SETTINGS = new KeyBinding(
             "key.universal_translator.open_settings", Keyboard.KEY_U, "MC Auto Translation Tool");
@@ -46,16 +83,63 @@ public final class LegacyClientEvents {
             "key.universal_translator.toggle_translation", Keyboard.KEY_F8, "MC Auto Translation Tool");
     private static File configDirectory;
     private static boolean registered;
+    /** Whether the shutdown hook that flushes queued configuration writes is already registered. */
+    private static boolean configFlushHookInstalled;
     private boolean connectedLastTick;
     private int joinHintTicks = -1;
     private String lastRuntimeStatus = "";
     private long nextFailureNotificationAt;
+    private long nextStatusNotificationAt;
 
     private LegacyClientEvents() {
     }
 
+    /**
+     * Gives the queued configuration writes a bounded moment to land when the process ends.
+     *
+     * <p>Only the failed-startup path ever called {@code LegacyTranslationRuntime.shutdown()}, so the
+     * writer's own flush never ran: "press F8 and quit" dropped the toggle and the screen worker
+     * threads outlived the configuration they belonged to. A shutdown hook is the one seam this tree
+     * has without naming a stopping event of its own.
+     */
+    private static void installConfigFlushHook() {
+        if (configFlushHookInstalled) {
+            return;
+        }
+        configFlushHookInstalled = true;
+        try {
+            Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    // The hook only starts the teardown and waits for it with a bound: shutdown()
+                    // drains the configuration writer and then closes the session, which waits for
+                    // workers parked in a provider read, so running it inline made "close the game"
+                    // wait for all of it with no upper limit.
+                    Thread teardown = new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            LegacyTranslationRuntime.shutdown();
+                        }
+                    }, "universal-translator-stop");
+                    teardown.setDaemon(false);
+                    teardown.start();
+                    try {
+                        teardown.join(
+                                org.universaltranslator.core.ShutdownBudget.HOOK_JOIN_MILLIS);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            }, "universal-translator-config-flush"));
+        } catch (IllegalStateException alreadyStopping) {
+            // The JVM is already shutting down; no thread is left for a queued write to land on.
+            configFlushHookInstalled = false;
+        }
+    }
+
     static synchronized void initialize(File directory) {
         configDirectory = directory;
+        installConfigFlushHook();
         if (!registered) {
             ClientRegistry.registerKeyBinding(OPEN_SETTINGS);
             ClientRegistry.registerKeyBinding(TOGGLE_TRANSLATION);
@@ -69,9 +153,11 @@ public final class LegacyClientEvents {
         if (!(LegacyVersionAccess.eventScreen(event) instanceof GuiMainMenu)) {
             return;
         }
-        int x = Math.max(4, LegacyVersionAccess.eventScreen(event).width - 136);
+        int x = Math.max(HOME_BUTTON_MARGIN,
+                LegacyVersionAccess.eventScreen(event).width - (HOME_BUTTON_WIDTH + HOME_BUTTON_MARGIN));
         LegacyVersionAccess.buttonList(event).add(new GuiButton(
-                HOME_OPEN, x, 6, 132, 20, tr("screen.universal_translator.home.open")));
+                HOME_OPEN, x, HOME_BUTTON_TOP, HOME_BUTTON_WIDTH, HOME_BUTTON_HEIGHT,
+                tr("screen.universal_translator.home.open")));
     }
 
     @SubscribeEvent
@@ -88,7 +174,17 @@ public final class LegacyClientEvents {
             return;
         }
         try {
-            LegacyConfig config = LegacyConfig.load(configDirectory);
+            // The runtime already holds the configuration it is running; the file is only the answer
+            // before the first load succeeded.
+            LegacyConfig config = LegacyTranslationRuntime.diagnosticsConfig();
+            if (config == null) {
+                // A failed load drops the live copy and re-reading the same unreadable file throws
+                // again, which left the one screen that repairs it unreachable.
+                config = LegacyConfig.lastLoaded();
+            }
+            if (config == null) {
+                config = LegacyConfig.load(configDirectory);
+            }
             minecraft.displayGuiScreen(new LegacyConfigScreen(
                     LegacyVersionAccess.eventScreen(event), config));
         } catch (Exception exception) {
@@ -132,6 +228,7 @@ public final class LegacyClientEvents {
         // their bodies in try/finally, but a stack left behind by a path that never returned would
         // otherwise persist for the whole session and silently stop translation.
         LegacyRenderContext.beginFrame();
+        LegacyTranslationRuntime.refreshProtectedNames();
         Minecraft minecraft = Minecraft.getMinecraft();
         boolean connected = LegacyVersionAccess.connection(minecraft) != null;
         if (connected && !connectedLastTick) {
@@ -153,7 +250,12 @@ public final class LegacyClientEvents {
             LegacyConfig previous = null;
             boolean runtimeChanged = false;
             try {
-                previous = LegacyConfig.load(configDirectory);
+                // The live snapshot is the one last written; re-reading the file here parsed the
+                // whole properties file on the client tick only to throw the result away.
+                previous = LegacyTranslationRuntime.diagnosticsConfig();
+                if (previous == null) {
+                    previous = LegacyConfig.load(configDirectory);
+                }
                 LegacyConfig updated = previous.withEnabled(!previous.enabled);
                 if (updated.enabled) {
                     updated.validateProviderConfiguration();
@@ -162,7 +264,9 @@ public final class LegacyClientEvents {
                 LegacyTranslationRuntime.initialize(updated);
                 lastRuntimeStatus = "";
                 nextFailureNotificationAt = 0L;
-                updated.save();
+                nextStatusNotificationAt = 0L;
+                LegacyConfigWriter.saveOffTick(updated,
+                        LegacyTranslationRuntime.SAVE_FAILURE_REPORTER);
                 minecraft.ingameGUI.setRecordPlayingMessage(
                         tr("message.universal_translator.toggle", tr(updated.enabled
                                 ? "value.universal_translator.enabled"
@@ -186,7 +290,17 @@ public final class LegacyClientEvents {
             return;
         }
         try {
-            LegacyConfig config = LegacyConfig.load(configDirectory);
+            // The runtime already holds the configuration it is running; the file is only the
+            // answer before the first load succeeded.
+            LegacyConfig config = LegacyTranslationRuntime.diagnosticsConfig();
+            if (config == null) {
+                // A failed load drops the live copy and re-reading the same unreadable file throws
+                // again, which left the one screen that repairs it unreachable.
+                config = LegacyConfig.lastLoaded();
+            }
+            if (config == null) {
+                config = LegacyConfig.load(configDirectory);
+            }
             minecraft.displayGuiScreen(new LegacyConfigScreen(minecraft.currentScreen, config));
         } catch (Exception exception) {
             LOGGER.error("Could not open settings", exception);
@@ -217,6 +331,13 @@ public final class LegacyClientEvents {
                     tr("message.universal_translator.runtime_failed", localized));
         } else {
             nextFailureNotificationAt = 0L;
+            long now = System.currentTimeMillis();
+            if (now < nextStatusNotificationAt) {
+                // Progress strings are kept out of the action bar for this window; the newest one
+                // then replaces the previous one instead of overwriting it dozens of times.
+                return;
+            }
+            nextStatusNotificationAt = now + STATUS_NOTIFICATION_INTERVAL_MILLIS;
             minecraft.ingameGUI.setRecordPlayingMessage(
                     tr("message.universal_translator.runtime_status", localized));
         }
@@ -334,7 +455,7 @@ public final class LegacyClientEvents {
         } else if (content == HudIndicatorContent.PROVIDER) {
             label = quickSettings.getProvider();
         } else if (content == HudIndicatorContent.ACTIVITY && TranslationActivity.isTranslating()) {
-            label = I18n.format("value.universal_translator.hud_content.activity");
+            label = activityLabel();
         }
         if (label == null || label.isEmpty()) {
             return;
@@ -358,6 +479,24 @@ public final class LegacyClientEvents {
     }
 
     /**
+     * The activity label, resolved at most once per {@code HudLabelCache.REFRESH_MILLIS}.
+     *
+     * <p>One second rather than the whole session for the same reason the sibling caches use it: the
+     * player can change the language while the game runs.
+     */
+    private static String activityLabel() {
+        long now = System.currentTimeMillis();
+        String cached = activityText;
+        if (cached != null && now - activityResolvedAt < HudLabelCache.REFRESH_MILLIS) {
+            return cached;
+        }
+        String resolved = I18n.format(HudLabelCache.ACTIVITY_KEY);
+        activityText = resolved;
+        activityResolvedAt = now;
+        return resolved;
+    }
+
+    /**
      * Whether this is the single {@code ALL} pass of {@link RenderGameOverlayEvent.Post}.
      *
      * <p>Post fires once per HUD element, so without this check the same square, border, label and
@@ -370,7 +509,18 @@ public final class LegacyClientEvents {
      */
     private static boolean isAllElementsPass(RenderGameOverlayEvent event) {
         Object type = elementType(event);
-        return type == null || type == RenderGameOverlayEvent.ElementType.ALL;
+        if (type == null) {
+            // The element type could not be read at all. The old answer was "this is the ALL pass",
+            // which drew the square, the label measurement and the outgoing preview for every one of
+            // the dozen passes in a frame - and each of those also re-entered the translation path.
+            // Not drawing is the cheaper mistake of the two, and the warning says why the indicator
+            // is missing instead of leaving it unexplained.
+            if (elementTypeWarningIssued.compareAndSet(false, true)) {
+                LOGGER.warn("HUD indicator disabled: the render overlay element type could not be read");
+            }
+            return false;
+        }
+        return type == RenderGameOverlayEvent.ElementType.ALL;
     }
 
     private static Object elementType(RenderGameOverlayEvent event) {

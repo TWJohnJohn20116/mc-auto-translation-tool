@@ -41,25 +41,15 @@ public final class TranslationDiagnosticsSnapshot {
         this.runtimeStatus = sanitizeStatus(runtimeStatus);
     }
 
-    public List<String> displayLines() {
-        List<String> lines = new ArrayList<String>();
-        lines.add("自动翻译：" + onOff(enabled));
-        lines.add("配置服务：" + providerLabel(configuredProvider));
-        lines.add("运行服务：" + activeProviderLabel());
-        lines.add("目标语言：" + (targetLanguage.isEmpty() ? "未设置" : targetLanguage));
-        if ("offline".equalsIgnoreCase(configuredProvider)) {
-            lines.add("离线模型：" + offlineModel.displayName()
-                    + "（预计 " + formatBytes(offlineModel.expectedBytes()) + "）");
-            lines.add("模型文件：" + modelFileStatus());
-            lines.add("模型自动下载：" + onOff(offlineAutoDownload));
-        }
-        lines.add("磁盘缓存：" + cacheStatus());
-        lines.add("运行状态：" + (runtimeStatus.isEmpty()
-                ? (enabled ? "等待首次翻译" : "翻译已关闭")
-                : runtimeStatus));
-        return Collections.unmodifiableList(lines);
-    }
-
+    /**
+     * The snapshot as localizable lines.
+     *
+     * <p>The only producer path: every diagnostics screen calls this one, and the class no longer
+     * carries a second hard-coded copy that a new line could be added to without reaching a screen.
+     *
+     * @param translator platform language-key resolver
+     * @return display lines, never {@code null}
+     */
     public List<String> localizedLines(UiTranslator translator) {
         List<String> lines = new ArrayList<String>();
         lines.add(translator.translate("screen.universal_translator.diagnostics.enabled",
@@ -121,7 +111,15 @@ public final class TranslationDiagnosticsSnapshot {
         if (activeProviderId.startsWith("offline-llama:")) {
             return translator.translate("value.universal_translator.provider_offline_model");
         }
-        return localizedProvider(configuredProvider, translator);
+        // Derived from the id that is actually running: the configured provider is a different
+        // field, and showing it here answered "离线" while an API provider was doing the work.
+        return localizedProvider(activeProviderCategory(), translator);
+    }
+
+    /** The provider category of {@link #activeProviderId}, which is everything before its colon. */
+    private String activeProviderCategory() {
+        int separator = activeProviderId.indexOf(':');
+        return separator < 0 ? activeProviderId : activeProviderId.substring(0, separator);
     }
 
     private static String localizedProvider(String provider, UiTranslator translator) {
@@ -144,67 +142,36 @@ public final class TranslationDiagnosticsSnapshot {
         return translator.translate(UiTextKeys.onOff(value));
     }
 
-    private String modelFileStatus() {
-        if (modelFileBytes < 0L) {
-            return "未安装";
-        }
-        if (modelFileBytes == offlineModel.expectedBytes()) {
-            return "已安装并且大小正确";
-        }
-        return "大小异常（" + formatBytes(modelFileBytes) + " / "
-                + formatBytes(offlineModel.expectedBytes()) + "）";
-    }
-
-    private String cacheStatus() {
-        if (!diskCache) {
-            return "关闭（仅内存）";
-        }
-        return cacheFileBytes < 0L
-                ? "开启（尚未建立文件）"
-                : "开启（" + formatBytes(cacheFileBytes) + "）";
-    }
-
-    private String activeProviderLabel() {
-        if (activeProviderId.isEmpty()) {
-            return "未启动";
-        }
-        if (activeProviderId.startsWith("fallback:")) {
-            return "离线模型 + API 回退";
-        }
-        if (activeProviderId.startsWith("offline-llama:")) {
-            return "离线模型";
-        }
-        return providerLabel(configuredProvider);
-    }
-
-    private static String providerLabel(String provider) {
-        if ("offline".equalsIgnoreCase(provider)) {
-            return "离线";
-        }
-        if ("libretranslate".equalsIgnoreCase(provider)) {
-            return "LibreTranslate";
-        }
-        if ("tencent-hunyuan".equalsIgnoreCase(provider)) {
-            return "腾讯混元";
-        }
-        return provider.isEmpty() ? "未设置" : provider;
-    }
-
-    private static String onOff(boolean value) {
-        return value ? "开启" : "关闭";
-    }
-
     private static String formatBytes(long bytes) {
         if (bytes >= 1_000_000_000L) {
-            return String.format(LocaleHolder.ROOT, "%.2f GB", bytes / 1_000_000_000.0d);
+            return fixedPoint(bytes, 1_000_000_000L, 100L) + " GB";
         }
         if (bytes >= 1_000_000L) {
-            return String.format(LocaleHolder.ROOT, "%.1f MB", bytes / 1_000_000.0d);
+            return fixedPoint(bytes, 1_000_000L, 10L) + " MB";
         }
         if (bytes >= 1_000L) {
-            return String.format(LocaleHolder.ROOT, "%.1f KB", bytes / 1_000.0d);
+            return fixedPoint(bytes, 1_000L, 10L) + " KB";
         }
         return bytes + " B";
+    }
+
+    /**
+     * {@code bytes / unit} with the last digit rounding half up, using integer arithmetic only.
+     *
+     * <p>This runs for every size line of a panel that redraws at the frame rate, and
+     * {@code String.format} parsed a format string and built a {@code Formatter} per call.
+     *
+     * @param scale ten for one decimal place, one hundred for two
+     */
+    private static String fixedPoint(long bytes, long unit, long scale) {
+        long scaled = (bytes * scale + unit / 2L) / unit;
+        StringBuilder text = new StringBuilder(8);
+        text.append(scaled / scale).append('.');
+        long fraction = scaled % scale;
+        if (scale == 100L && fraction < 10L) {
+            text.append('0');
+        }
+        return text.append(fraction).toString();
     }
 
     private static String clean(String value) {
@@ -215,9 +182,5 @@ public final class TranslationDiagnosticsSnapshot {
         // Delegate to the shared exporter logic so the two redaction implementations cannot
         // drift apart again. The placeholders stay localized for the in-game screen.
         return DiagnosticsLogExporter.sanitize(clean(value), "[地址已隐藏]", "[已隐藏]", "[密钥已隐藏]");
-    }
-
-    private static final class LocaleHolder {
-        private static final java.util.Locale ROOT = java.util.Locale.ROOT;
     }
 }

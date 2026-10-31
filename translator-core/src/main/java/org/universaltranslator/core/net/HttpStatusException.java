@@ -6,6 +6,14 @@ import java.io.IOException;
 public final class HttpStatusException extends IOException {
     private final int statusCode;
     private final Long retryAfterSeconds;
+    /**
+     * Whether the whole error body was consumed.
+     *
+     * <p>The transport has to know this before it decides to disconnect: a body read to its end
+     * leaves the socket usable for the next attempt, and a body that was never read (or was cut at
+     * its size bound) does not.
+     */
+    private boolean bodyDrained;
 
     public HttpStatusException(int statusCode, String message) {
         this(statusCode, message, null);
@@ -19,7 +27,20 @@ public final class HttpStatusException extends IOException {
      *                          absent or not usable
      */
     public HttpStatusException(int statusCode, String message, Long retryAfterSeconds) {
-        super(message);
+        this(statusCode, message, retryAfterSeconds, null);
+    }
+
+    /**
+     * Creates a failure that keeps its status even when the error body could not be read.
+     *
+     * <p>The status is the only fact a caller can act on — 401 and 403 are permanent, 429 and 5xx
+     * are worth another attempt — so an unreadable (or oversized) error body must never turn the
+     * failure into a plain transport error whose classification is decided elsewhere.
+     *
+     * @param cause why the error body could not be read, or {@code null} when it was read
+     */
+    public HttpStatusException(int statusCode, String message, Long retryAfterSeconds, Throwable cause) {
+        super(message, cause);
         this.statusCode = statusCode;
         this.retryAfterSeconds = retryAfterSeconds;
     }
@@ -42,5 +63,20 @@ public final class HttpStatusException extends IOException {
 
     public boolean isRetryable() {
         return statusCode == 408 || statusCode == 425 || statusCode == 429 || statusCode >= 500;
+    }
+
+    /**
+     * Marks this failure as one whose error body was read to its end.
+     *
+     * <p>Package-private because only the transport knows how much of the body it consumed; a
+     * caller that set it would make the keep-alive decision from a guess.
+     */
+    void markBodyDrained() {
+        this.bodyDrained = true;
+    }
+
+    /** {@code true} when the whole error body was read, so its connection is still clean. */
+    boolean isBodyDrained() {
+        return bodyDrained;
     }
 }

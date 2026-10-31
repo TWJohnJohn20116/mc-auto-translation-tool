@@ -4,8 +4,6 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.hud.InGameHud;
-import net.minecraft.client.resource.language.I18n;
-import net.minecraft.text.Text;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -32,8 +30,9 @@ import org.universaltranslator.fabric.TranslationRenderContext;
  * instead. The window size still comes from {@code MinecraftClient.getWindow()}: that accessor is
  * identical across 1.16-1.20.6, and {@code InGameHud}'s own scaled-width fields are private.
  *
- * <p>The label is looked up through {@code I18n.translate} to match the other legacy families; the
- * {@code Text} it is wrapped in is only needed because {@code DrawContext} draws {@code Text}.
+ * <p>The label and the outgoing preview are localized through {@code HudIndicatorLabels}, which
+ * caches them: the HUD redraws sixty times a second, and a language lookup plus a fresh
+ * {@code Text} per frame is pure waste while the value has not changed.
  *
  * <p>All state lives in locals on purpose: a mixin that declares extra fields or helper methods
  * risks colliding with members of the target class.
@@ -69,6 +68,12 @@ abstract class InGameHudStatusIndicatorMixin {
                 break;
         }
         MinecraftClient client = MinecraftClient.getInstance();
+        // The injection sits at the RETURN of the HUD render, which still runs while F1 hides the
+        // HUD: without this the square and its label stayed on an otherwise empty screen and were
+        // painted over the chat and the hotbar, because RETURN is the last thing that happens.
+        if (client.options.hudHidden) {
+            return;
+        }
         int windowWidth = client.getWindow().getScaledWidth();
         int windowHeight = client.getWindow().getScaledHeight();
         HudIndicatorCorner corner = settings.getCorner();
@@ -108,12 +113,16 @@ abstract class InGameHudStatusIndicatorMixin {
         // render path as the indicator and only while that translation is still running, so the
         // player sees the answer arrive instead of waiting for the whole line.
         String outgoingPreview = OutgoingTranslationPreview.text();
-        if (outgoingPreview != null) {
+        TextRenderer previewFont = client.textRenderer;
+        // The text renderer is null while resources reload and the HUD keeps drawing through that
+        // window, so this frame has to skip the preview instead of measuring with nothing.
+        if (outgoingPreview != null && previewFont != null) {
             TranslationRenderContext.pushTextInput();
             try {
                 int previewCenterX = windowWidth / 2;
                 int previewY = Math.max(0, windowHeight - 60);
-                context.drawCenteredTextWithShadow(client.textRenderer, Text.literal(outgoingPreview), previewCenterX, previewY, 0xFFFFFFFF);
+                context.drawCenteredTextWithShadow(previewFont,
+                        HudIndicatorLabels.preview(outgoingPreview), previewCenterX, previewY, 0xFFFFFFFF);
             } finally {
                 TranslationRenderContext.popTextInput();
             }
@@ -131,27 +140,40 @@ abstract class InGameHudStatusIndicatorMixin {
         } else if (content == HudIndicatorContent.PROVIDER) {
             label = quickSettings.getProvider();
         } else if (content == HudIndicatorContent.ACTIVITY && TranslationActivity.isTranslating()) {
-            label = I18n.translate("value.universal_translator.hud_content.activity");
+            label = HudIndicatorLabels.activity();
         }
         if (label == null || label.isEmpty()) {
             return;
         }
         TextRenderer font = client.textRenderer;
+        if (font == null) {
+            // Resource reloads null the text renderer while the HUD keeps drawing.
+            return;
+        }
         // This version hooks TextRenderer.getWidth and TextRenderer.drawInternal in order to
         // translate what they render, so measuring or drawing the label unguarded would feed the
         // indicator's own text back into the translation path.
         TranslationRenderContext.pushTextInput();
         try {
-            int labelWidth = font.getWidth(label);
+            int labelWidth = HudIndicatorLabels.width(font, label);
             // Beside the square, never over it: a 6px square cannot hold "zh-TW", and a label
-            // centred on a right-corner square would run off the screen edge.
+            // centred on a right-corner square would run off the screen edge. The square itself is
+            // clamped to the window above, so the label has to be clamped too: a provider id is
+            // wider than the square and ran off the opposite edge on a narrow window.
             int labelCenterX = corner.isRight()
                     ? left - 2 - labelWidth / 2
                     : right + 2 + labelWidth / 2;
-            // y is the top of the text line, so centre it against the square by hand.
-            int labelY = top + (size - 8) / 2;
+            int minimumCentre = labelWidth / 2;
+            int maximumCentre = Math.max(minimumCentre, windowWidth - labelWidth / 2);
+            labelCenterX = Math.max(minimumCentre, Math.min(maximumCentre, labelCenterX));
+            // y is the top of the text line, so centre it against the square by hand. A line is
+            // font.fontHeight tall, not the hard-coded 8 this copy started with, and the square can
+            // be smaller than one, in which case the label moves above the square instead of onto it.
+            int labelY = size >= font.fontHeight
+                    ? top + (size - font.fontHeight) / 2
+                    : Math.max(0, top - font.fontHeight);
             context.drawCenteredTextWithShadow(
-                    font, Text.literal(label), labelCenterX, labelY, 0xFFFFFFFF);
+                    font, HudIndicatorLabels.label(label), labelCenterX, labelY, 0xFFFFFFFF);
         } finally {
             TranslationRenderContext.popTextInput();
         }

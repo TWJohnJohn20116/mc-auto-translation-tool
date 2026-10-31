@@ -1,0 +1,226 @@
+package org.universaltranslator.forge;
+
+import org.universaltranslator.core.DebugLog;
+import org.universaltranslator.core.ShutdownBudget;
+
+import java.io.IOException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.function.Consumer;
+
+/**
+ * Writes configuration files off the client thread.
+ *
+ * <p>One Save is a temporary-file create, a buffered write, an atomic move and a second ownership
+ * change; on Windows an on-access antivirus turns those four steps into tens of milliseconds. Both
+ * callers that reach {@code save()} while the game runs — the F8 toggle and the settings screen's
+ * Save — did it on the thread that is about to draw the next frame, so a save showed up as a stalled
+ * frame. Writing from one daemon thread keeps the order the calls were made in and never blocks the
+ * caller.
+ */
+final class ForgeConfigWriter {
+    /**
+     * How long {@link #shutdown()} and the Save barrier wait for the queued writes to land.
+     *
+     * <p>Read from {@link ShutdownBudget} so the client's stop hook, which adds this wait to the other
+     * teardown steps, cannot end up shorter than the wait it is supposed to cover.
+     */
+    private static final long SHUTDOWN_WAIT_MILLIS = ShutdownBudget.CONFIG_WRITE_MILLIS;
+
+    private static final Object LOCK = new Object();
+    private static ExecutorService writer;
+    /** Guards the one-time registration of the shutdown hook below. */
+    private static final Object HOOK_LOCK = new Object();
+    /** Whether {@link #installShutdownHook(Runnable)} already registered its hook. */
+    private static boolean shutdownHookInstalled;
+
+    private ForgeConfigWriter() {
+    }
+
+    /**
+     * Queues one configuration write and returns immediately.
+     *
+     * @param config configuration to write; {@code null} does nothing
+     * @param onFailure told about a failed write on the writer thread; {@code null} only logs
+     */
+    static void saveOffTick(final ForgeConfig config, final Consumer<Throwable> onFailure) {
+        if (config == null) {
+            return;
+        }
+        Runnable task = new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    config.save();
+                } catch (Throwable failure) {
+                    DebugLog.global().log("config", "save", "failed",
+                            "reason", String.valueOf(failure.getClass().getSimpleName()));
+                    if (onFailure != null) {
+                        try {
+                            onFailure.accept(failure);
+                        } catch (RuntimeException ignored) {
+                            // A reporting callback must not kill the writer thread; the failure is
+                            // already recorded in the debug log above.
+                        }
+                    }
+                }
+            }
+        };
+        try {
+            writer().execute(task);
+        } catch (RejectedExecutionException shuttingDown) {
+            // The executor is only ever shut down while the game closes, and the check in writer()
+            // cannot hold a lock across execute(): a write rejected here would silently lose the
+            // toggle, so it is performed on the caller instead.
+            task.run();
+        }
+    }
+
+    /**
+     * Waits for the queued writes to land, then writes {@code config} on the calling thread.
+     *
+     * <p>The settings screen's Save has to be the last write: {@link #saveOffTick} only preserves the
+     * order of the calls made on one thread, so a queued F8 toggle or Home snapshot could otherwise
+     * land after the Save and put the old values back. The screen also needs a synchronous result to
+     * report a failure through {@code status.universal_translator.save_failed}.
+     *
+     * @param config configuration to write; {@code null} does nothing
+     */
+    static void saveNow(final ForgeConfig config) throws IOException {
+        if (config == null) {
+            return;
+        }
+        drainQueuedWrites();
+        config.save();
+    }
+
+    /**
+     * Blocks until every write queued so far has run, or until the wait above runs out.
+     *
+     * <p>The barrier is an empty task: a single-thread executor runs it after everything ahead of
+     * it, so returning from {@code get()} means the queue is empty. A write that failed inside its
+     * own task reports through {@code onFailure}, so its exception never reaches this call. The
+     * wait is bounded because this runs on the render thread and the queue can be stuck on I/O the
+     * process does not control (a network or cloud-synced {@code config/} directory): freezing the
+     * frame indefinitely is worse than writing in a slightly weaker order.
+     */
+    private static void drainQueuedWrites() {
+        ExecutorService current;
+        synchronized (LOCK) {
+            current = writer;
+        }
+        if (current == null) {
+            return;
+        }
+        try {
+            current.submit(new Runnable() {
+                @Override
+                public void run() {
+                    // Nothing to do: reaching the end of the queue is the whole point.
+                }
+            }).get(SHUTDOWN_WAIT_MILLIS, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        } catch (TimeoutException timedOut) {
+            DebugLog.global().log("config", "save", "drain-timeout",
+                    "wait-millis", Long.toString(SHUTDOWN_WAIT_MILLIS));
+        } catch (ExecutionException | RejectedExecutionException ignored) {
+            // A closed writer, or a failure already reported by a queued task: the synchronous write
+            // that follows is the authoritative one either way.
+        }
+    }
+
+    /**
+     * Flushes what is already queued and stops accepting new work.
+     *
+     * <p>Called when the client drops its configuration, which includes the case where the game is
+     * closing: the queued writes are given a bounded moment to land, because "press F8 and quit"
+     * must still persist the toggle. The executor is recreated on the next {@link #saveOffTick}.
+     */
+    static void shutdown() {
+        ExecutorService current;
+        synchronized (LOCK) {
+            current = writer;
+            writer = null;
+        }
+        if (current == null) {
+            return;
+        }
+        current.shutdown();
+        try {
+            if (!current.awaitTermination(SHUTDOWN_WAIT_MILLIS, TimeUnit.MILLISECONDS)) {
+                current.shutdownNow();
+            }
+        } catch (InterruptedException interrupted) {
+            current.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * Registers the one shutdown hook that lets the queued writes land before the JVM halts.
+     *
+     * <p>Only a failed startup used to call the runtime's stop action, so this writer's own flush
+     * never ran: "press F8 and quit" dropped the toggle, and the session and the screen worker
+     * threads outlived the configuration they belonged to. A shutdown hook is the one seam every
+     * supported loader and game version has without naming a version-specific stopping event.
+     *
+     * <p>The hook only starts the teardown on its own thread and waits for it with a bound, because
+     * the teardown drains this writer and then closes the session, which waits for workers parked in
+     * a provider read. Running it inline made "close the game" wait for all of it with no upper
+     * limit. Each Forge client used to carry its own copy of this protocol, so a change to the order
+     * or the budget only reached the copies someone remembered; a client now hands over the action.
+     *
+     * @param teardown the runtime's stop action, run on {@code "universal-translator-stop"}
+     */
+    static void installShutdownHook(final Runnable teardown) {
+        if (teardown == null) {
+            return;
+        }
+        synchronized (HOOK_LOCK) {
+            if (shutdownHookInstalled) {
+                return;
+            }
+            shutdownHookInstalled = true;
+            try {
+                Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        Thread stopping = new Thread(teardown, "universal-translator-stop");
+                        stopping.setDaemon(false);
+                        stopping.start();
+                        try {
+                            stopping.join(ShutdownBudget.HOOK_JOIN_MILLIS);
+                        } catch (InterruptedException interrupted) {
+                            Thread.currentThread().interrupt();
+                        }
+                    }
+                }, "universal-translator-config-flush"));
+            } catch (IllegalStateException alreadyStopping) {
+                // The JVM is already shutting down; no thread is left for a queued write to land on.
+                shutdownHookInstalled = false;
+            }
+        }
+    }
+
+    private static ExecutorService writer() {
+        synchronized (LOCK) {
+            if (writer == null || writer.isShutdown()) {
+                writer = Executors.newSingleThreadExecutor(new ThreadFactory() {
+                    @Override
+                    public Thread newThread(Runnable task) {
+                        Thread thread = new Thread(task, "universal-translator-config-writer");
+                        thread.setDaemon(true);
+                        return thread;
+                    }
+                });
+            }
+            return writer;
+        }
+    }
+}

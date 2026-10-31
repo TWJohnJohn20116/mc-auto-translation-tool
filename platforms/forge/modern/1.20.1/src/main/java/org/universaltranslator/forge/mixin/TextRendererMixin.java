@@ -2,7 +2,6 @@ package org.universaltranslator.forge.mixin;
 
 import net.minecraft.client.gui.Font;
 import net.minecraft.util.FormattedCharSequence;
-import net.minecraft.network.chat.FormattedText;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.ModifyVariable;
@@ -40,12 +39,9 @@ abstract class TextRendererMixin {
         return RenderedTextBridge.translate(text);
     }
 
-    @ModifyVariable(
-            method = "width(Lnet/minecraft/network/chat/FormattedText;)I",
-            at = @At("HEAD"), argsOnly = true, require = 1)
-    private FormattedText universalTranslator$translateMeasuredText(FormattedText text) {
-        return RenderedTextBridge.translate(text);
-    }
+    // No width(FormattedText) hook on purpose: that overload resolves to width(String) or
+    // width(FormattedCharSequence), both hooked here, so measuring one Component ran two hooks and
+    // the second one received the translation the first had just produced.
 
     @ModifyVariable(
             method = "width(Lnet/minecraft/util/FormattedCharSequence;)I",

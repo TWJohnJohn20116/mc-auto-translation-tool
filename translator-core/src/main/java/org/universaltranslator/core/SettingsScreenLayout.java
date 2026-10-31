@@ -19,9 +19,16 @@ public final class SettingsScreenLayout {
     private SettingsScreenLayout() {
     }
 
-    /** Four tabs, the layout every screen had before the HUD tab was added. */
+    /**
+     * The layout every settings screen uses today: five tabs, the four original ones plus the HUD tab.
+     *
+     * <p>It delegates to the same five-tab call the screens make, so the geometry that is exercised in
+     * a test is the geometry that is drawn. It used to answer with four tabs, which no screen has
+     * passed since the HUD tab was added, so the five-tab arithmetic — including the shrink step that
+     * keeps the last tab inside the form — was only ever checked by hand.
+     */
     public static Geometry calculate(int screenWidth, int screenHeight) {
-        return calculate(screenWidth, screenHeight, 4);
+        return calculate(screenWidth, screenHeight, 5);
     }
 
     /**

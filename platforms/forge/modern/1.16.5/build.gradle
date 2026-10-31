@@ -8,7 +8,9 @@ ext.legacyMinecraftVersion = "1.16.5"
 ext.legacyForgeVersion = "36.2.42"
 ext.legacyForgeLoaderMajor = "36"
 ext.legacyMinecraftNextVersion = "1.17"
-ext.legacyJavaRelease = 8
+// settings.gradle's treeJavaRelease is the one table the Mixin compatibilityLevel bounds come from;
+// reading it here keeps this module from being compiled for a level those bounds do not describe.
+ext.legacyJavaRelease = gradle.ext.treeJavaTarget("platforms/forge/modern/1.16.5/")
 ext.legacyPackFormat = 6
 ext.legacyAuthors = "wuxiangdan96-byte"
 

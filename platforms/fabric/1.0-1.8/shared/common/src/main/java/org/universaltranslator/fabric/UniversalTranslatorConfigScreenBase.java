@@ -7,9 +7,14 @@ import net.minecraft.client.render.TextRenderer;
 /**
  * Version seams for the shared settings screen.
  *
- * <p>This bundle compiles for 1.3.1 through 1.8.8 from one source set, so the parts that differ
+ * <p>This bundle compiles for 1.3.1 through 1.7.10 from one source set, so the parts that differ
  * across that range cannot live in the shared screen: the text field constructor gained an id in
  * 1.8, {@code mouseDragged} only exists from 1.7.10, and the translation helper differs.
+ *
+ * <p>1.8.x is not built from here: those versions apply {@code platforms/fabric/1.8-1.12/shared.gradle},
+ * so they compile the shared screen against the base of the same name in that tree. The two bases
+ * differ in {@code tr} and in {@code mouseDragged}, which is why the same screen source behaves
+ * differently at the 1.7.10/1.8 boundary.
  */
 abstract class UniversalTranslatorConfigScreenBase extends Screen {
     protected static String tr(String key, Object... arguments) {

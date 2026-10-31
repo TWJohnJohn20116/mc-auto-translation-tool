@@ -4,7 +4,6 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiElement;
 import net.minecraft.client.render.TextRenderer;
 
-import net.minecraft.locale.I18n;
 import org.universaltranslator.core.HudIndicatorContent;
 import org.universaltranslator.core.HudIndicatorCorner;
 import org.universaltranslator.core.HomeQuickSettingsState;
@@ -13,6 +12,7 @@ import org.universaltranslator.core.HudIndicatorVisibility;
 import org.universaltranslator.core.OutgoingTranslationPreview;
 import org.universaltranslator.core.TranslationActivity;
 import org.universaltranslator.fabric.FabricTranslationRuntime;
+import org.universaltranslator.fabric.OrnitheClientAccess;
 import org.universaltranslator.fabric.TranslationRenderContext;
 /**
  * Draws the translation status indicator on the HUD.
@@ -57,6 +57,19 @@ final class HudIndicatorOverlay {
         // Window (the field exists but is not visible), so each injection point passes what it
         // already has: render(FZII)V carries width/height, renderHotbar carries the Window.
         Minecraft client = Minecraft.getInstance();
+        // Every injection point here sits at the RETURN of a HUD render, which still runs while F1
+        // hides the HUD: without this the square and its label stayed on an otherwise empty screen
+        // and were painted over the chat and the hotbar.
+        if (client == null || OrnitheClientAccess.hudHidden(client)) {
+            return;
+        }
+        TextRenderer font = client.textRenderer;
+        if (font == null) {
+            // The renderer is null while a resource reload swaps it; the 1.14-1.15 body checks this
+            // and this copy did not, so a reload could draw the label through a null font. The check
+            // sits here, before the outgoing preview measures with the same font.
+            return;
+        }
         HudIndicatorCorner corner = settings.getCorner();
         int margin = settings.getMargin();
         int size = settings.getSize();
@@ -98,8 +111,8 @@ final class HudIndicatorOverlay {
             TranslationRenderContext.pushTextInput();
             try {
                 int previewY = Math.max(0, windowHeight - 60);
-                int previewX = windowWidth / 2 - client.textRenderer.getWidth(outgoingPreview) / 2;
-                client.textRenderer.drawWithShadow(outgoingPreview, previewX, previewY, 0xFFFFFFFF);
+                int previewX = windowWidth / 2 - HudLabels.width(font, outgoingPreview) / 2;
+                font.drawWithShadow(outgoingPreview, previewX, previewY, 0xFFFFFFFF);
             } finally {
                 TranslationRenderContext.popTextInput();
             }
@@ -117,15 +130,9 @@ final class HudIndicatorOverlay {
         } else if (content == HudIndicatorContent.PROVIDER) {
             label = quickSettings.getProvider();
         } else if (content == HudIndicatorContent.ACTIVITY && TranslationActivity.isTranslating()) {
-            label = I18n.translate("value.universal_translator.hud_content.activity");
+            label = HudLabels.activity();
         }
         if (label == null || label.isEmpty()) {
-            return;
-        }
-        TextRenderer font = client.textRenderer;
-        if (font == null) {
-            // The renderer is null while a resource reload swaps it; the 1.14-1.15 body checks this
-            // and this copy did not, so a reload could draw the label through a null font.
             return;
         }
         // This version hooks TextRenderer.getWidth and TextRenderer.draw in order to translate what
@@ -133,10 +140,12 @@ final class HudIndicatorOverlay {
         // text back into the translation path.
         TranslationRenderContext.pushTextInput();
         try {
-            int labelWidth = font.getWidth(label);
+            int labelWidth = HudLabels.width(font, label);
             // Beside the square, never over it: a 6px square cannot hold "zh-TW", and a label
-            // centred on a right-corner square would run off the screen edge.
+            // centred on a right-corner square would run off the screen edge. Clamped afterwards,
+            // because the square can sit against either edge.
             int labelLeft = corner.isRight() ? left - 2 - labelWidth : right + 2;
+            labelLeft = Math.max(2, Math.min(windowWidth - labelWidth - 2, labelLeft));
             // y is the top of the text line, so centre it against the square by hand.
             int labelY = top + (size - 8) / 2;
             font.drawWithShadow(label, labelLeft, labelY, 0xFFFFFFFF);

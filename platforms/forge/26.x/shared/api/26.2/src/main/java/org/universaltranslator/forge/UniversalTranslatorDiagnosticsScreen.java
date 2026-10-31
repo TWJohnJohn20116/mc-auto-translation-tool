@@ -16,9 +16,44 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Collections;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /** Secret-free runtime diagnostics that update while the screen is open. */
 final class UniversalTranslatorDiagnosticsScreen extends Screen {
+    private static final String EXPORT_THREAD_NAME = "universal-translator-diagnostics-export";
+    /**
+     * Serializes archive exports away from the render thread.
+     *
+     * <p>Both buttons used to run the whole I/O chain inline: the debug log is read line by line,
+     * redacted with a regex per line, copied into a {@code StringBuilder} and deflated into a zip,
+     * all inside the click handler — hundreds of milliseconds to seconds of frozen window on a
+     * multi-megabyte log, with every tick stopped. One daemon thread keeps the cost off the frame
+     * budget and keeps two presses from writing the same archive twice.
+     */
+    private static final ExecutorService EXPORTER =
+            Executors.newSingleThreadExecutor(task -> {
+                Thread thread = new Thread(task, EXPORT_THREAD_NAME);
+                thread.setDaemon(true);
+                return thread;
+            });
+
+    static {
+        // The screen has no lifecycle of its own, so class load is the only place a game exit can be
+        // observed from here: without this the export thread was still parked on its queue, together
+        // with its unbounded task queue, after the client was gone.
+        try {
+            Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    EXPORTER.shutdownNow();
+                }
+            }, "universal-translator-diagnostics-export-shutdown"));
+        } catch (IllegalStateException alreadyStopping) {
+            // The JVM is already shutting down. Letting this escape a static initializer would turn
+            // into an ExceptionInInitializerError and leave the whole diagnostics page unusable.
+        }
+    }
     /** Vertical distance between two text lines. */
     private static final int LINE_STEP = 17;
     /** First line's y, just under the title. */
@@ -38,11 +73,16 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
     private Button debugButton;
     private Button pageButton;
     private Button resetButton;
+    private Button exportButton;
+    private Button bundleButton;
     /** Whether the counters page is shown instead of the engine diagnostics page. */
     private boolean statisticsPage;
     private boolean debugEnabled;
-    private String exportStatus = "";
-    private boolean exportFailed;
+    /** Written from the export thread, read by the render thread. */
+    private volatile String exportStatus = "";
+    private volatile boolean exportFailed;
+    /** True while an archive is being written; the buttons are flat and further presses ignored. */
+    private volatile boolean exporting;
     /** The current page's lines, rebuilt at most every {@link #LINES_CACHE_MILLIS}. */
     private List<Component> cachedLines;
     private long cachedLinesAt;
@@ -71,7 +111,7 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
             debugEnabled = !debugEnabled;
             applyDebugMode();
         }).bounds(left, this.height - 76, buttonWidth, 20).build());
-        addRenderableWidget(Button.builder(
+        this.bundleButton = addRenderableWidget(Button.builder(
                 Component.translatable("screen.universal_translator.debug.bundle"),
                 button -> exportBundle())
                 .bounds(left + buttonWidth + gap, this.height - 76, buttonWidth, 20).build());
@@ -90,11 +130,23 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
         addRenderableWidget(Button.builder(
                 Component.translatable("screen.universal_translator.diagnostics.back"), button -> onClose())
                 .bounds(left, this.height - 28, buttonWidth, 20).build());
-        addRenderableWidget(Button.builder(
+        this.exportButton = addRenderableWidget(Button.builder(
                 Component.translatable("screen.universal_translator.diagnostics.export"), button -> exportLog())
                 .bounds(left + buttonWidth + gap, this.height - 28, buttonWidth, 20).build());
         refreshDebugLabel();
         refreshPageLabels();
+        refreshExportButtons();
+    }
+
+    /** Flattens both archive buttons while a write is in flight. */
+    private void refreshExportButtons() {
+        boolean idle = !exporting;
+        if (exportButton != null) {
+            exportButton.active = idle;
+        }
+        if (bundleButton != null) {
+            bundleButton.active = idle;
+        }
     }
 
     /**
@@ -146,7 +198,10 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
         try {
             ForgeConfig updated = live.withDebugLog(debugEnabled);
             ForgeTranslationRuntime.initialize(updated);
-            updated.save();
+            // Queued off the render thread: the switch is already live through DebugLog below, and
+            // the click no longer pays a temporary create, a write, an atomic move and two
+            // ownership changes before the next frame.
+            ForgeConfigWriter.saveOffTick(updated, this::reportDebugSaveFailure);
             Path configFile = updated.configFile();
             DebugLog.global().configure(
                     configFile.resolveSibling(DebugLog.FILE_NAME), debugEnabled);
@@ -154,12 +209,35 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
                     tr(UiTextKeys.onOff(debugEnabled)));
             exportFailed = false;
         } catch (Exception failure) {
-            String message = failure.getMessage();
-            exportStatus = tr("screen.universal_translator.diagnostics.settings_failed",
-                    message == null || message.trim().isEmpty()
-                            ? failure.getClass().getSimpleName() : message);
+            exportStatus = settingsFailure(failure);
             exportFailed = true;
         }
+    }
+
+    /**
+     * Publishes a failed debug-switch write on the client thread.
+     *
+     * <p>The configuration writer is not the client thread, and this screen's state is only touched
+     * by the one that draws it — the same rule the export path follows.
+     */
+    private void reportDebugSaveFailure(Throwable failure) {
+        Runnable apply = () -> {
+            exportStatus = settingsFailure(failure);
+            exportFailed = true;
+        };
+        if (minecraft == null) {
+            apply.run();
+        } else {
+            minecraft.execute(apply);
+        }
+    }
+
+    /** Formats a failed settings write for the status line, whatever raised it. */
+    private String settingsFailure(Throwable failure) {
+        String message = failure.getMessage();
+        return tr("screen.universal_translator.diagnostics.settings_failed",
+                message == null || message.trim().isEmpty()
+                        ? failure.getClass().getSimpleName() : message);
     }
 
     /** Clears the process-wide counters and writes the cleared values out. */
@@ -261,15 +339,13 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
     }
 
     private void exportLog() {
-        try {
-            DiagnosticsLogExporter.export(config.offlineDirectory.getParent()
-                    .resolve("universal-translator-diagnostics"), diagnosticsLines());
-            exportStatus = tr("screen.universal_translator.diagnostics.exported");
-            exportFailed = false;
-        } catch (Exception ignored) {
-            exportStatus = tr("screen.universal_translator.diagnostics.export_failed");
-            exportFailed = true;
-        }
+        final Path directory = config.offlineDirectory.getParent()
+                .resolve("universal-translator-diagnostics");
+        // The page is already built and cached by the render thread; the worker only writes it out.
+        final List<String> lines = diagnosticsLines();
+        startExport("screen.universal_translator.diagnostics.export",
+                "screen.universal_translator.diagnostics.exported", null,
+                () -> DiagnosticsLogExporter.export(directory, lines));
     }
 
     /**
@@ -283,18 +359,71 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
             exportFailed = true;
             return;
         }
-        try {
-            Path configFile = live.configFile();
-            Path archive = DiagnosticsBundleExporter.export(
-                    configFile.getParent(), configFile,
-                    configFile.resolveSibling(DebugLog.FILE_NAME), "forge", diagnosticsLines());
-            exportStatus = tr("screen.universal_translator.debug.bundle_exported",
-                    archive.getFileName().toString());
-            exportFailed = false;
-        } catch (Exception failure) {
-            exportStatus = tr("screen.universal_translator.diagnostics.export_failed");
-            exportFailed = true;
+        final Path configFile = live.configFile();
+        // Snapshot the page here: the worker thread must never walk this screen's state.
+        final List<String> lines = diagnosticsLines();
+        startExport("screen.universal_translator.debug.bundle",
+                "screen.universal_translator.debug.bundle_exported", "", () -> {
+                    Path archive = DiagnosticsBundleExporter.export(
+                            configFile.getParent(), configFile,
+                            configFile.resolveSibling(DebugLog.FILE_NAME), "forge", lines);
+                    return archive;
+                });
+    }
+
+    /**
+     * Runs one export on {@link #EXPORTER} and reports the outcome back on the client thread.
+     *
+     * <p>The click handler returns immediately: the status line names the export that is running and
+     * both archive buttons go flat until the worker reports. No {@code CompletableFuture} is involved
+     * on purpose — any join or {@code get()} on the render path would reintroduce the freeze.
+     */
+    private void startExport(String busyKey, String successKey, String successExtras, ExportJob job) {
+        if (exporting) {
+            return;
         }
+        exporting = true;
+        exportFailed = false;
+        exportStatus = tr(busyKey) + "\u2026";
+        refreshExportButtons();
+        EXPORTER.execute(() -> {
+            Path written = null;
+            boolean failed;
+            try {
+                written = job.run();
+                failed = false;
+            } catch (Exception ignored) {
+                failed = true;
+            }
+            finishExport(successKey, successExtras, written, failed);
+        });
+    }
+
+    /** Publishes one export result on the client thread and re-enables the buttons. */
+    private void finishExport(String successKey, String successExtras, Path written, boolean failed) {
+        Runnable apply = () -> {
+            exporting = false;
+            exportFailed = failed;
+            if (failed) {
+                exportStatus = tr("screen.universal_translator.diagnostics.export_failed");
+            } else if (successExtras == null) {
+                exportStatus = tr(successKey);
+            } else {
+                exportStatus = tr(successKey, written == null
+                        ? successExtras : written.getFileName().toString());
+            }
+            refreshExportButtons();
+        };
+        if (minecraft == null) {
+            apply.run();
+        } else {
+            minecraft.execute(apply);
+        }
+    }
+
+    /** One export job, run on the exporter thread and never on the client thread. */
+    private interface ExportJob {
+        Path run() throws Exception;
     }
 
     @Override

@@ -7,7 +7,6 @@ ext.legacyYarnMappings = yarn_1_16_2_mappings
 ext.legacyLoaderVersion = loader_1_16_2_version
 ext.legacyFabricApiVersion = fabric_api_1_16_2_version
 ext.legacyJavaRelease = 8
-ext.legacyFabricDependency = "fabric-api"
 
 apply from: rootProject.file("platforms/fabric/legacy/shared.gradle")
 

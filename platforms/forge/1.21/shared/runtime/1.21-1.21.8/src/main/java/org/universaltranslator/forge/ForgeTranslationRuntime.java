@@ -16,6 +16,9 @@ import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.RecentUserText;
 import org.universaltranslator.core.TranslationResult;
 import org.universaltranslator.core.TranslationStatusLocalizer;
+import org.universaltranslator.core.DebugLog;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -29,12 +32,27 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 public final class ForgeTranslationRuntime {
     private static final long PLAYER_NAME_SNAPSHOT_MILLIS = 5_000L;
     // Match ProtectedText's bounded literal limit so large network lobbies do not silently
     // drop names after the first few tab-list pages.
     private static final int MAX_PROTECTED_PLAYER_NAMES = 1_000;
+    private static final Logger LOGGER = LoggerFactory.getLogger("universal_translator");
+    /**
+     * Reports a queued write that failed, so a quick setting cannot vanish without a trace.
+     *
+     * <p>The writer's own record goes to the opt-in debug log, which is off by default, so a Home key
+     * whose write failed left nothing behind anywhere while the button already showed the new value.
+     */
+    private static final Consumer<Throwable> SAVE_FAILURE_REPORTER = new Consumer<Throwable>() {
+        @Override
+        public void accept(Throwable failure) {
+            LOGGER.warn("Could not persist the quick setting", failure);
+        }
+    };
 
     private static volatile RenderTranslationSession session;
     private static volatile ForgeConfig activeConfig;
@@ -60,6 +78,41 @@ public final class ForgeTranslationRuntime {
     private static final AtomicBoolean playerNameRefresh = new AtomicBoolean();
     private static final RecentUserText RECENT_USER_TEXT = new RecentUserText();
     private static CompletableFuture<Void> outgoingTail = CompletableFuture.completedFuture(null);
+    /**
+     * Serializes the outgoing pipeline without holding the class monitor.
+     *
+     * <p>{@code initialize} is {@code synchronized} and holds that monitor for the whole provider
+     * build, so an outgoing chat line that arrived during a configuration switch used to wait
+     * behind a llama.cpp start or a 500 MB model download before it was even queued.
+     */
+    private static final Object OUTGOING_LOCK = new Object();
+
+    // ---------------------------------------------------------------------------------------------
+    // Frame window in front of the render lookup
+    // ---------------------------------------------------------------------------------------------
+    // A drawn line is looked up at least twice (once to measure it, once to draw it), and a HUD
+    // repeats the same handful of strings every frame. The session lookup builds a RenderKey and
+    // probes three maps per call, so the immediate repeat is answered here instead. The window is
+    // one client tick — the epoch that ends it is advanced by TranslationRenderContext.beginFrame —
+    // so a worker-thread translation lags by at most one tick, which is below perception, and a
+    // stale configuration can never leak because initialize() and shutdown() bump the epoch too.
+    private static final int RENDER_MEMO_SLOTS = 64;
+    private static final String[] RENDER_MEMO_KEYS = new String[RENDER_MEMO_SLOTS];
+    private static final String[] RENDER_MEMO_VALUES = new String[RENDER_MEMO_SLOTS];
+    private static final TextKind[] RENDER_MEMO_KINDS = new TextKind[RENDER_MEMO_SLOTS];
+    private static final int[] RENDER_MEMO_FRAMES = new int[RENDER_MEMO_SLOTS];
+    private static final int[] RENDER_MEMO_EPOCHS = new int[RENDER_MEMO_SLOTS];
+    private static volatile int renderMemoEpoch = 1;
+
+    /**
+     * The snapshot the HUD draws when no configuration is loaded.
+     *
+     * <p>A shared instance, not a fresh object: shutdown() and a failed initialize() both leave
+     * {@code cachedHome} null, and the HUD then reads this several times per frame for as long as
+     * the state lasts.
+     */
+    private static final HomeQuickSettingsState DISABLED_SETTINGS =
+            new HomeQuickSettingsState(false, true, TargetLanguage.SIMPLIFIED_CHINESE);
     // A single daemon thread serializes the teardown of replaced sessions: at most one reaper
     // thread exists no matter how often the configuration is switched, and two replaced sessions
     // can never tear down concurrently. Threads are created lazily, so a client that never switches
@@ -119,8 +172,10 @@ public final class ForgeTranslationRuntime {
                 // Record the provider before the store and the session are built around it: a
                 // failure in either must not orphan a provider that may already hold resources.
                 createdProvider = provider;
+                // One store per cache file: a settings change must not make the next session's first
+                // lookup parse the whole file again.
                 TranslationStore store = config.diskCache
-                        ? new PersistentTranslationCache(config.cacheFile, 10_000)
+                        ? PersistentTranslationCache.shared(config.cacheFile, 10_000)
                         : new TranslationCache(10_000);
                 // The offline llama.cpp server is single threaded, so it always gets one worker no
                 // matter what the configuration asks for.
@@ -158,35 +213,55 @@ public final class ForgeTranslationRuntime {
         protectedPlayerNamesExpireAt = 0L;
         RECENT_USER_TEXT.clear();
         outgoingTail = CompletableFuture.completedFuture(null);
+        invalidateRenderMemo();
         closeInBackground(replaced);
     }
+
+    /** Teardowns queued but not finished, reported by {@link #closeInBackground}. */
+    private static final AtomicInteger PENDING_TEARDOWNS = new AtomicInteger();
+    /** Backlog depth worth one debug-log line; the queue itself is never truncated. */
+    private static final int MAX_PENDING_TEARDOWNS = 2;
 
     /**
      * Hands a replaced session to the shared reaper so its teardown never runs on the caller's
      * thread. {@link #shutdown()} stays synchronous on purpose: it runs while the game is closing,
      * where blocking is free, and it closes whichever session is current at that moment, which is
      * never one that was already handed to the reaper.
+     *
+     * <p>The reaper is a single unbounded queue, so a burst of switches — holding F8 down, or a
+     * HUD drag that re-initializes several times a second — queues one live session with its thread
+     * pool and caches per press. Each one is retired without waiting for its workers, so the queue
+     * drains as fast as the switches arrive instead of accumulating five seconds of teardown per
+     * press; {@link #PENDING_TEARDOWNS} still records its depth past
+     * {@link #MAX_PENDING_TEARDOWNS} in the debug log.
      */
     private static void closeInBackground(final RenderTranslationSession replaced) {
         if (replaced == null) {
             return;
+        }
+        if (PENDING_TEARDOWNS.incrementAndGet() == MAX_PENDING_TEARDOWNS + 1) {
+            DebugLog.global().log("runtime", "teardown", "backlog",
+                    "pending", Integer.toString(MAX_PENDING_TEARDOWNS + 1));
         }
         try {
             SESSION_REAPER.execute(new Runnable() {
                 @Override
                 public void run() {
                     try {
-                        replaced.close();
+                        replaced.closeWithoutWaiting();
                     } catch (Throwable ignored) {
                         // A reaper must never die with a teardown still pending. The session is
                         // already unreachable from the live fields, so a failure here can only
                         // leak its resources; there is no caller left to report it to.
+                    } finally {
+                        PENDING_TEARDOWNS.decrementAndGet();
                     }
                 }
             });
         } catch (Throwable rejected) {
             // The executor only rejects once it has been shut down, which this class never does.
             // Leaving the replaced session unclosed still beats blocking the caller.
+            PENDING_TEARDOWNS.decrementAndGet();
         }
     }
 
@@ -202,7 +277,37 @@ public final class ForgeTranslationRuntime {
                 || RECENT_USER_TEXT.shouldPreserve(original)) {
             return original;
         }
-        return active.lookup(original, kind);
+        return lookupWithMemo(active, original, kind);
+    }
+
+    /** Drops every memoised lookup without waiting for the next tick. */
+    private static void invalidateRenderMemo() {
+        renderMemoEpoch++;
+    }
+
+    private static String lookupWithMemo(
+            RenderTranslationSession active, String original, TextKind kind) {
+        if (original == null) {
+            // Null reaches here from the render hooks; it is not worth a memo slot.
+            return active.lookup(original, kind);
+        }
+        int slot = (original.hashCode() * 31 + (kind == null ? 0 : kind.ordinal()))
+                & (RENDER_MEMO_SLOTS - 1);
+        int epoch = renderMemoEpoch;
+        int frame = TranslationRenderContext.frameEpoch();
+        if (RENDER_MEMO_EPOCHS[slot] == epoch && RENDER_MEMO_FRAMES[slot] == frame
+                && RENDER_MEMO_KINDS[slot] == kind
+                && original.equals(RENDER_MEMO_KEYS[slot])) {
+            return RENDER_MEMO_VALUES[slot];
+        }
+        String translated = active.lookup(original, kind);
+        RENDER_MEMO_KEYS[slot] = original;
+        RENDER_MEMO_VALUES[slot] = translated;
+        RENDER_MEMO_KINDS[slot] = kind;
+        RENDER_MEMO_FRAMES[slot] = frame;
+        // Published last: a reader that matches both windows must find the matching entry.
+        RENDER_MEMO_EPOCHS[slot] = epoch;
+        return translated;
     }
 
     private static boolean isSettingsScreen(Object screen) {
@@ -211,14 +316,35 @@ public final class ForgeTranslationRuntime {
                 || screen instanceof UniversalTranslatorLlmConfigScreen;
     }
 
-    static synchronized void shutdown() {
-        RenderTranslationSession active = session;
-        session = null;
-        activeProvider = null;
-        protectedPlayerNames = Collections.emptyList();
-        protectedPlayerNamesExpireAt = 0L;
-        RECENT_USER_TEXT.clear();
-        outgoingTail = CompletableFuture.completedFuture(null);
+    static void shutdown() {
+        RenderTranslationSession active;
+        synchronized (ForgeTranslationRuntime.class) {
+            active = session;
+            session = null;
+            // Clear the published settings too, not just the session. Leaving them behind made a failed
+            // initialize() permanent: session == null meant "nothing translates", while the HUD read
+            // cachedHome.enabled == true and kept painting the "translation is on" indicator,
+            // diagnostics() reported a provider that no longer exists, and requireActiveConfig() handed
+            // the broken configuration back to the Home toggles, which then saved it over the file.
+            activeConfig = null;
+            activeProvider = null;
+            cachedHome = null;
+            diagnosticsSnapshot = null;
+            diagnosticsSnapshotAt = 0L;
+            protectedPlayerNames = Collections.emptyList();
+            protectedPlayerNamesExpireAt = 0L;
+            RECENT_USER_TEXT.clear();
+            outgoingTail = CompletableFuture.completedFuture(null);
+            invalidateRenderMemo();
+            // Both caches outlive the session on purpose (they are shared by every snapshot of the same
+            // file), so releasing the configuration is the point where they are dropped instead.
+            ForgeConfig.clearCaches();
+        }
+        // Both waits below are bounded but long -- two seconds for the write queue, up to five for a
+        // session with a worker parked in a provider read -- so they run outside the class monitor:
+        // initialize() takes that same monitor from the render thread on a settings change, and holding
+        // it here froze one frame meanwhile.
+        ForgeConfigWriter.shutdown();
         if (active != null) {
             active.close();
         }
@@ -229,8 +355,7 @@ public final class ForgeTranslationRuntime {
         List<String> snapshot = protectedPlayerNames;
         if (now < protectedPlayerNamesExpireAt) {
             return snapshot;
-        }
-        // Refreshed outside the class monitor: the coordinator asks for this on every submitted
+        }        // Refreshed outside the class monitor: the coordinator asks for this on every submitted
         // string, so the render thread reaches it for every new line, and initialize() holds that
         // monitor for the whole provider build. One refresher per window is enough; the rest keep
         // using the published snapshot, which only decides which names are excluded.
@@ -242,6 +367,18 @@ public final class ForgeTranslationRuntime {
         } finally {
             playerNameRefresh.set(false);
         }
+    }
+
+    /**
+     * Refreshes the protected-name snapshot from the client tick instead of from a draw call.
+     *
+     * <p>The supplier below is asked for this on the render thread for every submitted string, so
+     * the refresh ran inside a frame: on a full server that walked the whole tab list between two
+     * draw calls. Refreshing here means a frame only reads the published snapshot, and the client
+     * thread is where the tab list may be read at all.
+     */
+    static void refreshProtectedNames() {
+        playerNameSnapshot();
     }
 
     private static List<String> refreshPlayerNames(long now) {
@@ -260,13 +397,11 @@ public final class ForgeTranslationRuntime {
                 addProtectedLiteral(names, client.getCurrentServer().ip);
             }
             if (protectPlayerNames) {
-                client.getConnection().getOnlinePlayers().forEach(entry -> {
-                    if (names.size() >= MAX_PROTECTED_PLAYER_NAMES) {
-                        return;
-                    }
-                    String name = entry.getProfile().getName();
-                    addProtectedLiteral(names, name);
-                });
+                // Bounded before the walk, not inside it: the previous lambda returned early once
+                // the limit was reached but the callback still ran for every remaining player.
+                client.getConnection().getOnlinePlayers().stream()
+                        .limit(MAX_PROTECTED_PLAYER_NAMES)
+                        .forEach(entry -> addProtectedLiteral(names, entry.getProfile().getName()));
             }
             protectedPlayerNames = Collections.unmodifiableList(new ArrayList<String>(names));
         }
@@ -280,7 +415,7 @@ public final class ForgeTranslationRuntime {
         }
         String normalized = value.trim();
         if (!normalized.isEmpty() && normalized.length() <= 255
-                && values.size() < MAX_PROTECTED_PLAYER_NAMES && !values.contains(normalized)) {
+                && !values.contains(normalized)) {
             values.add(normalized);
         }
     }
@@ -355,7 +490,10 @@ public final class ForgeTranslationRuntime {
         Minecraft client = Minecraft.getInstance();
         if (active == null || config == null || !config.allows(kind)
                 || TranslationRenderContext.isTextInput()) {
-            return originals;
+            // The same read-only answer the core hands back. A bridge that renders with translation on
+            // and then off must not see the list become editable: the first set/sort/add that works in
+            // one state throws UnsupportedOperationException in the other, once per frame.
+            return originals == null ? null : Collections.unmodifiableList(originals);
         }
         return active.lookupLines(originals, kind);
     }
@@ -376,7 +514,9 @@ public final class ForgeTranslationRuntime {
     }
 
     /** Serializes outgoing requests so rapidly sent chat lines keep their original order. */
-    static synchronized CompletableFuture<TranslationResult> translateOutgoing(String message) {
+    static CompletableFuture<TranslationResult> translateOutgoing(String message) {
+        // Both fields are volatile, so the fast path needs no monitor: holding the class monitor
+        // here made "press Enter" wait behind a whole provider build whenever the two overlapped.
         final RenderTranslationSession active = session;
         final ForgeConfig config = activeConfig;
         if (active == null || config == null || !shouldTranslateOutgoing(message)) {
@@ -388,11 +528,13 @@ public final class ForgeTranslationRuntime {
         CompletableFuture<TranslationResult> translated = active.translateInteractive(
                 message, TextKind.CHAT, config.outgoingTargetLanguage, false,
                 config.streamOutgoing);
-        CompletableFuture<TranslationResult> next = outgoingTail
-                .handle((ignored, failure) -> null)
-                .thenCompose(ignored -> translated);
-        outgoingTail = next.handle((ignored, failure) -> null);
-        return next;
+        synchronized (OUTGOING_LOCK) {
+            CompletableFuture<TranslationResult> next = outgoingTail
+                    .handle((ignored, failure) -> null)
+                    .thenCompose(ignored -> translated);
+            outgoingTail = next.handle((ignored, failure) -> null);
+            return next;
+        }
     }
 
     /**
@@ -457,7 +599,10 @@ public final class ForgeTranslationRuntime {
             }
             runtimeChanged = true;
             initialize(updated);
-            updated.save();
+            // Queued instead of written here: the Home buttons run on the thread that is about to
+            // draw the next frame, and a save is four file operations. The new settings are already
+            // live in memory, so a failed write can only mean the file keeps the old values.
+            ForgeConfigWriter.saveOffTick(updated, SAVE_FAILURE_REPORTER);
             return homeSettingsState(updated);
         } catch (Exception failure) {
             if (runtimeChanged) {
@@ -473,7 +618,7 @@ public final class ForgeTranslationRuntime {
 
     private static HomeQuickSettingsState homeSettingsState(ForgeConfig config) {
         return config == null
-                ? new HomeQuickSettingsState(false, true, TargetLanguage.SIMPLIFIED_CHINESE)
+                ? DISABLED_SETTINGS
                 : new HomeQuickSettingsState(
                         config.enabled, config.translateVanilla, config.targetLanguage,
                         config.hudIndicatorSettings(), config.provider);

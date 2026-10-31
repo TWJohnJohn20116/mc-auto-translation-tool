@@ -1,5 +1,6 @@
 package org.universaltranslator.fabric;
 
+import org.universaltranslator.core.ModelListPaging;
 import org.universaltranslator.core.UiLimits;
 import java.util.Collections;
 import java.util.List;
@@ -13,11 +14,9 @@ import org.universaltranslator.core.provider.OpenAiModelCatalog;
 /** Local-only editor for an OpenAI-compatible hosted or loopback LLM endpoint. */
 final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorLlmConfigScreenBase {
     /** Height of a single catalog row in the model picker overlay. */
-    private static final int LIST_ROW_HEIGHT = 12;
+    private static final int LIST_ROW_HEIGHT = ModelListPaging.ROW_HEIGHT;
     /** Y of the first catalog row; the picker title sits above it. */
-    private static final int LIST_TOP = 46;
-    /** Room kept under the rows for the paging, back, and hint lines. */
-    private static final int LIST_FOOTER_HEIGHT = 62;
+    private static final int LIST_TOP = ModelListPaging.LIST_TOP;
 
     private final UniversalTranslatorSettingsScreen parent;
     private String initialEndpoint;
@@ -31,8 +30,10 @@ final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorLlmCon
     private volatile boolean statusIsError;
     private volatile List<String> fetchedModels = Collections.emptyList();
     private volatile boolean fetching;
-    private boolean modelListOpen;
-    private int modelPage;
+    // Written by the worker that fetches the catalog and read by the render thread, so both need
+    // the visibility the list itself already had.
+    private volatile boolean modelListOpen;
+    private volatile int modelPage;
 
     UniversalTranslatorLlmConfigScreen(
             UniversalTranslatorSettingsScreen parent,
@@ -74,8 +75,10 @@ int width = Math.max(180, Math.min(360, this.width - 20));
         int buttonWidth = (width - gap) / 2;
         addDrawableChild(ButtonWidget.builder(Text.translatable("screen.universal_translator.llm.save"), button -> save())
                 .dimensions(left, top + 108, buttonWidth, 20).build());
+        // The right button takes the odd pixel instead of both rounding down and leaving a gap.
         addDrawableChild(ButtonWidget.builder(Text.translatable("gui.cancel"), button -> close())
-                .dimensions(left + buttonWidth + gap, top + 108, buttonWidth, 20).build());
+                .dimensions(left + buttonWidth + gap, top + 108,
+                        Math.max(1, width - buttonWidth - gap), 20).build());
         addDrawableChild(ButtonWidget.builder(
                         Text.translatable("screen.universal_translator.llm.fetch_models"), button -> fetchModels())
                 .dimensions(left, top + 132, width, 20).build());
@@ -110,15 +113,18 @@ int width = Math.max(180, Math.min(360, this.width - 20));
                 ? parent.llmApiKey() : ("-".equals(enteredKey) ? "" : enteredKey);
         fetching = true;
         setStatus(tr("screen.universal_translator.llm.fetching"), false);
-        Thread worker = new Thread(() -> {
+        ScreenWorkerPool.execute(() -> {
             List<String> models = Collections.emptyList();
             String failure = "";
             try {
                 models = OpenAiModelCatalog.fetch(endpointValue, keyValue);
             } catch (Exception error) {
                 failure = describe(error);
+            } finally {
+                // In a finally block so a LinkageError or OutOfMemoryError from the provider class
+                // cannot leave the guard stuck at true and silence the button for the session.
+                fetching = false;
             }
-            fetching = false;
             if (!failure.isEmpty()) {
                 setStatus(tr("screen.universal_translator.llm.fetch_failed", failure), true);
                 return;
@@ -130,15 +136,11 @@ int width = Math.max(180, Math.min(360, this.width - 20));
             fetchedModels = models;
             modelPage = 0;
             modelListOpen = true;
-            // This version layer cannot intercept typing, so drop focus: a hidden field must not
-            // collect the characters the user types while the picker is open.
-            endpoint.setFocused(false);
-            model.setFocused(false);
-            apiKey.setFocused(false);
+            // The focus guard moved to render(): this thread used to call setFocused on the widgets
+            // while init() rebuilt them on every resize, so the guard landed on dead instances (and
+            // the fresh ones stayed focused, collecting what was typed over the overlay).
             setStatus("", false);
-        }, "universal-translator-model-list");
-        worker.setDaemon(true);
-        worker.start();
+        });
     }
 
     private void setStatus(String message, boolean error) {
@@ -172,26 +174,67 @@ int width = Math.max(180, Math.min(360, this.width - 20));
         }
         super.render(context, mouseX, mouseY, delta);
         if (modelListOpen) {
+            releaseFieldFocus();
             renderModelList(context, mouseX, mouseY);
+        } else {
+            restoreFieldEditing();
+        }
+    }
+
+    /**
+     * Keeps the form from collecting characters while the picker covers it.
+     *
+     * <p>Applied on every frame the overlay is open rather than once when the list arrives: a resize
+     * rebuilds the three fields in {@code init()}, and a one-shot call left the fresh instances
+     * accepting input, so the characters typed over the overlay went into the hidden API key field
+     * again.
+     *
+     * <p>Clearing a field's own focus needs an accessor the game renames at runtime, so the
+     * reflective call this used to make found nothing and did not guard anything. The editability
+     * switch exists on every generation and stops the characters at the field itself;
+     * {@link #restoreFieldEditing()} hands it back when the picker closes.
+     */
+    private void releaseFieldFocus() {
+        setFieldEditing(endpoint, false);
+        setFieldEditing(model, false);
+        setFieldEditing(apiKey, false);
+    }
+
+    /** Gives the form its editing back once the picker is gone. */
+    private void restoreFieldEditing() {
+        setFieldEditing(endpoint, true);
+        setFieldEditing(model, true);
+        setFieldEditing(apiKey, true);
+    }
+
+    private static void setFieldEditing(TextFieldWidget field, boolean editable) {
+        if (field != null) {
+            field.setEditable(editable);
         }
     }
 
     /** Draws the fetched catalog over the form so a served model can be picked instead of typed. */
     private void renderModelList(DrawContext context, int mouseX, int mouseY) {
+        // Snapshot the list once: the worker replaces it wholesale, so reading size() and get()
+        // through the volatile field separately can mix two different lists and throw on the
+        // render thread.
+        List<String> models = fetchedModels;
+        int rows = ModelListPaging.rows(this.height);
+        // The overlay survives a resize, which lowers the page count, so clamp before drawing.
+        modelPage = ModelListPaging.clampPage(modelPage, models.size(), rows);
         context.fill(0, 0, this.width, this.height, 0xFF101010);
         context.drawCenteredTextWithShadow(this.textRenderer,
-                Text.translatable("screen.universal_translator.llm.select_model", fetchedModels.size()),
+                Text.translatable("screen.universal_translator.llm.select_model", models.size()),
                 this.width / 2, 20, 0xFFFFFF);
-        int rows = rowsPerPage();
         int first = modelPage * rows;
-        for (int row = 0; row < rows && first + row < fetchedModels.size(); row++) {
+        for (int row = 0; row < rows && first + row < models.size(); row++) {
             int rowY = LIST_TOP + row * LIST_ROW_HEIGHT;
             boolean hovered = mouseY >= rowY && mouseY < rowY + LIST_ROW_HEIGHT;
             context.drawTextWithShadow(this.textRenderer,
-                    Text.literal((hovered ? "> " : "  ") + fetchedModels.get(first + row)),
+                    Text.literal((hovered ? "> " : "  ") + models.get(first + row)),
                     24, rowY, hovered ? 0xFFFFD060 : 0xFFE0E0E0);
         }
-        int pages = pageCount(rows);
+        int pages = ModelListPaging.pageCount(models.size(), rows);
         context.drawCenteredTextWithShadow(this.textRenderer,
                 Text.literal("< " + (modelPage + 1) + "/" + pages + " >"), this.width / 2, this.height - 46, 0xFFFFFF);
         context.drawCenteredTextWithShadow(this.textRenderer,
@@ -205,8 +248,11 @@ int width = Math.max(180, Math.min(360, this.width - 20));
         if (!modelListOpen) {
             return false;
         }
+        List<String> models = fetchedModels;
+        int rows = ModelListPaging.rows(this.height);
+        modelPage = ModelListPaging.clampPage(modelPage, models.size(), rows);
         if (mouseY >= this.height - 54 && mouseY < this.height - 38) {
-            int pages = pageCount(rowsPerPage());
+            int pages = ModelListPaging.pageCount(models.size(), rows);
             if (pages > 1) {
                 modelPage = mouseX < this.width / 2.0
                         ? (modelPage + pages - 1) % pages : (modelPage + 1) % pages;
@@ -218,24 +264,15 @@ int width = Math.max(180, Math.min(360, this.width - 20));
             return true;
         }
         if (mouseY >= LIST_TOP) {
-            int rows = rowsPerPage();
-            int row = (int) ((mouseY - LIST_TOP) / LIST_ROW_HEIGHT);
-            int index = modelPage * rows + row;
-            if (row < rows && index < fetchedModels.size()) {
-                model.setText(fetchedModels.get(index));
+            int row = ModelListPaging.rowAt(mouseY);
+            int index = ModelListPaging.index(modelPage, rows, row);
+            if (row < rows && index < models.size()) {
+                model.setText(models.get(index));
                 modelListOpen = false;
                 setStatus("", false);
             }
         }
         return true;
-    }
-
-    private int rowsPerPage() {
-        return Math.max(3, (this.height - LIST_TOP - LIST_FOOTER_HEIGHT) / LIST_ROW_HEIGHT);
-    }
-
-    private int pageCount(int rows) {
-        return Math.max(1, (fetchedModels.size() + rows - 1) / rows);
     }
 
     @Override

@@ -31,6 +31,21 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
     private boolean debugEnabled;
     private String exportStatus = "";
     private boolean exportFailed;
+    /**
+     * The rendered page contents, or {@code null} when they must be rebuilt.
+     *
+     * <p>{@link #render} runs at the frame rate and {@code displayLines()} used to rebuild every line
+     * on each call: two {@code Files.size} calls on the render thread plus 8–10 {@code I18n} lookups
+     * per frame, at 60 fps. Caching makes that cost per invalidation instead of per frame.
+     */
+    private List<String> cachedLines;
+    /** {@link System#currentTimeMillis()} when {@link #cachedLines} was built. */
+    private long cachedLinesAt;
+    /** Upper bound on how long a cached page may stay stale while the screen stays open. */
+    private static final long LINE_REFRESH_MILLIS = 500L;
+    /** Filled in by the export worker; published on the client thread by {@link #render}. */
+    private volatile boolean pendingExportDone;
+    private volatile String pendingExportArchive;
 
     UniversalTranslatorDiagnosticsScreen(Screen parent) {
         super(new TranslatableText("screen.universal_translator.diagnostics.title"));
@@ -45,40 +60,47 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
             // made by another screen, is reflected instead of showing a stale value.
             debugEnabled = config.debugLog();
         }
+        // Entering the screen (or rebuilding it after a resize) is the natural point to recompute.
+        invalidateLines();
         int totalWidth = Math.max(180, Math.min(320, this.width - 24));
         int gap = 8;
         int buttonWidth = (totalWidth - gap) / 2;
         int left = (this.width - totalWidth) / 2;
 
-        this.debugButton = addDrawableChild(ButtonWidget.builder(new LiteralText(""), button -> {
+        this.debugButton = addLegacyButton(ButtonWidget.builder(new LiteralText(""), button -> {
             debugEnabled = !debugEnabled;
             applyDebugMode();
+            invalidateLines();
         }).dimensions(left, this.height - 76, buttonWidth, 20).build());
-        addDrawableChild(ButtonWidget.builder(
+        addLegacyButton(ButtonWidget.builder(
                 new TranslatableText("screen.universal_translator.debug.bundle"),
                 button -> exportBundle())
                 .dimensions(left + buttonWidth + gap, this.height - 76, buttonWidth, 20).build());
 
-        this.pageButton = addDrawableChild(ButtonWidget.builder(new LiteralText(""), button -> {
+        this.pageButton = addLegacyButton(ButtonWidget.builder(new LiteralText(""), button -> {
             statisticsPage = !statisticsPage;
             refreshPageLabels();
+            invalidateLines();
         }).dimensions(left, this.height - 52, buttonWidth, 20).build());
-        this.resetButton = addDrawableChild(ButtonWidget.builder(
+        this.resetButton = addLegacyButton(ButtonWidget.builder(
                 new TranslatableText("screen.universal_translator.stats.reset"),
-                button -> resetStatistics())
+                button -> {
+                    resetStatistics();
+                    invalidateLines();
+                })
                 .dimensions(left + buttonWidth + gap, this.height - 52, buttonWidth, 20).build());
 
-        addDrawableChild(ButtonWidget.builder(
+        addLegacyButton(ButtonWidget.builder(
                 new TranslatableText("screen.universal_translator.diagnostics.back"), button -> onClose())
                 .dimensions(left, this.height - 28, buttonWidth, 20).build());
-        addDrawableChild(ButtonWidget.builder(
+        addLegacyButton(ButtonWidget.builder(
                 new TranslatableText("screen.universal_translator.diagnostics.export"), button -> exportLog())
                 .dimensions(left + buttonWidth + gap, this.height - 28, buttonWidth, 20).build());
         refreshDebugLabel();
         refreshPageLabels();
     }
 
-    private <T extends net.minecraft.client.gui.widget.AbstractButtonWidget> T addDrawableChild(T child) {
+    private <T extends net.minecraft.client.gui.widget.AbstractButtonWidget> T addLegacyButton(T child) {
         return addButton(child);
     }
 
@@ -119,13 +141,22 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
         try {
             FabricConfig updated = config.withDebugLog(debugEnabled);
             FabricTranslationRuntime.initialize(updated);
-            updated.save();
+            // Same writer as the F8 toggles, so an older queued snapshot cannot overwrite this one.
+            // The result decides the message: a write still queued past the bounded wait, or one that
+            // failed, used to be announced as applied while the file still held the old value.
+            boolean written = FabricTranslationRuntimeBase.saveInBackgroundAndWait(updated);
             Path configFile = updated.configFile();
             DebugLog.global().configure(
                     configFile.resolveSibling(DebugLog.FILE_NAME), debugEnabled);
-            exportStatus = tr("screen.universal_translator.debug.changed",
-                    tr(UiTextKeys.onOff(debugEnabled)));
-            exportFailed = false;
+            if (written) {
+                exportStatus = tr("screen.universal_translator.debug.changed",
+                        tr(UiTextKeys.onOff(debugEnabled)));
+                exportFailed = false;
+            } else {
+                exportStatus = tr("status.universal_translator.save_failed",
+                        configFile.getFileName());
+                exportFailed = true;
+            }
         } catch (Exception failure) {
             String message = failure.getMessage();
             exportStatus = tr("screen.universal_translator.diagnostics.settings_failed",
@@ -135,7 +166,7 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
         }
     }
 
-    /** Clears the process-wide counters and writes the cleared values out. */
+    /** Clears the in-memory counters; the on-disk totals are only rewritten at shutdown. */
     private void resetStatistics() {
         TranslationStats.global().reset();
         exportStatus = tr("screen.universal_translator.stats.reset_done");
@@ -144,6 +175,7 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
 
     @Override
     public void render(int mouseX, int mouseY, float delta) {
+        applyPendingExport();
         fill(0, 0, width, height, 0xE510151C);
         fill(Math.max(5, width / 2 - 190), 8,
                 Math.min(width - 5, width / 2 + 190), height - 34, 0xD51A232E);
@@ -173,14 +205,38 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
                         : "screen.universal_translator.diagnostics.note").getString(),
                 width / 2, Math.min(y + 7, height - 88), 0xFF909090);
         if (!exportStatus.isEmpty()) {
+            // Above the first button row (height-76): drawn at height-82 the row's background and
+            // hover highlight covered the bottom two pixels, cutting the descenders off the only
+            // feedback the export gives.
             drawCenteredString(font, new LiteralText(exportStatus).getString(),
-                    width / 2, height - 82, exportFailed ? 0xFFFF5555 : 0xFF55FF88);
+                    width / 2, height - 86, exportFailed ? 0xFFFF5555 : 0xFF55FF88);
         }
         super.render(mouseX, mouseY, delta);
     }
 
-    /** The lines the current page shows. */
+    /** The lines the current page shows, served from {@link #cachedLines} when it is still fresh. */
     private List<String> displayLines() {
+        long now = System.currentTimeMillis();
+        List<String> cached = cachedLines;
+        if (cached == null || now - cachedLinesAt >= LINE_REFRESH_MILLIS) {
+            cached = computeLines();
+            cachedLines = cached;
+            cachedLinesAt = now;
+        }
+        return cached;
+    }
+
+    /** Drops the cache so the next {@link #render} rebuilds the page once. */
+    private void invalidateLines() {
+        cachedLines = null;
+        cachedLinesAt = 0L;
+    }
+
+    /**
+     * Rebuilds the page contents, which is the expensive part: it localizes 4-10 lines and, on the
+     * diagnostics page, goes through {@code FabricTranslationRuntime.diagnostics()} (file sizes).
+     */
+    private List<String> computeLines() {
         try {
             return statisticsPage
                     ? TranslationStats.global().localizedLines(
@@ -220,6 +276,11 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
     /**
      * Writes one archive holding the diagnostics, the debug log, the redacted configuration and the
      * environment into the configuration directory.
+     *
+     * <p>On a background thread: the exporter reads and redacts the whole debug log (up to
+     * {@code DebugLog.MAXIMUM_BYTES}) and deflates it, which froze the client for seconds on a
+     * spinning disk or an antivirus-watched folder. The result is published by
+     * {@link #applyPendingExport()} on the client thread.
      */
     private void exportBundle() {
         FabricConfig config = FabricTranslationRuntime.diagnosticsConfig();
@@ -228,18 +289,39 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
             exportFailed = true;
             return;
         }
-        try {
-            Path configFile = config.configFile();
-            Path archive = DiagnosticsBundleExporter.export(
-                    configFile.getParent(), configFile,
-                    configFile.resolveSibling(DebugLog.FILE_NAME), "fabric", diagnosticsLines());
-            exportStatus = tr("screen.universal_translator.debug.bundle_exported",
-                    archive.getFileName().toString());
-            exportFailed = false;
-        } catch (Exception failure) {
+        final Path configFile = config.configFile();
+        final List<String> lines = diagnosticsLines();
+        ScreenWorkers.export(() -> {
+            String archiveName;
+            try {
+                Path archive = DiagnosticsBundleExporter.export(
+                        configFile.getParent(), configFile,
+                        configFile.resolveSibling(DebugLog.FILE_NAME), "fabric", lines);
+                archiveName = archive.getFileName().toString();
+            } catch (Exception failure) {
+                archiveName = null;
+            }
+            // Published in this order: the client thread only reads the name after the flag is set.
+            pendingExportArchive = archiveName;
+            pendingExportDone = true;
+        });
+    }
+
+    /** Publishes the export worker's result on the client thread, where the label can be localized. */
+    private void applyPendingExport() {
+        if (!pendingExportDone) {
+            return;
+        }
+        pendingExportDone = false;
+        String archiveName = pendingExportArchive;
+        pendingExportArchive = null;
+        if (archiveName == null) {
             exportStatus = tr("screen.universal_translator.diagnostics.export_failed");
             exportFailed = true;
+            return;
         }
+        exportStatus = tr("screen.universal_translator.debug.bundle_exported", archiveName);
+        exportFailed = false;
     }
 
     @Override

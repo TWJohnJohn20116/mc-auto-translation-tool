@@ -27,8 +27,20 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        // ESC closes the overlay, not the whole settings screen.
-        return handleSelectionKey(keyCode) || super.keyPressed(keyCode, scanCode, modifiers);
+        if (isOverlayOpen()) {
+            // ESC closes the overlay, not the whole settings screen; every other key is swallowed so
+            // it cannot reach a field hidden behind the overlay.
+            handleSelectionKey(keyCode);
+            return true;
+        }
+        return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+    @Override
+    public boolean charTyped(char chr, int modifiers) {
+        // The overlay is a painted rectangle, not a screen, so the focused field behind it used to
+        // collect every character typed over it and Save then wrote them into the configuration.
+        return isOverlayOpen() || super.charTyped(chr, modifiers);
     }
 
     @Override

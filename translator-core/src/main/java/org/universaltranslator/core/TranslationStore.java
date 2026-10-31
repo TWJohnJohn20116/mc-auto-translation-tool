@@ -1,6 +1,16 @@
 package org.universaltranslator.core;
 
-/** Cache abstraction shared by memory-only and privacy-conscious disk stores. */
+/**
+ * Cache abstraction shared by memory-only and privacy-conscious disk stores.
+ *
+ * <p>Eviction is <em>not</em> part of this contract. The bound and the order in which entries are
+ * dropped are properties of each implementation, and callers must not depend on either: the in-memory
+ * store evicts the least recently used entry, while the disk-backed store evicts the one written
+ * earliest, because an access-ordered map relinks the entry on every read and that turns a hit into a
+ * structural modification under the instance monitor every worker shares. A caller that needs an entry
+ * to survive keeps it, or writes it again; {@link #get(String)} returning {@code null} is the only
+ * thing it may conclude.
+ */
 public interface TranslationStore {
     String get(String key);
 

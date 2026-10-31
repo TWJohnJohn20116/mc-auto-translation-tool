@@ -9,18 +9,20 @@ import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.DirectoryStream;
-import java.nio.file.FileStore;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import org.universaltranslator.core.TextPreview;
+import org.universaltranslator.core.net.CryptoSupport;
 
 /** Platform-specific process setup and compact diagnostics for the local llama.cpp server. */
 public final class OfflineProcessSupport {
@@ -30,11 +32,24 @@ public final class OfflineProcessSupport {
     private static final int MAX_DETAIL_CHARACTERS = 240;
     /** Copy chunk for the compatibility alias: large enough to be fast, small enough to cancel. */
     private static final int COPY_CHUNK_BYTES = 64 * 1024;
-    private static final long MINIMUM_FREE_SPACE_BYTES = 64L * 1024L * 1024L;
     /** Windows and macOS compare path entries without case; the other targets do not. */
     private static final boolean CASE_INSENSITIVE_PATHS =
             System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")
                     || System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("mac");
+    /** Suffix of a finished ASCII alias. */
+    private static final String ALIAS_SUFFIX = ".gguf";
+    /** Suffix of the sidecar that records an alias verification, see {@code ModelVerificationCache}. */
+    private static final String ALIAS_SIDECAR_SUFFIX = ".gguf.verified";
+    /** Suffix of the scratch file an alias copy is written to before it is moved into place. */
+    private static final String ALIAS_PARTIAL_SUFFIX = ".gguf.part";
+    /**
+     * How long a scratch file must have been untouched before another start may delete it.
+     *
+     * <p>Two instances of the game share this directory, and the one that is copying right now owns
+     * its own {@code .part}. Deleting it made that instance's move fail after it had already written
+     * the whole gigabyte, so the sweep only touches a scratch file that clearly has no writer left.
+     */
+    private static final long PARTIAL_GRACE_MILLIS = 10L * 60L * 1000L;
 
     private OfflineProcessSupport() {
     }
@@ -248,6 +263,14 @@ public final class OfflineProcessSupport {
         addCandidate(bases, System.getenv("PUBLIC"));
         addCandidate(bases, System.getProperty("java.io.tmpdir", ""));
         IOException lastFailure = null;
+        // Every candidate directory is cleaned before this attempt writes: an alias left by another
+        // model level or another engine build is a gigabyte each, no other sweep can see it, and the
+        // free-space check below would otherwise refuse to start because of the leftovers.
+        for (Path candidate : bases) {
+            if (isAsciiPath(candidate)) {
+                sweepStaleAliases(candidate.resolve(".universal-translator-native"), aliasName);
+            }
+        }
         for (Path base : bases) {
             if (!isAsciiPath(base)) {
                 continue;
@@ -353,11 +376,7 @@ public final class OfflineProcessSupport {
                 output.write(buffer, 0, count);
             }
         }
-        StringBuilder hex = new StringBuilder(64);
-        for (byte value : digest.digest()) {
-            hex.append(String.format("%02x", value & 0xff));
-        }
-        return hex.toString();
+        return CryptoSupport.hex(digest.digest());
     }
 
     private static void requireNotCancelled(CancellationCheck cancellation)
@@ -405,6 +424,71 @@ public final class OfflineProcessSupport {
         }
     }
 
+    /**
+     * Removes compatibility aliases left behind by a different model or engine build.
+     *
+     * <p>An alias is a gigabyte-sized file — a hard link where the volume supports one and a full
+     * copy where it does not — but only this attempt's own name was ever swept: a user who switched
+     * between the LITE and QUALITY models kept both forever, and the leftover is exactly what makes
+     * the next install fail its own free-space check with no file the user can point at.
+     *
+     * <p>Scoped to one {@code .universal-translator-native} directory, so nothing outside this
+     * module's own cache is ever touched. A file another instance is reading cannot be removed on
+     * Windows; {@link #deleteQuietly(Path)} leaves those for the next start.
+     *
+     * @param directory the per-base cache directory holding the aliases
+     * @param keepName the alias and sidecars this attempt is about to use
+     */
+    private static void sweepStaleAliases(Path directory, String keepName) {
+        try (DirectoryStream<Path> entries =
+                     Files.newDirectoryStream(directory, "model-*.gguf*")) {
+            for (Path entry : entries) {
+                String name = entry.getFileName().toString();
+                // Every suffix of the kept alias stays: ".part" is this attempt's own scratch file
+                // and ".verified" is the sidecar that spares the next start a gigabyte of hashing.
+                if (name.startsWith(keepName)) {
+                    continue;
+                }
+                // Only a finished alias, its sidecar and a scratch file nobody is writing are this
+                // sweep's business. Two instances of the game share the directory, and the one that
+                // is copying right now owns its ".part": deleting it made that instance's move fail
+                // after it had written the whole gigabyte. An unknown suffix is not a file this
+                // module ever created, so it is left alone as well.
+                boolean finishedAlias = name.endsWith(ALIAS_SUFFIX)
+                        || name.endsWith(ALIAS_SIDECAR_SUFFIX);
+                boolean abandonedScratch = (name.endsWith(ALIAS_PARTIAL_SUFFIX)
+                        || name.indexOf(ALIAS_SUFFIX + ".tmp-") >= 0)
+                        && isOlderThan(entry, PARTIAL_GRACE_MILLIS);
+                if (!finishedAlias && !abandonedScratch) {
+                    continue;
+                }
+                deleteQuietly(entry);
+                ModelVerificationCache.forget(entry);
+            }
+        } catch (IOException | RuntimeException unsupported) {
+            // The sweep is hygiene only; failing to list a directory must not fail the start.
+        }
+    }
+
+    /**
+     * Whether {@code file} has been left untouched for at least {@code graceMillis}.
+     *
+     * <p>An unreadable timestamp counts as "still in use": the sweep is hygiene, so leaving one
+     * orphan behind is cheaper than deleting a file another instance is writing right now.
+     *
+     * @param file candidate to judge
+     * @param graceMillis quiet period that proves no writer still owns it
+     * @return {@code true} when the file is old enough to sweep
+     */
+    private static boolean isOlderThan(Path file, long graceMillis) {
+        try {
+            long modified = Files.getLastModifiedTime(file).toMillis();
+            return System.currentTimeMillis() - modified > graceMillis;
+        } catch (IOException | RuntimeException unknown) {
+            return false;
+        }
+    }
+
     private static void deleteQuietly(Path file) {
         try {
             Files.deleteIfExists(file);
@@ -421,20 +505,9 @@ public final class OfflineProcessSupport {
      * cheap check happens before the first byte is written.
      */
     private static void requireSpaceForCopy(Path directory, long requiredBytes) throws IOException {
-        long usable = usableSpace(directory);
-        if (usable >= 0L && usable < requiredBytes + MINIMUM_FREE_SPACE_BYTES) {
-            throw new IOException("Not enough free space for the offline model copy: "
-                    + requiredBytes + " bytes needed, " + usable + " available");
-        }
-    }
-
-    private static long usableSpace(Path directory) {
-        try {
-            FileStore store = Files.getFileStore(directory);
-            return store.getUsableSpace();
-        } catch (IOException | RuntimeException unavailable) {
-            return -1L;
-        }
+        // One reserve, one message shape: the downloader and the extractor ask the same class, so a
+        // shortage cannot mean three different things depending on which step noticed it.
+        DiskSpace.require(directory, requiredBytes, "offline model copy");
     }
 
     public static boolean isAsciiPath(Path path) {
@@ -570,15 +643,18 @@ public final class OfflineProcessSupport {
         if (ModelVerificationCache.isVerified(candidate, stableId)) {
             return true;
         }
+        // The state is read before the hash: remember() reads it afterwards, so a write landing
+        // inside that window recorded the digest of the replaced bytes against the new state.
+        BasicFileAttributes observed = ModelVerificationCache.observe(candidate);
         if (!stableId.equalsIgnoreCase(VerifiedDownloader.sha256(candidate))) {
             return false;
         }
-        ModelVerificationCache.remember(candidate, stableId);
+        ModelVerificationCache.rememberIfUnchanged(candidate, stableId, observed);
         return true;
     }
 
     private static boolean isSha256(String value) {
-        return value != null && value.matches("(?i)[0-9a-f]{64}");
+        return ModelVerificationCache.isSha256(value);
     }
 
     private static String requireAsciiFileName(String value) {
@@ -666,7 +742,7 @@ public final class OfflineProcessSupport {
             joined.append(selected.get(index));
         }
         if (joined.length() > MAX_DETAIL_CHARACTERS) {
-            return joined.substring(0, MAX_DETAIL_CHARACTERS - 3) + "...";
+            return TextPreview.oneLine(joined.toString(), MAX_DETAIL_CHARACTERS - 3) + "...";
         }
         return joined.toString();
     }
@@ -755,7 +831,7 @@ public final class OfflineProcessSupport {
             return "无法启动离线引擎进程";
         }
         if (detail.length() > MAX_DETAIL_CHARACTERS) {
-            detail = detail.substring(0, MAX_DETAIL_CHARACTERS - 3) + "...";
+            detail = TextPreview.oneLine(detail, MAX_DETAIL_CHARACTERS - 3) + "...";
         }
         return "无法启动离线引擎进程：" + detail;
     }

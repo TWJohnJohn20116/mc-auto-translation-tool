@@ -1,0 +1,96 @@
+// Mixin config coverage: the reverse of the inventory check.
+//
+// verify_release_jars.py (and the manual audits) check the forward direction — every name a
+// mixins.json lists has a class file. Nothing checks the other direction, so a class that carries
+// @Mixin but is named by no config compiles into the JAR, ships, and is never applied: Mixin's
+// `required: true` only requires that everything *listed* exists, it never complains about a class
+// that exists but was never listed. That is how the Fabric 1.19.3/1.19.4 JARs came to carry
+// SignEditScreenMixin and ChatHudContextMixin — targets that stopped existing in 1.19.3 — with a
+// mixins.json that lists neither of them, silently.
+//
+// The check runs against the remapped JAR rather than the source tree on purpose: the source tree
+// says what was *mounted*, the JAR says what was *compiled and shipped*, and only the second answer
+// is what Mixin sees. It also means the check needs no knowledge of each tree's layer table.
+//
+// Apply it after `java`/loom has been set up:
+//
+//     apply from: rootProject.file("gradle/fabric-mixin-config-verify.gradle")
+//
+// Both directions are hard failures: an unlisted @Mixin class is a hook that silently does nothing,
+// and a listed name with no class is a `required: true` config that refuses to start the client.
+// 26.x Loom no longer publishes a remapJar task (that layer remaps during jar), so fall back to jar.
+def remappedName = tasks.findByName("remapJar") ?: tasks.findByName("jar")
+def remappedJar = tasks.named(remappedName.name)
+
+tasks.register("verifyMixinConfigCoverage") {
+    group = "verification"
+    description = "Checks every @Mixin class in the remapped JAR is named by a shipped mixins.json, and vice versa."
+    dependsOn remappedJar
+    inputs.file(remappedJar.flatMap { it.archiveFile })
+    doLast {
+        def archive = remappedJar.get().archiveFile.get().asFile
+        if (!archive.isFile()) {
+            throw new GradleException("Missing remapped JAR ${archive}")
+        }
+        // @Mixin is RetentionPolicy.CLASS, so its descriptor sits in the constant pool of every mixin
+        // class file and a byte scan finds it without loading the class or pulling in ASM.
+        def mixinDescriptor = "Lorg/spongepowered/asm/mixin/Mixin;"
+        def declared = [] as Set
+        def classNames = [] as Set
+        def mixinClasses = [] as Set
+        new java.util.zip.ZipFile(archive).withCloseable { zip ->
+            zip.entries().each { entry ->
+                if (entry.directory) {
+                    return
+                }
+                if (entry.name.endsWith(".mixins.json")) {
+                    def config = new groovy.json.JsonSlurper()
+                            .parseText(zip.getInputStream(entry).getText("UTF-8"))
+                    // get() rather than a property read: "package" is a reserved word.
+                    def packageName = config.get("package") == null ? "" : config.get("package").toString()
+                    ["mixins", "client", "server"].each { section ->
+                        def entries = config[section]
+                        if (!(entries instanceof List)) {
+                            return
+                        }
+                        entries.each { mixin ->
+                            def name = mixin.toString()
+                            // Mixin resolves a bare name against the config's package.
+                            def qualified = (name.contains(".") || packageName.isEmpty())
+                                    ? name : packageName + "." + name
+                            declared.add(qualified.replace(".", "/") + ".class")
+                        }
+                    }
+                } else if (entry.name.endsWith(".class")) {
+                    // A JAR with flattened duplicates makes the comparison meaningless, so that is
+                    // reported instead of quietly keeping the last one.
+                    if (!classNames.add(entry.name)) {
+                        throw new GradleException("Duplicate class entry ${entry.name} in ${archive.name}")
+                    }
+                    def text = new String(zip.getInputStream(entry).bytes, "ISO-8859-1")
+                    if (text.contains(mixinDescriptor)) {
+                        mixinClasses.add(entry.name)
+                    }
+                }
+            }
+        }
+        def unlisted = mixinClasses.findAll { !declared.contains(it) }.sort()
+        if (!unlisted.isEmpty()) {
+            throw new GradleException(
+                    "${archive.name}: ${unlisted.size()} class file(s) carry @Mixin but no shipped " +
+                            "mixins.json lists them, so Mixin never applies them: " +
+                            "${unlisted.take(10).join(', ')}")
+        }
+        def dangling = declared.findAll { !classNames.contains(it) }.sort()
+        if (!dangling.isEmpty()) {
+            throw new GradleException(
+                    "${archive.name}: mixins.json names ${dangling.size()} class file(s) this JAR does " +
+                            "not contain, which a `required: true` config turns into a client start " +
+                            "failure: ${dangling.take(10).join(', ')}")
+        }
+    }
+}
+
+tasks.named("build").configure {
+    dependsOn tasks.named("verifyMixinConfigCoverage")
+}

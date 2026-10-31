@@ -2,8 +2,12 @@ package org.universaltranslator.core;
 
 import org.universaltranslator.core.provider.OnlineProviderConfig;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -13,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -30,6 +35,8 @@ public final class DiagnosticsBundleExporter {
     public static final String FILE_PREFIX = "universal-translator-diagnostics-";
     private static final DateTimeFormatter FILE_TIME =
             DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss", Locale.ROOT);
+    /** Archives kept in the configuration directory; the oldest ones are deleted before a new one. */
+    private static final int MAXIMUM_RETAINED_EXPORTS = 5;
 
     private DiagnosticsBundleExporter() {
     }
@@ -56,30 +63,90 @@ public final class DiagnosticsBundleExporter {
             throw new IOException("Diagnostics directory is unavailable");
         }
         Files.createDirectories(configDirectory);
-        Path output = uniqueFile(configDirectory,
-                FILE_PREFIX + LocalDateTime.now().format(FILE_TIME) + ".zip");
-        try (OutputStream file = Files.newOutputStream(output);
-                ZipOutputStream zip = new ZipOutputStream(file)) {
-            put(zip, "environment.txt", environment(platform));
-            put(zip, "diagnostics.txt", report(diagnosticLines, configFile));
-            put(zip, "config.properties", redactedFile(configFile,
-                    "# The configuration is redacted: keys, tokens and endpoints are replaced."));
-            put(zip, "debug.log", redactedFile(debugLogFile,
-                    "# Debug logging was off, so no log was written."));
+        DiagnosticsLogExporter.prune(configDirectory, FILE_PREFIX, MAXIMUM_RETAINED_EXPORTS);
+        Path output = DiagnosticsLogExporter.reserve(configDirectory,
+                FILE_PREFIX + LocalDateTime.now().format(FILE_TIME), ".zip");
+        // Written under a temporary name and moved onto the reserved one afterwards. Writing straight
+        // into the final name left a zero byte or a zip without a central directory wherever the
+        // process died mid-export; the retention pass below then counted it as one of the five
+        // exports and could push out an archive that did work, and the user was told to attach a file
+        // that cannot be opened.
+        Path temporary = output.resolveSibling(
+                output.getFileName().toString() + "." + UUID.randomUUID() + ".tmp");
+        try {
+            // Owner-only before the archive exists: the temporary holds the configuration, the log
+            // slice and the report for the whole write, and the default mode of a shared POSIX
+            // profile is one every account on the machine can open.
+            DiagnosticsLogExporter.createOwnerOnlyTemporary(temporary);
+            try (OutputStream file = Files.newOutputStream(temporary);
+                    ZipOutputStream zip = new ZipOutputStream(file)) {
+                put(zip, "environment.txt", environment(platform));
+                put(zip, "diagnostics.txt", report(diagnosticLines, configFile));
+                putRedactedFile(zip, "config.properties", configFile,
+                        "# The configuration is redacted: keys, tokens and endpoints are replaced.");
+                putRedactedFile(zip, "debug.log", debugLogFile,
+                        "# Debug logging was off, so no log was written.");
+            }
+            DiagnosticsLogExporter.moveIntoPlace(temporary, output);
+        } catch (IOException | RuntimeException failed) {
+            // A half-written archive is worse than none: it cannot be opened, it still counts against
+            // the retention limit and it hides the bundle that did work. The failure is rethrown, so
+            // the caller still reports it. The reserved name is released as well, because a leftover
+            // there would occupy one of the retained slots while holding nothing.
+            DiagnosticsLogExporter.deleteQuietly(temporary);
+            DiagnosticsLogExporter.deleteQuietly(output);
+            throw failed;
         }
+        // The archive carries the configuration plus a slice of what the player and the provider
+        // said, so it is restricted the same way the configuration it was derived from is instead of
+        // inheriting the default permissions of a shared user profile.
+        LocalConfigSecurity.restrictToOwner(output);
         return output;
     }
 
-    /** Redacts a file line by line; a missing file becomes a single explanatory line. */
-    static String redactedFile(Path source, String missingComment) throws IOException {
+    /**
+     * Redacts a file line by line straight into an archive entry; a missing file becomes one comment
+     * line.
+     *
+     * <p>Streaming rather than {@code readAllLines} plus a {@code StringBuilder} plus {@code
+     * getBytes}: the log is bounded at two megabytes, which those four copies turned into a peak of
+     * six to eight megabytes on the thread that handled the button press.
+     */
+    private static void putRedactedFile(
+            ZipOutputStream zip,
+            String name,
+            Path source,
+            String missingComment
+    ) throws IOException {
+        zip.putNextEntry(new ZipEntry(name));
         if (source == null || !Files.isRegularFile(source)) {
-            return missingComment + System.lineSeparator();
+            zip.write((missingComment + System.lineSeparator()).getBytes(StandardCharsets.UTF_8));
+            zip.closeEntry();
+            return;
         }
-        StringBuilder content = new StringBuilder(2048);
-        for (String line : Files.readAllLines(source, StandardCharsets.UTF_8)) {
-            content.append(DebugLog.redact(line)).append('\n');
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(Files.newInputStream(source), tolerantUtf8()), 8192)) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                zip.write((DebugLog.redact(line) + '\n').getBytes(StandardCharsets.UTF_8));
+            }
         }
-        return content.toString();
+        zip.closeEntry();
+    }
+
+    /**
+     * A UTF-8 decoder that replaces bytes it cannot use instead of refusing the whole file.
+     *
+     * <p>{@code Files.newBufferedReader} reports malformed input, so one truncated byte failed the
+     * whole export with an {@code IOException} -- in exactly the situation a bundle is made for: a
+     * process killed in the middle of an append, a full disk, or a sync client that cut the file.
+     * The redaction and the streaming shape are unaffected; only invalid bytes become {@code ?}.
+     */
+    private static CharsetDecoder tolerantUtf8() {
+        // A fresh decoder per call: a CharsetDecoder keeps state and must not be shared.
+        return StandardCharsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPLACE)
+                .onUnmappableCharacter(CodingErrorAction.REPLACE);
     }
 
     private static String environment(String platform) {
@@ -93,13 +160,9 @@ public final class DiagnosticsBundleExporter {
         content.append("OS: ").append(System.getProperty("os.name", "unknown"))
                 .append(' ').append(System.getProperty("os.version", "unknown"))
                 .append(' ').append(System.getProperty("os.arch", "unknown")).append('\n');
-        // The statement has to describe this archive, not a hypothetical one. The debug log in the
-        // zip is redacted for credentials only (DebugLog.redact), so its request/response lines keep
-        // the first 120 characters of what the player saw and what the provider answered. Promising
-        // "translated text is excluded" while shipping that file was the one inconsistency here.
-        content.append("Privacy: API keys and full endpoints are excluded. The debug log inside this "
-                + "archive may contain up to 120 characters of source and translated text per "
-                + "request.\n");
+        // The statement describes this archive rather than a hypothetical one, and it is the same
+        // string the exported report prints: two sentences about the same material disagreed before.
+        content.append(DiagnosticsLogExporter.PRIVACY_NOTICE).append('\n');
         return content.toString();
     }
 
@@ -131,16 +194,6 @@ public final class DiagnosticsBundleExporter {
         zip.putNextEntry(new ZipEntry(name));
         zip.write(content.getBytes(StandardCharsets.UTF_8));
         zip.closeEntry();
-    }
-
-    private static Path uniqueFile(Path directory, String fileName) {
-        Path candidate = directory.resolve(fileName);
-        int suffix = 2;
-        while (Files.exists(candidate)) {
-            candidate = directory.resolve(fileName.replace(".zip", "-" + suffix + ".zip"));
-            suffix++;
-        }
-        return candidate;
     }
 
     /** The entry names the archive always contains, for callers that want to verify a bundle. */

@@ -194,9 +194,15 @@ final class LegacyConfigScreen extends GuiScreen {
 
     private FontRenderer renderer;
     private String status = "";
-    /** Result of the engine tab's connection test; written by its worker thread. */
-    private volatile String testStatus = "";
-    private volatile boolean testStatusIsError;
+    /**
+     * Result of the engine tab's connection test, written by its worker thread.
+     *
+     * <p>One reference rather than two independent fields: the message and its error flag are one
+     * line on screen, and a reader that picked up the new message next to the previous flag painted
+     * a failure in green (or the reverse). A single volatile reference publishes both at once, while
+     * the writer runs on a worker and {@code drawScreen()} reads it.
+     */
+    private volatile TestStatus testStatus = TestStatus.EMPTY;
     private volatile boolean testing;
     private volatile boolean fetchingModels;
     private volatile List<String> fetchedModels = Collections.emptyList();
@@ -204,6 +210,20 @@ final class LegacyConfigScreen extends GuiScreen {
     private volatile int modelPage;
     private long animationStartedNanos = System.nanoTime();
     private SettingsSelectionList.Kind openSelection = SettingsSelectionList.Kind.NONE;
+    /**
+     * Last computed layout, keyed on the window size it was computed for.
+     *
+     * <p>One frame of the HUD tab asks for it through a dozen accessors and the engine tab asks for
+     * it twice per row, and every one of those re-ran the shared geometry maths.
+     */
+    private SettingsScreenLayout.Geometry cachedLayout;
+    private int cachedLayoutWidth = -1;
+    private int cachedLayoutHeight = -1;
+    /** How long a localized runtime status may be reused. */
+    private static final long STATUS_CACHE_MILLIS = 200L;
+    private String cachedLocalizedStatus = "";
+    private boolean cachedStatusIsFailure;
+    private long cachedStatusAt;
 
     LegacyConfigScreen(GuiScreen parent, LegacyConfig config) {
         this.parent = parent;
@@ -307,7 +327,7 @@ final class LegacyConfigScreen extends GuiScreen {
         playerNamesButton = new GuiButton(PLAYER_NAMES, right, layout.contentRow(1), buttonWidth, 20, "");
         mixedTextButton = new GuiButton(MIXED_TEXT, left, layout.contentRow(2), totalWidth, 20, "");
         blockedKeywords = new GuiTextField(22, renderer, left, layout.contentRow(3), totalWidth, 20);
-        blockedKeywords.setMaxStringLength(4096);
+        blockedKeywords.setMaxStringLength(UiLimits.KEYWORDS_MAX_CHARS);
         blockedKeywords.setText(blockedKeywordsValue);
 
         buttonList.add(chatButton);
@@ -332,7 +352,7 @@ final class LegacyConfigScreen extends GuiScreen {
         checkSettingsButton = new GuiButton(CHECK_SETTINGS, left, engineRow(2), totalWidth, 20, "");
         fallbackButton = new GuiButton(FALLBACK, left, engineRow(2), totalWidth, 20, "");
         endpoint = new GuiTextField(21, renderer, left, engineRow(1), totalWidth, 20);
-        endpoint.setMaxStringLength(512);
+        endpoint.setMaxStringLength(UiLimits.ENDPOINT_MAX_CHARS);
         endpoint.setText(endpointValue);
 
         buttonList.add(providerButton);
@@ -358,12 +378,13 @@ final class LegacyConfigScreen extends GuiScreen {
         buttonList.add(batchSizeButton);
 
         String promptValue = customPrompt == null
-                ? TranslationPrompt.toEditorText(original.customSystemPrompt())
+                ? TranslationPrompt.toEditorText(
+                        TranslationPrompt.clampForEditor(original.customSystemPrompt()))
                 : customPrompt.getText();
         int promptApplyWidth = Math.max(48, buttonWidth - 24);
         customPrompt = new GuiTextField(PROMPT_FIELD, renderer, left, engineRow(4),
                 totalWidth - promptApplyWidth - gap, 20);
-        customPrompt.setMaxStringLength(UiLimits.PROMPT_MAX_CHARS);
+        customPrompt.setMaxStringLength(UiLimits.PROMPT_EDITOR_MAX_CHARS);
         customPrompt.setText(promptValue);
         applyPromptButton = new GuiButton(PROMPT_APPLY, right + buttonWidth - promptApplyWidth,
                 engineRow(4), promptApplyWidth, 20,
@@ -750,16 +771,19 @@ final class LegacyConfigScreen extends GuiScreen {
      */
     private void applyPromptSettings() {
         refreshQualityLabel();
+        LegacyConfig base = currentConfig();
         try {
             String prompt = customPrompt == null
-                    ? original.customSystemPrompt()
-                    : TranslationPrompt.fromEditorText(customPrompt.getText());
-            LegacyConfig updated = original.withPromptSettings(quality, prompt);
+                    ? base.customSystemPrompt()
+                    : TranslationPrompt.clampEditorText(customPrompt.getText());
+            LegacyConfig updated = base.withPromptSettings(quality, prompt);
             if (updated.enabled) {
                 updated.validateProviderConfiguration();
             }
             LegacyTranslationRuntime.initialize(updated);
-            updated.save();
+            // Waits for the queued F8 / Home writes before writing: the Save is the last user action
+            // and a snapshot queued earlier must never land after it.
+            LegacyConfigWriter.saveNow(updated);
             setTestStatus(tr("screen.universal_translator.diagnostics.settings_saved"), false);
         } catch (Exception exception) {
             setTestStatus(tr("screen.universal_translator.diagnostics.settings_failed",
@@ -768,7 +792,64 @@ final class LegacyConfigScreen extends GuiScreen {
     }
 
     private SettingsScreenLayout.Geometry layout() {
-        return SettingsScreenLayout.calculate(width, height, 5);
+        SettingsScreenLayout.Geometry cached = cachedLayout;
+        if (cached != null && cachedLayoutWidth == width && cachedLayoutHeight == height) {
+            return cached;
+        }
+        SettingsScreenLayout.Geometry built = SettingsScreenLayout.calculate(width, height, 5);
+        cachedLayout = built;
+        cachedLayoutWidth = width;
+        cachedLayoutHeight = height;
+        return built;
+    }
+
+    /**
+     * Drops the keyboard focus of every field while the catalog overlay owns the screen.
+     *
+     * <p>The overlay covers the form, but the fields underneath kept the focus, so a keystroke typed
+     * into a field the player could not see and the next Save wrote it.
+     */
+    private void releaseFieldFocus() {
+        if (endpoint != null) {
+            endpoint.setFocused(false);
+        }
+        if (customPrompt != null) {
+            customPrompt.setFocused(false);
+        }
+        if (blockedKeywords != null) {
+            blockedKeywords.setFocused(false);
+        }
+    }
+
+    /**
+     * The runtime status as the status line shows it, reused for {@link #STATUS_CACHE_MILLIS}.
+     *
+     * <p>{@code status()} builds a string out of the provider status and the session's last failure,
+     * and localizing it walks a dozen comparisons plus an {@code I18n} lookup. Both ran once per
+     * frame while the screen was open, even with nothing changing.
+     */
+    private String localizedStatus() {
+        long now = System.currentTimeMillis();
+        if (now - cachedStatusAt < STATUS_CACHE_MILLIS) {
+            return cachedLocalizedStatus;
+        }
+        String raw = LegacyTranslationRuntime.status();
+        cachedLocalizedStatus = TranslationStatusLocalizer.localize(raw, LegacyConfigScreen::tr);
+        cachedStatusIsFailure = isFailureStatus(raw);
+        cachedStatusAt = now;
+        return cachedLocalizedStatus;
+    }
+
+    /**
+     * The configuration this screen edits from, taken from the runtime when it has one.
+     *
+     * <p>{@code withSettings} copies every key it does not own from the object it is given, so
+     * saving from the constructor snapshot silently reverted whatever another path had written
+     * while the screen was open: an F8 toggle, a Home-key target-language change.
+     */
+    private LegacyConfig currentConfig() {
+        LegacyConfig live = LegacyTranslationRuntime.diagnosticsConfig();
+        return live == null ? original : live;
     }
 
     /**
@@ -985,9 +1066,10 @@ final class LegacyConfigScreen extends GuiScreen {
     }
 
     private void saveAndApply() {
+        LegacyConfig base = currentConfig();
         boolean runtimeChanged = false;
         try {
-            LegacyConfig updated = original.withSettings(
+            LegacyConfig updated = base.withSettings(
                     enabled,
                     translateChat,
                     translateOther,
@@ -1015,7 +1097,7 @@ final class LegacyConfigScreen extends GuiScreen {
                             hudIndicatorVisibility, hudIndicatorOffsetX, hudIndicatorOffsetY))
                     // Save writes the engine tab's prompt controls too, so applying the prompt and
                     // then saving cannot silently restore the value the screen was opened with.
-                    .withPromptSettings(quality, TranslationPrompt.fromEditorText(
+                    .withPromptSettings(quality, TranslationPrompt.clampEditorText(
                             customPrompt == null ? "" : customPrompt.getText()))
                     .withTranslationTuning(workers, batchSize);
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
@@ -1027,12 +1109,14 @@ final class LegacyConfigScreen extends GuiScreen {
             }
             runtimeChanged = true;
             LegacyTranslationRuntime.initialize(updated);
-            updated.save();
+            LegacyConfigWriter.saveNow(updated);
             mc.displayGuiScreen(parent);
         } catch (Exception exception) {
             if (runtimeChanged) {
                 try {
-                    LegacyTranslationRuntime.initialize(original);
+                    // Roll back to the configuration that was running before this save, not to the
+                    // snapshot the screen opened with: something else may have changed it since.
+                    LegacyTranslationRuntime.initialize(base);
                 } catch (Exception restoreFailure) {
                     exception.addSuppressed(restoreFailure);
                 }
@@ -1068,12 +1152,13 @@ final class LegacyConfigScreen extends GuiScreen {
         }
         // ESC (1 on this generation's LWJGL2 keyboard) closes the overlay first. GuiScreen would
         // otherwise close the whole screen and drop every unsaved change, even though the overlay
-        // draws its own Back area.
-        if (keyCode == 1) {
-            if (openSelection != SettingsSelectionList.Kind.NONE) {
+        // draws its own Back area. The list is modal for typing too: it covers the fields it would
+        // otherwise write into.
+        if (openSelection != SettingsSelectionList.Kind.NONE) {
+            if (keyCode == 1) {
                 openSelection = SettingsSelectionList.Kind.NONE;
-                return;
             }
+            return;
         }
         if (activeTab == Tab.ENGINE && isLibreTranslate() && endpoint != null && endpoint.textboxKeyTyped(typedChar, keyCode)) {
             return;
@@ -1176,7 +1261,8 @@ final class LegacyConfigScreen extends GuiScreen {
             blockedKeywords.drawTextBox();
             if (blockedKeywords.getText().isEmpty()) {
                 renderer.drawStringWithShadow(
-                        tr("screen.universal_translator.blocked_keywords_hint"),
+                        tr("screen.universal_translator.blocked_keywords_hint",
+                                UiLimits.KEYWORDS_MAX_ENTRIES, UiLimits.KEYWORD_MAX_CHARS),
                         layout.left() + 4, layout.contentRow(3) + 6, 0x70A0A0A0);
             }
         } else if (activeTab == Tab.ENGINE) {
@@ -1200,21 +1286,21 @@ final class LegacyConfigScreen extends GuiScreen {
         }
 
         // Status & feedback
-        String rawRuntimeStatus = LegacyTranslationRuntime.status();
-        String runtimeStatus = TranslationStatusLocalizer.localize(rawRuntimeStatus,
-                LegacyConfigScreen::tr);
+        String runtimeStatus = localizedStatus();
         int messageY = layout.saveY() + 24;
         if (messageY > height - 10) {
             messageY = height - 10;
         }
+        // Read the worker's result once, so the message and its colour come from the same write.
+        TestStatus engineTest = testStatus;
         if (!status.isEmpty()) {
             drawCenteredString(renderer, status, width / 2, messageY, 0xFFFF5555);
-        } else if (!testStatus.isEmpty()) {
-            drawCenteredString(renderer, testStatus, width / 2, messageY,
-                    testStatusIsError ? 0xFFFF5555 : 0xFF55FF55);
+        } else if (!engineTest.message.isEmpty()) {
+            drawCenteredString(renderer, engineTest.message, width / 2, messageY,
+                    engineTest.error ? 0xFFFF5555 : 0xFF55FF55);
         } else if (!runtimeStatus.isEmpty()) {
             drawCenteredString(renderer, runtimeStatus, width / 2, messageY,
-                    isFailureStatus(rawRuntimeStatus) ? 0xFFFF5555 : 0xFF55FF55);
+                    cachedStatusIsFailure ? 0xFFFF5555 : 0xFF55FF55);
         }
 
         if (animatedUi) {
@@ -1381,7 +1467,7 @@ final class LegacyConfigScreen extends GuiScreen {
         final String keyValue = llmApiKey;
         fetchingModels = true;
         setTestStatus(tr("screen.universal_translator.llm.fetching"), false);
-        Thread worker = new Thread(() -> {
+        LegacyScreenWorkers.execute(() -> {
             OpenAiModelCatalog.Catalog catalog = null;
             String failure = "";
             try {
@@ -1405,10 +1491,9 @@ final class LegacyConfigScreen extends GuiScreen {
             fetchedModels = catalog.models();
             modelPage = 0;
             modelListOpen = true;
+            releaseFieldFocus();
             setTestStatus("", false);
-        }, "universal-translator-model-list");
-        worker.setDaemon(true);
-        worker.start();
+        });
     }
 
     /**
@@ -1426,7 +1511,7 @@ final class LegacyConfigScreen extends GuiScreen {
         final String keyValue = llmApiKey;
         testing = true;
         setTestStatus(tr("screen.universal_translator.engine.testing"), false);
-        Thread worker = new Thread(() -> {
+        LegacyScreenWorkers.execute(() -> {
             String message;
             boolean error;
             try {
@@ -1438,7 +1523,8 @@ final class LegacyConfigScreen extends GuiScreen {
                         message = tr("screen.universal_translator.engine.test_need_model");
                         error = true;
                     } else {
-                        ProviderProbe.probe(provider, endpointValue, keyValue, model);
+                        ProviderProbe.probe(provider, endpointValue, keyValue, model,
+                                original.editorApiVersion(provider));
                         message = tr("screen.universal_translator.engine.test_ok_probe", model);
                         error = false;
                     }
@@ -1465,14 +1551,24 @@ final class LegacyConfigScreen extends GuiScreen {
             }
             testing = false;
             setTestStatus(message, error);
-        }, "universal-translator-connection-test");
-        worker.setDaemon(true);
-        worker.start();
+        });
+    }
+
+    /** One coherent "engine test" line: the message and the colour it is drawn in. */
+    private static final class TestStatus {
+        static final TestStatus EMPTY = new TestStatus("", false);
+
+        final String message;
+        final boolean error;
+
+        TestStatus(String message, boolean error) {
+            this.message = message == null ? "" : message;
+            this.error = error;
+        }
     }
 
     private void setTestStatus(String message, boolean error) {
-        testStatus = message;
-        testStatusIsError = error;
+        testStatus = new TestStatus(message, error);
     }
 
     private static String describe(Exception error) {

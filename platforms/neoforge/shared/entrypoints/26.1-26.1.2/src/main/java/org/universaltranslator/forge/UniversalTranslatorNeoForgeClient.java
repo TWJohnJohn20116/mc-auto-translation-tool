@@ -35,11 +35,73 @@ public final class UniversalTranslatorNeoForgeClient {
     private UniversalTranslatorNeoForgeClient() {
     }
 
+    /**
+     * The configuration the runtime is running, or a fresh read before the first load.
+     *
+     * <p>Reading the file on every key press put a full {@code .properties} parse (plus a directory
+     * check) on the tick thread; after startup the runtime already holds the same values.
+     */
+    private static ForgeConfig liveConfig() throws java.io.IOException {
+        // One implementation for every Forge-family tree; see ForgeConfig.liveOrLoad.
+        return ForgeConfig.liveOrLoad(FMLPaths.CONFIGDIR.get());
+    }
+
+    /** Whether the shutdown hook that flushes queued configuration writes is already registered. */
+    private static boolean configFlushHookInstalled;
+
+    /**
+     * Gives the queued configuration writes a bounded moment to land when the process ends.
+     *
+     * <p>Only a failed startup ever called {@code ForgeTranslationRuntime.shutdown()}, so the writer's
+     * own flush never ran: "press F8 and quit" dropped the toggle, and the session and the screen
+     * worker threads outlived the configuration they belonged to. A shutdown hook is the one seam
+     * every supported loader and game version has without naming a version-specific stopping event.
+     */
+    private static void installConfigFlushHook() {
+        if (configFlushHookInstalled) {
+            return;
+        }
+        configFlushHookInstalled = true;
+        try {
+            Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    // The hook only starts the teardown and waits for it with a bound: shutdown()
+                    // drains the configuration writer and then closes the session, which waits for
+                    // workers parked in a provider read, so running it inline made "close the game"
+                    // wait for all of it with no upper limit.
+                    Thread teardown = new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            ForgeTranslationRuntime.shutdown();
+                        }
+                    }, "universal-translator-stop");
+                    teardown.setDaemon(false);
+                    teardown.start();
+                    try {
+                        teardown.join(
+                                org.universaltranslator.core.ShutdownBudget.HOOK_JOIN_MILLIS);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            }, "universal-translator-config-flush"));
+        } catch (IllegalStateException alreadyStopping) {
+            // The JVM is already shutting down; no thread is left for a queued write to land on.
+            configFlushHookInstalled = false;
+        }
+    }
+
     private static void loadConfig() {
+        installConfigFlushHook();
+        // Registered before the configuration is loaded on purpose: the title-screen entry performs
+        // its own configuration read when clicked, so it must not depend on this initialization
+        // succeeding. Registering it after initialize() left the entry a dead button for the whole
+        // session whenever the load threw, and it is the only entry that can repair a broken file.
+        ForgeTranslationRuntime.setTitleSettingsOpener(UniversalTranslatorNeoForgeClient::openFromTitle);
         try {
             ForgeConfig config = ForgeConfig.load(FMLPaths.CONFIGDIR.get());
             ForgeTranslationRuntime.initialize(config);
-            ForgeTranslationRuntime.setTitleSettingsOpener(UniversalTranslatorNeoForgeClient::openFromTitle);
             UniversalTranslatorNeoForgeMod.LOGGER.info(
                     "MC Auto Translation Tool initialized; enabled={}", config.enabled);
         } catch (Exception exception) {
@@ -74,6 +136,10 @@ public final class UniversalTranslatorNeoForgeClient {
 
         @SubscribeEvent
         public static void clientTick(ClientTickEvent.Post event) {
+            // Same two lines as the Forge client's tick: the protected-name snapshot and the render
+            // latches are advanced here, on the client thread, instead of from inside a draw call.
+            TranslationRenderContext.beginFrame();
+            ForgeTranslationRuntime.refreshProtectedNames();
             Minecraft client = Minecraft.getInstance();
             boolean connected = client.level != null && client.getConnection() != null;
             if (connected && !connectedLastTick) {
@@ -119,7 +185,7 @@ public final class UniversalTranslatorNeoForgeClient {
             return;
         }
         try {
-            ForgeConfig config = ForgeConfig.load(FMLPaths.CONFIGDIR.get());
+            ForgeConfig config = ForgeConfig.liveOrLoad(FMLPaths.CONFIGDIR.get());
             client.setScreen(new UniversalTranslatorConfigScreen((net.minecraft.client.gui.screens.Screen) parent, config));
         } catch (Exception exception) {
             UniversalTranslatorNeoForgeMod.LOGGER.error(LogMessages.SETTINGS_OPEN_FAILED, exception);
@@ -128,7 +194,7 @@ public final class UniversalTranslatorNeoForgeClient {
 
     private static void openSettings(Minecraft client) {
         try {
-            ForgeConfig config = ForgeConfig.load(FMLPaths.CONFIGDIR.get());
+            ForgeConfig config = liveConfig();
             client.setScreen(new UniversalTranslatorConfigScreen(client.screen, config));
         } catch (Exception exception) {
             UniversalTranslatorNeoForgeMod.LOGGER.error(LogMessages.SETTINGS_OPEN_FAILED, exception);
@@ -139,14 +205,20 @@ public final class UniversalTranslatorNeoForgeClient {
 
     private static void toggle(Minecraft client) {
         try {
-            ForgeConfig previous = ForgeConfig.load(FMLPaths.CONFIGDIR.get());
+            ForgeConfig previous = liveConfig();
             ForgeConfig updated = previous.withEnabled(!previous.enabled);
             if (updated.enabled) {
                 updated.validateProviderConfiguration();
             }
             ForgeTranslationRuntime.initialize(updated);
             ForgeRuntimeStatusNotifier.reset();
-            updated.save();
+            // Queued on the shared daemon writer instead of a per-client executor.
+            ForgeConfigWriter.saveOffTick(updated, failure -> {
+                UniversalTranslatorNeoForgeMod.LOGGER.error(
+                        "Could not save MC Auto Translation Tool settings", failure);
+                client.execute(() -> client.gui.setOverlayMessage(
+                        Component.translatable("message.universal_translator.toggle_failed"), false));
+            });
             client.gui.setOverlayMessage(
                     Component.translatable(
                             "message.universal_translator.toggle",

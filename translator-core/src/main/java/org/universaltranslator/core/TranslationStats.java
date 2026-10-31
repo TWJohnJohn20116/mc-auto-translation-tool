@@ -6,11 +6,16 @@ import java.io.IOException;
 import java.io.Reader;
 import java.io.Writer;
 import java.net.SocketTimeoutException;
+import java.nio.charset.MalformedInputException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.PosixFileAttributeView;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -37,14 +42,41 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class TranslationStats {
     /** Sits next to {@code universal-translator.properties} in the game instance's config folder. */
     public static final String FILE_NAME = "universal-translator-stats.properties";
+    /** Suffix of the copy a file this class cannot parse is moved to by {@link #preserveUnreadable}. */
+    private static final String CORRUPT_SUFFIX = ".corrupt";
+    /**
+     * Age after which a temporary file left behind by a killed process is deleted by the next flush.
+     * A write never takes this long, so a flush in flight is never a candidate.
+     */
+    private static final long ORPHAN_TEMPORARY_MILLIS = 3_600_000L;
     /** Latency samples kept for the percentiles; the oldest sample is overwritten first. */
     private static final int LATENCY_SAMPLE_CAPACITY = 512;
     /** How often the counters reach the disk while the game runs. */
     private static final long FLUSH_INTERVAL_MILLIS = 60_000L;
+    /**
+     * How long a read that failed waits for its next attempt. {@link #attach(Path)} reads the file
+     * once and then returns early for a path it already points at, so without a retry of its own one
+     * locked read kept the counters in memory for the rest of the process.
+     */
+    private static final long LOAD_RETRY_INTERVAL_MILLIS = 600_000L;
+    /**
+     * Largest statistics file this class reads back.
+     *
+     * <p>A normal file is eight totals, the failure buckets and at most
+     * {@link #MAXIMUM_STORED_PROVIDERS} providers of seven fields each -- roughly twenty kilobytes.
+     * {@code Properties.load} has no size concept: it reads the whole file before a single key is
+     * filtered, and it does so on the thread that loads the configuration, so a file many times this
+     * size is not one this class wrote and is not materialized at all.
+     */
+    private static final long MAXIMUM_STATS_FILE_BYTES = 4L * 1024L * 1024L;
     /** Bound on the provider ids read back from the file, so a corrupt file cannot grow memory. */
     private static final int MAXIMUM_STORED_PROVIDERS = 64;
+    /** Bucket that takes every provider id arriving after {@link #MAXIMUM_STORED_PROVIDERS}. */
+    private static final String PROVIDER_OVERFLOW = "other";
     private static final String PROVIDER_PREFIX = "provider.";
     private static final String FAILURE_PREFIX = "failure.";
+    /** Longs {@link #captureProviderFields} copies per provider, in {@link ProviderLine} order. */
+    private static final int PROVIDER_FIELDS = 7;
 
     public static final String REASON_AUTH = "auth";
     public static final String REASON_RATE_LIMIT = "rate-limit";
@@ -79,8 +111,39 @@ public final class TranslationStats {
     private long revision;
     private Snapshot cachedSnapshot;
     private long cachedRevision = -1L;
+    /**
+     * The localized lines and the revision they were built from. The diagnostics screens ask for
+     * them from {@code render()}, so resolving the language keys and formatting the numbers again
+     * for an unchanged view was the same per-frame cost {@link #snapshot()} already avoids.
+     */
+    private List<String> cachedLines;
+    private long cachedLinesRevision = -1L;
+    /**
+     * Guarded by the path monitor of {@code file}, not by {@link #lock}: the newest {@link #revision}
+     * whose counters reached the disk. A flush that took its snapshot before a {@link #reset()} must
+     * not write those pre-reset totals back over the zeros.
+     */
+    private long writtenRevision = -1L;
+    /**
+     * When the counters may try their file again after a failed read, in wall-clock milliseconds.
+     * Several threads reach {@link #flush()}, so this is volatile rather than guarded: a lost update
+     * costs one extra read and never skips one.
+     */
+    private volatile long nextLoadRetryMillis;
     private volatile Path file;
     private volatile boolean flusherStarted;
+    /**
+     * True when the last {@link #load(Path)} could not read the file, whether it was locked by a sync
+     * client, held by another instance or malformed. The counters then hold what this session
+     * counted and nothing else, so writing them back would replace the totals the file still holds
+     * with a zero nobody asked for.
+     */
+    private volatile boolean loadFailed;
+    /**
+     * Set by the first flush of a path, so the orphan sweep of {@link #deleteOrphanTemporaries} lists
+     * the directory once per process instead of once per minute.
+     */
+    private volatile boolean orphansSwept;
 
     private TranslationStats() {
     }
@@ -116,11 +179,33 @@ public final class TranslationStats {
             return;
         }
         synchronized (lock) {
-            if (file != null) {
+            if (file != null && file.equals(statisticsFile)) {
                 return;
             }
-            file = statisticsFile;
         }
+        // A second attach with a different file used to be dropped silently, so every later total
+        // went to the first path while the platform displayed the second. Writing the old file
+        // before the switch keeps what was counted under it instead of abandoning it.
+        flush();
+        boolean replaced;
+        synchronized (lock) {
+            replaced = file != null;
+            file = statisticsFile;
+            // A different file gets its own read result.
+            loadFailed = false;
+            // The counters that reached the previous path say nothing about this one, so the first
+            // flush after the switch has to write even when nothing was counted since the last one.
+            writtenRevision = -1L;
+            // The temporary names this class leaves behind belong to the file's own directory, so a
+            // different file is a different sweep.
+            orphansSwept = false;
+        }
+        if (replaced) {
+            DebugLog.global().log("stats-attach", "result", "replaced");
+        }
+        // Same cleanup point as reset(): the display lines cached from the previous file or from the
+        // previous language must not survive the switch.
+        invalidateLocalizedLines();
         load(statisticsFile);
         startFlusher();
     }
@@ -182,6 +267,10 @@ public final class TranslationStats {
      */
     public void recordRejected() {
         synchronized (lock) {
+            // Counted as a request: a rejected translation was asked for, and every path that
+            // settles a request has to contribute exactly one entry here or the identity the
+            // report prints (requests == successes + failures + rejected) can never hold.
+            requests++;
             rejected++;
             revision++;
         }
@@ -241,7 +330,11 @@ public final class TranslationStats {
      *
      * @param providerId provider id, or {@code null} for the unknown bucket
      * @param responseBody raw response body, possibly {@code null}
+     * @deprecated only for a caller that has no parsed body. A provider that already parsed the
+     *     response pays for a second full parse of a multi-kilobyte batch answer here, so it should
+     *     hand its parsed root to {@link #recordParsedUsage(String, Object)}.
      */
+    @Deprecated
     public void recordUsage(String providerId, String responseBody) {
         if (responseBody == null) {
             return;
@@ -252,10 +345,25 @@ public final class TranslationStats {
         } catch (RuntimeException malformed) {
             return;
         }
-        if (!(root instanceof Map)) {
+        recordParsedUsage(providerId, root);
+    }
+
+    /**
+     * Adds the token counts of a response a provider has already parsed.
+     *
+     * <p>Every LLM provider parses the body into a map before it can take the translation out of it,
+     * so a provider holding that map can hand it over here and pay for one parse instead of two. The
+     * protocol-specific names stay in this class instead of being repeated by every provider.
+     *
+     * @param providerId provider id, or {@code null} for the unknown bucket
+     * @param parsedRoot the body as returned by {@code JsonStrings.parse}; anything that is not a map,
+     *     or carries no token counts, adds nothing
+     */
+    public void recordParsedUsage(String providerId, Object parsedRoot) {
+        if (!(parsedRoot instanceof Map)) {
             return;
         }
-        Map<?, ?> object = (Map<?, ?>) root;
+        Map<?, ?> object = (Map<?, ?>) parsedRoot;
         long prompt = 0L;
         long completion = 0L;
         Object usage = object.get("usage");
@@ -270,15 +378,32 @@ public final class TranslationStats {
             prompt = number(values.get("promptTokenCount"), null);
             completion = number(values.get("candidatesTokenCount"), null);
         }
-        if (prompt <= 0L && completion <= 0L) {
+        recordUsage(providerId, prompt, completion);
+    }
+
+    /**
+     * Adds token counts a provider has already read out of its own response.
+     *
+     * <p>Every LLM provider parses the body into a map before it can take the translation out of
+     * it, so handing the same string back to this class made each request pay for a second full
+     * parse of a multi-kilobyte batch response at the end of its critical path.
+     *
+     * @param providerId provider id, or {@code null} for the unknown bucket
+     * @param promptTokens prompt tokens the provider reported; negative values count as zero
+     * @param completionTokens completion tokens the provider reported; negative values count as zero
+     */
+    public void recordUsage(String providerId, long promptTokens, long completionTokens) {
+        if (promptTokens <= 0L && completionTokens <= 0L) {
             return;
         }
+        long reportedPrompt = Math.max(0L, promptTokens);
+        long reportedCompletion = Math.max(0L, completionTokens);
         synchronized (lock) {
-            promptTokens += prompt;
-            completionTokens += completion;
+            this.promptTokens += reportedPrompt;
+            this.completionTokens += reportedCompletion;
             ProviderCounters counters = counters(providerId);
-            counters.promptTokens += prompt;
-            counters.completionTokens += completion;
+            counters.promptTokens += reportedPrompt;
+            counters.completionTokens += reportedCompletion;
             revision++;
         }
     }
@@ -298,8 +423,13 @@ public final class TranslationStats {
             rejected = 0L;
             promptTokens = 0L;
             completionTokens = 0L;
+            // Clearing the totals is the one repair a user has against a file this session could not
+            // read, so the request replaces that file with these zeroes instead of being dropped by
+            // the latch that exists to protect it.
+            loadFailed = false;
             revision++;
         }
+        invalidateLocalizedLines();
         flush();
     }
 
@@ -314,24 +444,67 @@ public final class TranslationStats {
     private static final ConcurrentHashMap<String, Object> PATH_LOCKS =
             new ConcurrentHashMap<String, Object>();
 
-    /** Writes the counters out. Never throws: statistics must not be able to break a translation. */
+    /**
+     * Writes the counters out. Never throws: statistics must not be able to break a translation.
+     *
+     * <p>The counters are read before the path monitor is taken, so the revision they were read at
+     * travels into that monitor with them: a flush that snapshotted before a {@link #reset()} finds
+     * a newer {@link #writtenRevision} and gives up instead of putting the deleted totals back.
+     */
     public void flush() {
         Path target = file;
         if (target == null) {
             return;
         }
+        if (loadFailed && !retryFailedRead(target)) {
+            // The read failed, so these counters are a partial view of a file this session could not
+            // see: writing them would replace the totals still on disk with a zero. The periodic
+            // flusher and the shutdown hook both run this, which is how one locked read used to
+            // erase the history permanently.
+            return;
+        }
         Properties properties;
+        long snapshotRevision;
         synchronized (lock) {
+            snapshotRevision = revision;
+            if (writtenRevision == snapshotRevision) {
+                // Nothing has been counted since the counters last reached the disk, so the file
+                // already says exactly this. The flusher runs every minute for the whole life of the
+                // client: rewriting an unchanged file meant one temporary file, one full write and
+                // one atomic move per minute, which a synced directory turns into an upload and an
+                // antivirus scan of the same bytes. A stale read of writtenRevision can only make
+                // this write one extra time, never skip one.
+                return;
+            }
             properties = toProperties();
         }
         synchronized (lockFor(target)) {
+            if (snapshotRevision < writtenRevision) {
+                return;
+            }
             Path temporary = null;
             try {
+                if (!orphansSwept) {
+                    // A process killed between the write and the move leaves a complete copy of the
+                    // counters under a unique ".tmp" name, and nothing in this class ever looked at
+                    // that name again: it only accumulates in the folder launchers and cloud clients
+                    // sync.
+                    orphansSwept = true;
+                    deleteOrphanTemporaries(target);
+                }
                 // A unique name per attempt: a shared ".tmp" is what allowed one writer to truncate
                 // the file another writer was still filling.
                 temporary = target.resolveSibling(target.getFileName().toString() + "."
                         + UUID.randomUUID() + ".tmp");
-                try (Writer writer = Files.newBufferedWriter(temporary, StandardCharsets.UTF_8)) {
+                // Created owner-only before the content exists: the temporary carries the same
+                // provider ids the target does for the whole duration of the write, and the default
+                // mode of a POSIX profile is one every account on the machine can open.
+                Files.createFile(temporary);
+                if (supportsOwnerPermissions(temporary)) {
+                    LocalConfigSecurity.restrictToOwner(temporary);
+                }
+                try (Writer writer = Files.newBufferedWriter(temporary, StandardCharsets.UTF_8,
+                        StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
                     properties.store(writer, "MC Auto Translation Tool - translation statistics");
                 }
                 try {
@@ -341,6 +514,17 @@ public final class TranslationStats {
                     Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
                 }
                 temporary = null;
+                writtenRevision = snapshotRevision;
+                // The copy preserveUnreadable kept aside has no reader left once a file this class can
+                // parse is back in place, and no other code path deletes it.
+                deleteCorruptCopy(target);
+                if (supportsOwnerPermissions(target)) {
+                    // Every flush writes a fresh temporary file and moves it over the target, so the
+                    // mode has to be applied again: the file carries a provider id per line, endpoint
+                    // host included, which is the same material the configuration file is restricted
+                    // for. Two system calls on a call that runs once a minute.
+                    LocalConfigSecurity.restrictToOwner(target);
+                }
             } catch (IOException | RuntimeException failed) {
                 // Not a translation failure, but no longer invisible: a statistics file that never
                 // lands used to be indistinguishable from one that was simply not due yet.
@@ -357,12 +541,123 @@ public final class TranslationStats {
         }
     }
 
+    /**
+     * Retries a read that failed, at most once per {@link #LOAD_RETRY_INTERVAL_MILLIS}.
+     *
+     * <p>{@link #attach(Path)} reads the file once and then returns early for the path it already
+     * points at, so a file that was locked for that single read never got a second chance in the
+     * whole session and every total stayed in memory. What this session counted before the retry is
+     * lost either way -- the write path was off while the latch was set -- so recovering the file's
+     * totals is what makes the next flush carry them instead of nothing.
+     *
+     * @param target the statistics file to read again
+     * @return {@code true} when the counters may now be written
+     */
+    private boolean retryFailedRead(Path target) {
+        long now = System.currentTimeMillis();
+        if (now < nextLoadRetryMillis) {
+            return false;
+        }
+        nextLoadRetryMillis = now + LOAD_RETRY_INTERVAL_MILLIS;
+        load(target);
+        return !loadFailed;
+    }
+
+    /**
+     * Whether owner-only permissions can be verified on {@code target} at all.
+     *
+     * <p>A file store without POSIX attribute support -- Windows, or a mount that reports it as
+     * unsupported -- answers every {@code setPosixFilePermissions} with an exception. This runs on
+     * every flush, so asking first costs one lookup and keeps the debug log free of a line a minute.
+     */
+    private static boolean supportsOwnerPermissions(Path target) {
+        try {
+            return Files.getFileStore(target)
+                    .supportsFileAttributeView(PosixFileAttributeView.class);
+        } catch (IOException | RuntimeException unsupported) {
+            return false;
+        }
+    }
+
+    /**
+     * Deletes the temporary files of this statistics file that an earlier process left behind.
+     *
+     * <p>The name of every attempt is unique, so a temporary that outlived its process is never read
+     * and never reused: it only accumulates a copy of the provider ids, endpoint hosts included, in
+     * the folder launchers and cloud clients sync. Only names this class produces are touched, and
+     * only once they are older than {@link #ORPHAN_TEMPORARY_MILLIS}, so a flush in flight is never a
+     * candidate.
+     *
+     * @param target the statistics file, whose own directory is listed
+     */
+    private void deleteOrphanTemporaries(Path target) {
+        Path name = target.getFileName();
+        Path parent = target.toAbsolutePath().getParent();
+        if (name == null || parent == null) {
+            return;
+        }
+        long deadline = System.currentTimeMillis() - ORPHAN_TEMPORARY_MILLIS;
+        try (DirectoryStream<Path> stream =
+                     Files.newDirectoryStream(parent, name.toString() + ".*.tmp*")) {
+            for (Path orphan : stream) {
+                if (lastModifiedMillis(orphan) > deadline) {
+                    continue;
+                }
+                try {
+                    Files.deleteIfExists(orphan);
+                } catch (IOException ignored) {
+                    // Housekeeping must never be the reason a flush fails; the next one retries.
+                }
+            }
+        } catch (IOException | RuntimeException unreadable) {
+            // A directory that cannot be listed is not a reason to skip the write itself.
+        }
+    }
+
+    /** Last modification time in milliseconds, or {@code Long.MAX_VALUE} when it cannot be read. */
+    private static long lastModifiedMillis(Path candidate) {
+        try {
+            return Files.getLastModifiedTime(candidate).toMillis();
+        } catch (IOException unreadable) {
+            // An unknown age counts as recent, so a file this class cannot date is never deleted.
+            return Long.MAX_VALUE;
+        }
+    }
+
+    /**
+     * Deletes the copy {@link #preserveUnreadable(Path)} put aside, once it is old enough.
+     *
+     * <p>That copy is unparseable by construction, so no code path of this class reads it again:
+     * without this it stays in the configuration directory for good and the user is left with a file
+     * that never disappears and is not part of any diagnostics export. The age test is what keeps a
+     * copy of a file that was only oversized recoverable for a while after the first good write.
+     *
+     * @param target the statistics file, whose sibling copy is removed
+     */
+    private static void deleteCorruptCopy(Path target) {
+        Path name = target.getFileName();
+        if (name == null) {
+            return;
+        }
+        Path preserved = target.resolveSibling(name.toString() + CORRUPT_SUFFIX);
+        if (lastModifiedMillis(preserved)
+                > System.currentTimeMillis() - ORPHAN_TEMPORARY_MILLIS) {
+            return;
+        }
+        try {
+            Files.deleteIfExists(preserved);
+        } catch (IOException | RuntimeException ignored) {
+            // A directory that refuses the delete keeps the copy; the name is bounded to one file.
+        }
+    }
+
     /** The monitor that serializes every writer of {@code target}, process-wide. */
     private static Object lockFor(Path target) {
         String key = target.toAbsolutePath().normalize().toString();
-        Object fresh = new Object();
-        Object existing = PATH_LOCKS.putIfAbsent(key, fresh);
-        return existing == null ? fresh : existing;
+        // computeIfAbsent rather than putIfAbsent: the eager construction allocated a monitor on
+        // every flush that was then thrown away. Entries are never removed, which is what keeps the
+        // returned monitor stable for the life of the process.
+        return PATH_LOCKS.computeIfAbsent(key, ignored -> new Object());
     }
 
     /**
@@ -370,39 +665,113 @@ public final class TranslationStats {
      *
      * <p>The diagnostics screens ask for this from {@code render()}, i.e. sixty times a second while
      * they are open, but the counters only change when a provider call settles. The view is
-     * therefore reused until a counter update bumps {@link #revision}; building it under the same
-     * lock the workers use is then a one-integer test on an idle screen instead of 512 boxings and a
-     * sort every frame.
+     * therefore reused until a counter update bumps {@link #revision}; an idle screen then costs one
+     * integer test under the workers' lock, and a rebuild copies no more than the primitives it
+     * needs before leaving that lock.
      */
     public Snapshot snapshot() {
+        long builtRevision;
+        long requestTotal;
+        long successTotal;
+        long failureTotal;
+        long hitTotal;
+        long missTotal;
+        long rejectedTotal;
+        long promptTotal;
+        long completionTotal;
+        String[] reasonKeys;
+        long[] reasonValues;
+        String[] providerIds;
+        long[] providerFields;
+        int sampleCount;
         synchronized (lock) {
             Snapshot cached = cachedSnapshot;
             if (cached != null && cachedRevision == revision) {
                 return cached;
             }
-            Snapshot built = buildSnapshot();
-            cachedSnapshot = built;
-            cachedRevision = revision;
-            return built;
+            // Only the state the workers own is copied out here, into arrays of primitives and
+            // string references. The view itself -- the boxed reason map, the provider lines and the
+            // sample copy -- is assembled below, outside the monitor, so a diagnostics screen that
+            // asks while translations are running no longer stops every worker for the length of
+            // that boxing and object allocation.
+            builtRevision = revision;
+            requestTotal = requests;
+            successTotal = successes;
+            failureTotal = failures;
+            hitTotal = cacheHits;
+            missTotal = cacheMisses;
+            rejectedTotal = rejected;
+            promptTotal = promptTokens;
+            completionTotal = completionTokens;
+            reasonKeys = new String[failuresByReason.size()];
+            reasonValues = new long[reasonKeys.length];
+            int reasonIndex = 0;
+            for (Map.Entry<String, Long> entry : failuresByReason.entrySet()) {
+                reasonKeys[reasonIndex] = entry.getKey();
+                reasonValues[reasonIndex] = entry.getValue().longValue();
+                reasonIndex++;
+            }
+            providerIds = new String[providers.size()];
+            providerFields = new long[providers.size() * PROVIDER_FIELDS];
+            captureProviderFields(providerIds, providerFields);
+            sampleCount = latencyCount;
+        }
+        Map<String, Long> reasons = new LinkedHashMap<String, Long>(reasonKeys.length * 2 + 1);
+        for (int index = 0; index < reasonKeys.length; index++) {
+            reasons.put(reasonKeys[index], Long.valueOf(reasonValues[index]));
+        }
+        List<ProviderLine> lines = providerLines(providerIds, providerFields);
+        // Copied outside the monitor: the ring is a fixed-length array and the count only grows, so a
+        // sample recorded during the copy is simply one of the newer measurements. Copying it under
+        // the monitor put a four kilobyte allocation on the same lock every worker settles under.
+        long[] samples = Arrays.copyOf(latencySamples, Math.min(sampleCount, LATENCY_SAMPLE_CAPACITY));
+        Snapshot built = new Snapshot(requestTotal, successTotal, failureTotal, hitTotal, missTotal,
+                rejectedTotal, promptTotal, completionTotal, reasons, lines, samples);
+        synchronized (lock) {
+            // Two threads may build the same view; the newer revision wins so a slow builder cannot
+            // replace a fresher view with an older one.
+            if (cachedRevision < builtRevision) {
+                cachedSnapshot = built;
+                cachedRevision = builtRevision;
+            }
+        }
+        return built;
+    }
+
+    /**
+     * Copies the per-provider counters into two parallel arrays; must be called with {@link #lock}
+     * held.
+     *
+     * <p>{@code ids} holds {@code providers.size()} references and {@code fields} seven longs per
+     * provider, in {@link ProviderLine} order, so the immutable lines can be built after the monitor
+     * has been released.
+     */
+    private void captureProviderFields(String[] ids, long[] fields) {
+        int index = 0;
+        for (Map.Entry<String, ProviderCounters> entry : providers.entrySet()) {
+            ProviderCounters counters = entry.getValue();
+            ids[index] = entry.getKey();
+            int base = index * PROVIDER_FIELDS;
+            fields[base] = counters.requests;
+            fields[base + 1] = counters.successes;
+            fields[base + 2] = counters.failures;
+            fields[base + 3] = counters.latencySum;
+            fields[base + 4] = counters.latencyCount;
+            fields[base + 5] = counters.promptTokens;
+            fields[base + 6] = counters.completionTokens;
+            index++;
         }
     }
 
-    /** Builds a fresh view; must be called with {@link #lock} held. */
-    private Snapshot buildSnapshot() {
-        List<Long> samples = new ArrayList<Long>(latencyCount);
-        for (int index = 0; index < latencyCount; index++) {
-            samples.add(Long.valueOf(latencySamples[index]));
+    /** One immutable line per provider, built from the arrays {@link #captureProviderFields} filled. */
+    private static List<ProviderLine> providerLines(String[] ids, long[] fields) {
+        List<ProviderLine> lines = new ArrayList<ProviderLine>(ids.length);
+        for (int index = 0; index < ids.length; index++) {
+            int base = index * PROVIDER_FIELDS;
+            lines.add(new ProviderLine(ids[index], fields[base], fields[base + 1], fields[base + 2],
+                    fields[base + 3], fields[base + 4], fields[base + 5], fields[base + 6]));
         }
-        List<ProviderLine> lines = new ArrayList<ProviderLine>(providers.size());
-        for (Map.Entry<String, ProviderCounters> entry : providers.entrySet()) {
-            ProviderCounters counters = entry.getValue();
-            lines.add(new ProviderLine(entry.getKey(), counters.requests, counters.successes,
-                    counters.failures, counters.latencySum, counters.latencyCount,
-                    counters.promptTokens, counters.completionTokens));
-        }
-        return new Snapshot(requests, successes, failures, cacheHits, cacheMisses, rejected,
-                promptTokens, completionTokens,
-                new LinkedHashMap<String, Long>(failuresByReason), lines, samples);
+        return lines;
     }
 
     /**
@@ -413,11 +782,29 @@ public final class TranslationStats {
      */
     public List<String> localizedLines(UiTranslator translator) {
         UiTranslator ui = translator == null ? (key, arguments) -> key : translator;
+        long buildRevision;
+        List<String> cached;
+        long cachedVersion;
+        synchronized (lock) {
+            buildRevision = revision;
+            cached = cachedLines;
+            cachedVersion = cachedLinesRevision;
+        }
         Snapshot snapshot = snapshot();
-        List<String> lines = new ArrayList<String>(6);
-        lines.add(ui.translate("screen.universal_translator.stats.totals",
+        String totals = ui.translate("screen.universal_translator.stats.totals",
                 Long.valueOf(snapshot.requests()), Long.valueOf(snapshot.successes()),
-                Long.valueOf(snapshot.failures())));
+                Long.valueOf(snapshot.failures()));
+        if (cached != null && cachedVersion == buildRevision && !cached.isEmpty()
+                && cached.get(0).equals(totals)) {
+            // The counters did not move and the first line still resolves to the same text, so the
+            // language did not change either: a language switch moves no counter, and rebuilding is
+            // only due once the wording actually differs. One rebuilt line is one lookup against the
+            // five this cache exists to avoid, and it keeps the reuse correct even on a platform that
+            // does not call invalidateLocalizedLines() when its resources reload.
+            return cached;
+        }
+        List<String> lines = new ArrayList<String>(6);
+        lines.add(totals);
         lines.add(ui.translate("screen.universal_translator.stats.cache",
                 Long.valueOf(snapshot.cacheHits()), Long.valueOf(snapshot.cacheMisses()),
                 snapshot.cacheHitRate()));
@@ -438,7 +825,28 @@ public final class TranslationStats {
             }
             lines.add(ui.translate("screen.universal_translator.stats.reasons", reasons.toString()));
         }
-        return Collections.unmodifiableList(lines);
+        lines = Collections.unmodifiableList(lines);
+        synchronized (lock) {
+            if (buildRevision >= cachedLinesRevision) {
+                cachedLines = lines;
+                cachedLinesRevision = buildRevision;
+            }
+        }
+        return lines;
+    }
+
+    /**
+     * Drops the cached display lines.
+     *
+     * <p>The lines are cached by counter revision, and the text they carry also depends on the game
+     * language, which moves no counter. A platform calls this when its resources reload after a
+     * language change so the diagnostics page does not keep serving the previous language.
+     */
+    public void invalidateLocalizedLines() {
+        synchronized (lock) {
+            cachedLines = null;
+            cachedLinesRevision = -1L;
+        }
     }
 
     /** The statistics as plain lines, for the exported diagnostics report. */
@@ -478,11 +886,18 @@ public final class TranslationStats {
     static String safeProviderId(String providerId) {
         String value = providerId == null ? "unknown" : providerId.trim();
         int scheme = value.indexOf("://");
-        if (scheme < 0) {
-            return value;
+        if (scheme >= 0) {
+            int path = value.indexOf('/', scheme + 3);
+            if (path >= 0) {
+                value = value.substring(0, path) + "/...";
+            }
         }
-        int path = value.indexOf('/', scheme + 3);
-        return path < 0 ? value : value.substring(0, path) + "/...";
+        // Cache keys end with the model digest and an optional prompt signature. Neither helps a
+        // support request, and the digest is still a fingerprint of what the player was sending.
+        int digest = value.indexOf('@');
+        int signature = value.indexOf('#');
+        int cut = digest < 0 ? signature : (signature < 0 ? digest : Math.min(digest, signature));
+        return cut < 0 ? value : value.substring(0, cut);
     }
 
     /**
@@ -520,13 +935,36 @@ public final class TranslationStats {
         return REASON_OTHER;
     }
 
+    /** Whether {@code reason} is one of the buckets {@link #reasonOf} can produce. */
+    private static boolean isKnownReason(String reason) {
+        return REASON_AUTH.equals(reason)
+                || REASON_RATE_LIMIT.equals(reason)
+                || REASON_SERVER.equals(reason)
+                || REASON_CLIENT.equals(reason)
+                || REASON_TIMEOUT.equals(reason)
+                || REASON_NETWORK.equals(reason)
+                || REASON_INVALID_OUTPUT.equals(reason)
+                || REASON_OTHER.equals(reason);
+    }
+
     private ProviderCounters counters(String providerId) {
         String key = providerId == null || providerId.trim().isEmpty() ? "unknown" : providerId.trim();
         ProviderCounters counters = providers.get(key);
-        if (counters == null) {
-            counters = new ProviderCounters();
-            providers.put(key, counters);
+        if (counters != null) {
+            return counters;
         }
+        if (providers.size() >= MAXIMUM_STORED_PROVIDERS) {
+            // Runtime ids carry the endpoint and the model name, so every settings change invents a
+            // new key. Overflow shares one bucket instead of growing the map and the statistics file
+            // without bound; the same bound already guards the keys read back from that file.
+            key = PROVIDER_OVERFLOW;
+            counters = providers.get(key);
+            if (counters != null) {
+                return counters;
+            }
+        }
+        counters = new ProviderCounters();
+        providers.put(key, counters);
         return counters;
     }
 
@@ -567,13 +1005,31 @@ public final class TranslationStats {
     }
 
     private void load(Path source) {
+        if (tooLargeToRead(source)) {
+            return;
+        }
         Properties properties = new Properties();
         try (Reader reader = Files.newBufferedReader(source, StandardCharsets.UTF_8)) {
             properties.load(reader);
+        } catch (NoSuchFileException absent) {
+            // A first run, not a failed read: there is nothing on disk to preserve.
+            loadFailed = false;
+            return;
         } catch (IOException | RuntimeException unreadable) {
+            // Not the same as "there is no file yet": the totals are on disk and this session simply
+            // could not see them. Starting from zero is unavoidable here -- flushing that zero back
+            // over them is what turned one locked read into a permanently erased history.
+            //
+            // A file whose content cannot be parsed is the one case where not writing is worse: it
+            // cannot be read on the next launch either, so the counters would never reach the disk
+            // again. That copy is kept aside and the next flush writes a fresh file, exactly as the
+            // oversized branch above does.
+            loadFailed = !(isPermanentlyCorrupt(unreadable) && preserveUnreadable(source));
+            DebugLog.global().logFailure("stats-load", unreadable);
             return;
         }
         synchronized (lock) {
+            loadFailed = false;
             requests = longValue(properties, "requests");
             successes = longValue(properties, "successes");
             failures = longValue(properties, "failures");
@@ -588,7 +1044,13 @@ public final class TranslationStats {
                     continue;
                 }
                 if (key.startsWith(FAILURE_PREFIX) && key.length() > FAILURE_PREFIX.length()) {
-                    failuresByReason.put(key.substring(FAILURE_PREFIX.length()), Long.valueOf(value));
+                    String reason = key.substring(FAILURE_PREFIX.length());
+                    // Only the buckets this class can produce are adopted. Unlike the provider table
+                    // this map had no bound at all, so a corrupted file could grow it and then have
+                    // the whole thing written back on every flush.
+                    if (isKnownReason(reason)) {
+                        failuresByReason.put(reason, Long.valueOf(value));
+                    }
                     continue;
                 }
                 if (key.startsWith(PROVIDER_PREFIX) && key.length() > PROVIDER_PREFIX.length()
@@ -619,6 +1081,75 @@ public final class TranslationStats {
                 }
             }
             revision++;
+        }
+    }
+
+    /**
+     * Whether the file is too large to be one this class wrote, in which case it is put aside.
+     *
+     * <p>{@code Properties.load} has no size concept: it materializes the whole file before a single
+     * key is filtered, and it does that on the thread that loads the configuration. A file many
+     * times the size of the real one therefore costs that thread its heap at startup. The read is
+     * skipped and the copy is kept aside, so the counters recover instead of never being written
+     * again.
+     *
+     * @param source the statistics file
+     * @return {@code true} when the file was put aside and the counters start from zero
+     */
+    private boolean tooLargeToRead(Path source) {
+        long storedBytes;
+        try {
+            storedBytes = Files.size(source);
+        } catch (IOException | RuntimeException unknown) {
+            // A missing or unreadable file: the read below reports the same thing and classifies it
+            // the same way, so this check stays out of that decision.
+            return false;
+        }
+        if (storedBytes <= MAXIMUM_STATS_FILE_BYTES) {
+            return false;
+        }
+        DebugLog.global().log("stats-load", "result", "oversized",
+                "bytes", Long.toString(storedBytes));
+        loadFailed = !preserveUnreadable(source);
+        return true;
+    }
+
+    /**
+     * Whether the stored content can never be parsed, whatever the next launch does.
+     *
+     * <p>An {@code IllegalArgumentException} is a truncated escape sequence and a
+     * {@link MalformedInputException} is a byte sequence that is not UTF-8: both describe the bytes
+     * on disk rather than a lock or a permission, so retrying the same file cannot succeed.
+     */
+    private static boolean isPermanentlyCorrupt(Throwable failure) {
+        return failure instanceof IllegalArgumentException
+                || failure instanceof MalformedInputException;
+    }
+
+    /**
+     * Moves a file this class cannot read out of the way and records it.
+     *
+     * @param source the statistics file
+     * @return {@code true} when {@code source} no longer occupies the statistics path, so the next
+     *     flush may create a fresh one; {@code false} when the move failed and the file has to be
+     *     left untouched
+     */
+    private boolean preserveUnreadable(Path source) {
+        Path name = source.getFileName();
+        if (name == null) {
+            return false;
+        }
+        Path preserved = source.resolveSibling(name.toString() + CORRUPT_SUFFIX);
+        try {
+            Files.move(source, preserved, StandardCopyOption.REPLACE_EXISTING);
+            DebugLog.global().log("stats-load", "result", "kept",
+                    "file", preserved.getFileName().toString());
+            return true;
+        } catch (IOException | RuntimeException failed) {
+            // A read-only directory keeps today's behaviour: the file stays as it is and the write
+            // path stays off, so nothing the file holds is replaced by a zero.
+            DebugLog.global().logFailure("stats-load-preserve", failed);
+            return false;
         }
     }
 
@@ -761,7 +1292,12 @@ public final class TranslationStats {
         private final long completionTokens;
         private final Map<String, Long> failuresByReason;
         private final List<ProviderLine> providers;
-        private final List<Long> latencySamples;
+        /**
+         * The retained samples, owned by this view. A primitive array rather than a list of boxed
+         * longs: this is rebuilt whenever a counter moves, and one {@code Long} per sample was the
+         * bulk of that cost.
+         */
+        private final long[] latencySamples;
         /** Sum of {@link #latencySamples}, computed once so a panel can ask for the average freely. */
         private final long latencyTotal;
         /**
@@ -781,7 +1317,7 @@ public final class TranslationStats {
                 long completionTokens,
                 Map<String, Long> failuresByReason,
                 List<ProviderLine> providers,
-                List<Long> latencySamples
+                long[] latencySamples
         ) {
             this.requests = requests;
             this.successes = successes;
@@ -793,10 +1329,10 @@ public final class TranslationStats {
             this.completionTokens = completionTokens;
             this.failuresByReason = Collections.unmodifiableMap(failuresByReason);
             this.providers = Collections.unmodifiableList(providers);
-            this.latencySamples = Collections.unmodifiableList(latencySamples);
+            this.latencySamples = latencySamples;
             long total = 0L;
-            for (Long sample : this.latencySamples) {
-                total += sample.longValue();
+            for (long sample : latencySamples) {
+                total += sample;
             }
             this.latencyTotal = total;
         }
@@ -854,7 +1390,7 @@ public final class TranslationStats {
 
         /** Average request latency over the retained samples, or {@code 0} when none were kept. */
         public long averageLatencyMillis() {
-            int count = latencySamples.size();
+            int count = latencySamples.length;
             return count <= 0 ? 0L : latencyTotal / count;
         }
 
@@ -874,7 +1410,9 @@ public final class TranslationStats {
                 return 0L;
             }
             int bounded = Math.max(0, Math.min(100, percentile));
-            int position = (int) Math.ceil(bounded / 100.0d * sorted.length) - 1;
+            // Integer arithmetic: the floating point form landed on the neighbouring index for
+            // combinations whose product is an exact integer but not representable in binary.
+            int position = (bounded * sorted.length + 99) / 100 - 1;
             return sorted[Math.max(0, Math.min(sorted.length - 1, position))];
         }
 
@@ -889,10 +1427,7 @@ public final class TranslationStats {
         private long[] sortedSamples() {
             long[] local = sortedSamples;
             if (local == null) {
-                local = new long[latencySamples.size()];
-                for (int index = 0; index < local.length; index++) {
-                    local[index] = latencySamples.get(index).longValue();
-                }
+                local = latencySamples.clone();
                 Arrays.sort(local);
                 sortedSamples = local;
             }
@@ -901,7 +1436,7 @@ public final class TranslationStats {
 
         /** The retained latency sample count, for a panel that wants to say how it was measured. */
         public int latencySampleCount() {
-            return latencySamples.size();
+            return latencySamples.length;
         }
 
         @Override

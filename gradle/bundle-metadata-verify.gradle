@@ -1,0 +1,317 @@
+// Reverse metadata verification for the legacy Minecraft bundle jars.
+//
+// A bundle's verifyBundle task only proves that everything in supportedVersions was packed, and its
+// jar block builds that list from the same variable, so that direction can hardly fail. What can and
+// did fail is the other way round: a fabric.mod.json that declares versions nobody builds. The
+// Loader then treats those as supported and fails them at resolution time, and nothing in CI looks at
+// it. This script is the single copy of that comparison; a bundle opts in with
+//
+//     ext.bundleSupportedVersions = supportedVersions
+//     apply from: rootProject.file("gradle/bundle-metadata-verify.gradle")
+//
+// and calls verifyBundleMetadata() from its verifyBundle task.
+
+def bundleMetadataFile = project.file("src/main/resources/fabric.mod.json")
+// What actually ships. processResources rewrites ${version}, ${fabricDependency}, ${loaderFloor} and
+// ${javaFloor} into build/resources/main, and every check below reads the template instead, so an
+// expansion that produced a broken value (a leftover placeholder, a version string the nested
+// implementations do not satisfy) reached players with all of them green.
+def expandedBundleMetadataFile = project.file("build/resources/main/fabric.mod.json")
+
+// Dotted numeric comparison for loader versions such as 0.15.11 and java releases such as 21. A part
+// that is not a plain decimal number compares as -1 with a string tie-break, so an unexpected value
+// can never make this helper throw inside a verification task.
+def dottedPart = { String part -> part.isInteger() ? part.toInteger() : -1 }
+def compareDottedVersions = { String left, String right ->
+    def leftParts = left.tokenize(".")
+    def rightParts = right.tokenize(".")
+    for (int index = 0; index < Math.max(leftParts.size(), rightParts.size()); index++) {
+        def leftPart = index < leftParts.size() ? leftParts[index] : "0"
+        def rightPart = index < rightParts.size() ? rightParts[index] : "0"
+        def comparison = dottedPart(leftPart) <=> dottedPart(rightPart)
+        if (comparison == 0) {
+            comparison = leftPart <=> rightPart
+        }
+        if (comparison != 0) {
+            return comparison
+        }
+    }
+    return 0
+}
+def weakestDottedVersion = { List values ->
+    def weakest = null
+    values.each { value -> weakest = (weakest == null || compareDottedVersions(value, weakest) < 0) ? value : weakest }
+    return weakest
+}
+
+// The version-list comparison on its own, without a file path or a project-scoped supported list, so
+// the root build can run it against the fabric-all.jar metadata it reads straight out of the archive.
+ext.verifyBundleMetadataAgainst = { Map metadata, Collection supported ->
+    // Launchers and the bundle's own nested jars are keyed by the launcher name ("1.13", not
+    // "1.13.0"), which is what supportedVersions already holds in every bundle.
+    def supportedSorted = new ArrayList(supported)
+    def declaredJars = (metadata.jars ?: []).collect { entry ->
+        // A jars[] element without "file" is easy to produce by hand and used to surface as
+        // "Cannot invoke method tokenize() on null object", with no hint of which entry it was.
+        if (entry.file == null) {
+            throw new GradleException("fabric.mod.json jars entry ${entry} has no 'file' key")
+        }
+        entry.file.tokenize('/').last()
+                .replace('universal-translator-', '')
+                .replace('.jar', '')
+    }
+    def declaredMinecraft = metadata.depends == null ? null : metadata.depends.minecraft
+    if (!(declaredMinecraft instanceof Collection)) {
+        // A range string (">=1.13") is valid metadata but says nothing per version; comparing it as
+        // a one-entry list would report a version drift instead of the shape problem it really is.
+        throw new GradleException(
+                "fabric.mod.json depends.minecraft must be a version list to compare against " +
+                        "${supported}, got ${declaredMinecraft == null ? 'no entry' : declaredMinecraft}")
+    }
+    // Compare as sets: the order of jars[] and depends.minecraft is semantically irrelevant, so a
+    // reorder must not be reported as an inconsistency.
+    if (declaredJars.sort() != supportedSorted.sort()) {
+        throw new GradleException(
+                "fabric.mod.json jars ${declaredJars} != supportedVersions ${supported}")
+    }
+    if (declaredMinecraft.sort() != supportedSorted.sort()) {
+        throw new GradleException(
+                "fabric.mod.json depends.minecraft ${declaredMinecraft} != supportedVersions ${supported}")
+    }
+}
+
+ext.verifyBundleMetadata = {
+    def supported = project.ext.bundleSupportedVersions
+    if (supported == null) {
+        throw new GradleException(
+                "bundleSupportedVersions must be set before applying bundle-metadata-verify.gradle")
+    }
+    def metadata = new groovy.json.JsonSlurper().parse(bundleMetadataFile)
+    project.ext.verifyBundleMetadataAgainst(metadata, supported)
+    // supportedVersions is a hand-copied list in every bundle, while settings.gradle derives the same
+    // set from platformDependencies; nothing compared the two, so a version added to one side only was
+    // invisible in both directions — either the bundle ships a version nothing resolves, or the
+    // resolver is handed a version the jar does not contain. fabricBundleVersions already applies the
+    // 1.13.0 -> 1.13 normalisation the launcher ids need, so the two lists are comparable.
+    if (!project.gradle.ext.has("fabricBundleVersions")) {
+        throw new GradleException(
+                "gradle.ext.fabricBundleVersions is missing; settings.gradle has to expose it before " +
+                        "${project.path} applies gradle/bundle-metadata-verify.gradle")
+    }
+    def supportedAsText = supported.collect { it.toString() }
+    def fromSettings = (project.gradle.ext.fabricBundleVersions(project.name) as List)
+            .collect { it.toString() }
+    if (fromSettings.isEmpty()) {
+        throw new GradleException(
+                "${project.path}: settings.gradle's platformDependencies has no entry for " +
+                        "'${project.name}', so supportedVersions ${supportedAsText} is derived from " +
+                        "nothing; add the bundle to platformDependencies")
+    }
+    def onlyInBundle = supportedAsText.findAll { !fromSettings.contains(it) }.sort()
+    def onlyInSettings = fromSettings.findAll { !supportedAsText.contains(it) }.sort()
+    if (!onlyInBundle.isEmpty() || !onlyInSettings.isEmpty()) {
+        throw new GradleException(
+                "${project.path}: supportedVersions and settings.gradle's platformDependencies " +
+                        "disagree — only in the bundle ${onlyInBundle}, only in settings " +
+                        "${onlyInSettings}. Both lists have to name the same Minecraft versions.")
+    }
+    // Fabric API's mod id. The ten hand-written bundle metadata files spelled it three ways ("fabric"
+    // in three, no entry at all in 1.19, "fabric-api" in six); "fabric" only resolves through Fabric
+    // API's `provides` alias, so nothing compared the three answers. settings.gradle's
+    // gradle.ext.fabricApiModId is the one value, ${fabricDependency} in the template is the one
+    // spelling, and a bundle that declares two of them fails here instead of at load time.
+    def apiIdSpellings = ["fabric", "fabric-api", '${fabricDependency}']
+    def declaredApiIds = apiIdSpellings.findAll { metadata.depends != null && metadata.depends.containsKey(it) }
+    if (declaredApiIds.size() > 1) {
+        throw new GradleException(
+                "fabric.mod.json depends on Fabric API more than once (${declaredApiIds.join(', ')}); " +
+                        "the mod id is '${project.gradle.ext.fabricApiModId}' (gradle.ext.fabricApiModId)")
+    }
+    if (declaredApiIds.isEmpty()) {
+        // Only the nested implementations declare the dependency then, so a launcher that reads the
+        // bundle metadata alone cannot tell the bundle needs Fabric API at all. Three bundles really
+        // do not use Fabric API (no net.fabricmc.fabric.api reference exists in those trees, so there
+        // is nothing to declare); for the other seven this used to be a warning that named the drift
+        // and then let it through.
+        def fabricApiFreeBundles = [
+                "platform-fabric-1.0-1.8.x",
+                "platform-fabric-1.8-1.12.x",
+                "platform-fabric-1.13.x"]
+        if (!fabricApiFreeBundles.contains(project.name)) {
+            throw new GradleException(
+                    "${project.path}: fabric.mod.json declares no Fabric API dependency (expected " +
+                            "'\${fabricDependency}' = '${project.gradle.ext.fabricApiModId}'); " +
+                            "only the nested implementations do")
+        }
+        project.logger.info("${project.path}: this bundle ships no Fabric API dependency by design")
+    }
+    // A bundle jar ships several Minecraft releases at once, so its single declared loader/java floor
+    // has to serve all of them. The weakest member requirement is the only value that keeps every
+    // member installable: a stricter floor locks the older releases out even though that member runs
+    // on them, and a looser one defers their failure to the nested jar — which is what the 1.20
+    // bundle's hand-written ">=0.15.11"/">=17" did to 1.20.5/1.20.6. A bundle that opts in declares
+    // the number once in its build.gradle (ext.bundleLoaderFloor / ext.bundleJavaFloor) and leaves the
+    // placeholder in the template; the members are already evaluated, so their own requirement is
+    // readable here and no second hand-copied number can exist.
+    def declaredLoaderFloor = project.ext.has("bundleLoaderFloor")
+            ? project.ext.bundleLoaderFloor.toString() : null
+    def declaredJavaFloor = project.ext.has("bundleJavaFloor")
+            ? project.ext.bundleJavaFloor.toString() : null
+    if (declaredLoaderFloor != null || declaredJavaFloor != null) {
+        def memberLoaders = []
+        def memberJavas = []
+        supported.each { version ->
+            def member = project.rootProject.findProject(":platform-fabric-${version}")
+            if (member != null) {
+                if (member.ext.has("legacyLoaderVersion")) {
+                    memberLoaders << member.ext.legacyLoaderVersion.toString()
+                }
+                if (member.ext.has("legacyJavaRelease")) {
+                    memberJavas << member.ext.legacyJavaRelease.toString()
+                }
+            }
+        }
+        // Only members that declare the ext are collected, so a member that declares neither silently
+        // shrank the comparison: the 1.14-1.15 bundle's three stub modules (1.14, 1.14.1, 1.14.2) had
+        // no legacyLoaderVersion/legacyJavaRelease at all, and the floor was derived from the other
+        // five members while those three were never reconciled with it. A missing declaration is a
+        // hole in this check, not an exemption, so it fails here.
+        def undeclaredMembers = supported.findAll { version ->
+            def member = project.rootProject.findProject(":platform-fabric-${version}")
+            member == null
+                    || !member.ext.has("legacyLoaderVersion")
+                    || !member.ext.has("legacyJavaRelease")
+        }
+        if (!undeclaredMembers.isEmpty()) {
+            throw new GradleException(
+                    "${project.path}: these members declare no legacyLoaderVersion/legacyJavaRelease, " +
+                            "so the weakest-member floor would be derived from the remaining members " +
+                            "only: ${undeclaredMembers}. Declare both ext values on the member; a stub " +
+                            "module that only applies the java plugin needs them too.")
+        }
+        def declared = metadata.depends
+        // The template has to carry the placeholder: a literal here is the hand-copied value this
+        // block exists to remove, and it would silently disagree with the opted-in ext property.
+        if (declaredLoaderFloor != null) {
+            if (declared == null || declared.get("fabricloader") != '>=$' + '{loaderFloor}') {
+                throw new GradleException(
+                        "${project.path}: fabricloader must be \">=\${loaderFloor}\" so bundleLoaderFloor " +
+                                "stays the only copy of the floor, but is ${declared?.get('fabricloader')}")
+            }
+            def weakestLoader = weakestDottedVersion(memberLoaders)
+            if (weakestLoader != null && compareDottedVersions(declaredLoaderFloor, weakestLoader) != 0) {
+                throw new GradleException(
+                        "${project.path}: bundleLoaderFloor ${declaredLoaderFloor} is not the weakest " +
+                                "member requirement ${weakestLoader} (members ${memberLoaders})")
+            }
+        }
+        if (declaredJavaFloor != null) {
+            if (declared == null || declared.get("java") != '>=$' + '{javaFloor}') {
+                throw new GradleException(
+                        "${project.path}: java must be \">=\${javaFloor}\" so bundleJavaFloor stays the " +
+                                "only copy of the floor, but is ${declared?.get('java')}")
+            }
+            def weakestJava = weakestDottedVersion(memberJavas)
+            if (weakestJava != null && compareDottedVersions(declaredJavaFloor, weakestJava) != 0) {
+                throw new GradleException(
+                        "${project.path}: bundleJavaFloor ${declaredJavaFloor} is not the weakest member " +
+                                "requirement ${weakestJava} (members ${memberJavas})")
+            }
+        }
+        // The stubs expand their own fabric.mod.json from their own build.gradle, so what they declare is
+        // a second copy of the two ext values reconciled above — and nothing compared them: a stub
+        // compiled against a newer Loader than its metadata advertised stayed green here and failed on
+        // the player's client instead. The placeholder is the single-copy form and passes; a literal
+        // passes only while it still equals the ext. Bundles without stub members declare no list.
+        def stubDrift = []
+        def stubVersions = project.ext.has("bundleStubVersions") ? project.ext.bundleStubVersions : []
+        stubVersions.each { version ->
+            def member = project.rootProject.findProject(":platform-fabric-${version}")
+            if (member == null
+                    || !member.ext.has("legacyLoaderVersion")
+                    || !member.ext.has("legacyJavaRelease")) {
+                stubDrift << "${version}: no project or no legacyLoaderVersion/legacyJavaRelease"
+                return
+            }
+            def template = new File(member.projectDir, "src/main/resources/fabric.mod.json")
+            if (!template.isFile()) {
+                stubDrift << "${version}: ${template} does not exist, so nothing shows what it declares"
+                return
+            }
+            def stubDepends = new groovy.json.JsonSlurper().parse(template).depends
+            def loaderRequirement = stubDepends == null ? null : stubDepends.get("fabricloader")
+            def javaRequirement = stubDepends == null ? null : stubDepends.get("java")
+            def expectedLoader = '>=' + member.ext.legacyLoaderVersion.toString()
+            def expectedJava = '>=' + member.ext.legacyJavaRelease.toString()
+            if (!(['>=$' + '{loaderVersion}', expectedLoader].contains(loaderRequirement))) {
+                stubDrift << "${version}: depends.fabricloader ${loaderRequirement} is neither the " +
+                        "loaderVersion placeholder nor ${expectedLoader}"
+            }
+            if (!(['>=$' + '{javaVersion}', expectedJava].contains(javaRequirement))) {
+                stubDrift << "${version}: depends.java ${javaRequirement} is neither the javaVersion " +
+                        "placeholder nor ${expectedJava}"
+            }
+        }
+        if (!stubDrift.isEmpty()) {
+            throw new GradleException(
+                    "${project.path}: stub member metadata disagrees with the ext values the floor is " +
+                            "derived from: ${stubDrift}")
+        }
+    }
+    // Same questions again, on the copy that goes into the jar. verifyBundle already dependsOn jar, so
+    // processResources has run; a missing file therefore means the task order changed, not that the
+    // check should be skipped.
+    if (!expandedBundleMetadataFile.isFile()) {
+        throw new GradleException(
+                "${project.path}: ${expandedBundleMetadataFile} does not exist, so the metadata that " +
+                        "ships cannot be checked; verifyBundleMetadata has to run after processResources")
+    }
+    def expandedText = expandedBundleMetadataFile.getText("UTF-8")
+    def leftoverPlaceholder = expandedText =~ /\$\{[^}]+\}/
+    if (leftoverPlaceholder.find()) {
+        throw new GradleException(
+                "${project.path}: shipped fabric.mod.json still contains ${leftoverPlaceholder.group()}; " +
+                        "processResources does not expand that key (the release verifier rejects it too)")
+    }
+    def expandedMetadata = new groovy.json.JsonSlurper().parseText(expandedText)
+    if (expandedMetadata.version != project.version.toString()) {
+        throw new GradleException(
+                "${project.path}: shipped fabric.mod.json version ${expandedMetadata.version} != " +
+                        "project.version ${project.version}")
+    }
+    // The bundle demands its nested implementations by version, and those implementations declare
+    // project.version themselves. If the two strings ever diverge the Loader refuses the bundle on
+    // every client, and neither verifyBundle nor verifyLoaderSelection reads depends at all.
+    def expandedDepends = expandedMetadata.depends
+    def selfRequirement = expandedDepends == null ? null : expandedDepends.get("universal_translator")
+    def expectedSelfRequirement = ">=" + project.version.toString()
+    if (selfRequirement != expectedSelfRequirement) {
+        throw new GradleException(
+                "${project.path}: shipped fabric.mod.json requires universal_translator " +
+                        "${selfRequirement}, expected ${expectedSelfRequirement}")
+    }
+    // `jars[].file` is an absolute path inside the archive. verifyBundleMetadataAgainst strips the
+    // directory off before comparing, so a nested jar one directory deeper than META-INF/jars is
+    // reported as present while the Loader never loads it.
+    (expandedMetadata.jars ?: []).each { entry ->
+        if (entry.file == null || !entry.file.toString().startsWith("META-INF/jars/")) {
+            throw new GradleException(
+                    "${project.path}: shipped fabric.mod.json jars entry ${entry} is not under " +
+                            "META-INF/jars/")
+        }
+    }
+    // The template may only say "\${fabricDependency}"; what ships has to be the one real mod id.
+    // A bundle that ships the alias "fabric" relies on Fabric API's `provides` entry, which is a
+    // launcher decision, while the nested implementations declare the real id.
+    if (!declaredApiIds.isEmpty()) {
+        def shippedApiIds = expandedDepends == null ? [] : ["fabric", "fabric-api"].findAll {
+            expandedDepends.containsKey(it)
+        }
+        if (shippedApiIds.size() != 1 || shippedApiIds[0] != project.gradle.ext.fabricApiModId) {
+            throw new GradleException(
+                    "${project.path}: shipped fabric.mod.json declares Fabric API as ${shippedApiIds}, " +
+                            "expected exactly '${project.gradle.ext.fabricApiModId}' (the template " +
+                            "declared ${declaredApiIds})")
+        }
+    }
+}

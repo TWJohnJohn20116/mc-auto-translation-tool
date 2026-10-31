@@ -40,7 +40,7 @@
 
 | Workflow | 檔案 | 觸發條件 | 用途 |
 | --- | --- | --- | --- |
-| 主要建置 | `.github/workflows/build.yml` | PR、push `main`、`workflow_dispatch` | workflow 靜態檢查（actionlint + shellcheck）、核心檢查、網站檢查（只在 PR 動到 `website/` 時才真的跑）、17 個平台目標、7 個舊版目標（各自獨立 job 平行跑）、發布資產驗證，最後由 `CI 總結` 彙總。這是 PR 必經路徑，牆鐘約 5～6 分（由最慢的 job 決定） |
+| 主要建置 | `.github/workflows/build.yml` | PR、push `main`、`workflow_dispatch` | workflow 靜態檢查（actionlint + shellcheck）、核心檢查、網站檢查（只在 PR 動到 `website/` 時才真的跑）、16 個平台目標、7 個舊版目標（各自獨立 job 平行跑）、發布資產驗證，最後由 `CI 總結` 彙總。這是 PR 必經路徑，牆鐘約 5～6 分（由最慢的 job 決定） |
 | 舊版目標 | `.github/workflows/legacy-targets.yml` | 每週排程（週一 03:17 UTC）、`workflow_dispatch` | 4 個 Ornithe／舊版 Fabric bundle（1.3.1–1.15）、2 個獨立 Forge 1.8.9／1.12.2 建置，以及 15 個 NeoForge 目標（1.20.4～26.2）。這些要 remap／decompile 或跑 Minecraft Mavenizer，刻意不放在 PR 路徑 |
 | 準備發布資產 | `.github/workflows/prepare-release.yml` | 只有 `workflow_dispatch` | 一鍵準備 `downloads/<mod_version>`：建置 48 個目標、用標準檔名收集、產生 `SHA256SUMS.txt`、跑 `verify_release_jars.py` 驗證，再開 PR。手動觸發，不在 PR 路徑上（一次約 10～20 分鐘牆鐘時間） |
 | 發布下載資產 | `.github/workflows/publish-release.yml` | push `main`（限特定路徑）、`workflow_dispatch` | 驗證 `downloads/<version>` 並建立或更新 GitHub Release |
@@ -98,7 +98,9 @@ git -c 'credential.helper=' -c 'credential.helper=!gh auth git-credential' push 
      Forge 的 `build/release`）
    - 舊版 Fabric bundle 1.3.1–1.15 → artifact 名稱 `legacy-fabric-<target>`
    - 獨立 Forge 1.8.9／1.12.2 → artifact 名稱 `forge-legacy-1.8.9`、`forge-legacy-1.12.2`
-   - 可直接安裝的正式版 JAR → artifact 名稱 `release-assets`（`build/release-assets/*.jar` 與 `SHA256SUMS.txt`）
+   - 可直接安裝的正式版 JAR → artifact 名稱 `release-assets`（`build/release-assets/*.jar` 與
+     `SHA256SUMS.txt`）；只有 `workflow_dispatch` 的執行才有，push `main` 的發布驗證由
+     `publish-release.yml` 負責一次（同一個 commit 不重複解壓 48 顆 JAR）
 
 6. 確認你要的 job 真的有跑，而不是被略過：`gh run view <run-id> --json jobs` 中該 job 的
    `conclusion` 不能是 `skipped`。分支保護要求的檢查是單一的 **`CI 總結`**（彙總 job）：只有全部
@@ -139,12 +141,16 @@ git -c 'credential.helper=' -c 'credential.helper=!gh auth git-credential' push 
 
 ### 目標名稱
 
-`build.yml` → `platform-build`（17 個，PR 必經）：
+`build.yml` → `platform-build`（16 個，PR 必經）：
 
 `fabric-1.16.x`、`fabric-1.17-1.18.x`、`fabric-1.19.x`、`fabric-1.20.x`、`fabric-1.21.x`、
-`fabric-1.21.4-1.21.5`、`fabric-26.x`、`neoforge-1.20.1`、`forge-1.21.1`、`forge-1.21.7`、
+`fabric-26.x`、`neoforge-1.20.1`、`forge-1.21.1`、`forge-1.21.7`、
 `forge-1.21.9`、`forge-1.21.11`、`forge-26.1.1`、`forge-26.2`、`neoforge-1.21.1`、`neoforge-1.21.3`、
 `neoforge-1.21.11`
+
+`fabric-1.21.4-1.21.5` 這個目標已於第四輪審計（B07-004）刪除：它每個 PR 都吃掉一個完整 Loom 專案，
+卻不在任何 bundle、也不在 `downloads/` 的收集範圍裡；1.21.4／1.21.5 本來就由 `fabric-1.21.x`
+的 bundle 涵蓋。刪除它不影響 48 顆發布資產，所以 `downloads/` 與四份 `README.md` 都不必跟著動。
 
 `build.yml` → `legacy-build`（7 個，各自獨立平行 job；關鍵字 `legacy` 可全選）：
 
@@ -194,20 +200,28 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
    缺少這個區段會讓發布失敗。
 4. 推送到 `origin/main`。workflow 只在這些路徑變動時觸發：`downloads/**`、`gradle.properties`、
    `CHANGELOG.md`、`scripts/prepare_release_assets.py`、`scripts/verify_release_jars.py`、
+   `scripts/release_layout.py`（分片門檻與後綴公式的唯一實作，改壞它會讓已提交的分片對不上）、
+   `scripts/ci/read-mod-version.sh`（版本號白名單是這支 workflow 的入口邏輯）、
    `publish-release.yml` 自己。
 5. workflow 會驗證 48 顆 JAR 與 checksum、縮減成 **31 顆可直接安裝 JAR**（加 `SHA256SUMS.txt` 共
    32 個資產），再建立或更新 `v<mod_version>` Release；版本號含 `-` 者視為 prerelease。
    NeoForge **不做**版本範圍合併（同一顆 JAR 塞多個同 `modId` 實作會載入失敗），每個版本各一顆。
-   **注意**：`publish-release.yml` 的 `expected` 陣列與數量檢查描述的是**目前 `downloads/` 裡已提交
-   的版本**，現在是 1.4 的 48 顆／32 個資產。下一個版本用 `prepare-release` 重新產生
-   `downloads/` 時，必須在**同一個 PR** 裡把這兩處改成新的目標清單與數量，否則發布會失敗。
+   **注意**：`publish-release.yml` 沒有手寫的目標清單——`expected` 由
+   `downloads/<version>/SHA256SUMS.txt` 逐行推導，數量檢查是兩條自我一致關係
+   （`assets == jars + 1`、`checksum_lines == jars`）。所以「要發布什麼」完全由 `downloads/` 決定：
+   改發布內容就改 `downloads/`（由 `prepare-release` 產生），**不要在 workflow 裡手寫目標清單或
+   數字**——手寫清單就是該檔註解明文要避免的第二份真相，bump 之後第一次 push 到 `main` 會以
+   `Missing release target` 失敗。
 6. 更新文件與網站：`README.md` 與 `docs/Zh-cn|Zh-tw|en/README.md` 裡的連結是**寫死版本號**的
    （`releases/download/v<版本>/...`），新增或移除目標時四個檔案都要一起改，否則會指向不存在的檔案。
    `website/app/page.tsx` 也要一起更新：`releaseVersion`、`metadata.title`／`description`、按鈕文字，
    以及文案裡的 **JAR 數量**與**覆蓋範圍**（1.3.11 的說明寫著「不含 1.16.0–1.16.4」，1.4 的 Fabric
-   1.16 bundle 已涵蓋那 5 個版本；「16 个 JAR」也要改成新的數字）。網站測試只從 `app/page.tsx` 讀
-   `releaseVersion` 與 `metadata.title`，其餘文案不會被測試抓到，數字與覆蓋範圍必須人工確認。
-   這一步沒有自動化，漏掉只會在事後被使用者發現。
+   1.16 bundle 已涵蓋那 5 個版本）。這些**大多已由 `website/tests/rendered-html.test.mjs` 守住**：
+   31／48／51／26／15、9 處 Fabric 版本清單、23 份文件的反引號路徑與版本號、
+   `downloads/<版本>/release-assets.txt`、Forge 家族的 loader 版本、`CHANGELOG.md` 的本版區段——
+   逐條清單見 `website/README.md` 的「驗證」一節，這裡不抄第二份。仍靠人工的只有措辭本身
+   （例如「不含 1.16.0–1.16.4」這種歷史敘述）。漏掉的後果：PR 動到 `website/`、`README.md`、`docs/`
+   時 website job 紅燈，非 PR 觸發則一律執行。
 7. 更新**程式碼內**寫死的版本號：`translator-core` 的 `core/UserAgent.java` 是對外請求版本號的
    **唯一來源**（`HttpJsonClient` 與 `VerifiedDownloader` 都引用它的 `VALUE`）。`translator-core` 的
    `build.gradle` **沒有** `processResources`，也沒有任何建置產生的版本資源，所以那個常數無法由建置
@@ -220,14 +234,17 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
 
 ## 修改 CI 的規則
 
-- `prepare-release.yml` 的 48 個目標是「要建置什麼」；`publish-release.yml` 的 `expected` 陣列
-  （目標 JAR 名稱，每個目標一顆）與 `-ne <數量>`（合併後的可安裝資產數）描述的是**目前 `downloads/`
-  裡已提交的那個版本**。兩者**不是同時改**：
-  - 目標清單可以隨時改動——`prepare-release.yml` 只有 `workflow_dispatch`，改了不會觸發任何執行。
-  - `expected` 與數量**只能在 `release/prepare-<version>` PR 裡改**（那個 PR 會把 `downloads/` 整個
-    換成新版本）。**不要**在還沒重新產生 `downloads/` 之前就改它：`publish-release.yml` 的觸發路徑
-    包含它自己，任何動到它的 push 到 `main` 都會立刻用新數字去驗證舊的 `downloads/` 而失敗
-    （2026-10-06 就差點這樣把 `main` 弄紅）。
+- `prepare-release.yml` 的 48 筆 `TARGETS_JSON` 是「**要建置什麼**」；實際發布什麼由
+  `downloads/<version>/` 決定（`SHA256SUMS.txt` 就是那份清單），`publish-release.yml` 只驗證它與
+  自己一致——它**沒有**手寫的 `expected` 陣列，也沒有 `-ne <數量>`。兩者的關係是**只有前者可以
+  隨時改**：
+  - `TARGETS_JSON` 可以隨時改動——`prepare-release.yml` 只有 `workflow_dispatch`，改了不會觸發任何
+    執行。要在**同一個 PR** 裡跟著同步的是消費端：四份 `README.md`、三份 `USER_GUIDE.md` 的表格與
+    `website/app/page.tsx` 的數字與覆蓋範圍（見「發布流程」第 6 步）。
+  - **不要**在 `publish-release.yml` 裡加回手寫清單或數字：它從 `downloads/` 推導，再用兩條自我
+    一致關係（`assets == jars + 1`、`checksum_lines == jars`）互相驗證。手寫清單在版本 bump 之後
+    必然與 `downloads/` 不一致，而 `prepare-release` 開的 PR 只 `git add -A downloads`，沒有人會
+    記得改那一段。
   - 每個目標的 `project` 與 `jar_dir` 也要對得上 `settings.gradle`（`jar_dir` 是專案目錄，JAR 會在
     它的 `build/release-assets`、`build/release` 或 `build/libs` 下）。收集時是用**版本號精確比對**
     `*-<version>.jar`，不要改成「目錄裡唯一的 JAR」：本機與快取目錄常留有舊版本的 JAR。
@@ -310,6 +327,12 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   `website/tests/rendered-html.test.mjs` 的版本號與標題是**從 `app/page.tsx` 原始碼取**的
   （`releaseVersion` 與 `metadata.title`），不要改回寫死版本號——寫死的話每次發布都會讓它變紅
   （2026-10-04 就發生過：測試還停在 1.3.10，網站已經是 1.3.11）。
+  **反方向沒有守**：那些關卡讀的是「產生端」（`platforms/fabric/**`、`platforms/forge/**`、
+  `prepare-release.yml` 的 `TARGETS_JSON`、`gradle.properties`、`downloads/**`），但觸發條件只看
+  「消費端」（`website/`、`README.md`、`docs/`）。所以「產生端變了、文件沒動」的 PR 不會啟動
+  website job，數字會在 13 份文件上靜默漂移，直到下一個動到文件或網站的 PR（可能只是無關的 npm
+  更新）或發布派送才紅。要補這一半得改 `scripts/ci/` 或 `build.yml` 的 `git diff` 正則
+  （見 `website/README.md` 的「驗證」一節）。
 - `fabric-1.0-1.8.x` 這個 bundle 覆蓋 **1.3.1～1.8.8 當中的 26 個版本**，排除 12 個上游 mappings
   有問題的版本：1.0.0～1.2.5 上游只發佈帶側別後綴的 feather（`1.0.0-client+build.3`），而
   `ploceus.featherMappings` 只會組出一般命名（`1.0.0+build.31`）；1.6.2／1.7.3／1.7.5／1.7.7 雖然

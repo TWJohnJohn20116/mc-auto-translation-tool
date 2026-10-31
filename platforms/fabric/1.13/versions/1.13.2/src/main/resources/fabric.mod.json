@@ -4,11 +4,12 @@
   "version": "${version}",
   "name": "MC Auto Translation Tool",
   "description": "Client-side automatic translation for server-provided text on Legacy Fabric 1.13.2.",
-  "authors": ["272635"],
+  "authors": ["我小张7272635"],
+  "icon": "assets/universal_translator/icon.png",
   "contact": {"homepage": "https://space.bilibili.com/3546631091783712", "sources": "https://github.com/TWJohnJohn20116/mc-auto-translation-tool"},
   "license": "MIT",
   "environment": "client",
   "entrypoints": {"client": ["org.universaltranslator.fabric.UniversalTranslatorFabricClient"]},
   "mixins": ["universal-translator.fabric.mixins.json"],
-  "depends": {"fabricloader": ">=0.16.10", "minecraft": "1.13.2", "java": ">=8"}
+  "depends": {"fabricloader": ">=${loaderVersion}", "minecraft": "1.13.2", "java": ">=8"}
 }

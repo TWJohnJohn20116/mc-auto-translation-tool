@@ -8,7 +8,13 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.universaltranslator.fabric.TranslationRenderContext;
 
-/** Keeps the local sign editor preview untranslated until the player saves it. */
+/**
+ * Keeps the local sign editor preview untranslated until the player saves it.
+ *
+ * <p>1.19.3+ does not list this class: the family config for 1.19.3-1.19.4 uses
+ * {@code AbstractSignEditScreenMixin} instead, because the screen was renamed and its render method
+ * takes a {@code DrawContext} there. This copy is mounted for 1.16-1.19.2 only.
+ */
 @Mixin(SignEditScreen.class)
 abstract class SignEditScreenMixin {
     @Inject(

@@ -16,7 +16,7 @@
     "paths": {
       "@/*": ["./*"]
     },
-    "types": ["@cloudflare/workers-types"]
+    "types": ["@cloudflare/workers-types", "node"]
   },
   "include": [
     "next-env.d.ts",

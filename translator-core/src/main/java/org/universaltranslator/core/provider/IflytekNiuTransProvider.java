@@ -1,5 +1,6 @@
 package org.universaltranslator.core.provider;
 
+import org.universaltranslator.core.TranslationOutputValidator;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationRequest;
 import org.universaltranslator.core.net.CryptoSupport;
@@ -30,6 +31,14 @@ public final class IflytekNiuTransProvider implements TranslationProvider {
         this.endpoint = EndpointPolicy.requireSafeEndpoint(endpoint);
         if (this.endpoint.getRawQuery() != null || this.endpoint.getFragment() != null) {
             throw new IllegalArgumentException("iFlytek endpoint must not contain a query or fragment");
+        }
+        // The signature covers "POST <raw path> HTTP/1.1", but the request line the transport sends
+        // is the URL's normalised path. A path the two can disagree about would fail signing at
+        // runtime with nothing but "HTTP 401", so it is refused while the setting is being edited.
+        String signedPath = this.endpoint.getRawPath();
+        if (signedPath != null && (signedPath.contains("..") || !isAscii(signedPath))) {
+            throw new IllegalArgumentException(
+                    "iFlytek endpoint path must not contain '..' or non-ASCII characters");
         }
         this.appId = ProviderSupport.requireCredential("iFlytek app ID", appId);
         this.apiKey = ProviderSupport.requireCredential("iFlytek API key", apiKey);
@@ -78,6 +87,15 @@ public final class IflytekNiuTransProvider implements TranslationProvider {
             throw BaiduTranslationProvider.providerError(
                     "iFlytek NiuTrans", response, "code", "message");
         }
-        return translated;
+        return TranslationOutputValidator.requireValid(request.getText(), translated);
+    }
+
+    private static boolean isAscii(String value) {
+        for (int index = 0; index < value.length(); index++) {
+            if (value.charAt(index) > 126) {
+                return false;
+            }
+        }
+        return true;
     }
 }

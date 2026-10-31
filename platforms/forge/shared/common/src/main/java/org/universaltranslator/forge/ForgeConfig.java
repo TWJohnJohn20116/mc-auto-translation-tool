@@ -10,6 +10,7 @@ import org.universaltranslator.core.HudIndicatorVisibility;
 import org.universaltranslator.core.TranslationQuality;
 import org.universaltranslator.core.TranslationStats;
 import org.universaltranslator.core.DebugLog;
+import org.universaltranslator.core.PersistentTranslationCache;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TextKind;
 import org.universaltranslator.core.LocalConfigSecurity;
@@ -33,9 +34,64 @@ import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Properties;
 import java.util.Set;
+import java.util.UUID;
 
 final class ForgeConfig {
     private static final String FILE_NAME = "universal-translator.properties";
+    /** Serializes every writer of one configuration file; see {@link #save()}. */
+    private static final java.util.concurrent.ConcurrentHashMap<Path, Object> SAVE_MONITORS =
+            new java.util.concurrent.ConcurrentHashMap<Path, Object>();
+    /**
+     * The advanced keys as they were last read from disk, shared by every snapshot of one file.
+     *
+     * <p>{@code toProperties()} re-reads those keys so a settings screen holding an older snapshot
+     * cannot undo a change the diagnostics panel made meanwhile, and one Save rebuilds it four times
+     * (the three {@code withXxx} copies plus the write). Each rebuild was a full file open and
+     * {@code Properties.load} on the calling thread — the render thread for a Save, the client tick
+     * for F8 — which costs 5–50 ms per read once {@code config/} sits in a cloud-synced folder. One
+     * copy is enough: this class is the only writer, and the stamp below re-reads as soon as the
+     * file changes by any other means.
+     */
+    private static volatile DiskCopy diskCopy;
+    /**
+     * How many saves this process has staged for writing, on any configuration file.
+     *
+     * <p>A cached copy is only trusted while this has not moved since it was read. {@link #save()}
+     * drops the copy inside the same monitor as the write, but a reader can read the entry just
+     * before that drop and stat the file just after the replace — and a filesystem whose timestamp
+     * granularity is coarser than that gap (FAT 2 s, some SMB and cloud-sync directories 1 s) reports
+     * the same (mtime, size) for a same-length rewrite. Counting the saves invalidates exactly that
+     * entry, without distrusting a correct one for a fixed window after every save.
+     */
+    private static volatile long saveCounter;
+
+    /**
+     * The last snapshot this process built, kept after the live one is dropped.
+     *
+     * <p>{@link ForgeTranslationRuntime#shutdown()} clears {@code activeConfig} when a load fails,
+     * which is exactly the case where the player needs the settings screen to repair the file. Only
+     * the successful path of {@link #load(Path)} writes this, so it can never present a
+     * configuration that was never readable.
+     */
+    private static volatile ForgeConfig lastLoaded;
+
+    /** One read of the configuration file: its parsed contents plus the stamp they were read at. */
+    private static final class DiskCopy {
+        final Path file;
+        final long lastModified;
+        final long size;
+        final Properties properties;
+        /** {@link ForgeConfig#saveCounter} as it stood when this copy was read. */
+        final long saveCount;
+
+        DiskCopy(Path file, long lastModified, long size, long saveCount, Properties properties) {
+            this.file = file;
+            this.lastModified = lastModified;
+            this.size = size;
+            this.saveCount = saveCount;
+            this.properties = properties;
+        }
+    }
 
     final boolean enabled;
     final boolean translateChat;
@@ -208,8 +264,16 @@ final class ForgeConfig {
         }
 
         Properties stored = new Properties();
+        boolean recovered = false;
         try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
             stored.load(reader);
+        } catch (IOException | RuntimeException malformed) {
+            // A single unreadable byte used to be fatal for the whole session, and the broken file
+            // stayed on disk, so every later load - including the settings screen that is the only
+            // way to fix it - failed the same way. Move it aside and start from the defaults.
+            recovered = true;
+            stored = new Properties();
+            quarantine(file, malformed);
         }
         Properties properties = defaults();
         properties.putAll(stored);
@@ -223,15 +287,116 @@ final class ForgeConfig {
         properties.setProperty("config-version", "6");
         LocalConfigSecurity.restrictToOwner(file);
         ForgeConfig loaded = new ForgeConfig(
-                properties, file, configDirectory.resolve("universal-translator-cache.properties"));
-        if (migrated) {
-            loaded.save();
+                properties, file, configDirectory.resolve(PersistentTranslationCache.FILE_NAME));
+        if (migrated || recovered) {
+            try {
+                loaded.save();
+            } catch (IOException unwritable) {
+                // Reading must not require a writable directory: a launcher-managed or cloud-synced
+                // configuration directory can be read-only, and failing here disabled translation
+                // for the whole session over an optional write-back.
+                DebugLog.global().log("config", "write", "skipped",
+                        "reason", String.valueOf(unwritable.getClass().getSimpleName()));
+            }
         }
         // The statistics file sits next to the configuration. Reading it here is the one place every
         // platform passes through at startup, so no runtime has to know about statistics.
         TranslationStats.global().attach(file.resolveSibling(TranslationStats.FILE_NAME));
         DebugLog.global().configure(file.resolveSibling(DebugLog.FILE_NAME), loaded.debugLog());
+        lastLoaded = loaded;
         return loaded;
+    }
+
+    /**
+     * The configuration the running client already published, or a fresh read when there is none.
+     *
+     * <p>Every settings entry point called {@link #load(Path)}, which is a directory create, a file
+     * stat, a full properties parse, a statistics attach and a debug-log reconfiguration, on the
+     * thread that handled the key or the title-screen click. The client already holds exactly that
+     * configuration, so the file is only the answer before the first load succeeded — the case that
+     * has to keep working, because a file that cannot be read is what makes a player reach for the
+     * settings screen in the first place.
+     *
+     * @param configDirectory directory the configuration file lives in, used only for the fallback
+     * @return the live configuration, or whatever {@link #load(Path)} produces
+     */
+    public static ForgeConfig liveOrLoad(Path configDirectory) throws IOException {
+        ForgeConfig live = ForgeTranslationRuntime.diagnosticsConfig();
+        return live == null ? load(configDirectory) : live;
+    }
+
+    /**
+     * The configuration a settings entry point should edit when {@link #liveOrLoad} just threw.
+     *
+     * <p>{@code liveOrLoad} only throws from {@code load()}, which it only evaluates once the live
+     * copy is already {@code null}; calling it again in the failure branch therefore answers
+     * {@code null} by construction, and every entry point that tried it had a dead key exactly when
+     * the file needed repairing. The last snapshot this process read is the one copy that is still
+     * editable, and {@code load()} is the last resort for the very first launch.
+     *
+     * @param configDirectory directory the configuration file lives in
+     * @return the live configuration, the last loaded one, or whatever {@code load()} produces
+     */
+    static ForgeConfig forEditing(Path configDirectory) throws IOException {
+        ForgeConfig live = ForgeTranslationRuntime.diagnosticsConfig();
+        if (live != null) {
+            return live;
+        }
+        ForgeConfig recovered = lastLoaded();
+        return recovered != null ? recovered : load(configDirectory);
+    }
+
+    /**
+     * {@link #forEditing} for the entry points whose rescue runs inside a {@code catch} block.
+     *
+     * <p>{@code forEditing} throws, so a caller that has already caught the first failure would have
+     * to catch a second one right next to it. That is how the settings entry points ended up each
+     * carrying their own copy of the ladder {@code forEditing} was introduced to replace. Answering
+     * {@code null} keeps the rescue a single expression, and every one of those entry points already
+     * has the branch that reports "the settings screen could not be opened".
+     *
+     * @param configDirectory directory the configuration file lives in
+     * @return the live configuration, the last loaded one, or {@code null} when none can be had
+     */
+    static ForgeConfig forEditingOrNull(Path configDirectory) {
+        try {
+            return forEditing(configDirectory);
+        } catch (Exception unreadable) {
+            // The caller's failure branch names the failure that sent it here; a second exception
+            // raised by the retry would only replace the cause the player needs to see.
+            return null;
+        }
+    }
+
+    /**
+     * The last configuration this process loaded, or {@code null} before the first success.
+     *
+     * <p>Used only by the settings entry points' failure branch: it is the copy to edit when the
+     * live one is gone and the file cannot be read again.
+     */
+    static ForgeConfig lastLoaded() {
+        return lastLoaded;
+    }
+
+    /**
+     * Moves an unreadable configuration aside so the next launch starts from the defaults.
+     *
+     * <p>Renamed rather than deleted: the file may hold nothing but an edit the player can repair by
+     * hand, and the diagnostics page can point at the copy.
+     */
+    private static void quarantine(Path file, Exception cause) {
+        try {
+            Path backup = file.resolveSibling(file.getFileName().toString()
+                    + ".corrupt-" + System.currentTimeMillis());
+            Files.move(file, backup, StandardCopyOption.REPLACE_EXISTING);
+            DebugLog.global().log("config", "quarantined",
+                    "file", String.valueOf(backup.getFileName()),
+                    "reason", String.valueOf(cause.getClass().getSimpleName()));
+        } catch (IOException | RuntimeException unquarantinable) {
+            // Nothing else can be done here; the defaults still let the session run.
+            DebugLog.global().log("config", "quarantine", "failed",
+                    "reason", String.valueOf(unquarantinable.getClass().getSimpleName()));
+        }
     }
 
     ForgeConfig withSettings(
@@ -411,15 +576,45 @@ final class ForgeConfig {
     }
 
     void save() throws IOException {
-        Path temporary = configFile.resolveSibling(configFile.getFileName().toString() + ".tmp");
+        // One writer at a time per configuration file. Two paths do reach save() at the same time —
+        // the settings screen's Save and the F8 toggle — and interleaved writers each removed the
+        // other's temporary file, so one of them moved a half-written file into place.
+        Path lockKey = configFile.toAbsolutePath();
+        Object monitor;
+        synchronized (SAVE_MONITORS) {
+            monitor = SAVE_MONITORS.get(lockKey);
+            if (monitor == null) {
+                monitor = new Object();
+                SAVE_MONITORS.put(lockKey, monitor);
+            }
+        }
+        synchronized (monitor) {
+            writeAtomically();
+            // What is on disk is now this snapshot, so no cached copy can be newer than it: keeping
+            // the pre-save read would let the next toProperties() answer with the older keys.
+            diskCopy = null;
+        }
+    }
+
+    private void writeAtomically() throws IOException {
+        // Merge before the generation moves. The merge read can then still be answered by the copy
+        // withXxx() just built — this process has not touched the file since — where bumping first
+        // made the stamp differ and forced one open plus Properties.load on every single save.
+        Properties staged = toProperties();
+        // Advance the generation only now, and still before the move below: a reader that stats the
+        // new file must never pick up the older count and trust a stale copy.
+        saveCounter++;
+        // Unique per attempt. Writers on the same path used to share one "<file>.tmp" name, and the
+        // second writer's deleteIfExists removed the file the first one was still writing into.
+        Path temporary = configFile.resolveSibling(
+                configFile.getFileName().toString() + "." + UUID.randomUUID() + ".tmp");
         try {
-            Files.deleteIfExists(temporary);
             Files.createFile(temporary);
             LocalConfigSecurity.restrictToOwner(temporary);
             try (Writer writer = Files.newBufferedWriter(
                     temporary, StandardCharsets.UTF_8,
                     StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
-                toProperties().store(writer,
+                staged.store(writer,
                         "MC Auto Translation Tool - online translation may send selected game, mod, and modpack text to this endpoint");
             }
             try {
@@ -473,6 +668,10 @@ final class ForgeConfig {
 
     String editorModel(String selectedProvider) {
         return onlineProviderConfig.llmEditorSettings(selectedProvider).model();
+    }
+
+    String editorApiVersion(String selectedProvider) {
+        return onlineProviderConfig.llmEditorApiVersion(selectedProvider);
     }
 
     boolean allows(TextKind kind) {
@@ -543,12 +742,71 @@ final class ForgeConfig {
         return properties;
     }
 
+    /**
+     * The whole configuration file as it currently stands on disk, read at most once per revision.
+     *
+     * @param file configuration file; {@code null} reads nothing
+     * @return the parsed file, or {@code null} when it cannot be read right now
+     */
+    private static Properties diskProperties(Path file) {
+        if (file == null) {
+            return null;
+        }
+        long lastModified;
+        long size;
+        try {
+            lastModified = Files.getLastModifiedTime(file).toMillis();
+            size = Files.size(file);
+        } catch (IOException | RuntimeException missing) {
+            return null;
+        }
+        DiskCopy cached = diskCopy;
+        long saves = saveCounter;
+        // save() already drops the copy under the monitor that performs the write, so this is the
+        // second line of defence rather than the first: the counter catches the reader that read the
+        // entry before the drop and reached the file after the replace. What no reader can catch is
+        // another process's same-length rewrite inside one timestamp tick, and a clock cannot tell
+        // those apart either.
+        if (cached != null && cached.saveCount == saves && cached.file.equals(file)
+                && cached.lastModified == lastModified && cached.size == size) {
+            return cached.properties;
+        }
+        Properties stored = new Properties();
+        try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            stored.load(reader);
+        } catch (IOException | RuntimeException malformed) {
+            return null;
+        }
+        diskCopy = new DiskCopy(file, lastModified, size, saves, stored);
+        return stored;
+    }
+
+    /** Drops the shared copy of the file; called when the client releases its configuration. */
+    static void clearCaches() {
+        diskCopy = null;
+        saveCounter = 0L;
+    }
+
     private Properties toProperties() {
         Properties properties = new Properties();
         onlineProviderConfig.writeTo(properties);
         // Keep the advanced settings the diagnostics panel may have changed after this snapshot,
         // except for the ones this snapshot wrote itself (see ownedPromptKeys).
-        OnlineProviderConfig.preservePromptSettings(configFile, properties, ownedPromptKeys);
+        Properties stored = diskProperties(configFile);
+        if (stored == null) {
+            // Unreadable file: write this snapshot as it stands, and keep the trace the shared helper
+            // logs so a value the panel just wrote is not lost silently.
+            OnlineProviderConfig.preservePromptSettings(configFile, properties, ownedPromptKeys);
+        } else {
+            for (String key : OnlineProviderConfig.promptKeys()) {
+                if (ownedPromptKeys.contains(key)) {
+                    continue;
+                }
+                if (stored.containsKey(key)) {
+                    properties.setProperty(key, stored.getProperty(key, ""));
+                }
+            }
+        }
         properties.setProperty("config-version", "6");
         properties.setProperty("enabled", Boolean.toString(enabled));
         properties.setProperty("translate-chat", Boolean.toString(translateChat));

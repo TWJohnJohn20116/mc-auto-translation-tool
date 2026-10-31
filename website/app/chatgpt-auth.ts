@@ -1,4 +1,3 @@
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 export type ChatGPTUser = {
@@ -8,35 +7,34 @@ export type ChatGPTUser = {
   fullName: string | null;
 };
 
-const USER_ID_HEADER = "oai-authenticated-user-id";
-const USER_EMAIL_HEADER = "oai-authenticated-user-email";
-const USER_FULL_NAME_HEADER = "oai-authenticated-user-full-name";
-const USER_FULL_NAME_ENCODING_HEADER =
-  "oai-authenticated-user-full-name-encoding";
-const PERCENT_ENCODED_UTF8 = "percent-encoded-utf-8";
 const SIGN_IN_PATH = "/signin-with-chatgpt";
 const SIGN_OUT_PATH = "/signout-with-chatgpt";
 const CALLBACK_PATH = "/callback";
+// Synthetic origin used to normalize `return_to` candidates. It is not a real
+// site: parsing with it only serves to run the URL normalizer.
+const RETURN_PATH_ORIGIN = "https://app.local";
+
+/**
+ * Identity is not configured on this deployment, so this reports it instead of
+ * pretending to read one.
+ *
+ * `worker/index.ts` strips every `oai-authenticated-*` header before the app router
+ * sees a request — without that strip, a caller could forge a user id and an email
+ * with two request headers. Those headers used to be exactly what this reader
+ * parsed, so the two halves cancelled out: every request produced `null`, and
+ * `requireChatGPTUser()` answered with a sign-in redirect that could never complete
+ * (an endless redirect the moment a route called it). Until a real session — or a
+ * signed header the worker can verify — replaces the current scheme, fail loudly.
+ *
+ * Keep this paragraph and the one above `IDENTITY_HEADER_PREFIX` in
+ * `worker/index.ts` describing the same decision: they are one contract.
+ */
+const AUTH_NOT_CONFIGURED =
+  "authentication is not configured: worker/index.ts strips every " +
+  "oai-authenticated-* header, so no request carries a platform-injected identity";
 
 export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
-  const requestHeaders = await headers();
-  const userId = requestHeaders.get(USER_ID_HEADER);
-  const email = requestHeaders.get(USER_EMAIL_HEADER);
-  if (!userId || !email) return null;
-
-  const encodedFullName = requestHeaders.get(USER_FULL_NAME_HEADER);
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get(USER_FULL_NAME_ENCODING_HEADER) === PERCENT_ENCODED_UTF8
-      ? safeDecodeURIComponent(encodedFullName)
-      : null;
-
-  return {
-    userId,
-    displayName: fullName ?? email,
-    email,
-    fullName,
-  };
+  throw new Error(AUTH_NOT_CONFIGURED);
 }
 
 export async function requireChatGPTUser(
@@ -45,7 +43,7 @@ export async function requireChatGPTUser(
   const user = await getChatGPTUser();
   if (user) return user;
 
-  redirect(chatGPTSignInPath(returnTo));
+  return redirect(chatGPTSignInPath(returnTo));
 }
 
 export function chatGPTSignInPath(returnTo: string): string {
@@ -72,11 +70,11 @@ function safeRelativeReturnPath(value: string): string {
 
   let url: URL;
   try {
-    url = new URL(value, "https://app.local");
+    url = new URL(value, RETURN_PATH_ORIGIN);
   } catch {
     return "/";
   }
-  if (url.origin !== "https://app.local") return "/";
+  if (url.origin !== RETURN_PATH_ORIGIN) return "/";
   // Dot-segment removal happens during parsing, so the *normalized* pathname must
   // be re-validated: `/a/..//evil.com` collapses to `//evil.com`, which a browser
   // resolves as an absolute cross-origin URL when used in a Location header.
@@ -84,20 +82,33 @@ function safeRelativeReturnPath(value: string): string {
   if (isReservedAuthPath(url.pathname)) return "/";
   // Percent-encoded separators (`%2F`) survive `new URL`, so a consumer that
   // decodes `return_to` before redirecting would still see a protocol-relative
-  // path. Reject any pathname that escapes the origin once decoded.
-  if (isProtocolRelativeAfterDecoding(url.pathname)) return "/";
+  // path. Decode step by step and re-normalize every step, because a consumer may
+  // normalize *after* decoding: a `startsWith` check on the raw string misses
+  // inputs such as `/a/%252e%252e%252f..//evil.com`, whose dot segments only
+  // collapse into `//evil.com` once the extra layer is decoded.
+  if (escapesOriginAfterDecoding(url.pathname)) return "/";
 
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
-function isProtocolRelativeAfterDecoding(pathname: string): boolean {
+function escapesOriginAfterDecoding(pathname: string): boolean {
   // Percent-encoding can be applied more than once, so decode until the value
-  // stops changing (bounded to avoid pathological input) and check each step.
+  // stops changing (bounded to avoid pathological input) and validate each step.
   let candidate = pathname;
   for (let pass = 0; pass < 4; pass += 1) {
-    if (candidate.startsWith("//") || candidate.startsWith("/\\")) return true;
+    let normalized: URL;
+    try {
+      normalized = new URL(candidate, RETURN_PATH_ORIGIN);
+    } catch {
+      return true;
+    }
+    if (normalized.origin !== RETURN_PATH_ORIGIN) return true;
+    if (normalized.pathname.startsWith("//") || normalized.pathname.startsWith("/\\")) {
+      return true;
+    }
     const decoded = safeDecodeURIComponent(candidate);
-    if (decoded === null || decoded === candidate) return false;
+    if (decoded === null) return true;
+    if (decoded === candidate) return false;
     candidate = decoded;
   }
   return false;

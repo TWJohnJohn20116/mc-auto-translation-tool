@@ -7,6 +7,7 @@
   "authors": [
     "我小张7272635"
   ],
+  "icon": "assets/universal_translator/icon.png",
   "contact": {
     "homepage": "https://space.bilibili.com/3546631091783712",
     "sources": "https://github.com/TWJohnJohn20116/mc-auto-translation-tool"
@@ -31,7 +32,7 @@
     }
   ],
   "depends": {
-    "fabricloader": ">=0.19.3",
+    "fabricloader": ">=${loaderFloor}",
     "minecraft": [
       "26.1",
       "26.1.1",
@@ -39,8 +40,8 @@
       "26.2",
       "26.3"
     ],
-    "java": ">=25",
-    "fabric-api": "*",
-    "universal_translator": "*"
+    "java": ">=${javaFloor}",
+    "${fabricDependency}": "*",
+    "universal_translator": ">=${version}"
   }
 }

@@ -10,8 +10,15 @@ repositories {
 version = project.mod_version
 group = project.maven_group
 
+// The Loader the discovery harness resolves the nested jars with. It is the version
+// platforms/fabric/bundles/shared-test is compiled against, so it is not derived from the members: the
+// 1.20 bundle's members declare 0.15.11/0.16.9, a generation older than that harness. The floor
+// players see is bundleLoaderFloor below; this value only picks the test-time Loader, and
+// verifyLoaderSelection prints it so a bump shows up in the CI log instead of staying an edit.
+def bundleLoaderVersion = "0.19.3"
+
 dependencies {
-    testImplementation "net.fabricmc:fabric-loader:0.19.3"
+    testImplementation "net.fabricmc:fabric-loader:${bundleLoaderVersion}"
     testRuntimeOnly "org.ow2.asm:asm:9.10.1"
     testRuntimeOnly "org.ow2.asm:asm-analysis:9.10.1"
     testRuntimeOnly "org.ow2.asm:asm-commons:9.10.1"
@@ -32,10 +39,21 @@ def implementationJars = supportedVersions.collectEntries { gameVersion ->
     [(gameVersion): project(":platform-fabric-${gameVersion}").tasks.named("remapJar")]
 }
 
+// The one declared loader/java floor for all five members. It has to be the weakest requirement
+// among them: a single jar has to stay installable for every release it ships, so the stricter
+// per-version floor stays where it belongs, in that member's own fabric.mod.json. Declaring the
+// number once here keeps it from being hand-copied into the template and drifting.
+ext.bundleLoaderFloor = "0.19.3"
+ext.bundleJavaFloor = "17"
+
 processResources {
     inputs.property "version", project.version
+    inputs.property "fabricDependency", gradle.ext.fabricApiModId
+    inputs.property "loaderFloor", project.ext.bundleLoaderFloor
+    inputs.property "javaFloor", project.ext.bundleJavaFloor
     filesMatching("fabric.mod.json") {
-        expand "version": project.version
+        expand "version": project.version, "fabricDependency": gradle.ext.fabricApiModId,
+                "loaderFloor": project.ext.bundleLoaderFloor, "javaFloor": project.ext.bundleJavaFloor
     }
 }
 
@@ -50,19 +68,34 @@ jar {
 }
 ext.jarLicenseName = "LICENSE_universal_translator_bundle"
 apply from: rootProject.file("gradle/jar-contents.gradle")
+// The mod-list icon: one file under platforms/shared/lang/json, not a copy per bundle.
+apply from: rootProject.file("gradle/bundle-icon.gradle")
+// The reverse direction: a fabric.mod.json that declares a version this jar does not ship would pass
+// every presence check below, and the Loader then fails that version at resolution time.
+ext.bundleSupportedVersions = supportedVersions
+apply from: rootProject.file("gradle/bundle-metadata-verify.gradle")
 
 tasks.register("verifyBundle") {
     dependsOn jar
     doLast {
         def archive = jar.archiveFile.get().asFile
-        def required = ["fabric.mod.json"] + supportedVersions.collect {
+        def required = ["fabric.mod.json", "assets/universal_translator/icon.png"] + supportedVersions.collect {
             "META-INF/jars/universal-translator-${it}.jar"
         }
-        required.each { path ->
-            if (!zipTree(archive).matching { include path }.files) {
-                throw new GradleException("Missing bundle entry: ${path}")
-            }
+        // One walk for the whole list: collect the entries that exist, then compare names. zipTree is
+        // the only reader that sees the entries `jar` writes from other tasks' outputs; a raw ZipFile
+        // on the same path reports the nested jars as absent.
+        def present = [] as Set
+        zipTree(archive).matching {
+            include "fabric.mod.json"
+        include "assets/universal_translator/icon.png"
+            include "META-INF/jars/universal-translator-*.jar"
+        }.files.each { present.add(it.name) }
+        def missing = required.findAll { !present.contains(it.tokenize('/').last()) }
+        if (!missing.isEmpty()) {
+            throw new GradleException("Missing bundle entries: ${missing}")
         }
+        verifyBundleMetadata()
         println "Verified ${archive.name}: all ${supportedVersions.size()} Minecraft 1.19 implementations present"
     }
 }
@@ -72,6 +105,12 @@ tasks.register("verifyLoaderSelection", JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
     mainClass = "org.universaltranslator.bundle.BundleResolutionVerifier"
     args([jar.archiveFile.get().asFile.absolutePath] + supportedVersions)
+    doFirst {
+        // Which nested jar the Loader picks is decided by the Loader on the classpath above, so a
+        // resolution result only means something together with the generation it ran on.
+        println "verifyLoaderSelection: resolving ${supportedVersions.size()} implementations with " +
+                "fabric-loader ${bundleLoaderVersion}"
+    }
 }
 
 // Aggregate-bundle resolution check; the expected version list is settings.gradle's
@@ -85,9 +124,11 @@ test {
 build.dependsOn verifyBundle, verifyLoaderSelection
 
 
-// The Fabric Loader discovery harness is byte-identical across these seven bundles; it lives in
-// platforms/fabric/bundles/shared-test so a Loader API change is fixed once. The 1.20/1.21 and
-// 26.x bundles keep their own copy: they run against a different Loader generation.
+// The Fabric Loader discovery harness is identical across the Fabric bundles; it lives in
+// platforms/fabric/bundles/shared-test so a Loader API change is fixed once. The 1.20 and 1.21
+// copies were byte-identical to this one and point here as well; the 26.x bundle keeps its own,
+// because its fabric.mod.json declares `fabric-api` and not `fabric`, so its stub game provider
+// registers one fewer builtin mod.
 sourceSets {
     test {
         java.srcDir rootProject.file("platforms/fabric/bundles/shared-test/src/test/java")

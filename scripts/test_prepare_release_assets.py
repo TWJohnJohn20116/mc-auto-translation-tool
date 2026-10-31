@@ -11,6 +11,8 @@ from pathlib import Path
 from prepare_release_assets import (
     FORGE_FAMILIES,
     PreparationError,
+    installable_manifest,
+    list_installable,
     prepare_release,
     unmerged_forge_groups,
 )
@@ -166,6 +168,38 @@ class PrepareReleaseAssetsTest(unittest.TestCase):
                 digests,
                 {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in second},
             )
+
+    def test_manifest_only_matches_prepare_release_names(self) -> None:
+        # `--manifest-only`（prepare-release.yml 寫進 downloads/<version>/release-assets.txt 的那一份）
+        # 與 `prepare_release`（真正組裝資產的那一份）必須對同一份 downloads/ 給出同一組可安裝檔名：
+        # 先前兩邊各有一份「檔名推導」，清單可以被一份比生產端寬的判定寫出來，而清單就是四份 README
+        # 與網站的權威——漂移要等到發布那一輪才爆。
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            release = root / "release"
+            release.mkdir()
+            self._fixture(release)
+            assets = prepare_release(release, root / "assets", "1.2.3")
+            self.assertEqual(
+                # prepare_release 回的是「上傳到 Release 的全部資產」，含 SHA256SUMS.txt 與
+                # release-assets.txt 本身；清單描述的是可安裝 JAR，兩邊要落在同一個判準上。
+                installable_manifest(a.name for a in assets if a.name.endswith(".jar")),
+                installable_manifest(list_installable(release, "1.2.3")),
+            )
+
+    def test_manifest_only_rejects_a_layout_the_producer_rejects(self) -> None:
+        # 生產端 raise 的佈局，`--manifest-only` 不得回 0 並把清單寫出去。
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            release = root / "release"
+            release.mkdir()
+            self._fixture(release)
+            wrong = release / "MCAutoTranslationTool-old-mc1.12.2-forge.jar"
+            wrong.write_bytes(forge_jar("1.12.2"))
+            with self.assertRaisesRegex(PreparationError, "does not match version"):
+                prepare_release(release, root / "assets", "1.2.3")
+            with self.assertRaisesRegex(PreparationError, "does not match version"):
+                list_installable(release, "1.2.3")
 
     def test_rejects_forge_family_with_different_payloads(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

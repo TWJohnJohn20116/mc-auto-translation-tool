@@ -40,6 +40,20 @@ class PreparationError(RuntimeError):
     pass
 
 
+#: 可安裝資產清單的檔名。網站測試以 `downloads/<版本>/release-assets.txt` 為 31 個可安裝檔名的權威。
+MANIFEST_NAME = "release-assets.txt"
+
+
+def installable_manifest(names) -> str:
+    """`release-assets.txt` 的內容：可安裝檔名排序後一行一個。
+
+    31 個「可直接安裝」的檔名是發布階段才合併出來的（四個 Forge 家族 + fabric-all），靜態上無法從
+    48 個目標 JAR 推出，所以四份 README 與官網一直是手抄的。這份清單是「文件 ↔ 真實資產」比對的
+    唯一真憑實據；沒有它，四邊一起漂移也照樣全綠。
+    """
+    return "".join(f"{name}\n" for name in sorted(names))
+
+
 @dataclass(frozen=True)
 class ForgeFamily:
     """一個合併後的 Forge 家族：成員各一顆 JAR，共用同一份 payload。
@@ -115,7 +129,10 @@ def discover_jars(release_dir: Path) -> dict[str, tuple[Path, bytes]]:
         if not match:
             raise PreparationError(f"invalid split JAR part name: {part.name}")
         logical.add((part.parent / match.group("jar")).resolve())
-    result = {path.name: (path, _read_jar(path)) for path in logical}
+    # 用排序後的順序而不是 set 的迭代序：Path 的雜湊取決於字串雜湊（每個進程隨機），於是
+    # _fabric_implementations 遇到重複版本時丟哪一顆、unmerged_forge_groups 印 NOTE 的順序、
+    # forge_by_version 被同名覆蓋時保留哪一顆都會隨 PYTHONHASHSEED 變動。
+    result = {path.name: (path, _read_jar(path)) for path in sorted(logical)}
     if not result:
         raise PreparationError(f"no release JARs found in {release_dir}")
     return result
@@ -350,14 +367,119 @@ def unmerged_forge_groups(
     ]
 
 
+def _logical_jar_names(release_dir: Path) -> list[str]:
+    """`release_dir` 的邏輯 JAR 檔名（分片以 ``part-aa`` 還原成 ``*.jar``），不讀位元組。
+
+    `discover_jars` 會把每顆 JAR 讀進記憶體（分片還要接起來），那是組裝資產才需要的成本；
+    「有哪些可安裝檔名」只取決於檔名。
+    """
+    names = {path.name for path in release_dir.glob("*.jar")}
+    for part in release_dir.glob("*.jar.part-*"):
+        match = PART_PATTERN.match(part.name)
+        if not match:
+            raise PreparationError(f"invalid split JAR part name: {part.name}")
+        names.add(match.group("jar"))
+    if not names:
+        raise PreparationError(f"no release JARs found in {release_dir}")
+    # 分片本身的合法性（完整檔與分片並存、後綴不連續）用同一支檢查，只是不讀內容。
+    for name in names:
+        _split_parts(release_dir / name)
+    return sorted(names)
+
+
+def _forge_names_by_version(names, version: str) -> dict[str, str]:
+    """Forge 版本 → 檔名。兩個檔名指向同一個 Minecraft 版本是顯性錯誤。
+
+    `prepare_release` 與 `--manifest-only` 都經過這裡：先前只有前者驗，於是清單會被一份比生產端
+    寬的判定寫出來（`setdefault` 靜默取第一個檔名），而生產端對同一份佈局 raise 整個版本。
+    """
+    forge_names: dict[str, str] = {}
+    for name in names:
+        forge_version = _forge_version_from_name(name, version)
+        if not forge_version:
+            continue
+        if forge_version in forge_names:
+            raise PreparationError(
+                f"duplicate Forge JAR for {forge_version}: "
+                f"{forge_names[forge_version]} and {name}"
+            )
+        forge_names[forge_version] = name
+    return forge_names
+
+
+def installable_names(names, version: str) -> list[str]:
+    """`downloads/<version>` 的邏輯檔名 → 可安裝檔名，不建置也不解壓任何 JAR。
+
+    `prepare-release.yml` 只需要那 31 個檔名，先前卻為它把整支腳本跑了一遍：48 顆 JAR 被完整
+    解壓、`fabric-all.jar` 被重建，那份產物立刻被丟掉，同一個版本隨後又在 `build.yml` 與
+    `publish-release.yml` 各重建一次。檔名只取決於 ``downloads/<version>`` 的檔名與
+    `FORGE_FAMILIES`，所以用檔名推導出與 `prepare_release` 相同的一組「可安裝」名稱——
+    `prepare_release` 的輸出名稱也由這個函式決定，兩條入口只剩一份實作。
+    """
+    expected_prefix = f"MCAutoTranslationTool-{version}-"
+    mismatched = sorted(name for name in names if not name.startswith(expected_prefix))
+    if mismatched:
+        raise PreparationError(
+            "release JAR filename does not match version "
+            f"{version}: {', '.join(mismatched)}"
+        )
+    fabric = [name for name in names if name.lower().endswith("-fabric.jar")]
+    if not fabric:
+        raise PreparationError("release contains no Fabric implementations")
+    consumed = set(fabric)
+    generated = [f"MCAutoTranslationTool-{version}-fabric-all.jar"]
+    forge_names = _forge_names_by_version(names, version)
+    for family in FORGE_FAMILIES:
+        missing = [item for item in family.members if item not in forge_names]
+        if missing:
+            raise PreparationError(
+                f"Forge family {family.output_range} is missing: {', '.join(missing)}"
+            )
+        consumed.update(forge_names[item] for item in family.members)
+        generated.append(
+            f"MCAutoTranslationTool-{version}-mc{family.output_range}-forge.jar"
+        )
+    return generated + [name for name in names if name not in consumed]
+
+
+def list_installable(release_dir: Path, version: str) -> list[str]:
+    """`installable_names` 的 I/O 版本：只列檔名、驗分片佈局，不讀任何位元組。"""
+    release_dir = release_dir.resolve()
+    if not release_dir.is_dir():
+        raise PreparationError(f"release directory is missing: {release_dir}")
+    return installable_names(_logical_jar_names(release_dir), version)
+
+
 def _is_within(path: Path, parent: Path) -> bool:
     """Return True when `path` is `parent` itself or nested inside it.
 
     Uses `Path.parents` rather than `Path.is_relative_to` so the guard also holds on
-    interpreters older than 3.9; both operands are already resolved, so a cross-drive
-    comparison can never occur here.
+    interpreters older than 3.9. Both operands are resolved by the caller, so a relative
+    `..` cannot escape the comparison. A path on another drive (or another root) shares no
+    parents with `parent` and therefore compares as "not inside": this function alone
+    cannot prove a directory is safe, which is why `_validate_output_dir` also requires an
+    explicitly allowed location.
     """
     return path == parent or parent in path.parents
+
+
+def _validate_output_dir(output_dir: Path) -> None:
+    """Refuse an output directory that a mistyped argument could point at repository content.
+
+    The three release-directory guards below only describe how `output_dir` relates to
+    `downloads/<version>`, so `--output-dir scripts`, `--output-dir docs`, `--output-dir .`
+    and `--output-dir ..` all passed them and were then deleted by `shutil.rmtree` and
+    refilled with the generated JARs.
+    """
+    if _is_within(output_dir, Path.cwd().resolve() / "build"):
+        return
+    # build/ 之外只接受「還不存在的新目錄」（CI 傳 $RUNNER_TEMP/release-assets）或上一次執行
+    # 留下的資產集——後者以 SHA256SUMS.txt 認身分，那是這個工具唯一的產物簽名。
+    if output_dir.exists() and not (output_dir / "SHA256SUMS.txt").is_file():
+        raise PreparationError(
+            "output directory exists and is not a previous asset set "
+            f"(no SHA256SUMS.txt): {output_dir}"
+        )
 
 
 def prepare_release(
@@ -379,6 +501,7 @@ def prepare_release(
             "output directory must not be inside the release directory: "
             f"{output_dir} is inside {release_dir}"
         )
+    _validate_output_dir(output_dir)
     jars = discover_jars(release_dir)
     expected_prefix = f"MCAutoTranslationTool-{version}-"
     mismatched = sorted(name for name in jars if not name.startswith(expected_prefix))
@@ -387,7 +510,7 @@ def prepare_release(
             "release JAR filename does not match version "
             f"{version}: {', '.join(mismatched)}"
         )
-    fabric, consumed = _fabric_implementations(jars)
+    fabric, _ = _fabric_implementations(jars)
 
     for group in unmerged_forge_groups(jars, version):
         print(
@@ -397,11 +520,12 @@ def prepare_release(
             file=sys.stderr,
         )
 
-    forge_by_version: dict[str, tuple[str, bytes]] = {}
-    for name, (_, data) in jars.items():
-        forge_version = _forge_version_from_name(name, version)
-        if forge_version:
-            forge_by_version[forge_version] = (name, data)
+    # 同名覆蓋會讓「這一版的 Forge JAR 是哪一顆」取決於迭代序；規則在 `_forge_names_by_version`
+    # 一處（`--manifest-only` 走同一條），兩個檔名指向同一個 Minecraft 版本一律 raise。
+    forge_by_version: dict[str, tuple[str, bytes]] = {
+        forge_version: (name, jars[name][1])
+        for forge_version, name in _forge_names_by_version(list(jars), version).items()
+    }
 
     generated: dict[str, bytes] = {
         f"MCAutoTranslationTool-{version}-fabric-all.jar": _build_fabric_all(version, fabric)
@@ -416,11 +540,12 @@ def prepare_release(
         members = [forge_by_version[item] for item in family.members]
         family_name, family_data = _build_forge_family(version, family, members)
         generated[family_name] = family_data
-        consumed.update(name for name, _ in members)
 
-    for name, (_, data) in jars.items():
-        if name not in consumed:
-            generated[name] = data
+    # 哪些檔名會變成資產只由 `installable_names` 決定（與 `--manifest-only` 同一份實作）；
+    # 這裡只負責把「不是生成物」的那些換成原始位元組。
+    for name in installable_names(list(jars), version):
+        if name not in generated:
+            generated[name] = jars[name][1]
 
     if output_dir.exists():
         shutil.rmtree(output_dir)
@@ -439,16 +564,38 @@ def prepare_release(
         encoding="ascii",
         newline="\n",
     )
-    return [*assets, checksum]
+    # 31 個「可直接安裝」的檔名是發布階段才合併出來的（四個 Forge 家族 + fabric-all），
+    # 靜態上無法從 downloads/<版本>/ 的 48 個目標 JAR 推出，所以四份 README 與官網
+    # 一直都是手抄的。這裡把同一批產物的檔名寫成清單，讓文件與網站測試有一個真的產生者：
+    # 沒有這份檔案時，任何「文件 ↔ 真實資產」的比對都只是文件自我一致。
+    manifest = output_dir / MANIFEST_NAME
+    manifest.write_text(
+        installable_manifest(path.name for path in assets),
+        encoding="ascii",
+        newline="\n",
+    )
+    return [*assets, checksum, manifest]
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--release-dir", required=True, type=Path)
-    parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--version", required=True)
+    parser.add_argument(
+        "--manifest-only",
+        action="store_true",
+        help="只把 release-assets.txt 的內容印到 stdout：不建置、不解壓、不寫入任何 JAR",
+    )
     args = parser.parse_args(argv)
+    if not args.manifest_only and args.output_dir is None:
+        parser.error("--output-dir is required unless --manifest-only is given")
     try:
+        if args.manifest_only:
+            sys.stdout.write(
+                installable_manifest(list_installable(args.release_dir, args.version))
+            )
+            return 0
         assets = prepare_release(args.release_dir, args.output_dir, args.version)
         for asset in assets:
             print(f"Created {asset}")

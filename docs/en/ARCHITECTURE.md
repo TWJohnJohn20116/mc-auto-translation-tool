@@ -41,7 +41,7 @@ separate compatible JARs.
 
 ## Capture strategy
 
-- Fabric 1.16.5, 1.19.2, 1.20.1, 1.21.4, 1.21.5, 1.21.11, 26.1, 26.1.2, and 26.2 replace display
+- Fabric 1.16.5, 1.19.2, 1.20.1, 1.21.4, 1.21.5, 1.21.11, 26.1, 26.1.2, 26.2, and 26.3 replace display
   copies at the corresponding final `MatrixStack`/`DrawContext`/`GuiGraphicsExtractor` and
   `TextRenderer`/`Font` render entry points, while recording
   the content type during chat, scoreboard, Tab list, title, Action Bar, and Boss Bar rendering.

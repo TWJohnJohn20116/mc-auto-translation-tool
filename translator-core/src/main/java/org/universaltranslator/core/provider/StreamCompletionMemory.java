@@ -1,5 +1,7 @@
 package org.universaltranslator.core.provider;
 
+import java.util.concurrent.TimeUnit;
+
 /**
  * Remembers that an endpoint's event stream never declares its own end.
  *
@@ -12,13 +14,23 @@ package org.universaltranslator.core.provider;
  * the doubling visible only to whoever read the trace.
  *
  * <p>Two incomplete streams in a row are enough to conclude that this endpoint does not declare its
- * end, and the existing flag then routes every later line straight to the plain path. One complete
+ * end. What the caller does with that answer is a cooldown rather than a permanent switch: a relay
+ * that dropped two connections during a network handover must not lose the early preview for the
+ * rest of the session, so the provider stops asking for a while and tries again later. One complete
  * stream resets the count, so a single dropped connection never disables streaming on an endpoint
  * that does declare its end.
  */
 final class StreamCompletionMemory {
     /** Consecutive incomplete streams after which streaming is abandoned. */
     static final int INCOMPLETE_STREAMS_BEFORE_FALLBACK = 2;
+    /**
+     * How long an endpoint is left off the streaming path after one stream failed.
+     *
+     * <p>One constant for all three streaming providers: the flag it replaces had no way back, so a
+     * single silent stream lost the early preview for the rest of the session, and a second copy of
+     * this duration inside one provider is how the three ended up disagreeing about it.
+     */
+    static final long STREAM_COOLDOWN_NANOS = TimeUnit.MINUTES.toNanos(10);
 
     private int incompleteStreams;
 
@@ -46,5 +58,27 @@ final class StreamCompletionMemory {
      */
     synchronized int incompleteStreams() {
         return incompleteStreams;
+    }
+
+    /**
+     * Whether a cooldown is still running.
+     *
+     * <p>The decision lives here, once, so the three streaming providers cannot disagree about when
+     * streaming may be attempted again.
+     *
+     * @param retryAtNanos instant a provider stored, or {@code 0} when nothing is cooling down
+     * @return whether streaming has to wait
+     */
+    static boolean coolingDown(long retryAtNanos) {
+        return retryAtNanos != 0L && System.nanoTime() - retryAtNanos < 0L;
+    }
+
+    /**
+     * The {@link System#nanoTime()} instant one cooldown ends.
+     *
+     * @return the value a provider stores to start cooling down
+     */
+    static long cooldownUntilNow() {
+        return System.nanoTime() + STREAM_COOLDOWN_NANOS;
     }
 }

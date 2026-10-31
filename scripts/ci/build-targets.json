@@ -1,0 +1,29 @@
+{
+  "platform": [
+    {"target": "fabric-1.16.x", "java": "21", "bundle": true},
+    {"target": "fabric-1.17-1.18.x", "java": "21", "bundle": true},
+    {"target": "fabric-1.19.x", "java": "21", "bundle": true},
+    {"target": "fabric-1.20.x", "java": "21", "bundle": true},
+    {"target": "fabric-1.21.x", "java": "21", "bundle": true},
+    {"target": "fabric-26.x", "java": "25", "bundle": true},
+    {"target": "neoforge-1.20.1", "java": "21", "bundle": false},
+    {"target": "forge-1.21.1", "java": "21", "bundle": false},
+    {"target": "forge-1.21.7", "java": "21", "bundle": false},
+    {"target": "forge-1.21.9", "java": "21", "bundle": false},
+    {"target": "forge-1.21.11", "java": "21", "bundle": false},
+    {"target": "forge-26.1.1", "java": "25", "bundle": false},
+    {"target": "forge-26.2", "java": "25", "bundle": false},
+    {"target": "neoforge-1.21.1", "java": "21", "bundle": false},
+    {"target": "neoforge-1.21.3", "java": "21", "bundle": false},
+    {"target": "neoforge-1.21.11", "java": "21", "bundle": false}
+  ],
+  "legacy": [
+    {"target": "fabric-1.16.5", "java": "21"},
+    {"target": "fabric-1.19.2", "java": "21"},
+    {"target": "fabric-1.20.1", "java": "21"},
+    {"target": "forge-1.16.5", "java": "21"},
+    {"target": "forge-1.18.2", "java": "21"},
+    {"target": "forge-1.19.2", "java": "21"},
+    {"target": "forge-1.20.1", "java": "21"}
+  ]
+}

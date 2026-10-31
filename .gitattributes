@@ -7,3 +7,7 @@ gradlew text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
 *.jar binary
+# 發布資產超過分片門檻時只以 .jar.part-XX 存在（release_layout.py 決定門檻與後綴），那種路徑不以
+# .jar 結尾，第 1 行的 * text=auto 與第 9 行的 *.jar 都匹配不到，於是落回由 Git 的內容啟發式決定
+# 是不是 binary。
+*.jar.part-* binary

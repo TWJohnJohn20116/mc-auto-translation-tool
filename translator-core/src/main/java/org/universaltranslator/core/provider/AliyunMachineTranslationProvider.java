@@ -1,5 +1,6 @@
 package org.universaltranslator.core.provider;
 
+import org.universaltranslator.core.TranslationOutputValidator;
 import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationRequest;
 import org.universaltranslator.core.net.CryptoSupport;
@@ -83,11 +84,12 @@ public final class AliyunMachineTranslationProvider implements TranslationProvid
         headers.put("x-acs-signature-method", "HMAC-SHA1");
         headers.put("x-acs-version", API_VERSION);
         String response = http.post(endpoint, payload, headers);
-        String translated = JsonStrings.readStringPath(response, "Data.Translated");
+        String translated = ProviderErrors.pathOrNull(
+                "Alibaba Cloud MT", response, "Data.Translated");
         if (translated == null || translated.trim().isEmpty()) {
             throw BaiduTranslationProvider.providerError(
                     "Alibaba Cloud MT", response, "Code", "Message");
         }
-        return translated;
+        return TranslationOutputValidator.requireValid(request.getText(), translated);
     }
 }

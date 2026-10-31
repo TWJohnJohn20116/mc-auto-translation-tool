@@ -49,10 +49,64 @@ public final class ProviderProbe {
             return new ClaudeTranslationProvider(endpoint, apiKey, model, http, prompt).probe();
         }
         if ("azure-openai".equals(selected)) {
-            return new AzureOpenAiTranslationProvider(endpoint, apiKey, model,
-                    AzureOpenAiTranslationProvider.DEFAULT_API_VERSION, http, prompt).probe();
+            // The version the translation path would use is not part of this signature, so the pinned
+            // default is the honest answer here; a screen that knows the configured value calls the
+            // five-argument probe or probeAzure below instead.
+            return probeAzure(endpoint, apiKey, model,
+                    AzureOpenAiTranslationProvider.DEFAULT_API_VERSION);
         }
         return new OpenAiChatTranslationProvider(endpoint, apiKey, model, provider, http, prompt)
                 .probe();
+    }
+
+    /**
+     * Probes {@code provider} with the {@code api-version} its translation path uses.
+     *
+     * <p>{@link #probe} has no room for that value, so a settings screen testing Azure OpenAI sent
+     * the pinned {@link AzureOpenAiTranslationProvider#DEFAULT_API_VERSION} while the translations it
+     * was checking used {@code azure-openai-api-version}: a green test sat next to a failing
+     * translation (or the other way round) and the user went looking for a fault in an unrelated
+     * field. Every other provider ignores {@code apiVersion} and behaves exactly like the
+     * four-argument overload, so a screen can pass whatever the configuration holds.
+     *
+     * @param provider provider id from {@link org.universaltranslator.core.TranslationProviderCatalog}
+     * @param endpoint endpoint currently shown in the settings screen
+     * @param apiKey credential currently shown in the settings screen
+     * @param model model, or Azure OpenAI deployment, currently shown in the settings screen
+     * @param apiVersion configured {@code azure-openai-api-version}, or {@code null} for the pinned
+     *                   default
+     * @return the raw response body
+     * @throws Exception when the request fails, or the response is not what that protocol returns
+     */
+    public static String probe(String provider, String endpoint, String apiKey, String model,
+            String apiVersion) throws Exception {
+        String selected = provider == null ? "" : provider.trim().toLowerCase(Locale.ROOT);
+        if ("azure-openai".equals(selected)) {
+            return probeAzure(endpoint, apiKey, model, apiVersion);
+        }
+        return probe(provider, endpoint, apiKey, model);
+    }
+
+    /**
+     * Probes an Azure OpenAI deployment with the {@code api-version} the translation path uses.
+     *
+     * <p>{@link #probe} has no room for that value and always sent
+     * {@link AzureOpenAiTranslationProvider#DEFAULT_API_VERSION}, while
+     * {@code OnlineProviderConfig} builds the real provider from {@code azure-openai-api-version}: on a
+     * resource pinned to another version the two requests could disagree, so a green test sat next to a
+     * failing translation (or the other way round) and the user changed an unrelated field.
+     *
+     * @param endpoint resource endpoint currently shown in the settings screen
+     * @param apiKey credential currently shown in the settings screen
+     * @param deployment deployment name currently shown in the settings screen
+     * @param apiVersion configured {@code azure-openai-api-version}, or {@code null} for the pinned default
+     * @return the raw response body
+     * @throws Exception when the request fails, or the response is not what that protocol returns
+     */
+    public static String probeAzure(String endpoint, String apiKey, String deployment,
+            String apiVersion) throws Exception {
+        HttpJsonClient http = new HttpJsonClient(CONNECT_TIMEOUT_MILLIS, READ_TIMEOUT_MILLIS);
+        return new AzureOpenAiTranslationProvider(endpoint, apiKey, deployment, apiVersion, http,
+                TranslationPrompt.Settings.standard()).probe();
     }
 }

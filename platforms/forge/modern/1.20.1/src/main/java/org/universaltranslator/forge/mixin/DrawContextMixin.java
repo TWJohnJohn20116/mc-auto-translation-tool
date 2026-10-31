@@ -30,4 +30,19 @@ abstract class DrawContextMixin {
     private List<Component> universalTranslator$translateTooltipLines(List<Component> lines) {
         return RenderedTextBridge.translateTooltip(lines);
     }
+
+    /**
+     * The single-component tooltip overload.
+     *
+     * <p>{@code GuiGraphics} answers a hover through two entry points, and only the {@code List} one
+     * was hooked above. The {@code Component} overload — used by simple hints and by mods that render
+     * a one-line tooltip — never passes through the {@code List} version, so those lines stayed
+     * untranslated while the class comment claimed tooltips were covered.
+     */
+    @ModifyVariable(
+            method = "renderTooltip(Lnet/minecraft/client/gui/Font;Lnet/minecraft/network/chat/Component;II)V",
+            at = @At("HEAD"), argsOnly = true, require = 1)
+    private Component universalTranslator$translateTooltipComponent(Component text) {
+        return RenderedTextBridge.translate(text);
+    }
 }

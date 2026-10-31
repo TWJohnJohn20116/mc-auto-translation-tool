@@ -30,6 +30,12 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorSe
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        // Only the left button drags the HUD handle or picks a list row. Both handlers take
+        // coordinates alone, so without this guard a right click started a drag that followed the
+        // cursor until release.
+        if (button != 0) {
+            return super.mouseClicked(mouseX, mouseY, button);
+        }
         return handleDragStart(mouseX, mouseY)
                 || handleSelectionClick(mouseX, mouseY)
                 || super.mouseClicked(mouseX, mouseY, button);
@@ -116,8 +122,13 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorSe
     @Override
     protected TextFieldWidget newTextField(int x, int y, int width, int height,
             String initialText) {
-        return new TextFieldWidget(textRenderer(), x, y, width, height,
-                Text.literal(initialText));
+        // The Text argument is the hint shown while the field is empty, not its value. Passing the
+        // saved value there made a cleared field look filled with grey text while getText() was
+        // already empty, so saving wrote the setting away.
+        TextFieldWidget field = new TextFieldWidget(textRenderer(), x, y, width, height,
+                Text.literal(""));
+        field.setText(initialText == null ? "" : initialText);
+        return field;
     }
 
     @Override

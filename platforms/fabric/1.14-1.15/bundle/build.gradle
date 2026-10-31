@@ -35,10 +35,25 @@ def implementationJars = supportedVersions.collectEntries { gameVersion ->
     [(gameVersion): project(":platform-fabric-${gameVersion}").tasks.named(taskName)]
 }
 
+// The one declared loader/java floor for all eight members. It has to be the weakest requirement
+// among them: a single jar has to stay installable for every release it ships, so the stricter
+// per-version floor stays where it belongs, in that member's own fabric.mod.json. Declaring the
+// number once here keeps it from being hand-copied into the template and drifting.
+ext.bundleLoaderFloor = "0.19.3"
+ext.bundleJavaFloor = "8"
+// The three stub members do not go through platforms/fabric/legacy/shared.gradle: their fabric.mod.json
+// is expanded by their own build.gradle, so what they declare is a second copy of exactly these two
+// numbers. Named here so gradle/bundle-metadata-verify.gradle can reconcile those members too.
+ext.bundleStubVersions = stubVersions
+
 processResources {
     inputs.property "version", project.version
+    inputs.property "fabricDependency", gradle.ext.fabricApiModId
+    inputs.property "loaderFloor", project.ext.bundleLoaderFloor
+    inputs.property "javaFloor", project.ext.bundleJavaFloor
     filesMatching("fabric.mod.json") {
-        expand "version": project.version
+        expand "version": project.version, "fabricDependency": gradle.ext.fabricApiModId,
+                "loaderFloor": project.ext.bundleLoaderFloor, "javaFloor": project.ext.bundleJavaFloor
     }
 }
 
@@ -53,19 +68,40 @@ jar {
 }
 ext.jarLicenseName = "LICENSE_universal_translator_bundle"
 apply from: rootProject.file("gradle/jar-contents.gradle")
+// The mod-list icon: one file under platforms/shared/lang/json, not a copy per bundle.
+apply from: rootProject.file("gradle/bundle-icon.gradle")
+// The reverse direction: a fabric.mod.json that declares a version this jar does not ship would
+// pass every presence check below, and the Loader then fails that version at resolution time.
+ext.bundleSupportedVersions = supportedVersions
+apply from: rootProject.file("gradle/bundle-metadata-verify.gradle")
+
+// This bundle is a member of fabricReleaseBundles, so its nested jars end up in fabric-all.jar, but it
+// had no aggregate-bundle verification at all: verifyBundle only checks file names inside this jar and
+// verifyLoaderSelection only casts this bundle's own list. Without this apply, whether Fabric Loader
+// picks the right implementation out of the aggregate for these versions is never proven.
+apply from: rootProject.file("gradle/fabric-bundle-aggregate-verify.gradle")
 
 tasks.register("verifyBundle") {
     dependsOn jar
     doLast {
         def archive = jar.archiveFile.get().asFile
-        def required = ["fabric.mod.json"] + supportedVersions.collect {
+        def required = ["fabric.mod.json", "assets/universal_translator/icon.png"] + supportedVersions.collect {
             "META-INF/jars/universal-translator-${it}.jar"
         }
-        required.each { path ->
-            if (!zipTree(archive).matching { include path }.files) {
-                throw new GradleException("Missing bundle entry: ${path}")
-            }
+        // One walk for the whole list: collect the entries that exist, then compare names. zipTree is
+        // the only reader that sees the entries `jar` writes from other tasks' outputs; a raw ZipFile
+        // on the same path reports the nested jars as absent.
+        def present = [] as Set
+        zipTree(archive).matching {
+            include "fabric.mod.json"
+        include "assets/universal_translator/icon.png"
+            include "META-INF/jars/universal-translator-*.jar"
+        }.files.each { present.add(it.name) }
+        def missing = required.findAll { !present.contains(it.tokenize('/').last()) }
+        if (!missing.isEmpty()) {
+            throw new GradleException("Missing bundle entries: ${missing}")
         }
+        verifyBundleMetadata()
         println "Verified ${archive.name}: all ${supportedVersions.size()} Minecraft 1.14/1.15 implementations present"
     }
 }

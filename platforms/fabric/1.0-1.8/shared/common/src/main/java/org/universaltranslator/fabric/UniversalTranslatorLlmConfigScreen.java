@@ -8,16 +8,21 @@ import net.minecraft.client.render.TextRenderer;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.TextFieldWidget;
+import org.universaltranslator.core.ModelListPaging;
 import org.universaltranslator.core.provider.OpenAiModelCatalog;
 
-/** OpenAI-compatible LLM settings shared by Forge 1.8.9 and 1.12.2. */
+/**
+ * OpenAI-compatible LLM settings for Fabric 1.3.1-1.8.8; 1.8.9-1.12.2 use the same-named file under
+ * {@code platforms/fabric/1.8-1.12/shared/common}. The Forge legacy screens are separate classes in
+ * {@code platforms/forge/shared/legacy-common}.
+ */
 final class UniversalTranslatorLlmConfigScreen extends Screen {
     /** Height of a single catalog row in the model picker overlay. */
-    private static final int LIST_ROW_HEIGHT = 12;
+    private static final int LIST_ROW_HEIGHT = ModelListPaging.ROW_HEIGHT;
     /** Y of the first catalog row; the picker title sits above it. */
-    private static final int LIST_TOP = 46;
+    private static final int LIST_TOP = ModelListPaging.LIST_TOP;
     /** Room kept under the rows for the paging, back, and hint lines. */
-    private static final int LIST_FOOTER_HEIGHT = 62;
+    private static final int LIST_FOOTER_HEIGHT = ModelListPaging.FOOTER_HEIGHT;
     private static final int ESCAPE_KEY = 1;
 
     private static final int SAVE = 1;
@@ -37,6 +42,9 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
     private volatile boolean statusIsError;
     private volatile List<String> fetchedModels = Collections.emptyList();
     private volatile boolean fetching;
+    /** Handed over by the fetch worker; applied on the client thread by {@link #tick()}. */
+    private volatile List<String> pendingModels;
+    private volatile String pendingFailure = "";
     private boolean modelListOpen;
     private int modelPage;
 
@@ -61,6 +69,7 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
         if (model != null) { initialModel = model.getText(); }
         if (apiKey != null) { initialApiKey = apiKey.getText(); }
         buttons.clear();
+        modelPage = 0;
         renderer = OrnitheClientAccess.textRenderer();
         int fieldWidth = Math.max(180, Math.min(360, width - 20));
         int left = (width - fieldWidth) / 2;
@@ -125,30 +134,87 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
                 ? parent.llmApiKey() : ("-".equals(enteredKey) ? "" : enteredKey);
         fetching = true;
         setStatus(tr("screen.universal_translator.llm.fetching"), false);
-        Thread worker = new Thread(() -> {
-            List<String> models = Collections.emptyList();
+        ScreenWorkers.execute(() -> {
+            List<String> models = null;
             String failure = "";
             try {
                 models = OpenAiModelCatalog.fetch(endpointValue, keyValue);
-            } catch (Exception error) {
+            } catch (Throwable error) {
+                // A Throwable on purpose: the commonest failure on these mappings is a LinkageError,
+                // and missing it left "fetching" set for the lifetime of the screen, so the button
+                // did nothing at all afterwards with no message.
                 failure = describe(error);
+            } finally {
+                fetching = false;
             }
-            fetching = false;
+            if (models == null && failure.isEmpty()) {
+                // fetch answers null when the body was not parseable; reading it straight away used
+                // to NPE on the worker thread, where the player never saw anything.
+                failure = tr("screen.universal_translator.engine.test_not_json");
+            }
             if (!failure.isEmpty()) {
-                setStatus(tr("screen.universal_translator.llm.fetch_failed", failure), true);
+                pendingFailure = failure;
                 return;
             }
-            if (models.isEmpty()) {
-                setStatus(tr("screen.universal_translator.llm.fetch_empty"), true);
-                return;
-            }
-            fetchedModels = models;
-            modelPage = 0;
-            modelListOpen = true;
-            setStatus("", false);
-        }, "universal-translator-model-list");
-        worker.setDaemon(true);
-        worker.start();
+            pendingModels = models;
+        });
+    }
+
+    /**
+     * Applies the catalog the worker fetched, on the client thread.
+     *
+     * <p>The worker wrote the list, the page and the overlay flag itself, so the render thread could
+     * see the overlay opened before its rows were published and draw an empty page.
+     */
+    private void applyPendingModelList() {
+        List<String> models = pendingModels;
+        String failure = pendingFailure;
+        if (models == null && failure.isEmpty()) {
+            return;
+        }
+        pendingModels = null;
+        pendingFailure = "";
+        if (!failure.isEmpty()) {
+            setStatus(tr("screen.universal_translator.llm.fetch_failed", failure), true);
+            return;
+        }
+        if (models.isEmpty()) {
+            setStatus(tr("screen.universal_translator.llm.fetch_empty"), true);
+            return;
+        }
+        fetchedModels = models;
+        modelPage = 0;
+        modelListOpen = true;
+        releaseFieldFocus();
+        setStatus("", false);
+    }
+
+    /**
+     * Takes the focus off every field while the catalog covers the form.
+     *
+     * <p>{@code keyPressed} already swallows the keystrokes here, so this is the second line of
+     * defence: a field that cannot be edited keeps the characters out even if a later version routes
+     * them through a different callback.
+     *
+     * <p>Clearing a field's own focus needs an accessor the game renames at runtime, so the
+     * reflective call this used to make found nothing and guarded nothing at all. The editability
+     * switch exists on every generation; {@link #restoreFieldEditing()} hands it back.
+     */
+    private void releaseFieldFocus() {
+        setFieldEditing(endpoint, false);
+        setFieldEditing(model, false);
+        setFieldEditing(apiKey, false);
+    }
+
+    /** Gives the form its editing back once the picker is gone. */
+    private void restoreFieldEditing() {
+        setFieldEditing(endpoint, true);
+        setFieldEditing(model, true);
+        setFieldEditing(apiKey, true);
+    }
+
+    private static void setFieldEditing(TextFieldWidget field, boolean editable) {
+        OrnitheClientAccess.setEditable(field, editable);
     }
 
     private void setStatus(String message, boolean error) {
@@ -156,7 +222,7 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
         statusIsError = error;
     }
 
-    private static String describe(Exception error) {
+    private static String describe(Throwable error) {
         String message = error.getMessage();
         return message == null || message.trim().isEmpty() ? error.getClass().getSimpleName() : message;
     }
@@ -166,6 +232,7 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
         endpoint.tick();
         model.tick();
         apiKey.tick();
+        applyPendingModelList();
     }
 
     @Override
@@ -197,28 +264,30 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
     }
 
     private void handleModelListClick(double mouseX, double mouseY) {
-        if (mouseY >= this.height - 54 && mouseY < this.height - 38) {
-            int pages = pageCount(rowsPerPage());
+        List<String> models = fetchedModels;
+        int rows = rowsPerPage();
+        modelPage = ModelListPaging.clampPage(modelPage, models.size(), rows);
+        if (mouseY >= this.height - 48 && mouseY < this.height - 36) {
+            int pages = ModelListPaging.pageCount(models.size(), rows);
             if (pages > 1) {
                 modelPage = mouseX < this.width / 2.0
                         ? (modelPage + pages - 1) % pages : (modelPage + 1) % pages;
             }
             return;
         }
-        if (mouseY >= this.height - 38 && mouseY < this.height - 20) {
+        if (mouseY >= this.height - 34 && mouseY < this.height - 18) {
             modelListOpen = false;
             return;
         }
         if (mouseY < LIST_TOP) {
             return;
         }
-        int rows = rowsPerPage();
-        int row = (int) ((mouseY - LIST_TOP) / LIST_ROW_HEIGHT);
-        int index = modelPage * rows + row;
-        if (row >= rows || index >= fetchedModels.size()) {
+        int row = ModelListPaging.rowAt(mouseY);
+        int index = ModelListPaging.index(modelPage, rows, row);
+        if (row >= rows || index >= models.size()) {
             return;
         }
-        model.setText(fetchedModels.get(index));
+        model.setText(models.get(index));
         modelListOpen = false;
         setStatus("", false);
     }
@@ -229,55 +298,60 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
         int fieldWidth = Math.max(180, Math.min(360, width - 20));
         int left = (width - fieldWidth) / 2;
         int top = Math.max(42, (height - 174) / 2);
-        drawCenteredString(renderer, tr("screen.universal_translator.llm.title"), width / 2, 18, 0xFFFFFF);
-        drawString(renderer, tr("screen.universal_translator.llm.endpoint_hint"), left, top - 11, 0xA0A0A0);
-        drawString(renderer, tr("screen.universal_translator.llm.model_hint"), left, top + 25, 0xA0A0A0);
+        drawCenteredString(renderer, tr("screen.universal_translator.llm.title"), width / 2, 18, 0xFFFFFFFF);
+        drawString(renderer, tr("screen.universal_translator.llm.endpoint_hint"), left, top - 11, 0xFFA0A0A0);
+        drawString(renderer, tr("screen.universal_translator.llm.model_hint"), left, top + 25, 0xFFA0A0A0);
         drawString(renderer,
                 tr(hasStoredKey
                         ? "screen.universal_translator.llm.key_saved_hint"
                         : "screen.universal_translator.llm.key_empty_hint"),
-                left, top + 61, 0xA0A0A0);
+                left, top + 61, 0xFFA0A0A0);
         endpoint.render();
         model.render();
         apiKey.render();
         if (!status.isEmpty()) {
+            // Explicit alpha on every colour: 1.3.1-1.5.2 has no "0 alpha means opaque" fallback in
+            // the font renderer, so the bare RGB forms drew the whole page invisible there.
             drawCenteredString(renderer, status, width / 2, top + 158,
-                    statusIsError ? 0xFF5555 : 0xFFE0E0E0);
+                    statusIsError ? 0xFFFF5555 : 0xFFE0E0E0);
         }
         super.render(mouseX, mouseY, partialTicks);
         if (modelListOpen) {
+            releaseFieldFocus();
             renderModelList(mouseX, mouseY);
+        } else {
+            restoreFieldEditing();
         }
     }
 
     /** Draws the fetched catalog over the form so a served model can be picked instead of typed. */
     private void renderModelList(int mouseX, int mouseY) {
-        fill(0, 0, width, height, 0xFF101010);
-        drawCenteredString(renderer, tr("screen.universal_translator.llm.select_model", fetchedModels.size()),
-                width / 2, 20, 0xFFFFFF);
+        // A local snapshot: the worker republished the whole list, so the loop condition and the
+        // get() below could otherwise read two different lists and run off the short one.
+        List<String> models = fetchedModels;
         int rows = rowsPerPage();
+        modelPage = ModelListPaging.clampPage(modelPage, models.size(), rows);
+        fill(0, 0, width, height, 0xFF101010);
+        drawCenteredString(renderer, tr("screen.universal_translator.llm.select_model", models.size()),
+                width / 2, 20, 0xFFFFFFFF);
         int first = modelPage * rows;
-        for (int row = 0; row < rows && first + row < fetchedModels.size(); row++) {
+        for (int row = 0; row < rows && first + row < models.size(); row++) {
             int rowY = LIST_TOP + row * LIST_ROW_HEIGHT;
             boolean hovered = mouseY >= rowY && mouseY < rowY + LIST_ROW_HEIGHT;
-            drawString(renderer, (hovered ? "> " : "  ") + fetchedModels.get(first + row),
+            drawString(renderer, (hovered ? "> " : "  ") + models.get(first + row),
                     24, rowY, hovered ? 0xFFFFD060 : 0xFFE0E0E0);
         }
-        int pages = pageCount(rows);
+        int pages = ModelListPaging.pageCount(models.size(), rows);
         drawCenteredString(renderer, "< " + (modelPage + 1) + "/" + pages + " >",
-                width / 2, height - 46, 0xFFFFFF);
+                width / 2, height - 46, 0xFFFFFFFF);
         drawCenteredString(renderer, tr("screen.universal_translator.llm.select_back"),
                 width / 2, height - 30, 0xFFFFD060);
         drawCenteredString(renderer, tr("screen.universal_translator.llm.select_hint"),
-                width / 2, height - 16, 0xA0A0A0);
+                width / 2, height - 16, 0xFFA0A0A0);
     }
 
     private int rowsPerPage() {
-        return Math.max(3, (this.height - LIST_TOP - LIST_FOOTER_HEIGHT) / LIST_ROW_HEIGHT);
-    }
-
-    private int pageCount(int rows) {
-        return Math.max(1, (fetchedModels.size() + rows - 1) / rows);
+        return ModelListPaging.rows(this.height);
     }
 
     @Override

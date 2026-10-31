@@ -5,6 +5,7 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
@@ -96,6 +97,15 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
             return MinecraftClient.getInstance().currentScreen;
         }
 
+        /**
+         * Exact check: the inherited name comparison can never match a remapped client, where
+         * {@code ChatScreen} is {@code net.minecraft.class_408} at runtime.
+         */
+        @Override
+        protected boolean isChatScreen(Object screen) {
+            return screen instanceof ChatScreen;
+        }
+
         @Override
         protected void openSettings(Object parent, FabricConfig config) {
             MinecraftClient.getInstance().openScreen(new UniversalTranslatorConfigScreen((Screen) parent, config));
@@ -131,7 +141,12 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
 
         @Override
         protected void registerStopHook(Runnable onStop) {
-            ClientLifecycleEvents.CLIENT_STOPPING.register(client -> onStop.run());
+            ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
+                // The screens' shared pool is dropped here so a closed game does not keep two daemon
+                // threads (and whatever request they are waiting on) alive.
+                ScreenWorkers.shutdown();
+                onStop.run();
+            });
         }
 
         @Override

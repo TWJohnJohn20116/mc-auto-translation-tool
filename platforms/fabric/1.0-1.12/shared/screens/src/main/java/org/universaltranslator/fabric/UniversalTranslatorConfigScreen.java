@@ -109,6 +109,10 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
 
     private final Screen parent;
     private final FabricConfig original;
+    /** Last geometry handed out by {@link #layout()}, with the window size it was computed for. */
+    private SettingsScreenLayout.Geometry cachedLayout;
+    private int cachedWindowWidth = -1;
+    private int cachedWindowHeight = -1;
     private boolean enabled;
     private boolean translateChat;
     private boolean translateOther;
@@ -200,10 +204,10 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
     private ButtonWidget hudVisibilityButton;
 
     private TextRenderer renderer;
-    private String status = "";
+    /** Also cleared from the request workers' thread by setTestStatus, so it needs the same guarantee. */
+    private volatile String status = "";
     /** Result of the engine tab's connection test; written by its worker thread. */
-    private volatile String testStatus = "";
-    private volatile boolean testStatusIsError;
+    private volatile TestStatus testStatus = TestStatus.EMPTY;
     private volatile boolean testing;
     private volatile boolean fetchingModels;
     private volatile List<String> fetchedModels = Collections.emptyList();
@@ -371,12 +375,13 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
         buttons.add(batchSizeButton);
 
         String promptValue = customPrompt == null
-                ? TranslationPrompt.toEditorText(original.customSystemPrompt())
+                ? TranslationPrompt.toEditorText(
+                        TranslationPrompt.clampForEditor(original.customSystemPrompt()))
                 : customPrompt.getText();
         int promptApplyWidth = Math.max(48, buttonWidth - 24);
         customPrompt = textField(PROMPT, renderer, left, engineRow(4),
                 totalWidth - promptApplyWidth - 8, 20);
-        customPrompt.setMaxLength(UiLimits.PROMPT_MAX_CHARS);
+        customPrompt.setMaxLength(UiLimits.PROMPT_EDITOR_MAX_CHARS);
         customPrompt.setText(promptValue);
         applyPromptButton = new ButtonWidget(PROMPT_APPLY,
                 right + buttonWidth - promptApplyWidth, engineRow(4), promptApplyWidth, 20,
@@ -489,19 +494,37 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
      */
     private void applyPromptSettings() {
         refreshQualityLabel();
+        // Same shape as saveAndApply: the runtime is restored if the rebuild fails halfway, so the
+        // promise in the javadoc above holds and the next Save cannot persist a half-applied state.
+        boolean runtimeChanged = false;
+        FabricConfig base = writeBackBase();
         try {
-            FabricConfig base = writeBackBase();
             String prompt = customPrompt == null
                     ? base.customSystemPrompt()
-                    : TranslationPrompt.fromEditorText(customPrompt.getText());
+                    : TranslationPrompt.clampEditorText(customPrompt.getText());
             FabricConfig updated = base.withPromptSettings(quality, prompt);
             if (updated.enabled) {
                 updated.validateProviderConfiguration();
             }
+            runtimeChanged = true;
             FabricTranslationRuntime.initialize(updated);
-            updated.save();
-            setTestStatus(tr("screen.universal_translator.diagnostics.settings_saved"), false);
+            // Same writer as the F8 toggles, so an older queued snapshot cannot overwrite this one.
+            // The result decides the message: a write still queued past the bounded wait, or one that
+            // failed, used to be reported as saved and was then silently missing on the next launch.
+            if (FabricTranslationRuntimeBase.saveInBackgroundAndWait(updated)) {
+                setTestStatus(tr("screen.universal_translator.diagnostics.settings_saved"), false);
+            } else {
+                setTestStatus(tr("status.universal_translator.save_failed",
+                        updated.configFile().getFileName()), true);
+            }
         } catch (Exception exception) {
+            if (runtimeChanged) {
+                try {
+                    FabricTranslationRuntime.initialize(base);
+                } catch (Exception restoreFailure) {
+                    exception.addSuppressed(restoreFailure);
+                }
+            }
             setTestStatus(tr("screen.universal_translator.diagnostics.settings_failed",
                     describe(exception)), true);
         }
@@ -746,7 +769,13 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
             String modelValue = llmModel == null || llmModel.trim().isEmpty()
                     ? tr("screen.universal_translator.engine.key_unset") : llmModel.trim();
             modelPickButton.message = tr("screen.universal_translator.engine.model", modelValue);
+        }
+        // Their own buttons, not the model picker's: tying them to that unrelated widget left both
+        // labels unwritten whenever the provider has no model picker.
+        if (testConnectionButton != null) {
             testConnectionButton.message = tr("screen.universal_translator.engine.test");
+        }
+        if (checkSettingsButton != null) {
             checkSettingsButton.message = tr(isLibreTranslate()
                     ? "screen.universal_translator.engine.test"
                     : "screen.universal_translator.engine.check");
@@ -799,8 +828,22 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
         }
     }
 
+    /**
+     * The screen geometry, recomputed only when the window changes.
+     *
+     * <p>{@code calculate(...)} is pure but allocates a fourteen-field object, and the HUD tab calls
+     * this a dozen times per frame through the individual accessors.
+     */
     private SettingsScreenLayout.Geometry layout() {
-        return SettingsScreenLayout.calculate(width, height, 5);
+        SettingsScreenLayout.Geometry cached = cachedLayout;
+        if (cached != null && cachedWindowWidth == width && cachedWindowHeight == height) {
+            return cached;
+        }
+        SettingsScreenLayout.Geometry computed = SettingsScreenLayout.calculate(width, height, 5);
+        cachedLayout = computed;
+        cachedWindowWidth = width;
+        cachedWindowHeight = height;
+        return computed;
     }
 
     /**
@@ -1046,7 +1089,8 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         // the screen opened: restoring the snapshot would undo changes made from elsewhere meanwhile.
         FabricConfig base = writeBackBase();
         try {
-            FabricConfig updated = base.withSettings(
+            // One snapshot for the whole form: the file is read once instead of once per group.
+            FabricConfig updated = base.withAllSettings(
                     enabled,
                     translateChat,
                     translateOther,
@@ -1071,12 +1115,14 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
                     animatedUi,
                     new HudIndicatorSettings(hudIndicator, hudIndicatorCorner, hudIndicatorSize,
                             hudIndicatorMargin, hudIndicatorColor, hudIndicatorContent,
-                            hudIndicatorVisibility, hudIndicatorOffsetX, hudIndicatorOffsetY))
+                            hudIndicatorVisibility, hudIndicatorOffsetX, hudIndicatorOffsetY),
                     // Save writes the engine tab's prompt controls too, so applying the prompt and
                     // then saving cannot silently restore the value the screen was opened with.
-                    .withPromptSettings(quality, TranslationPrompt.fromEditorText(
-                            customPrompt == null ? "" : customPrompt.getText()))
-                    .withTranslationTuning(workers, batchSize);
+                    quality,
+                    TranslationPrompt.clampEditorText(
+                            customPrompt == null ? "" : customPrompt.getText()),
+                    workers,
+                    batchSize);
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
                     && (updated.tencentSecretId.isEmpty() || updated.tencentSecretKey.isEmpty())) {
                 throw new IllegalArgumentException(tr("error.universal_translator.tencent_credentials"));
@@ -1086,8 +1132,15 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
             }
             runtimeChanged = true;
             FabricTranslationRuntime.initialize(updated);
-            updated.save();
-            OrnitheClientAccess.openScreen(parent);
+            // Same writer as the F8 toggles, so an older queued snapshot cannot overwrite this one.
+            // Only leave the screen once the file is known to be on disk: a save still queued past
+            // the bounded wait used to close the screen and hide that it had not landed.
+            if (FabricTranslationRuntimeBase.saveInBackgroundAndWait(updated)) {
+                OrnitheClientAccess.openScreen(parent);
+            } else {
+                status = tr("status.universal_translator.save_failed",
+                        updated.configFile().getFileName());
+            }
         } catch (Exception exception) {
             if (runtimeChanged) {
                 try {
@@ -1243,7 +1296,8 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
             blockedKeywords.render();
             if (blockedKeywords.getText().isEmpty()) {
                 renderer.drawWithShadow(
-                        tr("screen.universal_translator.blocked_keywords_hint"),
+                        tr("screen.universal_translator.blocked_keywords_hint",
+                                UiLimits.KEYWORDS_MAX_ENTRIES, UiLimits.KEYWORD_MAX_CHARS),
                         layout.left() + 4, layout.contentRow(3) + 6, 0x70A0A0A0);
             }
         } else if (activeTab == Tab.ENGINE) {
@@ -1265,11 +1319,14 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         if (messageY > height - 10) {
             messageY = height - 10;
         }
+        // One read of the published pair: reading the field twice could pair a new message with the
+        // previous message's colour.
+        TestStatus testStatusLine = testStatus;
         if (!status.isEmpty()) {
             drawCenteredString(renderer, status, width / 2, messageY, 0xFFFF5555);
-        } else if (!testStatus.isEmpty()) {
-            drawCenteredString(renderer, testStatus, width / 2, messageY,
-                    testStatusIsError ? 0xFFFF5555 : 0xFF55FF55);
+        } else if (!testStatusLine.message.isEmpty()) {
+            drawCenteredString(renderer, testStatusLine.message, width / 2, messageY,
+                    testStatusLine.isError ? 0xFFFF5555 : 0xFF55FF55);
         } else if (!runtimeStatus.isEmpty()) {
             drawCenteredString(renderer, runtimeStatus, width / 2, messageY,
                     isFailureStatus(rawRuntimeStatus) ? 0xFFFF5555 : 0xFF55FF55);
@@ -1329,7 +1386,11 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
                 modelListOpen = false;
                 setTestStatus("", false);
                 openSelection = SettingsSelectionList.Kind.NONE;
-                init();
+                // Only what the provider actually changes: re-running init() here rebuilt all 38
+                // buttons and three text fields inside the click handler, which flashed the screen
+                // and dropped the cursor and the scroll position.
+                updateTabVisibility();
+                refreshLabels();
                 return true;
             } else if (openSelection == SettingsSelectionList.Kind.TARGET_LANGUAGE) {
                 targetLanguage = values[selected];
@@ -1390,7 +1451,7 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         final String keyValue = llmApiKey;
         fetchingModels = true;
         setTestStatus(tr("screen.universal_translator.llm.fetching"), false);
-        Thread worker = new Thread(() -> {
+        ScreenWorkers.execute(() -> {
             OpenAiModelCatalog.Catalog catalog = null;
             String failure = "";
             try {
@@ -1425,9 +1486,7 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
             // Handed to the client thread instead of touching modelPage/modelListOpen here.
             pendingModelList = catalog.models();
             setTestStatus("", false);
-        }, "universal-translator-model-list");
-        worker.setDaemon(true);
-        worker.start();
+        });
     }
 
     /**
@@ -1445,7 +1504,7 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         final String keyValue = llmApiKey;
         testing = true;
         setTestStatus(tr("screen.universal_translator.engine.testing"), false);
-        Thread worker = new Thread(() -> {
+        ScreenWorkers.execute(() -> {
             String message;
             boolean error;
             try {
@@ -1457,7 +1516,8 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
                         message = tr("screen.universal_translator.engine.test_need_model");
                         error = true;
                     } else {
-                        ProviderProbe.probe(provider, endpointValue, keyValue, model);
+                        ProviderProbe.probe(provider, endpointValue, keyValue, model,
+                                original.editorApiVersion(provider));
                         message = tr("screen.universal_translator.engine.test_ok_probe", model);
                         error = false;
                     }
@@ -1471,10 +1531,11 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
                     message = tr("screen.universal_translator.engine.test_ok_libre");
                     error = false;
                 } else {
-                    // Validate the provider the screen is showing, not the one this snapshot was
-                    // opened with: they differ until the form is saved, and answering for the old
-                    // one told users the wrong thing about the service they had just switched to.
-                    original.withProvider(provider).validateProviderConfiguration();
+                    // Validate the provider the screen is showing, against the configuration the
+                    // runtime is running with: {@code original} is the snapshot taken when this
+                    // screen opened, so a credential entered in the LLM screen and a provider
+                    // switched here never reached this check.
+                    writeBackBase().withProvider(provider).validateProviderConfiguration();
                     message = tr("screen.universal_translator.engine.test_ok_config");
                     error = false;
                 }
@@ -1486,14 +1547,29 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
                 testing = false;
             }
             setTestStatus(message, error);
-        }, "universal-translator-connection-test");
-        worker.setDaemon(true);
-        worker.start();
+        });
     }
 
     private void setTestStatus(String message, boolean error) {
-        testStatus = message;
-        testStatusIsError = error;
+        // One volatile write publishes both halves: two separate fields — volatile or not — let the
+        // worker thread hand render() a new message carrying the previous message's colour.
+        testStatus = new TestStatus(message == null ? "" : message, error);
+        // The save-failure line outranks the test line in render(), and nothing ever cleared it: one
+        // failed save hid every later "test connection" result until the screen was reopened.
+        status = "";
+    }
+
+    /** The status line and whether it describes a failure, published as one immutable pair. */
+    private static final class TestStatus {
+        private static final TestStatus EMPTY = new TestStatus("", false);
+
+        private final String message;
+        private final boolean isError;
+
+        private TestStatus(String message, boolean isError) {
+            this.message = message;
+            this.isError = isError;
+        }
     }
 
     private static String describe(Exception error) {
@@ -1544,7 +1620,9 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
     }
 
     private void handleModelListClick(double mouseX, double mouseY) {
-        if (mouseY >= this.height - 54 && mouseY < this.height - 38) {
+        // Bands match what renderModelList draws: an 8px line at height-46 occupies
+        // [height-46, height-38), and "back" at height-30 occupies [height-30, height-22).
+        if (mouseY >= this.height - 48 && mouseY < this.height - 36) {
             int pages = modelPageCount(modelRowsPerPage());
             if (pages > 1) {
                 modelPage = mouseX < this.width / 2.0
@@ -1552,7 +1630,7 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
             }
             return;
         }
-        if (mouseY >= this.height - 38 && mouseY < this.height - 20) {
+        if (mouseY >= this.height - 34 && mouseY < this.height - 18) {
             modelListOpen = false;
             return;
         }
@@ -1572,11 +1650,11 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
     }
 
     private int modelRowsPerPage() {
-        return Math.max(3, (this.height - MODEL_LIST_TOP - MODEL_LIST_FOOTER_HEIGHT) / MODEL_ROW_HEIGHT);
+        return ModelListPaging.rows(this.height);
     }
 
     private int modelPageCount(int rows) {
-        return Math.max(1, (fetchedModels.size() + rows - 1) / rows);
+        return ModelListPaging.pageCount(fetchedModels.size(), rows);
     }
 
     @Override
@@ -1600,9 +1678,12 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         if (!TranslationProviderCatalog.usesLlmEditor(selectedProvider)) {
             return;
         }
-        this.llmEndpoint = original.editorEndpoint(selectedProvider);
-        this.llmApiKey = original.editorApiKey(selectedProvider);
-        this.llmModel = original.editorModel(selectedProvider);
+        // The live configuration, not {@code original}: credentials saved from the LLM screen were
+        // overwritten with their screen-open-time values here, and the next Save wrote those back.
+        FabricConfig base = writeBackBase();
+        this.llmEndpoint = base.editorEndpoint(selectedProvider);
+        this.llmApiKey = base.editorApiKey(selectedProvider);
+        this.llmModel = base.editorModel(selectedProvider);
     }
 
     void applyLlmSettings(String endpoint, String model, String apiKey) {

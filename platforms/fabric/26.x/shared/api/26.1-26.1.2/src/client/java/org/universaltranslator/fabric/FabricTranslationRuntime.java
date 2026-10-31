@@ -9,7 +9,6 @@ import org.universaltranslator.core.TranslationTextColor;
 
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -19,7 +18,8 @@ import java.util.concurrent.CompletableFuture;
  *
  * <p>The body lives in {@link FabricTranslationRuntimeBase}; this file only answers the six
  * platform questions for this generation and forwards the unchanged static entry points. These
- * versions keep the pre-26.2 screen accessor {@code client.screen}.
+ * versions keep the pre-26.2 screen accessor {@code client.screen}, which is the single line kept in
+ * {@link FabricScreenOpener}.
  */
 public final class FabricTranslationRuntime {
     private static final Impl INSTANCE = new Impl();
@@ -108,7 +108,7 @@ public final class FabricTranslationRuntime {
     private static final class Impl extends FabricTranslationRuntimeBase {
         @Override
         protected Object currentScreen() {
-            return Minecraft.getInstance().screen;
+            return FabricScreenOpener.currentScreen(Minecraft.getInstance());
         }
 
         @Override
@@ -134,14 +134,18 @@ public final class FabricTranslationRuntime {
 
         @Override
         protected Iterable<String> onlinePlayerNames() {
-            Minecraft client = Minecraft.getInstance();
+            final Minecraft client = Minecraft.getInstance();
             if (client.getConnection() == null) {
                 return Collections.emptyList();
             }
-            List<String> names = new ArrayList<String>();
-            client.getConnection().getOnlinePlayers().forEach(entry ->
-                    names.add(entry.getProfile().name()));
-            return names;
+            // A view over the tab list, not a copy: the caller stops after a thousand names anyway,
+            // and collecting the whole list allocated one string per entry on the render thread.
+            // A tab-list entry whose profile never arrived is the one value here that can be null;
+            // without the guard one such entry threw out of the walk and left every player name
+            // translatable for the rest of the session.
+            return () -> client.getConnection().getOnlinePlayers().stream()
+                    .map(entry -> entry.getProfile() == null ? null : entry.getProfile().name())
+                    .iterator();
         }
     }
 }

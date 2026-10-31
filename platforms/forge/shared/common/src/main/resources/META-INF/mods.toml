@@ -1,14 +1,15 @@
 modLoader="javafml"
 loaderVersion="[${forgeLoaderMajor},)"
 license="MIT"
-clientSideOnly=true
 
 [[mods]]
 modId="universal_translator"
 version="${version}"
 displayName="MC Auto Translation Tool"
 displayURL="https://github.com/TWJohnJohn20116/mc-auto-translation-tool"
-authors="272635"
+displayTest="IGNORE_ALL_VERSION"
+authors="我小张7272635"
+logoFile="assets/universal_translator/icon.png"
 description='''Client-side automatic translation for server-provided text across Minecraft interfaces.'''
 
 [[dependencies.universal_translator]]

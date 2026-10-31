@@ -56,6 +56,9 @@ final class UniversalTranslatorDiagnosticsScreen extends UniversalTranslatorScre
     private long cachedLinesAt;
     /** Upper bound on how long a cached page may stay stale while the screen stays open. */
     private static final long LINE_REFRESH_MILLIS = 500L;
+    /** Filled in by the export worker; published on the client thread by {@link #render}. */
+    private volatile boolean pendingExportDone;
+    private volatile String pendingExportArchive;
 
     UniversalTranslatorDiagnosticsScreen(Screen parent) {
         this.parent = parent;
@@ -155,20 +158,29 @@ final class UniversalTranslatorDiagnosticsScreen extends UniversalTranslatorScre
         try {
             FabricConfig updated = config.withDebugLog(debugEnabled);
             FabricTranslationRuntime.initialize(updated);
-            updated.save();
+            // Same writer as the F8 toggles, so an older queued snapshot cannot overwrite this one.
+            // The result decides the message: a write still queued past the bounded wait, or one that
+            // failed, used to be announced as applied while the file still held the old value.
+            boolean written = FabricTranslationRuntimeBase.saveInBackgroundAndWait(updated);
             Path configFile = updated.configFile();
             DebugLog.global().configure(
                     configFile.resolveSibling(DebugLog.FILE_NAME), debugEnabled);
-            exportStatus = tr("screen.universal_translator.debug.changed",
-                    tr(UiTextKeys.onOff(debugEnabled)));
-            exportFailed = false;
+            if (written) {
+                exportStatus = tr("screen.universal_translator.debug.changed",
+                        tr(UiTextKeys.onOff(debugEnabled)));
+                exportFailed = false;
+            } else {
+                exportStatus = tr("status.universal_translator.save_failed",
+                        configFile.getFileName());
+                exportFailed = true;
+            }
         } catch (Exception failure) {
             exportStatus = settingsFailure(failure);
             exportFailed = true;
         }
     }
 
-    /** Clears the process-wide counters and writes the cleared values out. */
+    /** Clears the in-memory counters; the on-disk totals are only rewritten at shutdown. */
     private void resetStatistics() {
         TranslationStats.global().reset();
         exportStatus = tr("screen.universal_translator.stats.reset_done");
@@ -184,6 +196,7 @@ final class UniversalTranslatorDiagnosticsScreen extends UniversalTranslatorScre
 
     @Override
     public void render(int mouseX, int mouseY, float partialTicks) {
+        applyPendingExport();
         renderBackground();
         fill(Math.max(5, width / 2 - 190), 8,
                 Math.min(width - 5, width / 2 + 190), height - 34, 0xD51A232E);
@@ -213,7 +226,10 @@ final class UniversalTranslatorDiagnosticsScreen extends UniversalTranslatorScre
                         : "screen.universal_translator.diagnostics.note"),
                 width / 2, Math.min(y + 7, height - 88), 0xFF909090);
         if (!exportStatus.isEmpty()) {
-            drawCenteredString(renderer, exportStatus, width / 2, height - 82,
+            // Above the first button row (height-76): drawn at height-82 the row's background and
+            // hover highlight covered the bottom two pixels, cutting the descenders off the only
+            // feedback the export gives.
+            drawCenteredString(renderer, exportStatus, width / 2, height - 86,
                     exportFailed ? 0xFFFF5555 : 0xFF55FF88);
         }
         super.render(mouseX, mouseY, partialTicks);
@@ -281,6 +297,11 @@ final class UniversalTranslatorDiagnosticsScreen extends UniversalTranslatorScre
     /**
      * Writes one archive holding the diagnostics, the debug log, the redacted configuration and the
      * environment into the configuration directory.
+     *
+     * <p>On a background thread: the exporter reads and redacts the whole debug log (up to
+     * {@code DebugLog.MAXIMUM_BYTES}) and deflates it, which froze the client for seconds on a
+     * spinning disk or an antivirus-watched folder. The result is published by
+     * {@link #applyPendingExport()} on the client thread.
      */
     private void exportBundle() {
         FabricConfig config = FabricTranslationRuntime.diagnosticsConfig();
@@ -289,18 +310,39 @@ final class UniversalTranslatorDiagnosticsScreen extends UniversalTranslatorScre
             exportFailed = true;
             return;
         }
-        try {
-            Path configFile = config.configFile();
-            Path archive = DiagnosticsBundleExporter.export(
-                    configFile.getParent(), configFile,
-                    configFile.resolveSibling(DebugLog.FILE_NAME), "fabric", diagnosticsLines());
-            exportStatus = tr("screen.universal_translator.debug.bundle_exported",
-                    archive.getFileName().toString());
-            exportFailed = false;
-        } catch (Exception failure) {
+        final Path configFile = config.configFile();
+        final List<String> lines = diagnosticsLines();
+        ScreenWorkers.export(() -> {
+            String archiveName;
+            try {
+                Path archive = DiagnosticsBundleExporter.export(
+                        configFile.getParent(), configFile,
+                        configFile.resolveSibling(DebugLog.FILE_NAME), "fabric", lines);
+                archiveName = archive.getFileName().toString();
+            } catch (Exception failure) {
+                archiveName = null;
+            }
+            // Published in this order: the client thread only reads the name after the flag is set.
+            pendingExportArchive = archiveName;
+            pendingExportDone = true;
+        });
+    }
+
+    /** Publishes the export worker's result on the client thread, where the label can be localized. */
+    private void applyPendingExport() {
+        if (!pendingExportDone) {
+            return;
+        }
+        pendingExportDone = false;
+        String archiveName = pendingExportArchive;
+        pendingExportArchive = null;
+        if (archiveName == null) {
             exportStatus = tr("screen.universal_translator.diagnostics.export_failed");
             exportFailed = true;
+            return;
         }
+        exportStatus = tr("screen.universal_translator.debug.bundle_exported", archiveName);
+        exportFailed = false;
     }
 
     @Override

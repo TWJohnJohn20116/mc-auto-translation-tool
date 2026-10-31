@@ -138,7 +138,7 @@ final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorScreen
                 ? parent.llmApiKey() : ("-".equals(enteredKey) ? "" : enteredKey);
         fetching = true;
         setStatus(tr("screen.universal_translator.llm.fetching"), false);
-        Thread worker = new Thread(() -> {
+        ScreenWorkers.execute(() -> {
             List<String> models = Collections.emptyList();
             String failure = "";
             try {
@@ -163,9 +163,7 @@ final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorScreen
             // Handed to the client thread instead of touching modelPage/modelListOpen here.
             pendingModels = models;
             setStatus("", false);
-        }, "universal-translator-model-list");
-        worker.setDaemon(true);
-        worker.start();
+        });
     }
 
     private void setStatus(String message, boolean error) {

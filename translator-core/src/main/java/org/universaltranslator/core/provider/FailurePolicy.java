@@ -1,8 +1,10 @@
 package org.universaltranslator.core.provider;
 
 import org.universaltranslator.core.net.HttpStatusException;
+import org.universaltranslator.core.net.TranslationBudgetExceededException;
 import org.universaltranslator.core.net.TranslationEndpointUnavailableException;
 
+import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.net.SocketTimeoutException;
 
@@ -20,7 +22,22 @@ import java.net.SocketTimeoutException;
  * one answer in the package.
  */
 final class FailurePolicy {
+    /**
+     * Depth cap for one cause walk.
+     *
+     * <p>A wrapper built with {@code initCause(this)} makes the chain its own successor, and an
+     * unbounded walk then never returns: the worker that asked this question disappears without the
+     * coordinator noticing. {@code TranslationStats.reasonOf} bounds the same walk the same way.
+     */
+    static final int MAXIMUM_CAUSE_DEPTH = 16;
+
     private FailurePolicy() {
+    }
+
+    /** The next link of one cause chain, or {@code null} when the chain ends or points at itself. */
+    private static Throwable nextCause(Throwable current) {
+        Throwable next = current.getCause();
+        return next == current ? null : next;
     }
 
     /**
@@ -36,7 +53,8 @@ final class FailurePolicy {
      * @return whether the text may be sent to the fallback provider
      */
     static boolean mayFallBack(Throwable failure) {
-        for (Throwable current = failure; current != null; current = current.getCause()) {
+        Throwable current = failure;
+        for (int depth = 0; current != null && depth < MAXIMUM_CAUSE_DEPTH; depth++) {
             if (current instanceof IllegalArgumentException || current instanceof IllegalStateException) {
                 return false;
             }
@@ -45,36 +63,90 @@ final class FailurePolicy {
             if (current instanceof InterruptedException) {
                 return false;
             }
+            // A stall that ran out the transport's whole budget is a verdict, not a hiccup: no
+            // provider can answer the identical request differently, so handing it to the fallback
+            // engine only charges for the same text a second time. The subtype test has to come
+            // before the socket timeout below, because it is one.
+            if (current instanceof TranslationBudgetExceededException) {
+                return false;
+            }
             if (current instanceof SocketTimeoutException) {
                 return true;
             }
             if (current instanceof InterruptedIOException) {
                 return false;
             }
+            current = nextCause(current);
         }
         return true;
     }
 
     /**
+     * Whether one failed batch is worth one more attempt as a whole.
+     *
+     * <p>Only a transient transport or server failure qualifies. Anything deterministic — a 400, a
+     * credential, a refused budget — answers the same way when the identical group is resent.
+     *
+     * @param failure what the batch request threw
+     * @return whether the whole group may be sent once more
+     */
+    static boolean retryableAsGroup(Throwable failure) {
+        Throwable current = failure;
+        for (int depth = 0; current != null && depth < MAXIMUM_CAUSE_DEPTH; depth++) {
+            // Same verdict as above: an exhausted transport budget answers the resend identically,
+            // so one more paid request for the whole group cannot change the outcome.
+            if (current instanceof TranslationBudgetExceededException) {
+                return false;
+            }
+            if (current instanceof SocketTimeoutException) {
+                return true;
+            }
+            if (current instanceof InterruptedException || current instanceof InterruptedIOException) {
+                return false;
+            }
+            if (current instanceof TranslationEndpointUnavailableException) {
+                return false;
+            }
+            if (current instanceof HttpStatusException) {
+                return ((HttpStatusException) current).isRetryable();
+            }
+            if (current instanceof IOException) {
+                return true;
+            }
+            current = nextCause(current);
+        }
+        return false;
+    }
+
+    /**
      * Whether a failed batch is worth repairing one text at a time.
      *
-     * <p>A 401, 403 or 404 (or an endpoint that is not listening at all) answers the same way for
-     * every text in the group, so resending each of the eight lines only multiplies the failure by
-     * eight. A 400 is deliberately still repaired: the body may name one unusable line while the rest
-     * would have worked.
+     * <p>Only a 400 may name one unusable line while the rest would have worked. Every retryable
+     * status (429, 5xx, 408, 425), every other client status (401, 403, 404) and every transport
+     * failure answers the whole group the same way, so resending each of the eight lines only
+     * multiplies the failure by eight. A cancelled session is not repairable either: the caller is
+     * gone, and each repair would be a paid request for a text nobody waits for.
      *
      * @param failure what the batch request threw
      * @return whether each text should be retried with a request of its own
      */
     static boolean repairablePerLine(Throwable failure) {
-        for (Throwable current = failure; current != null; current = current.getCause()) {
+        Throwable current = failure;
+        for (int depth = 0; current != null && depth < MAXIMUM_CAUSE_DEPTH; depth++) {
+            if (current instanceof InterruptedException || current instanceof InterruptedIOException) {
+                return false;
+            }
             if (current instanceof TranslationEndpointUnavailableException) {
                 return false;
             }
             if (current instanceof HttpStatusException) {
-                int status = ((HttpStatusException) current).getStatusCode();
-                return status != 401 && status != 403 && status != 404;
+                return ((HttpStatusException) current).getStatusCode() == 400;
             }
+            if (current instanceof IOException) {
+                // A timeout, a watchdog budget or a dropped connection: the whole group shares it.
+                return false;
+            }
+            current = nextCause(current);
         }
         return true;
     }

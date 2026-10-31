@@ -162,7 +162,7 @@ JDK 17 or later is required:
 ./gradlew :platform-fabric-1.20.1:build
 ```
 
-Output is written to `platforms/fabric/legacy/1.20.1/build/libs/`.
+Output is written to `platforms/fabric/1.20/versions/1.20.1/build/libs/`. `platforms/fabric/legacy/` holds only cross-version shared layers; the 1.16.5 / 1.19.2 / 1.20.1 projects live in `platforms/fabric/1.16/versions/1.16.5`, `platforms/fabric/1.19/versions/1.19.2`, and `platforms/fabric/1.20/versions/1.20.1` (see `projectDir` in `settings.gradle`).
 
 ## Forge 1.20.1
 
@@ -279,7 +279,7 @@ $env:GRADLE_USER_HOME = "D:\Gradle\cache"
 ```
 
 The verified bundle is written to
-`platforms/fabric/1.0-1.8/bundle/build/libs/mc-auto-translation-tool-fabric-1.3.1-1.8.8-1.3.9.jar`.
+`platforms/fabric/1.0-1.8/bundle/build/libs/mc-auto-translation-tool-fabric-1.3.1-1.8.8-<mod_version>.jar`.
 
 ## Fabric 1.8.9 through 1.12.2 (Ornithe bundle)
 
@@ -293,7 +293,7 @@ $env:GRADLE_USER_HOME = "D:\Gradle\cache"
 ```
 
 The verified bundle is written to
-`platforms/fabric/1.8-1.12/bundle/build/libs/mc-auto-translation-tool-fabric-1.8.9-1.12.2-1.3.9.jar`.
+`platforms/fabric/1.8-1.12/bundle/build/libs/mc-auto-translation-tool-fabric-1.8.9-1.12.2-<mod_version>.jar`.
 
 ## Fabric 1.16.5
 
@@ -310,7 +310,7 @@ shared runtime.
 
 ## Forge 1.12.2
 
-A full JDK 8 installation is required. Enter `legacy/forge-1.12.2/` and run:
+A full JDK 8 installation is required. This target and 1.8.9 are separate standalone Gradle builds (each with its own wrapper and `build.gradle`, outside the root project's `settings.gradle`). Enter `platforms/forge/legacy/1.12.2/` and run:
 
 ```bash
 ./gradlew build
@@ -320,7 +320,7 @@ The wrapper is pinned to Gradle 4.10.3, ForgeGradle to 3.0.197, and Forge to 14.
 
 ## Forge 1.8.9
 
-A full JDK 8 installation is required. Enter `legacy/forge-1.8.9/` and run:
+A full JDK 8 installation is required. Enter `platforms/forge/legacy/1.8.9/` and run:
 
 ```bash
 ./gradlew build
@@ -336,26 +336,34 @@ need this argument.
 
 ## Release JAR verification
 
-The root check validates every tracked release JAR and its checksum:
+Below, `<mod_version>` is the current value in `gradle.properties`, and `downloads/` only ever holds
+the directory of the current version.
 
-```bash
-./gradlew check
-```
+The `./gradlew check` task that every pull request runs does **not** validate release assets: it needs
+`downloads/<mod_version>`, a directory that only exists once a release has been prepared, so hooking
+it back into `check` would lock the version bump to the required check (C2-163). Release assets are
+validated by three tasks: `./gradlew verifyReleaseJars` checks any built JAR (ZIP/metadata/Mixin/
+refmap/version selection), `./gradlew verifyPreparedReleaseAssets` checks the 48 JARs of
+`downloads/<version>` plus the 31 reduced installable ones, and `./gradlew verifyPublishedRelease`
+aggregates both and is invoked explicitly by `prepare-release.yml` and by the `release-assets` job of
+`build.yml` (that job skips the step entirely when `downloads/<mod_version>` is absent).
 
 To validate arbitrary build outputs directly, pass them to the standalone verifier:
 
 ```bash
 python3 scripts/verify_release_jars.py path/to/mod.jar
 python3 scripts/verify_release_jars.py \
-  --checksum-file downloads/1.4/SHA256SUMS.txt \
-  --require-complete-checksums downloads/1.4/*.jar
+  --checksum-file downloads/<mod_version>/SHA256SUMS.txt \
+  --require-complete-checksums downloads/<mod_version>/*.jar
 ```
 
 It checks ZIP structure, expanded metadata, entrypoints, declared Mixin classes and refmaps, nested
 Fabric JARs, legacy Forge runtime mappings, SHA-256 values, and checksum-manifest coverage. Legacy
 Fabric and Forge `build` tasks run the same verifier against their generated release JARs.
 
-The publish workflow reduces the 48 release build artifacts to 31 directly installable JARs. It
+Validation and reduction are two separate steps: validation only confirms the artifacts are
+structurally sound, reduction changes how many artifacts exist. The publish workflow reduces the 48
+release build artifacts to 31 directly installable JARs. It
 flattens all 51 Fabric implementations into one Loader-selected bundle, broadens four Forge
 families after confirming compatible payloads, and keeps Forge/NeoForge 1.20.1 as separately
 verified loader-specific JARs. Different APIs remain separate. Reproduce and validate
@@ -363,13 +371,25 @@ the publish set with:
 
 ```bash
 python3 scripts/prepare_release_assets.py \
-  --release-dir downloads/1.4 \
+  --release-dir downloads/<mod_version> \
   --output-dir build/release-assets \
-  --version 1.4
+  --version <mod_version>
 python3 scripts/verify_release_jars.py \
   --checksum-file build/release-assets/SHA256SUMS.txt \
   --require-complete-checksums build/release-assets/*.jar
 ```
+
+Release targets and source-only bundles are two different things; conflating them produces coverage
+claims that contradict the published artifacts:
+
+| Kind | Contents | Published with a release |
+| --- | --- | --- |
+| Release target (48) | Fabric 1.13–26.3 (continuous), Forge 1.8.9 / 1.12.2 / 1.16.5 / 1.18.2 / 1.19.2 / 1.20.1 / 1.21, 1.21.1, 1.21.3–1.21.11 / 26.1–26.2 (gap versions are rejected by `mods.toml`), NeoForge 1.20.1, 1.20.4, 1.20.6, 1.21, 1.21.1–1.21.11, 26.1–26.2 (one JAR each; 1.20.2, 1.20.3, and 1.20.5 have no target) | Yes, reduced to 31 installable JARs |
+| Source-only bundle (2) | `fabric-1.0-1.8.x` (26 of 1.3.1–1.8.8) and `fabric-1.8-1.12.x` (1.8.9–1.12.2, 15 versions) | No, built only by `legacy-targets.yml` and never present in `downloads/<version>/` |
+
+So `fabric-all` carries the 51 exact implementations for 1.13–26.3 only; 1.3.1–1.12.2 players have to
+build those two bundles themselves. Cite this section when stating the coverage in CHANGELOG or
+README instead of restating the numbers.
 
 ## Core self-test
 

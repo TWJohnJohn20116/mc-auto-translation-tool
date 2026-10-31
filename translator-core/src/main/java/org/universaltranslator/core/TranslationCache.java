@@ -3,7 +3,15 @@ package org.universaltranslator.core;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** Thread-safe bounded in-memory LRU cache. A disk-backed layer will wrap this later. */
+/**
+ * Thread-safe bounded in-memory cache that evicts the entry written earliest.
+ *
+ * <p>Insertion order, not access order, for the reason {@link TranslationStore} spells out: an
+ * access-ordered map relinks the entry on every read, so a hit becomes a structural modification
+ * inside the instance monitor that every worker shares, and the disk-backed store was already built
+ * the other way round. The two implementations of one interface must not disagree on whether a read
+ * writes.
+ */
 public final class TranslationCache implements TranslationStore {
     private final Map<String, String> entries;
 
@@ -11,7 +19,7 @@ public final class TranslationCache implements TranslationStore {
         if (maximumEntries < 1) {
             throw new IllegalArgumentException("maximumEntries must be positive");
         }
-        this.entries = new LinkedHashMap<String, String>(16, 0.75f, true) {
+        this.entries = new LinkedHashMap<String, String>(16, 0.75f, false) {
             @Override
             protected boolean removeEldestEntry(Map.Entry<String, String> eldest) {
                 return size() > maximumEntries;

@@ -34,7 +34,7 @@ chat, quest books, mod menus, scoreboards, item descriptions, and signs.
 
 1. Check the **Minecraft version, mod loader, and Java version** used by the game instance.
 2. Open the [latest release](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/latest) and select a JAR from the table below.
-3. Remove 1.4-beta4 and every older copy from that instance's `mods` folder, then add exactly one matching 1.4 JAR. Fabric also requires the matching version of Fabric API.
+3. Remove every older `MCAutoTranslationTool-*` copy from that instance's `mods` folder (the wildcard already covers all older releases, whatever their version number), then add exactly one JAR matching your Minecraft version and loader. Fabric also requires the matching version of Fabric API.
 4. Start the game. Press `F8` to toggle automatic translation. Open settings from the title-screen “Translation settings” button, by pressing `U`, or from the mods list if Mod Menu is installed.On Fabric 1.0–1.13.2 there is no key-binding API, so both keys are configured in `config/universal-translator.properties` (`settings-key` / `toggle-key`, for example `F7` and `J`).
 5. For a first run, choose **Offline** and **Translated only**. See the [installation and usage guide](USER_GUIDE.md) for details.
 
@@ -70,16 +70,19 @@ because Yarn cannot remap those snapshots; the full settings UI starts at 1.14.3
 
 [Download the Fabric JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4/MCAutoTranslationTool-1.4-fabric-all.jar)
 
-1.0.0–1.12.2 (Fabric / Ornithe) is not shipped in v1.4. Do not use `fabric-all` on a game version
-that is not listed as included.
+1.3.1–1.12.2 (Fabric / Ornithe) is not shipped in this release: the 26 releases in 1.3.1–1.8.8 and
+the 15 releases in 1.8.9–1.12.2 can still be built from source, while 1.0.0–1.2.5, 1.6.2, 1.7.3,
+1.7.5, and 1.7.7 have no target project at all. Do not use `fabric-all` on a game version that is
+not listed as included.
 
 ### Forge: choose by Minecraft version
 
 Forge shares a JAR only between adjacent versions with verified compatibility. It has no Fabric-style
-nested implementation selection. A family JAR declares a continuous version range in `mods.toml`
-(such as `[1.21,1.21.6)`), which is wider than the adapters it actually contains: **the gaps inside
-that range have no implementation** (1.21.2 has no target). Only the versions listed row by row below
-are actually supported.
+nested implementation selection. A family JAR declares a comma-separated union of exact version
+restrictions in `mods.toml` (for example `[1.21,1.21],[1.21.1,1.21.1],[1.21.3,1.21.3]`) and lists only
+the versions that actually have an implementation: **1.21.2 is not in that union, so Forge refuses to
+load the JAR with a dependency error** instead of loading it and missing an implementation. Only the
+versions listed row by row below are actually supported.
 
 | Minecraft | Java | Download |
 | --- | ---: | --- |
@@ -102,7 +105,7 @@ only the one matching the current game, the way Fabric Loader does. Duplicate mo
 and Jar-in-Jar is for embedding libraries. 1.20.1 (Java 17, NeoForge 47) is also incompatible with
 1.21.1 / 1.21.3 / 1.21.11 (Java 21, NeoForge 21.1 / 21.3 / 21.11), so the stable release ships one separate
 JAR per game version, nineteen in total. NeoForge ships only the nineteen versions in the table
-below: 1.20.2 cannot resolve its coordinates and 1.20.3 has no target, so neither is downloadable.
+below: 1.20.2 cannot resolve its coordinates, and 1.20.3 and 1.20.5 have no target, so none of them is downloadable.
 
 | Minecraft | NeoForge | Java | Download |
 | --- | --- | ---: | --- |

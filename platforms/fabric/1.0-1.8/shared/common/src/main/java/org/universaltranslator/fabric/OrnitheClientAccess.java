@@ -2,9 +2,11 @@ package org.universaltranslator.fabric;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.client.render.TextRenderer;
+import net.minecraft.locale.I18n;
 
-import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -12,6 +14,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import org.universaltranslator.core.DebugLog;
+import org.universaltranslator.core.HotkeyKeys;
 
 public final class OrnitheClientAccess {
     private static final Logger LOGGER = Logger.getLogger(UniversalTranslatorFabricClient.MOD_ID);
@@ -21,12 +24,17 @@ public final class OrnitheClientAccess {
      * One-shot switches for the reflective fallbacks below: a mapping drift must be reported once,
      * not once per rendered frame, and the lookup itself must not be retried per call.
      */
-    private static final AtomicBoolean TRANSLATE_FALLBACK_REPORTED = new AtomicBoolean();
     private static final AtomicBoolean OVERLAY_FALLBACK_REPORTED = new AtomicBoolean();
     private static final AtomicBoolean CHAT_FALLBACK_REPORTED = new AtomicBoolean();
+    private static final AtomicBoolean SERVER_ADDRESS_REPORTED = new AtomicBoolean();
+    private static final AtomicBoolean HOTKEY_FALLBACK_REPORTED = new AtomicBoolean();
+    private static final AtomicBoolean HOTKEY_FAILURE_REPORTED = new AtomicBoolean();
 
     private OrnitheClientAccess() {
     }
+
+    /** Field names the server entry has carried across this range; first match wins. */
+    private static final String[] SERVER_ADDRESS_FIELDS = {"ip", "address", "serverAddress"};
 
     public static Minecraft client() {
         return Minecraft.getInstance();
@@ -41,36 +49,63 @@ public final class OrnitheClientAccess {
     }
 
     /**
-     * Translates a key, answering the key itself when this Minecraft version's {@code I18n} cannot
-     * be reached.
+     * True when F1 has hidden the HUD.
      *
-     * <p>The entry point is resolved once ({@link TranslateAccess}) instead of through
-     * {@code Class.forName} plus {@code getMethod} on every call: the settings, LLM and diagnostics
-     * screens call this for every visible label on every frame, so the lookup used to run hundreds
-     * of times a second for strings that never change. A resolution or invocation failure is
-     * answered with the key and reported once, never thrown: this is called from
-     * {@code Screen.render}.
+     * <p>The only read of the flag in this tree: the name has moved between generations (26.x no
+     * longer exposes it on the options object at all), and this tree is compiled by the scheduled
+     * legacy-targets run rather than by every pull request, so a name that no longer matches should
+     * cost one line here instead of one call site per HUD hook.
+     *
+     * <p>{@code hideGui} is the name this bundle's ploceus (feather) mappings give the flag on every
+     * version it compiles, 1.3.1 through 1.7.10; {@code hudHidden} is the yarn name that arrives with
+     * 1.14.
+     */
+    public static boolean hudHidden(Minecraft client) {
+        if (client == null || client.options == null) {
+            return false;
+        }
+        return client.options.hideGui;
+    }
+
+    /**
+     * Sets whether {@code field} accepts typing.
+     *
+     * <p>The settings screen takes the keystrokes away while the model catalog covers the form; the
+     * switch is reached through here so that "this generation's text field" stays in the one class
+     * that already owns the version-specific widget API.
+     */
+    public static void setEditable(TextFieldWidget field, boolean editable) {
+        if (field == null) {
+            return;
+        }
+        OrnitheFamilyAccess.setEditable(field, editable);
+    }
+
+    /**
+     * Translates a key through this generation's language table.
+     *
+     * <p>A direct call, not a lookup by name: {@code remapJar} rewrites references but not string
+     * literals, so {@code Class.forName("net.minecraft...")} answered "not found" in the shipped JAR
+     * and every label fell back to its own key. {@code net.minecraft.locale.I18n} carries both the
+     * plain and the {@code Object[]} overload on all seventeen versions of this bundle, so no
+     * generation split is needed for this one.
      */
     public static String tr(String key, Object... arguments) {
-        return TranslateAccess.RESOLVED.apply(key, arguments);
+        return I18n.translate(key, arguments);
     }
 
     public static void overlay(String key, Object... arguments) {
         String message = tr(key, arguments);
-        Object gui = client().gui;
-        Method setOverlay = OverlayAccess.RESOLVED.setOverlay(gui);
-        if (setOverlay == null) {
-            // This Minecraft version exposes no overlay method under this name/signature; the
-            // status message is dropped, and the single report below says so once.
-            reportOnce(OVERLAY_FALLBACK_REPORTED, "setOverlayMessage", null);
+        Minecraft client = client();
+        if (client == null || client.gui == null) {
+            // Start-up and shutdown leave the HUD unset; the message has nowhere to go and this is
+            // not a mapping drift, so it is dropped without a report.
             return;
         }
-        try {
-            setOverlay.invoke(gui, message, false);
-        } catch (ReflectiveOperationException exception) {
-            reportOnce(OVERLAY_FALLBACK_REPORTED, "setOverlayMessage", exception);
-        } catch (LinkageError error) {
-            reportOnce(OVERLAY_FALLBACK_REPORTED, "setOverlayMessage", error);
+        if (!OrnitheFamilyAccess.overlayMessage(client, message)) {
+            // This generation keeps the line in a private field and exposes no setter; the single
+            // report below says so once.
+            reportOnce(OVERLAY_FALLBACK_REPORTED, "setOverlayMessage", null);
         }
     }
 
@@ -83,6 +118,8 @@ public final class OrnitheClientAccess {
     }
 
     public static void runClientTasks() {
+        // Every failure is contained per task, so one bad task cannot discard the rest of the batch
+        // or escape into Minecraft.tick().
         Runnable task;
         while ((task = CLIENT_TASKS.poll()) != null) {
             try {
@@ -91,27 +128,44 @@ public final class OrnitheClientAccess {
                 // Through the mod's logger, so the line gets a level and can be filtered; stdout had
                 // neither and launch wrappers showed it as a plain error line.
                 LOGGER.log(Level.SEVERE, "Client task failed", exception);
+            } catch (Error error) {
+                // Errors (LinkageError from a drifted mapping above all) used to escape into
+                // Minecraft.tick() and take the whole tick down after the queue was already empty.
+                LOGGER.log(Level.SEVERE, "Client task failed", error);
+                DebugLog.global().log("client-task",
+                        "result", "failed",
+                        "failure", error.getClass().getName());
             }
         }
     }
 
+    /**
+     * The name this session signed in with.
+     *
+     * <p>Part of the generation split (see {@code OrnitheFamilyAccess}): 1.3.1-1.5.2 keep the name in
+     * a public {@code Session} field and expose no accessor, 1.6.1 and later answer
+     * {@code getSession().getUsername()}. Read directly because a lookup by name cannot survive
+     * {@code remapJar}, which rewrites references but not string literals.
+     */
     static String sessionUsername() {
         Minecraft client = client();
-        try {
-            Object session = Minecraft.class.getMethod("getSession").invoke(client);
-            if (session == null) {
-                return null;
-            }
-            try {
-                return (String) session.getClass().getMethod("getUsername").invoke(session);
-            } catch (NoSuchMethodException ignored) {
-                return (String) session.getClass().getMethod("getPlayerName").invoke(session);
-            }
-        } catch (ReflectiveOperationException ignored) {
+        if (client == null) {
             return null;
         }
+        return OrnitheFamilyAccess.username(client);
     }
 
+    /**
+     * The address of the server this session plays on, or {@code null}.
+     *
+     * <p>The last lookup by name in this class, and the one that still cannot succeed in the shipped
+     * JAR: {@code remapJar} rewrites references but not string literals, so the runtime classes carry
+     * the unmapped names instead of the ones below. The fix is a per-generation call, but it needs
+     * three shapes rather than the two layers this tree has: 1.3.1-1.5.2 and 1.7.x expose
+     * {@code getCurrentServerEntry()}, while 1.6.1/1.6.4 keep the entry in a private
+     * {@code currentServerEntry} field with no getter and share the 1.6-1.8 layer with 1.7.x. Left in
+     * place, still told apart from "not on a server" by the one-shot report below.
+     */
     static String currentServerAddress() {
         Minecraft client = client();
         try {
@@ -120,27 +174,72 @@ public final class OrnitheClientAccess {
             if (entry == null) {
                 return null;
             }
-            try {
-                return (String) entry.getClass().getField("ip").get(entry);
-            } catch (NoSuchFieldException ignored) {
-                return (String) entry.getClass().getField("address").get(entry);
+            for (int index = 0; index < SERVER_ADDRESS_FIELDS.length; index++) {
+                Field field = findField(entry.getClass(), SERVER_ADDRESS_FIELDS[index]);
+                if (field == null) {
+                    continue;
+                }
+                Object value = field.get(entry);
+                if (value instanceof String) {
+                    return (String) value;
+                }
             }
+            // Reachable only when the entry carries no field under either name: a mapping drift
+            // that used to look exactly like "not on a server", silencing the per-server setting.
+            reportOnce(SERVER_ADDRESS_REPORTED, "ServerInfo.address", null);
+            return null;
         } catch (ReflectiveOperationException ignored) {
+            reportOnce(SERVER_ADDRESS_REPORTED, "ServerInfo.address", ignored);
             return null;
         }
     }
 
     /**
+     * Finds a field declared anywhere on the class chain.
+     *
+     * <p>{@code Class.getField} only answers public fields, and this generation's server entry keeps
+     * the address in a plain one, so both lookups threw and the answer was always null.
+     */
+    private static Field findField(Class<?> type, String name) {
+        for (Class<?> current = type; current != null; current = current.getSuperclass()) {
+            try {
+                Field field = current.getDeclaredField(name);
+                field.setAccessible(true);
+                return field;
+            } catch (NoSuchFieldException ignored) {
+                // Declared on a base class in several builds: keep walking up.
+            } catch (RuntimeException ignored) {
+                // Not openable in this environment; the caller reports the miss once.
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Posts one chat line through this version's chat HUD.
      *
-     * <p>The chat accessor, the {@code addMessage} overload and {@code LiteralText}'s constructor
-     * are resolved once ({@link ChatAccess}); a failure drops the line and is reported once. This
-     * runs from tick and render paths whose callers never expect an exception, and
-     * {@code client().gui.getChat()} throws {@link NoSuchMethodError} rather than an
-     * {@link Exception} when a mapping drifts.
+     * <p>The component type is the only thing that moved inside this bundle: 1.3.1-1.6.4 append a
+     * plain {@code String}, 1.7.x want a {@code Text} ({@code OrnitheChatSink} carries the half each
+     * one compiles). A failure drops the line and is reported once, because this runs from tick and
+     * render paths whose callers never expect an exception and a drifted mapping surfaces as an
+     * {@link Error}.
      */
     private static void addChatMessage(String message) {
-        ChatAccess.RESOLVED.send(message);
+        Minecraft client = client();
+        if (client == null || client.gui == null) {
+            // Start-up and shutdown leave the HUD unset: nothing to append the line to, and this is
+            // not a mapping drift.
+            return;
+        }
+        try {
+            OrnitheChatSink.addMessage(client, message);
+        } catch (LinkageError error) {
+            reportOnce(CHAT_FALLBACK_REPORTED, "ChatHud.addMessage", error);
+        } catch (NullPointerException error) {
+            // The chat HUD itself is not built yet: nothing to append the line to.
+            reportOnce(CHAT_FALLBACK_REPORTED, "ChatHud.addMessage", error);
+        }
     }
 
     static int maximumChatLength() {
@@ -167,172 +266,42 @@ public final class OrnitheClientAccess {
                 "failure", failure == null ? "none" : failure.getClass().getName());
     }
 
-    /** The {@code I18n} entry point this Minecraft version exposes, resolved at most once. */
-    private static final class TranslateAccess {
-        private static final TranslateAccess RESOLVED = resolve();
-
-        private final Method method;
-        private final boolean formatsArguments;
-
-        private TranslateAccess(Method method, boolean formatsArguments) {
-            this.method = method;
-            this.formatsArguments = formatsArguments;
+    /**
+     * Records once that a configured hotkey name has no LWJGL2 key code.
+     *
+     * <p>{@code HotkeyKeys.codeOf} accepts more names than {@code lwjgl2CodeOf} can number, and the
+     * poll silently skips a negative code, so the only place a player can find out why the key does
+     * nothing in these generations is the debug log the diagnostics screen prints.
+     */
+    public static void reportHotkey(boolean settingsUnmapped, boolean toggleUnmapped) {
+        if (!HOTKEY_FALLBACK_REPORTED.compareAndSet(false, true)) {
+            return;
         }
-
-        private static TranslateAccess resolve() {
-            Method found = find("net.minecraft.client.resource.language.I18n", true);
-            boolean formats = false;
-            if (found == null) {
-                found = find("net.minecraft.locale.I18n", true);
-            }
-            if (found == null) {
-                // Older builds only carry translate(String) and expect String.format to fill it in.
-                found = find("net.minecraft.locale.I18n", false);
-                formats = true;
-            }
-            return new TranslateAccess(found, formats);
-        }
-
-        private static Method find(String className, boolean varargs) {
-            try {
-                Class<?> i18n = Class.forName(className);
-                return varargs
-                        ? i18n.getMethod("translate", String.class, Object[].class)
-                        : i18n.getMethod("translate", String.class);
-            } catch (ClassNotFoundException ignored) {
-                return null;
-            } catch (NoSuchMethodException ignored) {
-                return null;
-            } catch (LinkageError error) {
-                // Class present but unusable (static init failed): treat it as absent, not as fatal.
-                return null;
-            }
-        }
-
-        String apply(String key, Object[] arguments) {
-            if (method == null) {
-                reportOnce(TRANSLATE_FALLBACK_REPORTED, "I18n.translate", null);
-                return key;
-            }
-            try {
-                if (!formatsArguments) {
-                    return (String) method.invoke(null, key, arguments);
-                }
-                Object translated = method.invoke(null, key);
-                if (arguments == null || arguments.length == 0) {
-                    return String.valueOf(translated);
-                }
-                return String.format(String.valueOf(translated), arguments);
-            } catch (ReflectiveOperationException exception) {
-                reportOnce(TRANSLATE_FALLBACK_REPORTED, "I18n.translate", exception);
-                return key;
-            } catch (LinkageError error) {
-                reportOnce(TRANSLATE_FALLBACK_REPORTED, "I18n.translate", error);
-                return key;
-            }
-        }
+        LOGGER.warning("Universal Translator: hotkey "
+                + (settingsUnmapped ? HotkeyKeys.settingsName() : HotkeyKeys.toggleName())
+                + " has no LWJGL2 key code on this Minecraft version; the key does nothing here");
+        DebugLog.global().log("hotkey",
+                "settings-key", HotkeyKeys.settingsName(),
+                "settings-key-lwjgl2", settingsUnmapped ? "unmapped" : "ok",
+                "toggle-key", HotkeyKeys.toggleName(),
+                "toggle-key-lwjgl2", toggleUnmapped ? "unmapped" : "ok",
+                "result", "not-polled");
     }
 
-    /** The overlay-message method of this version's HUD, resolved at most once. */
-    private static final class OverlayAccess {
-        private static final OverlayAccess RESOLVED = resolve();
-
-        private final Method setOverlay;
-
-        private OverlayAccess(Method setOverlay) {
-            this.setOverlay = setOverlay;
+    /**
+     * Records once that the hotkey poll threw, and drops the failure.
+     *
+     * <p>The poll runs from {@code Minecraft.tick()} through a mixin, so a drifted mapping there used
+     * to throw out of the vanilla tick loop and take the client down for one key press. Reported once
+     * because the poll runs again on the next tick and would otherwise flood the log.
+     */
+    public static void reportHotkeyFailure(Throwable failure) {
+        if (!HOTKEY_FAILURE_REPORTED.compareAndSet(false, true)) {
+            return;
         }
-
-        private static OverlayAccess resolve() {
-            Minecraft client = Minecraft.getInstance();
-            Object gui = client == null ? null : client.gui;
-            if (gui == null) {
-                return new OverlayAccess(null);
-            }
-            try {
-                return new OverlayAccess(
-                        gui.getClass().getMethod("setOverlayMessage", String.class, boolean.class));
-            } catch (NoSuchMethodException ignored) {
-                return new OverlayAccess(null);
-            } catch (LinkageError error) {
-                return new OverlayAccess(null);
-            }
-        }
-
-        Method setOverlay(Object gui) {
-            return gui == null ? null : setOverlay;
-        }
-    }
-
-    /** This version's chat HUD sink, resolved at most once. */
-    private static final class ChatAccess {
-        private static final ChatAccess RESOLVED = resolve();
-
-        private final Method getChat;
-        private final Constructor<?> literal;
-        private final Method addMessage;
-
-        private ChatAccess(Method getChat, Constructor<?> literal, Method addMessage) {
-            this.getChat = getChat;
-            this.literal = literal;
-            this.addMessage = addMessage;
-        }
-
-        private static ChatAccess resolve() {
-            Minecraft client = Minecraft.getInstance();
-            Object gui = client == null ? null : client.gui;
-            if (gui == null) {
-                return new ChatAccess(null, null, null);
-            }
-            try {
-                Method getChat = gui.getClass().getMethod("getChat");
-                Object chat = getChat.invoke(gui);
-                if (chat == null) {
-                    return new ChatAccess(getChat, null, null);
-                }
-                Class<?> chatType = chat.getClass();
-                try {
-                    Class<?> literalType = Class.forName("net.minecraft.text.LiteralText");
-                    Constructor<?> literal = literalType.getConstructor(String.class);
-                    try {
-                        return new ChatAccess(getChat, literal,
-                                chatType.getMethod("addMessage", literalType));
-                    } catch (NoSuchMethodException ignored) {
-                        return new ChatAccess(getChat, literal, chatType.getMethod(
-                                "addMessage", Class.forName("net.minecraft.text.Text")));
-                    }
-                } catch (ClassNotFoundException ignored) {
-                    // No component type at all: fall through to the plain-string overload.
-                } catch (NoSuchMethodException ignored) {
-                }
-                return new ChatAccess(getChat, null, chatType.getMethod("addMessage", String.class));
-            } catch (ReflectiveOperationException exception) {
-                return new ChatAccess(null, null, null);
-            } catch (LinkageError error) {
-                return new ChatAccess(null, null, null);
-            }
-        }
-
-        void send(String message) {
-            if (addMessage == null || getChat == null) {
-                reportOnce(CHAT_FALLBACK_REPORTED, "ChatHud.addMessage", null);
-                return;
-            }
-            try {
-                Minecraft client = Minecraft.getInstance();
-                Object gui = client == null ? null : client.gui;
-                Object chat = gui == null ? null : getChat.invoke(gui);
-                if (chat == null) {
-                    reportOnce(CHAT_FALLBACK_REPORTED, "ChatHud", null);
-                    return;
-                }
-                Object argument = literal == null ? message : literal.newInstance(message);
-                addMessage.invoke(chat, argument);
-            } catch (ReflectiveOperationException exception) {
-                reportOnce(CHAT_FALLBACK_REPORTED, "ChatHud.addMessage", exception);
-            } catch (LinkageError error) {
-                reportOnce(CHAT_FALLBACK_REPORTED, "ChatHud.addMessage", error);
-            }
-        }
+        LOGGER.log(Level.SEVERE, "MC Auto Translation Tool hotkey failed", failure);
+        DebugLog.global().log("hotkey",
+                "result", "failed",
+                "failure", failure.getClass().getName());
     }
 }

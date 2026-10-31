@@ -1,8 +1,8 @@
 package org.universaltranslator.core.provider;
 
 /**
- * How many translations run at once, how many texts one request may carry, and how long a request
- * waits for siblings to batch with.
+ * How many translations run at once, how many texts one request may carry, how long a request waits
+ * for siblings to batch with, and the smallest spacing between two requests to one endpoint.
  *
  * <p>These are throughput settings, not prompt settings: none of them changes the system prompt or
  * the text a request carries. They are therefore deliberately kept out of
@@ -32,6 +32,22 @@ public final class TranslationTuning {
     public static final int MINIMUM_BATCH_WINDOW_MILLIS = 0;
     public static final int MAXIMUM_BATCH_WINDOW_MILLIS = 500;
 
+    /**
+     * Attempts one request may make, and the smallest spacing between two requests to the same
+     * endpoint.
+     *
+     * <p>Both ranges are enforced here only. They used to be written out twice — once in
+     * {@code OnlineProviderConfig.integer(...)} and once inside
+     * {@link ResilientTranslationProvider}'s constructor — so changing one of them made the other
+     * clamp the value silently.
+     */
+    public static final int DEFAULT_ATTEMPTS = 3;
+    public static final int MINIMUM_ATTEMPTS = 1;
+    public static final int MAXIMUM_ATTEMPTS = 5;
+    public static final int DEFAULT_REQUEST_INTERVAL_MILLIS = 60;
+    public static final int MINIMUM_REQUEST_INTERVAL_MILLIS = 0;
+    public static final int MAXIMUM_REQUEST_INTERVAL_MILLIS = 60000;
+
     /** The historical hardcoded behaviour, used by every constructor that is not told otherwise. */
     public static final TranslationTuning DEFAULTS = new TranslationTuning(
             DEFAULT_WORKERS, DEFAULT_BATCH_SIZE, DEFAULT_BATCH_WINDOW_MILLIS);
@@ -39,12 +55,24 @@ public final class TranslationTuning {
     private final int workers;
     private final int batchSize;
     private final int batchWindowMillis;
+    private final int requestIntervalMillis;
 
     public TranslationTuning(int workers, int batchSize, int batchWindowMillis) {
+        this(workers, batchSize, batchWindowMillis, DEFAULT_REQUEST_INTERVAL_MILLIS);
+    }
+
+    /**
+     * @param requestIntervalMillis smallest spacing between two requests to one endpoint, in
+     *                              milliseconds; 0 sends as fast as the worker pool allows
+     */
+    public TranslationTuning(int workers, int batchSize, int batchWindowMillis,
+            int requestIntervalMillis) {
         this.workers = clamp(workers, MINIMUM_WORKERS, MAXIMUM_WORKERS);
         this.batchSize = clamp(batchSize, MINIMUM_BATCH_SIZE, MAXIMUM_BATCH_SIZE);
         this.batchWindowMillis = clamp(batchWindowMillis,
                 MINIMUM_BATCH_WINDOW_MILLIS, MAXIMUM_BATCH_WINDOW_MILLIS);
+        this.requestIntervalMillis = clamp(requestIntervalMillis,
+                MINIMUM_REQUEST_INTERVAL_MILLIS, MAXIMUM_REQUEST_INTERVAL_MILLIS);
     }
 
     /**
@@ -71,9 +99,36 @@ public final class TranslationTuning {
         return batchSize;
     }
 
+    /**
+     * How many groups of one job may be in request at the same time.
+     *
+     * <p>The batch gatherer used to allow exactly one leader per job, and a session's texts share
+     * one job (one target language, one text kind), so every worker waited behind the same leader
+     * and the worker count bought no parallelism at all. The worker count is the natural cap: more
+     * groups in flight than threads to send them cannot happen.
+     *
+     * @return the worker count, already inside its range
+     */
+    public int maximumConcurrentBatches() {
+        return clamp(workers, MINIMUM_WORKERS, MAXIMUM_WORKERS);
+    }
+
     /** How long a request waits for siblings, in milliseconds; 0 does not wait at all. */
     public int batchWindowMillis() {
         return batchWindowMillis;
+    }
+
+    /**
+     * Smallest spacing between two requests to one endpoint, in milliseconds.
+     *
+     * <p>{@link ResilientTranslationProvider} owns the gate for one translation call, but a batch
+     * sends more than one request from inside a single call: one whole-group retry, and one repair
+     * request per line the reply did not answer. Those requests bypassed that gate entirely, so
+     * {@code api-min-request-interval-ms} meant nothing on the most expensive request there is. The
+     * value travels here so the batch layer can pace them with the same number the outer gate uses.
+     */
+    public int requestIntervalMillis() {
+        return requestIntervalMillis;
     }
 
     /**
@@ -110,9 +165,10 @@ public final class TranslationTuning {
         return clamp(parsed, minimum, maximum);
     }
 
-    /** The two settings this object actually decides; the worker count is not one of them. */
+    /** The settings this object actually decides; the worker count is not one of them. */
     @Override
     public String toString() {
-        return "batchSize=" + batchSize + ", batchWindowMillis=" + batchWindowMillis;
+        return "batchSize=" + batchSize + ", batchWindowMillis=" + batchWindowMillis
+                + ", requestIntervalMillis=" + requestIntervalMillis;
     }
 }

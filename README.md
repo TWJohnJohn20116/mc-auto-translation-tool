@@ -39,7 +39,7 @@
 
 1. 确认游戏使用的 **Minecraft 版本、模组加载器和 Java 版本**。
 2. 打开 [最新 Release](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/latest)，按下表选择 JAR。
-3. 先从该实例的 `mods` 文件夹删除 1.4-beta4 及更早版本，再放入唯一一个匹配的 1.4 JAR。Fabric 还需安装对应版本的 Fabric API。
+3. 先从该实例的 `mods` 文件夹删除所有 `MCAutoTranslationTool-*` 旧版本（通配符已涵盖全部旧版，不分版本号），再放入唯一一个与你的 Minecraft 版本及加载器完全匹配的 JAR。Fabric 还需安装对应版本的 Fabric API。
 4. 启动游戏。按 `F8` 开启或关闭自动翻译；主界面右上角「翻译设置」或按 `U` 打开设置。若已安装 Mod Menu，也可在模组列表打开同一设置页。（Fabric 1.0–1.13.2 没有按键设置 API，这两个键可在 `config/universal-translator.properties` 用 `settings-key` / `toggle-key` 改，例如 `F7`、`J`。）
 5. 首次使用建议选择“离线”与“仅译文”。详细步骤见[安装与使用指南](docs/Zh-cn/USER_GUIDE.md)。
 
@@ -64,13 +64,14 @@ Java 随游戏为 8、17、21 或 25。1.14–1.14.2 因 Yarn 无法 remap，仅
 
 [下载 Fabric JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4/MCAutoTranslationTool-1.4-fabric-all.jar)
 
-1.0.0–1.12.2（Fabric / Ornithe）尚未随 v1.4 提供。请不要把 `fabric-all` 用在未列出的游戏版本上。
+1.3.1–1.12.2（Fabric / Ornithe）未随本版提供：1.3.1–1.8.8 共 26 个版本、1.8.9–1.12.2 共 15 个版本可自源码构建；1.0.0–1.2.5、1.6.2、1.7.3、1.7.5、1.7.7 没有目标目录。请不要把 `fabric-all` 用在未列出的游戏版本上。
 
 ### Forge：按 Minecraft 版本选择
 
 Forge 只在已验证兼容的相邻版本间共用 JAR，没有 Fabric 那种多实现嵌套选版。族群 JAR 的
-`mods.toml` 用连续版本区间（如 `[1.21,1.21.6)`）宣告，比实际适配清单宽：**区间里的缺口没有实作**
-（例如 1.21.2 没有对应目标），只有下表逐项列出的版本才是实际支援范围。
+`mods.toml` 用逗号分隔的精确 restriction 联集宣告（如 `[1.21,1.21],[1.21.1,1.21.1],[1.21.3,1.21.3]`），
+只列真正有实现的版本：**1.21.2 不在其中，Forge 会直接以依赖错误拒绝加载**，而不是放行后缺失实现。
+只有下表逐项列出的版本才是实际支持范围。
 
 | Minecraft | Java | 下载 |
 | --- | ---: | --- |
@@ -89,7 +90,7 @@ Forge 只在已验证兼容的相邻版本间共用 JAR，没有 Fabric 那种�
 ### NeoForge：必须按版本分开
 
 NeoForge / FML **不能**像 Fabric Loader 那样，在同一个 JAR 里嵌套多套同 `modId` 实现再按游戏版本只启用一套：重复 modId 会无法加载，Jar-in-Jar 只用于嵌入依赖库。1.20.1（Java 17、NeoForge 47）与 1.21.1 / 1.21.3 / 1.21.11（Java 21、NeoForge 21.1 / 21.3 / 21.11）API 也不兼容，所以正式版是每个 Minecraft 版本一颗独立 JAR，共 19 颗。NeoForge 只有下表这 19 个版本：1.20.2
-的坐标无法解析、1.20.3 没有对应目标，两者都不提供下载。
+的坐标无法解析、1.20.3 与 1.20.5 没有对应目标，三者都不提供下载。
 
 | Minecraft | NeoForge | Java | 下载 |
 | --- | --- | ---: | --- |

@@ -14,9 +14,15 @@ updates:
     commit-message:
       prefix: ci
     groups:
+      # 只把 minor／patch 合成一個 PR。major（checkout v7→v8、setup-java v6→v7 這種）會個別
+      # 開 PR：個 PR 會跑 25 個以上 job，一個紅的 major 會把同一個群組裡的小更新一起卡死，
+      # 與 #69 在 npm 那組造成的失敗模式相同。
       actions:
         patterns:
           - "*"
+        update-types:
+          - minor
+          - patch
 
   # website/ 是 Next.js + pnpm，package.json 與 pnpm-lock.yaml 都有進版控。
   - package-ecosystem: npm

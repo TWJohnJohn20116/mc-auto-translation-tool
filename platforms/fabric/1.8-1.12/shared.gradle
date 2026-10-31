@@ -58,7 +58,21 @@ sourceSets {
     }
 }
 
+// Minecraft 1.11 renamed the language files from en_US.lang to en_us.lang, while 1.10 and earlier only
+// read the uppercase name and one source directory can hold one spelling. The lowercase alias is
+// generated at build time instead of being committed, so the two spellings cannot drift apart, and
+// only for the versions that resolve the lowercase name.
+def lowerCaseLangRoots = []
+if (gameVersion.startsWith("1.11") || gameVersion.startsWith("1.12")) {
+    lowerCaseLangRoots = sourceSets.main.resources.srcDirs.findAll {
+        new File(it, "assets/universal_translator/lang").isDirectory()
+    }
+}
+
 processResources {
+    // expand() reads the template with the platform default charset unless this is set, so a jar
+    // built on a Windows dev box decoded the UTF-8 fabric.mod.json differently than CI did.
+    filteringCharset = "UTF-8"
     inputs.properties(
             "version": project.version,
             "minecraftVersion": gameVersion,
@@ -71,6 +85,13 @@ processResources {
                 "loaderVersion": project.ext.ornitheLoaderVersion
         )
     }
+    lowerCaseLangRoots.each { resourceRoot ->
+        from(new File(resourceRoot, "assets/universal_translator/lang")) {
+            include "*.lang"
+            rename { String name -> name.toLowerCase(Locale.ROOT) }
+            into "assets/universal_translator/lang"
+        }
+    }
 }
 
 tasks.withType(JavaCompile).configureEach {
@@ -78,11 +99,26 @@ tasks.withType(JavaCompile).configureEach {
     options.release = 8
 }
 
+// options.release already pins both the language level and the API table for every JavaCompile task
+// in this project, so repeating the 1.8 pair here only gave "what does this build target" a second,
+// contradicting answer.
 java {
-    sourceCompatibility = JavaVersion.VERSION_1_8
-    targetCompatibility = JavaVersion.VERSION_1_8
     withSourcesJar()
 }
 
 apply from: rootProject.file("gradle/jar-contents.gradle")
+// A mixin class that no shipped mixins.json lists is compiled, shipped and never applied — the
+// failure mode 1.19.3-1.19.4 shipped with — and required:true never complains about the reverse.
+// This tree is only built by the scheduled legacy-targets run, so without this check nothing looks
+// at the class-to-config mapping it ships at all.
+apply from: rootProject.file("gradle/fabric-mixin-config-verify.gradle")
+
+// Nothing read this tree's produced classes back: options.release was the whole story. These versions
+// are only built by the scheduled legacy-targets run and verify_release_jars.py never sees them (the
+// 1.8-1.12 bundle is not one of the published assets), so the header half below is the only proof that
+// the shipped bytecode really is Java 8. Loom writes compile options of its own, so the
+// declared-release half stays off - the same shape the 1.13 tree uses.
+ext.fabricReleaseJava = gradle.ext.treeJavaTarget("platforms/fabric/1.8-1.12/")
+ext.fabricReleaseJarSkipReleaseCheck = true
+apply from: rootProject.file("gradle/fabric-release-jar-verify.gradle")
 

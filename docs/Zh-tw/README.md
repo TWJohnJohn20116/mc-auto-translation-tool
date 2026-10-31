@@ -39,7 +39,7 @@
 
 1. 確認遊戲使用的 **Minecraft 版本、模組載入器與 Java 版本**。
 2. 開啟[最新 Release](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/latest)，依下表選擇 JAR。
-3. 先從該實例的 `mods` 資料夾移除 1.4-beta4 及更早版本，再放入唯一一個相符的 1.4 JAR。Fabric 還需安裝對應版本的 Fabric API。
+3. 先從該實例的 `mods` 資料夾移除所有 `MCAutoTranslationTool-*` 舊版本（萬用字元已涵蓋全部舊版，不分版本號），再放入唯一一個與你的 Minecraft 版本及載入器完全相符的 JAR。Fabric 還需安裝對應版本的 Fabric API。
 4. 啟動遊戲。按 `F8` 開啟或關閉自動翻譯；主畫面右上角「翻譯設定」或按 `U` 開啟設定。若已安裝 Mod Menu，也可在模組清單開啟同一設定頁。（Fabric 1.0–1.13.2 沒有按鍵設定 API，這兩個鍵可在 `config/universal-translator.properties` 用 `settings-key` / `toggle-key` 改，例如 `F7`、`J`。）
 5. 首次使用建議選擇「離線」與「僅譯文」。詳細步驟請見[安裝與使用指南](USER_GUIDE.md)。
 
@@ -64,13 +64,14 @@ Java 隨遊戲為 8、17、21 或 25。1.14–1.14.2 因 Yarn 無法 remap，僅
 
 [下載 Fabric JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4/MCAutoTranslationTool-1.4-fabric-all.jar)
 
-1.0.0–1.12.2（Fabric / Ornithe）尚未隨 v1.4 提供。請不要把 `fabric-all` 用在未列出的遊戲版本上。
+1.3.1–1.12.2（Fabric / Ornithe）未隨本版提供：1.3.1–1.8.8 共 26 個版本、1.8.9–1.12.2 共 15 個版本可自原始碼建置；1.0.0–1.2.5、1.6.2、1.7.3、1.7.5、1.7.7 沒有目標目錄。請不要把 `fabric-all` 用在未列出的遊戲版本上。
 
 ### Forge：依 Minecraft 版本選擇
 
 Forge 只在已驗證相容的相鄰版本間共用 JAR，沒有 Fabric 那種多實作巢狀選版。族群 JAR 的
-`mods.toml` 用連續版本區間（如 `[1.21,1.21.6)`）宣告，比實際轉接清單寬：**區間裡的缺口沒有實作**
-（例如 1.21.2 沒有對應目標），只有下表逐項列出的版本才是實際支援範圍。
+`mods.toml` 以逗號分隔的精確 restriction 聯集宣告（如 `[1.21,1.21],[1.21.1,1.21.1],[1.21.3,1.21.3]`），
+只列真正有實作的版本：**1.21.2 不在其中，Forge 會直接以相依錯誤拒絕載入**，而不是放行後缺失實作。
+只有下表逐項列出的版本才是實際支援範圍。
 
 | Minecraft | Java | 下載 |
 | --- | ---: | --- |
@@ -89,7 +90,7 @@ Forge 只在已驗證相容的相鄰版本間共用 JAR，沒有 Fabric 那種�
 ### NeoForge：必須依版本分開
 
 NeoForge / FML **不能**像 Fabric Loader 那樣，在同一個 JAR 裡巢狀多套同 `modId` 實作再依遊戲版本只啟用一套：重複 modId 會無法載入，Jar-in-Jar 只用來嵌入相依函式庫。1.20.1（Java 17、NeoForge 47）與 1.21.1 / 1.21.3 / 1.21.11（Java 21、NeoForge 21.1 / 21.3 / 21.11）API 也不相容，所以正式版是每個 Minecraft 版本一顆獨立 JAR，共 19 顆。NeoForge 只有下表這 19 個版本：1.20.2
-的座標無法解析、1.20.3 沒有對應目標，兩者都不提供下載。
+的座標無法解析、1.20.3 與 1.20.5 沒有對應目標，三者都不提供下載。
 
 | Minecraft | NeoForge | Java | 下載 |
 | --- | --- | ---: | --- |

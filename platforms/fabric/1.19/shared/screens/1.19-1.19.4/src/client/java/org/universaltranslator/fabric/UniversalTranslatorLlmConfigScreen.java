@@ -1,5 +1,6 @@
 package org.universaltranslator.fabric;
 
+import org.universaltranslator.core.ModelListPaging;
 import org.universaltranslator.core.UiLimits;
 import java.util.Collections;
 import java.util.List;
@@ -13,11 +14,9 @@ import org.universaltranslator.core.provider.OpenAiModelCatalog;
 /** Local-only editor for an OpenAI-compatible hosted or loopback LLM endpoint. */
 final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorScreenBase {
     /** Height of a single catalog row in the model picker overlay. */
-    private static final int LIST_ROW_HEIGHT = 12;
+    private static final int LIST_ROW_HEIGHT = ModelListPaging.ROW_HEIGHT;
     /** Y of the first catalog row; the picker title sits above it. */
-    private static final int LIST_TOP = 46;
-    /** Room kept under the rows for the paging, back, and hint lines. */
-    private static final int LIST_FOOTER_HEIGHT = 62;
+    private static final int LIST_TOP = ModelListPaging.LIST_TOP;
     private static final int ESCAPE_KEY = 256;
 
     private final UniversalTranslatorSettingsScreen parent;
@@ -32,8 +31,10 @@ final class UniversalTranslatorLlmConfigScreen extends UniversalTranslatorScreen
     private volatile boolean statusIsError;
     private volatile List<String> fetchedModels = Collections.emptyList();
     private volatile boolean fetching;
-    private boolean modelListOpen;
-    private int modelPage;
+    // Written by the worker that fetches the catalog and read by the render thread, so both need
+    // the visibility the list itself already had.
+    private volatile boolean modelListOpen;
+    private volatile int modelPage;
 
     UniversalTranslatorLlmConfigScreen(
             UniversalTranslatorSettingsScreen parent,
@@ -111,15 +112,18 @@ int width = Math.max(180, Math.min(360, this.width - 20));
                 ? parent.llmApiKey() : ("-".equals(enteredKey) ? "" : enteredKey);
         fetching = true;
         setStatus(tr("screen.universal_translator.llm.fetching"), false);
-        Thread worker = new Thread(() -> {
+        ScreenWorkerPool.execute(() -> {
             List<String> models = Collections.emptyList();
             String failure = "";
             try {
                 models = OpenAiModelCatalog.fetch(endpointValue, keyValue);
             } catch (Exception error) {
                 failure = describe(error);
+            } finally {
+                // In a finally block so a LinkageError or OutOfMemoryError from the provider class
+                // cannot leave the guard stuck at true and silence the button for the session.
+                fetching = false;
             }
-            fetching = false;
             if (!failure.isEmpty()) {
                 setStatus(tr("screen.universal_translator.llm.fetch_failed", failure), true);
                 return;
@@ -132,9 +136,7 @@ int width = Math.max(180, Math.min(360, this.width - 20));
             modelPage = 0;
             modelListOpen = true;
             setStatus("", false);
-        }, "universal-translator-model-list");
-        worker.setDaemon(true);
-        worker.start();
+        });
     }
 
     private void setStatus(String message, boolean error) {
@@ -168,26 +170,64 @@ int width = Math.max(180, Math.min(360, this.width - 20));
         }
         super.render(matrices, mouseX, mouseY, delta);
         if (modelListOpen) {
+            releaseFieldFocus();
             renderModelList(matrices, mouseX, mouseY);
+        } else {
+            restoreFieldEditing();
+        }
+    }
+
+    /**
+     * Keeps the form from collecting characters while the picker covers it.
+     *
+     * <p>{@code charTyped} and {@code keyPressed} already swallow the keystrokes here, so this is
+     * the second line of defence: a field that cannot be edited keeps the characters out even if a
+     * later version routes them through a different callback.
+     *
+     * <p>Clearing a field's own focus needs an accessor the game renames at runtime, so the
+     * reflective call this used to make found nothing and guarded nothing at all. The editability
+     * switch exists on every generation; {@link #restoreFieldEditing()} hands it back.
+     */
+    private void releaseFieldFocus() {
+        setFieldEditing(endpoint, false);
+        setFieldEditing(model, false);
+        setFieldEditing(apiKey, false);
+    }
+
+    /** Gives the form its editing back once the picker is gone. */
+    private void restoreFieldEditing() {
+        setFieldEditing(endpoint, true);
+        setFieldEditing(model, true);
+        setFieldEditing(apiKey, true);
+    }
+
+    private static void setFieldEditing(TextFieldWidget field, boolean editable) {
+        if (field != null) {
+            field.setEditable(editable);
         }
     }
 
     /** Draws the fetched catalog over the form so a served model can be picked instead of typed. */
     private void renderModelList(MatrixStack matrices, int mouseX, int mouseY) {
+        // Snapshot the list once: the worker replaces it wholesale, so reading size() and get()
+        // through the volatile field separately can mix two different lists and throw on the
+        // render thread.
+        List<String> models = fetchedModels;
         fill(matrices, 0, 0, this.width, this.height, 0xFF101010);
         drawCenteredText(matrices, this.textRenderer,
-                Text.translatable("screen.universal_translator.llm.select_model", fetchedModels.size()),
+                Text.translatable("screen.universal_translator.llm.select_model", models.size()),
                 this.width / 2, 20, 0xFFFFFF);
         int rows = rowsPerPage();
+        modelPage = ModelListPaging.clampPage(modelPage, models.size(), rows);
         int first = modelPage * rows;
-        for (int row = 0; row < rows && first + row < fetchedModels.size(); row++) {
+        for (int row = 0; row < rows && first + row < models.size(); row++) {
             int rowY = LIST_TOP + row * LIST_ROW_HEIGHT;
             boolean hovered = mouseY >= rowY && mouseY < rowY + LIST_ROW_HEIGHT;
             drawTextWithShadow(matrices, this.textRenderer,
-                    Text.literal((hovered ? "> " : "  ") + fetchedModels.get(first + row)),
+                    Text.literal((hovered ? "> " : "  ") + models.get(first + row)),
                     24, rowY, hovered ? 0xFFFFD060 : 0xFFE0E0E0);
         }
-        int pages = pageCount(rows);
+        int pages = ModelListPaging.pageCount(models.size(), rows);
         drawCenteredText(matrices, this.textRenderer,
                 Text.literal("< " + (modelPage + 1) + "/" + pages + " >"), this.width / 2, this.height - 46, 0xFFFFFF);
         drawCenteredText(matrices, this.textRenderer,
@@ -206,8 +246,11 @@ int width = Math.max(180, Math.min(360, this.width - 20));
     }
 
     private void handleModelListClick(double mouseX, double mouseY) {
+        List<String> models = fetchedModels;
+        int rows = rowsPerPage();
+        modelPage = ModelListPaging.clampPage(modelPage, models.size(), rows);
         if (mouseY >= this.height - 54 && mouseY < this.height - 38) {
-            int pages = pageCount(rowsPerPage());
+            int pages = ModelListPaging.pageCount(models.size(), rows);
             if (pages > 1) {
                 modelPage = mouseX < this.width / 2.0
                         ? (modelPage + pages - 1) % pages : (modelPage + 1) % pages;
@@ -221,13 +264,12 @@ int width = Math.max(180, Math.min(360, this.width - 20));
         if (mouseY < LIST_TOP) {
             return;
         }
-        int rows = rowsPerPage();
-        int row = (int) ((mouseY - LIST_TOP) / LIST_ROW_HEIGHT);
-        int index = modelPage * rows + row;
-        if (row >= rows || index >= fetchedModels.size()) {
+        int row = ModelListPaging.rowAt(mouseY);
+        int index = ModelListPaging.index(modelPage, rows, row);
+        if (row >= rows || index >= models.size()) {
             return;
         }
-        model.setText(fetchedModels.get(index));
+        model.setText(models.get(index));
         modelListOpen = false;
         setStatus("", false);
     }
@@ -249,11 +291,7 @@ int width = Math.max(180, Math.min(360, this.width - 20));
     }
 
     private int rowsPerPage() {
-        return Math.max(3, (this.height - LIST_TOP - LIST_FOOTER_HEIGHT) / LIST_ROW_HEIGHT);
-    }
-
-    private int pageCount(int rows) {
-        return Math.max(1, (fetchedModels.size() + rows - 1) / rows);
+        return ModelListPaging.rows(this.height);
     }
 
     @Override

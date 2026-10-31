@@ -23,6 +23,9 @@ public enum HudIndicatorColor {
     private final String configName;
     private final int argb;
 
+    /** Cached once: {@code values()} clones the whole array on every call. */
+    private static final HudIndicatorColor[] VALUES = values();
+
     HudIndicatorColor(String configName, int argb) {
         this.configName = configName;
         this.argb = argb;
@@ -41,7 +44,7 @@ public enum HudIndicatorColor {
     public static HudIndicatorColor fromConfig(String value) {
         if (value != null) {
             String normalized = value.trim().toLowerCase(java.util.Locale.ROOT).replace('_', '-');
-            for (HudIndicatorColor color : values()) {
+            for (HudIndicatorColor color : VALUES) {
                 if (color.configName.equals(normalized)) {
                     return color;
                 }

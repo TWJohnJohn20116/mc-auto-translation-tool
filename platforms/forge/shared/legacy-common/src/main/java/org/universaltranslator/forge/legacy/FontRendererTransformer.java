@@ -48,11 +48,17 @@ public final class FontRendererTransformer implements IClassTransformer {
             ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_FRAMES) {
                 @Override
                 protected String getCommonSuperClass(String type1, String type2) {
-                    // COMPUTE_FRAMES asks for this at every merge point. Loading the two types here
-                    // would run their static initialisers from inside the transformer — during
-                    // class loading, for classes that may not be defined yet. A wider frame type is
-                    // still verifiable, only less precise, so the merge is resolved to Object.
-                    return "java/lang/Object";
+                    // COMPUTE_FRAMES asks for this at every merge point. The default answer loads
+                    // the two types without initialising them, which is safe here; answering Object
+                    // for every merge only produced a wider frame type, and a slot that is narrowed
+                    // again later in the same method then failed verification. So the precise
+                    // supertype is kept, and Object is the fallback for a type that cannot be
+                    // resolved at all (a class that is not on the transformer's classloader yet).
+                    try {
+                        return super.getCommonSuperClass(type1, type2);
+                    } catch (RuntimeException | LinkageError unresolvable) {
+                        return "java/lang/Object";
+                    }
                 }
             };
             CountingVisitor visitor = fontRenderer

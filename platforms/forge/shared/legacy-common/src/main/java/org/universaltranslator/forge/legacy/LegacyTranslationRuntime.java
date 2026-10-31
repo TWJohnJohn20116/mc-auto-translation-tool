@@ -3,6 +3,8 @@ package org.universaltranslator.forge.legacy;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.network.NetHandlerPlayClient;
 import net.minecraft.client.network.NetworkPlayerInfo;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.universaltranslator.core.RenderTranslationSession;
 import org.universaltranslator.core.MinecraftContentScope;
 import org.universaltranslator.core.HomeQuickSettingsState;
@@ -19,6 +21,7 @@ import org.universaltranslator.core.RecentUserText;
 import org.universaltranslator.core.TranslationResult;
 import org.universaltranslator.core.TranslationStatusLocalizer;
 import org.universaltranslator.core.DiagnosticsLogExporter;
+import org.universaltranslator.core.DebugLog;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -32,6 +35,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 public final class LegacyTranslationRuntime {
     private static final long PLAYER_NAME_SNAPSHOT_MILLIS = 5_000L;
@@ -42,9 +47,32 @@ public final class LegacyTranslationRuntime {
     // Match ProtectedText's bounded literal limit so large network lobbies do not silently
     // drop names after the first few tab-list pages.
     private static final int MAX_PROTECTED_PLAYER_NAMES = 1_000;
+    private static final Logger LOGGER = LogManager.getLogger("MCAutoTranslationTool");
+    /**
+     * Reports a queued write that failed, so a quick setting cannot vanish without a trace.
+     *
+     * <p>The writer's own record goes to the opt-in debug log, which is off by default, so a Home key
+     * or the F8 toggle whose write failed left nothing behind anywhere while the HUD already showed
+     * the new value. Shared with {@code LegacyClientEvents}, so both paths report the same way.
+     */
+    static final Consumer<Throwable> SAVE_FAILURE_REPORTER = new Consumer<Throwable>() {
+        @Override
+        public void accept(Throwable failure) {
+            LOGGER.warn("Could not persist the quick setting", failure);
+        }
+    };
 
     private static volatile RenderTranslationSession session;
     private static volatile LegacyConfig activeConfig;
+    /**
+     * The snapshot the HUD draws when no configuration is loaded.
+     *
+     * <p>A shared instance, not a fresh object: shutdown() and a failed initialize() both leave
+     * {@code cachedHome} null, and the HUD then reads this several times per frame for as long as
+     * the state lasts.
+     */
+    private static final HomeQuickSettingsState DISABLED_SETTINGS =
+            new HomeQuickSettingsState(false, true, TargetLanguage.SIMPLIFIED_CHINESE);
     /**
      * Settings snapshot the render hooks read.
      *
@@ -113,8 +141,10 @@ public final class LegacyTranslationRuntime {
                 // Record the provider before the store and the session are built around it: a
                 // failure in either must not orphan a provider that may already hold resources.
                 createdProvider = provider;
+                // One store per cache file: a settings change must not make the next session's first
+                // lookup parse the whole file again.
                 store = config.diskCache
-                        ? new PersistentTranslationCache(config.cacheFile.toPath(), 10_000)
+                        ? PersistentTranslationCache.shared(config.cacheFile.toPath(), 10_000)
                         : new TranslationCache(10_000);
                 // The offline llama.cpp server is single threaded, so it always gets one worker no
                 // matter what the configuration asks for.
@@ -168,32 +198,51 @@ public final class LegacyTranslationRuntime {
         }
     }
 
+    /** Teardowns queued but not finished, reported by {@link #closeInBackground}. */
+    private static final AtomicInteger PENDING_TEARDOWNS = new AtomicInteger();
+    /** Backlog depth worth one debug-log line; the queue itself is never truncated. */
+    private static final int MAX_PENDING_TEARDOWNS = 2;
+
     /**
      * Hands a replaced session to the shared reaper so its teardown never runs on the caller's
      * thread. {@link #shutdown()} stays synchronous on purpose: it runs while the game is closing,
      * where blocking is free, and it closes whichever session is current at that moment, which is
      * never one that was already handed to the reaper.
+     *
+     * <p>The reaper is a single unbounded queue, so a burst of switches — holding F8 down, or a
+     * HUD drag that re-initializes several times a second — queues one live session with its thread
+     * pool and caches per press. Each one is retired without waiting for its workers, so the queue
+     * drains as fast as the switches arrive instead of accumulating five seconds of teardown per
+     * press; {@link #PENDING_TEARDOWNS} still records its depth past
+     * {@link #MAX_PENDING_TEARDOWNS} in the debug log.
      */
     private static void closeInBackground(final RenderTranslationSession replaced) {
         if (replaced == null) {
             return;
+        }
+        if (PENDING_TEARDOWNS.incrementAndGet() == MAX_PENDING_TEARDOWNS + 1) {
+            DebugLog.global().log("runtime", "teardown", "backlog",
+                    "pending", Integer.toString(MAX_PENDING_TEARDOWNS + 1));
         }
         try {
             SESSION_REAPER.execute(new Runnable() {
                 @Override
                 public void run() {
                     try {
-                        replaced.close();
+                        replaced.closeWithoutWaiting();
                     } catch (Throwable ignored) {
                         // A reaper must never die with a teardown still pending. The session is
                         // already unreachable from the live fields, so a failure here can only
                         // leak its resources; there is no caller left to report it to.
+                    } finally {
+                        PENDING_TEARDOWNS.decrementAndGet();
                     }
                 }
             });
         } catch (Throwable rejected) {
             // The executor only rejects once it has been shut down, which this class never does.
             // Leaving the replaced session unclosed still beats blocking the caller.
+            PENDING_TEARDOWNS.decrementAndGet();
         }
     }
 
@@ -214,17 +263,52 @@ public final class LegacyTranslationRuntime {
         return active.lookup(original, kind);
     }
 
-    static synchronized void shutdown() {
-        RenderTranslationSession active = session;
-        session = null;
-        activeProvider = null;
-        protectedPlayerNames = Collections.emptyList();
-        protectedPlayerNamesExpireAt = 0L;
-        RECENT_USER_TEXT.clear();
-        outgoingTail = CompletableFuture.completedFuture(null);
+    static void shutdown() {
+        RenderTranslationSession active;
+        synchronized (LegacyTranslationRuntime.class) {
+            active = session;
+            session = null;
+            // Clear the published settings too, not just the session. Leaving them behind made a failed
+            // initialize() permanent: session == null meant "nothing translates", while the HUD read
+            // cachedHome.enabled == true and kept painting the "translation is on" indicator,
+            // diagnostics() reported a provider that no longer exists, and the Home toggles handed the
+            // broken configuration back and then saved it over the file.
+            activeConfig = null;
+            activeProvider = null;
+            cachedHome = null;
+            diagnosticsSnapshot = null;
+            diagnosticsSnapshotAt = 0L;
+            protectedPlayerNames = Collections.emptyList();
+            protectedPlayerNamesExpireAt = 0L;
+            RECENT_USER_TEXT.clear();
+            outgoingTail = CompletableFuture.completedFuture(null);
+            // The on-disk copy of the advanced keys outlives a session on purpose (every snapshot of the
+            // same file shares it), so releasing the configuration is where it is dropped.
+            LegacyConfig.clearCaches();
+        }
+        // The waits below are bounded but long -- two seconds for the write queue, up to five for a
+        // session with a worker parked in a provider read -- so they run outside the class monitor:
+        // initialize() takes that same monitor from the render thread on a settings change, and holding
+        // it here froze one frame meanwhile.
+        // The queued writes are the ones this runtime accepted; let them land before the state they
+        // were derived from is dropped.
+        LegacyConfigWriter.shutdown();
+        // The screens' shared pool goes with the client so a closed game keeps no daemon threads.
+        LegacyScreenWorkers.shutdown();
         if (active != null) {
             active.close();
         }
+    }
+
+    /**
+     * Refreshes the protected-name snapshot from the client tick instead of from a draw call.
+     *
+     * <p>The supplier below is asked for this on the render thread for every submitted string, so
+     * the refresh ran inside a frame: on a full server that walked the whole tab list between two
+     * draw calls.
+     */
+    static void refreshProtectedNames() {
+        playerNameSnapshot();
     }
 
     private static List<String> playerNameSnapshot() {
@@ -283,7 +367,7 @@ public final class LegacyTranslationRuntime {
         }
         String normalized = value.trim();
         if (!normalized.isEmpty() && normalized.length() <= 255
-                && values.size() < MAX_PROTECTED_PLAYER_NAMES && !values.contains(normalized)) {
+                && !values.contains(normalized)) {
             values.add(normalized);
         }
     }
@@ -371,7 +455,10 @@ public final class LegacyTranslationRuntime {
                 || minecraft.currentScreen instanceof LegacyDiagnosticsScreen
                 || minecraft.currentScreen instanceof LegacyLlmConfigScreen
                 || LegacyRenderContext.isTextInput()) {
-            return originals;
+            // The same read-only answer the core hands back. A bridge that renders with translation on
+            // and then off must not see the list become editable: the first set/sort/add that works in
+            // one state throws UnsupportedOperationException in the other, once per frame.
+            return originals == null ? null : Collections.unmodifiableList(originals);
         }
         return active.lookupLines(originals, kind);
     }
@@ -473,7 +560,7 @@ public final class LegacyTranslationRuntime {
             }
             runtimeChanged = true;
             initialize(updated);
-            updated.save();
+            LegacyConfigWriter.saveOffTick(updated, SAVE_FAILURE_REPORTER);
             return homeSettingsState(updated);
         } catch (Exception failure) {
             if (runtimeChanged) {
@@ -489,7 +576,7 @@ public final class LegacyTranslationRuntime {
 
     private static HomeQuickSettingsState homeSettingsState(LegacyConfig config) {
         return config == null
-                ? new HomeQuickSettingsState(false, true, TargetLanguage.SIMPLIFIED_CHINESE)
+                ? DISABLED_SETTINGS
                 : new HomeQuickSettingsState(
                         config.enabled, config.translateVanilla, config.targetLanguage,
                         config.hudIndicatorSettings(), config.provider);

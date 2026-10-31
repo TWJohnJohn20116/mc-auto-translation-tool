@@ -17,6 +17,11 @@ ext.neoforgePackFormat = 32
 
 apply from: rootProject.file("platforms/neoforge/shared.gradle")
 
+// 1.20.6 still runs the 1.20-era HUD: Gui.render takes (GuiGraphics, float), so the 1.20.1 copy of
+// InGameHudStatusIndicatorMixin under neoforgeForgeExtraRoots applies here unchanged and
+// metadata/1.20.6 lists it. DeltaTracker, which replaced that float, only starts at 1.21 - the point
+// where the trees need their own HUD mixin, not here.
+
 neoForge {
     version = project.ext.neoforgeVersion
     runs {

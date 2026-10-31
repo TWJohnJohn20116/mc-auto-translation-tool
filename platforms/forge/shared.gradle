@@ -97,10 +97,47 @@ tasks.named("jar", Jar).configure {
     manifest {
         attributes "MixinConfigs": "universal-translator.forge.mixins.json"
     }
+    // When resourcesDir is pointed at the classes directory (loader >= 61) the same resource reaches
+    // the archive from both classesDirs and resourcesDir; Jar defaults to INCLUDE, so mods.toml,
+    // pack.mcmeta and the mixin config were each written twice per jar.
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
+
+// Mixin's refmap is produced by an annotation processor whose key order follows HashMap iteration,
+// so two builds of identical inputs produce different bytes. Only the modern tree opted out of the
+// build cache, which left the 15 targets on this script (all of 1.21 and 26.x) free to swap refmaps
+// between projects that share platforms/forge/shared/** — and a swapped refmap makes Forge silently
+// apply no mixin at all when defaultRequire is 0.
+tasks.named("compileJava", JavaCompile).configure {
+    outputs.cacheIf { false }
+    outputs.file(layout.buildDirectory.file("tmp/compileJava/compileJava-refmap.json"))
+            .withPropertyName("mixinRefmap")
+            .optional()
+    outputs.file(layout.buildDirectory.file("tmp/compileJava/compileJava-mappings.tsrg"))
+            .withPropertyName("mixinMappings")
+            .optional()
+}
+
 apply from: rootProject.file("gradle/jar-contents.gradle")
+
+// The class-file gate the Fabric trees already run, for the same reason: options.release is only a
+// request to the compiler, and nothing read the artifact back, so the bytecode level of these fifteen
+// targets rested on that one line. forgeJavaRelease comes from settings.gradle's treeJavaRelease, and
+// this tree has no remapJar, so the gate inspects jar, whose entries are this project's own classes.
+// ForgeGradle also writes compile options of its own, so the gate keeps only the class-header half
+// here: the header is what proves the shipped level either way.
+ext.fabricReleaseJava = project.ext.forgeJavaRelease
+ext.fabricReleaseJarSkipReleaseCheck = true
+apply from: rootProject.file("gradle/fabric-release-jar-verify.gradle")
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
     options.release = project.ext.forgeJavaRelease as int
 }
+
+// The reverse mixin check the Fabric trees already run: a @Mixin class that no shipped mixins.json names
+// compiles into the JAR, ships, and is never applied, and `required: true` only requires that every name
+// it lists exists. This family found out the hard way — the committed 1.20.1/1.20.4/1.20.6 NeoForge JARs
+// carried InGameHudStatusIndicatorMixin unlisted — and the source fixes for it had no gate of their own.
+// No remapJar exists here, so the check reads jar, whose entries are this project's own classes.
+apply from: rootProject.file("gradle/fabric-mixin-config-verify.gradle")

@@ -7,6 +7,8 @@ import net.minecraft.client.gui.widget.TextFieldWidget;
 import org.universaltranslator.core.TranslationTextStyling;
 
 import java.lang.reflect.Field;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * Identifies text currently being edited by the local player in the chat box.
@@ -17,23 +19,47 @@ import java.lang.reflect.Field;
  * calls plus the per-version {@code srcDir} wiring, which is audit2 S2-078 and outside this layer.
  */
 final class FabricLocalTextGuard {
-    private static volatile Field chatField;
     /**
-     * The screen class {@link #chatField} was resolved for, or {@code null} before the first attempt.
+     * The text field of the chat box, together with the screen class it was resolved for.
      *
-     * <p>The previous version latched only a *successful* lookup, so a chat screen whose text field
-     * could not be found re-walked the whole class hierarchy on every frame — from the render thread.
-     * Recording the class instead makes a failed lookup cost one scan per screen type, and a
-     * different screen class (a version's own chat screen, a modded one) re-runs it.
+     * <p>Two separate volatile fields could be observed half-updated — the class of the screen being
+     * drawn next to the field of a different screen type — and {@code Field.get} then threw
+     * {@code IllegalArgumentException}, which the caller swallowed, so that frame's local-input
+     * check silently failed. One immutable holder publishes both or neither.
      */
-    private static volatile Class<?> resolvedFor;
+    private static volatile Resolved resolved;
+
+    /** One resolution: the screen class it is valid for and the field found on it. */
+    private static final class Resolved {
+        private final Class<?> type;
+        private final Field field;
+
+        private Resolved(Class<?> type, Field field) {
+            this.type = type;
+            this.field = field;
+        }
+    }
+
     /** Last text the chat box held, with the two cursor forms the renderer appends to it. */
     private static volatile String cachedTyped;
     private static volatile String cachedTypedUnderscore;
     private static volatile String cachedTypedPipe;
-    /** Last stripped line, kept so the same drawn line is not re-walked for every hook. */
-    private static volatile String strippedSource;
-    private static volatile String strippedValue;
+    /**
+     * Stripped lines, most recently used last; bounded because they are player and server text.
+     */
+    private static final int STRIPPED_MEMO_LIMIT = 64;
+    private static final ThreadLocal<LinkedHashMap<String, String>> STRIPPED =
+            new ThreadLocal<LinkedHashMap<String, String>>() {
+                @Override
+                protected LinkedHashMap<String, String> initialValue() {
+                    return new LinkedHashMap<String, String>(16, 0.75F, true) {
+                        @Override
+                        protected boolean removeEldestEntry(Map.Entry<String, String> eldest) {
+                            return size() > STRIPPED_MEMO_LIMIT;
+                        }
+                    };
+                }
+            };
 
     private FabricLocalTextGuard() {
     }
@@ -53,23 +79,23 @@ final class FabricLocalTextGuard {
 
     private static TextFieldWidget findChatField(Screen screen) {
         Class<?> type = screen.getClass();
-        Field known = chatField;
-        if (resolvedFor != type) {
+        Resolved known = resolved;
+        if (known == null || known.type != type) {
             synchronized (FabricLocalTextGuard.class) {
-                if (resolvedFor != type) {
-                    known = findTextField(type);
-                    chatField = known;
-                    resolvedFor = type;
-                } else {
-                    known = chatField;
+                known = resolved;
+                if (known == null || known.type != type) {
+                    known = new Resolved(type, findTextField(type));
+                    resolved = known;
                 }
             }
         }
-        if (known == null) {
+        Field field = known.field;
+        // The screen must really be an instance of the class the field was resolved for.
+        if (field == null || !field.getDeclaringClass().isInstance(screen)) {
             return null;
         }
         try {
-            Object value = known.get(screen);
+            Object value = field.get(screen);
             return value instanceof TextFieldWidget ? (TextFieldWidget) value : null;
         } catch (ReflectiveOperationException | RuntimeException ignored) {
             return null;
@@ -77,19 +103,48 @@ final class FabricLocalTextGuard {
     }
 
     private static Field findTextField(Class<?> type) {
+        // Names first; see the copy in shared/legacy-common. getDeclaredFields() has no defined
+        // order, so the first text field of the hierarchy is not necessarily the chat box.
+        String[] preferred = {"chatField", "input", "textField"};
+        for (Class<?> current = type; current != null; current = current.getSuperclass()) {
+            for (String name : preferred) {
+                Field field = declaredField(current, name);
+                if (field != null) {
+                    return field;
+                }
+            }
+        }
         for (Class<?> current = type; current != null; current = current.getSuperclass()) {
             for (Field field : current.getDeclaredFields()) {
-                if (TextFieldWidget.class.isAssignableFrom(field.getType())) {
-                    try {
-                        field.setAccessible(true);
-                        return field;
-                    } catch (RuntimeException ignored) {
-                        return null;
-                    }
+                if (TextFieldWidget.class.isAssignableFrom(field.getType()) && makeAccessible(field)) {
+                    return field;
                 }
             }
         }
         return null;
+    }
+
+    /** A declared field of {@code holder} with the given name, when it holds a text field. */
+    private static Field declaredField(Class<?> holder, String name) {
+        try {
+            Field field = holder.getDeclaredField(name);
+            if (TextFieldWidget.class.isAssignableFrom(field.getType()) && makeAccessible(field)) {
+                return field;
+            }
+        } catch (NoSuchFieldException | RuntimeException ignored) {
+            // Not this class, or not reachable: keep looking.
+        }
+        return null;
+    }
+
+    /** True when the field can be read; one refusal must not abandon the whole search. */
+    private static boolean makeAccessible(Field field) {
+        try {
+            field.setAccessible(true);
+            return true;
+        } catch (RuntimeException ignored) {
+            return false;
+        }
     }
 
     /**
@@ -123,17 +178,17 @@ final class FabricLocalTextGuard {
     }
 
     /**
-     * {@code rendered} without its legacy colour codes, memoized for the last line seen; the value
-     * is published before its source, so a racing reader sees the pair or recomputes.
+     * {@code rendered} without its legacy colour codes, memoized for the lines of this frame; see
+     * the copy in {@code shared/legacy-common}.
      */
     private static String stripped(String rendered) {
-        String source = strippedSource;
-        if (source != null && source.equals(rendered)) {
-            return strippedValue;
+        LinkedHashMap<String, String> memo = STRIPPED.get();
+        String cached = memo.get(rendered);
+        if (cached != null) {
+            return cached;
         }
         String value = TranslationTextStyling.stripLegacyFormatting(rendered);
-        strippedValue = value;
-        strippedSource = rendered;
+        memo.put(rendered, value);
         return value;
     }
 }

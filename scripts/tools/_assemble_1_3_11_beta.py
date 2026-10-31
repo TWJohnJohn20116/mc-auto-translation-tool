@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""把重建好的 JAR 收進 ``downloads/<mod_version>`` 並寫出 ``SHA256SUMS.txt``。
+"""把重建好的 JAR 收進 ``downloads/<mod_version>`` 並寫出 ``SHA256SUMS.txt`` 與 ``release-assets.txt``。
 
 這是 ``AGENTS.md`` 描述的「手動版發布流程」，也是 ``.github/workflows/prepare-release.yml``
 的參考實作。它原本是 1.3.11-beta.1 時代的產物，內建 33 個目標（其中 ``mc1.16.5-fabric`` 早已
@@ -39,7 +39,16 @@ SCRIPTS_DIR = ROOT / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from release_layout import PART_SIZE, part_suffix  # noqa: E402  (需要先設好 sys.path)
+from release_layout import PART_SIZE, VERSION_PATTERN, part_suffix  # noqa: E402  (需要先設好 sys.path)
+
+# 可安裝清單（release-assets.txt）只有一份實作：prepare_release_assets，prepare-release.yml 用的就是
+# 它。手動流程寫的是同一個目錄，自己不寫清單就會把它一起換掉。
+from prepare_release_assets import (  # noqa: E402  (同上)
+    MANIFEST_NAME,
+    PreparationError,
+    installable_manifest,
+    installable_names,
+)
 
 #: 48 個發布目標的權威清單（prepare-release.yml 的 TARGETS_JSON）。
 PREPARE_WORKFLOW = ROOT / ".github" / "workflows" / "prepare-release.yml"
@@ -60,7 +69,15 @@ PLATFORM_PROJECT = re.compile(r'^\s*"(platform-[^"]+)"\s*:', re.MULTILINE)
 def get_version() -> str:
     for line in (ROOT / "gradle.properties").read_text(encoding="utf-8").splitlines():
         if line.startswith("mod_version="):
-            return line.split("=", 1)[1].strip()
+            value = line.split("=", 1)[1].strip()
+            # 同一條字元白名單（release_layout.VERSION_PATTERN ↔ read-mod-version.sh）：這個值會被
+            # 拼進 downloads/<version> 與 find -name，含 * 或 [ 時下面的 staging／backup 清理會
+            # 命中意料之外的目錄。
+            if not VERSION_PATTERN.fullmatch(value):
+                raise SystemExit(
+                    f"gradle.properties 的 mod_version 含不允許的字元：'{value}'"
+                )
+            return value
     raise SystemExit("gradle.properties 讀不到 mod_version")
 
 
@@ -200,10 +217,23 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{digest[:12]} {name} {len(data)} from {source.relative_to(ROOT)}")
     (staging / "SHA256SUMS.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
+    # downloads/<version> 的另一個生產者是 prepare-release.yml，它會寫 release-assets.txt。下面「把舊
+    # 目錄改名再刪備份」的換法會讓這裡沒寫的檔案直接消失，於是四份 README 與網站測試失去唯一的憑據
+    # （清單不見時那些比對只會 skipTest）。名稱由 prepare_release_assets 推導，不另寫第二份規則。
+    try:
+        installable = installable_names(sorted(names), version)
+    except PreparationError as error:
+        shutil.rmtree(staging)
+        print(f"可安裝清單與權威清單不符，未動 downloads/：{error}", file=sys.stderr)
+        return 1
+    (staging / MANIFEST_NAME).write_text(
+        installable_manifest(installable), encoding="ascii", newline="\n"
+    )
+
     # 產出的檔名必須與權威清單完全相符：少了就是這支腳本的清單又過期了，
     # 多了就是它寫了清單以外的東西。兩種都在這裡停下，destination 還沒被碰過。
     produced = sorted(path.name for path in staging.iterdir())
-    expected = set(names) | {"SHA256SUMS.txt"}
+    expected = set(names) | {"SHA256SUMS.txt", MANIFEST_NAME}
     missing_names = sorted(
         name
         for name in expected

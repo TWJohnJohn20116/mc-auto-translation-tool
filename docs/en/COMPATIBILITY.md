@@ -10,7 +10,7 @@ This document records only completed validation. “Builds successfully” is no
 - Compatibility mode no longer repeats newer optional switches after the first offline-engine startup failure, allowing launcher-cached older llama.cpp builds to start.
 - Startup exits, timeouts, permissions, missing files, unsupported CPU instructions, and memory-pressure termination now produce focused diagnostics using only the current attempt's appended log output.
 - The 1.21.x Forge and NeoForge release targets are validated on Java 21. Do not substitute Java 25: an older LWJGL native layer may terminate before a Java stack trace can be produced.
-- Remove 1.4-beta4 and every older copy from the `mods` directory when updating; keep exactly one 1.4 JAR matching the game version and loader.
+- Remove every older `MCAutoTranslationTool-*` copy from the `mods` directory when updating (the wildcard already covers all older releases, whatever their version number); keep exactly one JAR matching the game version and loader.
 
 ## Settings selection fix added in 1.3.5
 
@@ -30,7 +30,10 @@ This document records only completed validation. “Builds successfully” is no
 - Path handling, platform selection, and native library lookup are covered by the shared core tests.
   Full Android in-game results still depend on launcher permissions, Android version, and available RAM.
 
-## Version 1.3.4 release validation
+## Current release validation
+
+This table describes the current release (`<mod_version>` from `gradle.properties`); the per-version
+fix notes for 1.3.6 / 1.3.5 / 1.3.4 are in the sections above.
 
 | Minecraft | Loader | Java | Build and self-test | Launched to main menu | Full manual in-server regression |
 | --- | --- | --- | --- | --- | --- |

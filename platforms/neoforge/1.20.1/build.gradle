@@ -1,6 +1,6 @@
 plugins {
     id "java"
-    id "net.neoforged.moddev.legacyforge" version "2.0.91"
+    id "net.neoforged.moddev.legacyforge" version "${moddev_legacyforge_version}"
 }
 
 version = project.mod_version
@@ -11,10 +11,18 @@ group = project.maven_group
 // 3.5 minutes). The coordinates below are declarative only — nothing reads them at build time —
 // but they put 1.20.1 inside validateNeoForgeModuleCoordinates and validateSharedPlatformLayouts,
 // which previously described every NeoForge version except this one.
-ext.neoforgeMinecraftVersion = "1.20.1"
-ext.neoforgeVersion = "1.20.1-47.1.106"
+ext.neoforgeMinecraftVersion = minecraft_neoforge_1_20_1_version
+// Single source for the coordinate: legacyForge.enable below reads this same ext value, so the
+// declared version (which validateNeoForgeModuleCoordinates inspects) and the version the plugin
+// actually resolves can no longer drift apart.
+ext.neoforgeVersion = neoforge_1_20_1_version
 ext.neoforgeJavaRelease = 17
 ext.neoforgeEntryLayer = "1.20.2-1.20.4"
+// Declaring the layer above puts this module inside validateNeoForgeModuleCoordinates, but the layer
+// itself is not mounted: this source set comes from platforms/forge/modern/1.20.1, so an edit under
+// entrypoints/1.20.2-1.20.4 never reaches this JAR. The flag makes that exception checkable instead of
+// leaving "the three 1.20.x targets share one entrypoint layer" as an assumption.
+ext.neoforgeEntryLayerMounted = false
 ext.neoforgeMetadataLayer = "1.20-1.20.4"
 ext.neoforgeForgeSharedRoot = "platforms/forge/modern/shared"
 ext.neoforgeForgeLayers = ["common", "family/1.19.2-plus"]
@@ -26,7 +34,7 @@ base {
 
 legacyForge {
     enable {
-        neoForgeVersion = "1.20.1-47.1.106"
+        neoForgeVersion = project.ext.neoforgeVersion
     }
 
     runs {
@@ -70,12 +78,15 @@ sourceSets {
                 new File(rootProject.file("platforms/forge/shared"), "common/src/main/java"),
                 project(":translator-core").file("src/main/java")
         ]
-        resources.setSrcDirs([])
-        // Same reason as platforms/neoforge/shared.gradle: the language files live in
-        // platforms/shared/lang/json, outside every Forge tree, and this project clears the default
-        // resource directories. processResources already pulls src/main/resources for the mixin
-        // config and META-INF/mods.toml, so only the shared lang dir has to be added here.
-        resources.srcDir rootProject.file("platforms/shared/lang/json")
+        // Clearing the default resource directory left src/main/resources reachable only through the
+        // processResources copy spec, so anything that reads sourceSets.main.resources (IDE resource
+        // sync, withSourcesJar) never saw the mixin config or META-INF/mods.toml. List both
+        // directories instead; the duplicate copy from the explicit from(...) below is dropped by
+        // duplicatesStrategy = EXCLUDE.
+        resources.setSrcDirs([
+                "src/main/resources",
+                rootProject.file("platforms/shared/lang/json")
+        ])
     }
 }
 
@@ -91,19 +102,18 @@ mixin {
 tasks.named("processResources", ProcessResources).configure {
     inputs.properties("version": project.version, "packFormat": 15)
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    from(rootProject.file("platforms/forge/modern/1.20.1/src/main/resources")) {
-        exclude "META-INF/mods.toml", "universal-translator.forge.mixins.json"
-    }
     from(new File(forgeLegacyShared, "common/src/main/resources")) {
         exclude "META-INF/mods.toml"
         filesMatching("pack.mcmeta") {
             expand "packFormat": 15
         }
     }
-    from("src/main/resources") {
-        filesMatching("META-INF/mods.toml") {
-            expand "version": project.version
-        }
+    // Root-level filters: they apply to every copy spec of this task, including the one Java plugin
+    // registers for src/main/resources. A filter nested inside from("src/main/resources") only ran
+    // on that copy, and duplicatesStrategy = EXCLUDE kept the earlier, unexpanded copy instead — so
+    // the shipped mods.toml carried the literal ${version}.
+    filesMatching("META-INF/mods.toml") {
+        expand "version": project.version
     }
 }
 
@@ -114,7 +124,21 @@ tasks.named("jar", Jar).configure {
 }
 apply from: rootProject.file("gradle/jar-contents.gradle")
 
+// This module keeps a hand-written source set instead of applying neoforge/shared.gradle, so the
+// release it compiles for is written out below; the class-file gate has to be given the same number by
+// hand, or this would be the one NeoForge release with no bytecode check on the build path. The plugin
+// also writes compile options of its own, so the gate keeps only the class-header half here.
+ext.fabricReleaseJava = 17
+ext.fabricReleaseJarSkipReleaseCheck = true
+apply from: rootProject.file("gradle/fabric-release-jar-verify.gradle")
+
 tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
     options.release = 17
 }
+
+// The reverse mixin check the Fabric trees already run, and the one this module most needed: its own
+// mixins.json is the only list of the eleven @Mixin classes it compiles, and the shipped 1.4 JAR carried
+// InGameHudStatusIndicatorMixin while the config did not name it. A class in no config is applied by
+// nothing and `required: true` never complains about it, so the list is checked against the JAR here.
+apply from: rootProject.file("gradle/fabric-mixin-config-verify.gradle")

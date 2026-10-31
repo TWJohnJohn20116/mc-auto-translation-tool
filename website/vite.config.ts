@@ -13,6 +13,10 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
 const localBindingConfig = {
   main: "./worker/index.ts",
+  // Pinned so `nodejs_compat` and the `cloudflare:workers` exports keep the same
+  // meaning across wrangler upgrades; without it each wrangler version applies its
+  // own built-in default date.
+  compatibility_date: "2026-10-01",
   compatibility_flags: ["nodejs_compat"],
   d1_databases: d1
     ? [

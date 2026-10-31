@@ -5,8 +5,9 @@
   "name": "MC Auto Translation Tool - Fabric 1.19.x Bundle",
   "description": "Selects the exact compatible Universal Translator implementation for every Minecraft 1.19 release.",
   "authors": [
-    "272635"
+    "我小张7272635"
   ],
+  "icon": "assets/universal_translator/icon.png",
   "contact": {
     "homepage": "https://space.bilibili.com/3546631091783712",
     "sources": "https://github.com/TWJohnJohn20116/mc-auto-translation-tool"
@@ -31,7 +32,7 @@
     }
   ],
   "depends": {
-    "fabricloader": ">=0.19.3",
+    "fabricloader": ">=${loaderFloor}",
     "minecraft": [
       "1.19",
       "1.19.1",
@@ -39,7 +40,8 @@
       "1.19.3",
       "1.19.4"
     ],
-    "java": ">=17",
-    "universal_translator": "*"
+    "java": ">=${javaFloor}",
+    "${fabricDependency}": "*",
+    "universal_translator": ">=${version}"
   }
 }

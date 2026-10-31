@@ -13,8 +13,10 @@ import org.universaltranslator.core.net.HttpStatusException;
 import org.universaltranslator.core.net.JsonStrings;
 import org.universaltranslator.core.net.ServerSentEvents;
 
+import java.io.IOException;
 import java.net.URI;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -57,6 +59,9 @@ public final class GeminiTranslationProvider implements TranslationProvider {
     private static final String PROBE_TEXT = "ping";
 
     private final String base;
+    /** The two request URLs, resolved once: the endpoint cannot change after construction. */
+    private final URI generateUri;
+    private final URI streamUri;
     private final String apiKey;
     private final String model;
     private final TranslationPrompt.Settings prompt;
@@ -71,8 +76,49 @@ public final class GeminiTranslationProvider implements TranslationProvider {
      * worked is remembered so the next line does not have to discover it again.
      */
     private volatile int acceptedOutputTokens = MAXIMUM_TOKENS_LIMIT;
+    /**
+     * Largest batch completion budget this endpoint accepted, per batch size, lowered only by an
+     * actual refusal.
+     *
+     * <p>The batch path remembered nothing, so an endpoint whose output cap sits below the budget a
+     * batch asked for answered 400 on every batch of the session, and each refusal was followed by
+     * one request per line. See {@link BatchBudget}: the loop that learns the value is shared with
+     * the other two batching providers, and {@link BatchBudget.ByEntries} keeps one small batch from
+     * lowering the budget of every later batch of the session.
+     */
+    private final BatchBudget.ByEntries acceptedBatchTokens;
+    /**
+     * Largest number of texts one request has been observed to accept, lowered only by a refusal that
+     * pointed at the batch itself.
+     *
+     * <p>Nothing learned it, so an endpoint whose context cannot hold the configured batch was sent the
+     * same number of lines again on the next screen, and each attempt cost one refused or truncated
+     * request plus one request per line. See {@link BatchBudget.ByBatchSize}.
+     */
+    private final BatchBudget.ByBatchSize acceptedBatchSizes;
     /** Set once this endpoint proved it cannot answer with an event stream. */
     private volatile boolean streamingUnsupported;
+    /**
+     * Earliest {@link System#nanoTime()} instant at which an event stream may be attempted again, or
+     * {@code 0} when nothing is cooling down.
+     *
+     * <p>A stream that outlived its budget used to set {@link #streamingUnsupported} for good, so one
+     * silent minute cost the early preview for the rest of the session with no way back. The cooldown
+     * is what lets the endpoint recover on its own.
+     */
+    private volatile long streamingRetryAtNanos;
+    /**
+     * Groups nearby texts into one request.
+     *
+     * <p>{@code batch-size} was a dead setting for this provider: it implemented no gatherer, so a
+     * forty-line screen sent forty requests where the OpenAI-compatible path sent five. The protocol
+     * — a JSON object keyed by line number, read by
+     * {@link OpenAiChatTranslationProvider#parseJsonBatch} — is provider-neutral and is reused
+     * unchanged.
+     */
+    private final BatchGatherer gatherer;
+    /** How one group of texts is translated, handed to {@link #gatherer}. */
+    private final BatchGatherer.Work work;
 
     public GeminiTranslationProvider(String endpoint, String apiKey, String model) {
         this(endpoint, apiKey, model, new HttpJsonClient(5000, 120000),
@@ -95,6 +141,17 @@ public final class GeminiTranslationProvider implements TranslationProvider {
             HttpJsonClient http,
             TranslationPrompt.Settings prompt
     ) {
+        this(endpoint, apiKey, model, http, prompt, TranslationTuning.DEFAULTS);
+    }
+
+    GeminiTranslationProvider(
+            String endpoint,
+            String apiKey,
+            String model,
+            HttpJsonClient http,
+            TranslationPrompt.Settings prompt,
+            TranslationTuning tuning
+    ) {
         this.base = collectionBase(endpoint == null || endpoint.trim().isEmpty()
                 ? DEFAULT_ENDPOINT : endpoint.trim());
         // Validate at construction like the other providers, so a plaintext remote host is refused
@@ -102,10 +159,33 @@ public final class GeminiTranslationProvider implements TranslationProvider {
         EndpointPolicy.requireSafeEndpoint(this.base);
         this.apiKey = ProviderSupport.requireCredential("Gemini API key", apiKey);
         this.model = requireModel(model);
+        this.generateUri = URI.create(this.base + "/" + this.model + GENERATE);
+        this.streamUri = URI.create(this.base + "/" + this.model + STREAM_GENERATE + "?alt=sse");
         this.http = http;
         this.prompt = prompt == null ? TranslationPrompt.Settings.standard() : prompt;
         this.id = ProviderCacheKey.of("gemini", this.model, URI.create(this.base),
                 "x-goog-api-key", this.prompt.signature());
+        TranslationTuning effectiveTuning = tuning == null ? TranslationTuning.DEFAULTS : tuning;
+        this.acceptedBatchTokens = new BatchBudget.ByEntries(ESCALATED_TOKENS_LIMIT);
+        this.acceptedBatchSizes = new BatchBudget.ByBatchSize(effectiveTuning.batchSize());
+        this.gatherer = new BatchGatherer(effectiveTuning.batchSize(),
+                effectiveTuning.batchWindowMillis(),
+                effectiveTuning.maximumConcurrentBatches(),
+                effectiveTuning.requestIntervalMillis());
+        // OnlineProviderConfig puts every provider it builds inside ResilientTranslationProvider,
+        // which retries the very failures the gatherer would resend a group for.
+        this.gatherer.setOuterRetries(true);
+        this.work = new BatchGatherer.Work() {
+            @Override
+            public String translateAlone(TranslationRequest request) throws Exception {
+                return translateOne(request);
+            }
+
+            @Override
+            public List<String> translateGroup(List<TranslationRequest> requests) throws Exception {
+                return translateBatch(requests);
+            }
+        };
     }
 
     /**
@@ -122,15 +202,33 @@ public final class GeminiTranslationProvider implements TranslationProvider {
         return id;
     }
 
+    /**
+     * Translates one text, batching texts that arrive close together.
+     *
+     * <p>{@code batch-size} used to be a dead setting here: every line paid a request of its own, so
+     * a forty-line screen cost forty round trips and forty TLS handshakes on the slowest, most
+     * rate-limited providers in the list. A multi-line text stays on the single path, because
+     * {@link TranslationPrompt#batch} asks for one entry per input line and a text that already
+     * carries line breaks is one entry of its own either way.
+     */
     @Override
     public String translate(TranslationRequest request) throws Exception {
+        if (!gatherer.batching() || request.getText().indexOf('\n') >= 0) {
+            return translateOne(request);
+        }
+        return gatherer.translate(request, work);
+    }
+
+    /** Translates exactly one text with one request. */
+    private String translateOne(TranslationRequest request) throws Exception {
         String text = request.getText();
         DebugLog.global().logRequest("gemini:" + model, model, base,
                 request.getKind().name(), text);
         int budget = completionBudget(text);
         String system = TranslationPrompt.single(prompt, request);
         String response = post(text, system, budget, false);
-        String translated = extractContent(response);
+        Object root = JsonTree.parseOrNull(response);
+        String translated = extractContent(root, response);
         String finishReason = JsonStrings.readStringField(response, FINISH_REASON_FIELD);
         if (FINISH_REASON_MAX_TOKENS.equals(finishReason)) {
             // The budget ran out mid-answer. Reporting "raise the budget" was useless: nothing in the
@@ -140,12 +238,15 @@ public final class GeminiTranslationProvider implements TranslationProvider {
             int escalated = escalatedBudget();
             if (escalated > budget) {
                 response = post(text, system, escalated, false);
-                translated = extractContent(response);
+                // Quote the budget the request really used: reporting the pre-escalation value in
+                // the failure message sent the reader looking for a limit that no longer applied.
+                budget = escalated;
+                root = JsonTree.parseOrNull(response);
+                translated = extractContent(root, response);
                 finishReason = JsonStrings.readStringField(response, FINISH_REASON_FIELD);
                 if (translated != null && !translated.trim().isEmpty()
                         && !FINISH_REASON_MAX_TOKENS.equals(finishReason)) {
                     acceptedOutputTokens = escalated;
-                    budget = escalated;
                 }
             }
         }
@@ -158,10 +259,75 @@ public final class GeminiTranslationProvider implements TranslationProvider {
         // reason, while a cut-off answer is distinguishable from a short one only here.
         requireCompleteAnswer(finishReason, budget);
         if (response.indexOf("\"usageMetadata\"") >= 0) {
-            TranslationStats.global().recordUsage("gemini:" + model, response);
+            TranslationStats.global().recordParsedUsage("gemini:" + model, root);
         }
         DebugLog.global().logResponse("gemini:" + model, request.getKind().name(), translated);
         return TranslationOutputValidator.requireValid(text, translated);
+    }
+
+    /**
+     * Sends every text of one group as one JSON object in a single request.
+     *
+     * <p>{@code generationConfig.responseMimeType} makes the candidate text the object itself, so
+     * nothing has to be put back before parsing. Every entry the model did not answer stays
+     * {@code null}, and {@link BatchGatherer} repairs exactly those lines with a request of their own.
+     *
+     * @return one entry per group member in order, with {@code null} for a line the reply did not
+     *         answer
+     */
+    private List<String> translateBatch(List<TranslationRequest> group) throws Exception {
+        String user = ProviderSupport.batchUserBody(group);
+        String system = TranslationPrompt.batch(prompt, group.get(0));
+        int budget = Math.min(ChatBudget.batchCompletionBudget(user, group.size(),
+                ESCALATED_TOKENS_LIMIT, MINIMUM_COMPLETION_TOKENS),
+                acceptedBatchTokens.forEntries(group.size()).budget());
+        DebugLog.global().logRequest("gemini:" + model, model, base,
+                group.get(0).getKind().name(), user);
+        String response;
+        try {
+            response = BatchBudget.post(acceptedBatchTokens.forEntries(group.size()), budget,
+                    MINIMUM_COMPLETION_TOKENS,
+                    attempt -> http.post(generateUri, requestBody(user, system, attempt, true),
+                            headers()));
+        } catch (HttpStatusException rejected) {
+            // A refusal that names the request's own length is about how many texts travelled in it:
+            // nothing lowered that number, so every later batch was built the same size and refused
+            // again, each time for one refused request plus one request per line.
+            if (BatchBudget.refusedBecauseTooManyEntries(rejected, user, group)) {
+                gatherer.setBatchSize(acceptedBatchSizes.rememberTooLarge(group.size()));
+            }
+            throw rejected;
+        }
+        Object root = JsonTree.parseOrNull(response);
+        if (response != null && response.indexOf("\"usageMetadata\"") >= 0) {
+            TranslationStats.global().recordParsedUsage("gemini:" + model, root);
+        }
+        String content = extractContent(root, response);
+        // A reply that stopped at the output budget is a truncated object, and its last entry would
+        // look like a short translation. Reporting the batch as unusable sends every line down the
+        // single path, where the budget is escalated and each answer is judged on its own.
+        String finishReason = JsonStrings.readStringField(response, FINISH_REASON_FIELD);
+        if (content == null
+                || (finishReason != null && !FINISH_REASON_STOP.equals(finishReason))) {
+            if (FINISH_REASON_MAX_TOKENS.equals(finishReason)) {
+                // The output budget ran out before the object was closed, and the number of entries is
+                // what decides how much output one batch needs: remembering it here is the only way the
+                // next screen stops asking for the same impossible answer.
+                gatherer.setBatchSize(acceptedBatchSizes.rememberTooLarge(group.size()));
+            }
+            throw new IllegalStateException(ProviderJson.describeMissingContent("Gemini", response));
+        }
+        // Nothing has to be put back here: responseMimeType makes the candidate text the object
+        // itself. The numbered list is still a fallback, because a relay that drops the generation
+        // config answers with the prose form the historical protocol accepted.
+        List<String> parsed = ProviderSupport.parseBatchReply(content, group.size(), false);
+        if (parsed == null) {
+            gatherer.setBatchSize(acceptedBatchSizes.rememberTooLarge(group.size()));
+            throw new IllegalStateException("Gemini answered a batch without a JSON object");
+        }
+        DebugLog.global().logResponse("gemini:" + model, group.get(0).getKind().name(),
+                parsed.size() + " entries");
+        return parsed;
     }
 
     @Override
@@ -170,20 +336,24 @@ public final class GeminiTranslationProvider implements TranslationProvider {
         if (listener == null) {
             return translate(request);
         }
-        if (streamingUnsupported || request.getText().indexOf('\n') >= 0) {
+        if (streamingUnsupported
+                || StreamCompletionMemory.coolingDown(streamingRetryAtNanos)
+                || request.getText().indexOf('\n') >= 0) {
             return TranslationProvider.super.translateStreaming(request, listener);
         }
         String text = request.getText();
         int budget = completionBudget(text);
         StringBuilder accumulated = new StringBuilder(64);
-        boolean[] sawEvent = new boolean[1];
+        // Copying the whole accumulation on every delta made one translation copy O(n^2) characters
+        // and pushed a full string at the UI per delta. The step and the closing publish live in the
+        // shared publisher, so this provider cannot drift from the other two.
+        ProviderSupport.PreviewPublisher preview = new ProviderSupport.PreviewPublisher(listener);
         // Only the last chunk of a stream reports a finish reason, so that report is both the
         // truncation signal and this protocol's only end marker: streamGenerateContent ends by
         // closing the array, which an interrupted connection does just as well.
         String[] finishReason = new String[1];
         boolean[] sawEnd = new boolean[1];
-        try (HttpJsonClient.StreamedResponse response = http.postStreaming(
-                URI.create(streamUrl()), requestBody(
+        try (HttpJsonClient.StreamedResponse response = http.postStreaming(streamUri, requestBody(
                         text, TranslationPrompt.single(prompt, request), budget), headers())) {
             if (!EventStream.isEventStream(response.getContentType())) {
                 streamingUnsupported = true;
@@ -191,17 +361,23 @@ public final class GeminiTranslationProvider implements TranslationProvider {
             }
             // Bounded by wall clock, cancellation and raw bytes: a relay that only sends keep-alive
             // comments would otherwise hold this worker for the rest of the session, because the
-            // parser's payload bound never sees a comment.
-            ServerSentEvents.read(StreamWatchdog.arm(response.getBody()), payload -> {
+            // parser's payload bound never sees a comment. The budget is the one
+            // {@code api-read-timeout-ms} already decided for this response: a second, hidden 180 s
+            // constant here ignored the setting in both directions, and a ceiling kept here instead
+            // of in ProviderSupport made the three streaming providers disagree.
+            long deadlineNanos = response.getDeadlineNanos();
+            ServerSentEvents.read(StreamWatchdog.arm(response.getBody(),
+                    ProviderSupport.stallBudgetMillis(response)), payload -> {
                 // One parse per event: the fragments and the finish reason are fields of the same
                 // document, and looking them up separately rebuilt the tree once per field.
                 Object event = JsonTree.parseOrNull(payload);
                 String fragment = ProviderJson.joinField(event,
                         "candidates[0].content.parts", "text");
                 if (fragment != null && !fragment.isEmpty()) {
-                    sawEvent[0] = true;
                     accumulated.append(fragment);
-                    listener.onPartialText(accumulated.toString());
+                    // One callback per PARTIAL_TEXT_STEP_CHARS instead of one per delta: every
+                    // callback used to copy the whole accumulation, which is O(n^2) per line.
+                    preview.append(accumulated);
                 }
                 // finishReason sits inside the candidate object, so it is found with the field scan
                 // rather than a fixed path; the scan does not parse, so it costs nothing here.
@@ -215,9 +391,13 @@ public final class GeminiTranslationProvider implements TranslationProvider {
                     if (!FINISH_REASON_STOP.equals(reported)) {
                         finishReason[0] = reported;
                     }
+                    // The finish reason is this protocol's only end marker, so nothing can follow
+                    // it: reading on made the watchdog time out — SSE does not require the relay to
+                    // close the body — and turned a finished answer into an IOException.
+                    return false;
                 }
                 return true;
-            });
+            }, deadlineNanos);
         } catch (HttpStatusException rejected) {
             if (rejected.isRetryable()) {
                 // A rate limit or a server error is transient, and retrying it is the resilient
@@ -226,11 +406,29 @@ public final class GeminiTranslationProvider implements TranslationProvider {
             }
             streamingUnsupported = true;
             return TranslationProvider.super.translateStreaming(request, listener);
+        } catch (IOException broken) {
+            if (StreamWatchdog.isLimitExceeded(broken)) {
+                // This endpoint could not deliver an event stream inside the watchdog's budget, so
+                // every later line would pay the same wait before failing over. A cooldown replaces
+                // the permanent flag: one silent minute must not cost the early preview for the rest
+                // of the session, and the endpoint has to be able to recover on its own.
+                streamingRetryAtNanos = StreamCompletionMemory.cooldownUntilNow();
+                DebugLog.global().logStreamEvent("gemini:" + model, "streaming-cooldown", 0);
+            }
+            if (!sawEnd[0]) {
+                throw broken;
+            }
+            // The end marker had already arrived, so the accumulation is the whole answer and the
+            // break belongs to a relay that keeps the body open after its last chunk. Escaping here
+            // discarded a finished translation and, because the preview was already published, that
+            // line never received a result again in this session.
+            DebugLog.global().logStreamEvent("gemini:" + model, "end-before-break", 0);
         }
         if (accumulated.length() == 0) {
             // Nothing usable came back, including the case of an event stream carrying only a
-            // block reason. The plain path is the one that reports why, so it takes over.
-            streamingUnsupported = !sawEvent[0];
+            // block reason. The plain path is the one that reports why, so it takes over. The
+            // permanent flag is deliberately not set: an endpoint that answered "nothing to
+            // translate" has not proved anything about whether it can stream.
             return TranslationProvider.super.translateStreaming(request, listener);
         }
         if (!sawEnd[0]) {
@@ -246,12 +444,28 @@ public final class GeminiTranslationProvider implements TranslationProvider {
                     "characters", Integer.toString(accumulated.length()));
             if (streamMemory.rememberIncomplete()) {
                 // Recording the doubling without remembering it made every later line pay it again.
-                streamingUnsupported = true;
+                // A cooldown, not the permanent flag: StreamCompletionMemory says a dropped stream
+                // must cost a pause, and its own class comment names that behaviour as the contract.
+                streamingRetryAtNanos = StreamCompletionMemory.cooldownUntilNow();
+                DebugLog.global().logStreamEvent("gemini:" + model, "streaming-abandoned", 0);
             }
             return TranslationProvider.super.translateStreaming(request, listener);
         }
         streamMemory.rememberComplete();
-        requireCompleteAnswer(finishReason[0], budget);
+        if (finishReason[0] != null) {
+            // The stream itself reported that generation stopped early — in practice MAX_TOKENS,
+            // because thinking tokens eat the output budget. The plain path is where the budget is
+            // escalated and the request retried, so handing over is what keeps a long line
+            // recoverable; the partial text already published is replaced by the complete answer.
+            DebugLog.global().log("stream-fallback",
+                    "provider", "gemini:" + model,
+                    "reason", "stream ended early: " + finishReason[0],
+                    "action", "fell back to a plain request",
+                    "characters", Integer.toString(accumulated.length()));
+            return TranslationProvider.super.translateStreaming(request, listener);
+        }
+        // The throttle may have held the tail back; the preview has to end up complete.
+        preview.finish(accumulated);
         return TranslationOutputValidator.requireValid(text, accumulated.toString());
     }
 
@@ -285,7 +499,24 @@ public final class GeminiTranslationProvider implements TranslationProvider {
         if (response == null || response.trim().isEmpty()) {
             return null;
         }
-        return ProviderJson.joinField(response, "candidates[0].content.parts", "text");
+        return extractContent(JsonTree.parseOrNull(response), response);
+    }
+
+    /**
+     * The same join over an already parsed reply.
+     *
+     * <p>The single-text path needs the fragments, the finish reason and the token counts of one body,
+     * and reading each of them from the raw text built the same document twice more.
+     *
+     * @param root the reply as returned by {@code JsonTree.parseOrNull}, or {@code null}
+     * @param response the same body as text
+     * @return the joined fragments, or {@code null} when the reply carried none
+     */
+    static String extractContent(Object root, String response) {
+        if (response == null || response.trim().isEmpty()) {
+            return null;
+        }
+        return ProviderJson.joinField(root, "candidates[0].content.parts", "text");
     }
 
     /**
@@ -339,7 +570,7 @@ public final class GeminiTranslationProvider implements TranslationProvider {
     /**
      * Truncates a configured endpoint back to the models collection.
      *
-     * <p>{@link #generateUrl()} always appends {@code /<model><method>}, so a pasted full method
+     * <p>The request URLs always append {@code /<model><method>}, so a pasted full method
      * URL ({@code .../models/gemini-2.0-flash:generateContent}) would otherwise produce
      * {@code .../models/gemini-2.0-flash/gemini-2.0-flash:generateContent}. The collection base is
      * the only usable form here, which is why {@link #modelsUrl} already normalised to it.
@@ -373,17 +604,11 @@ public final class GeminiTranslationProvider implements TranslationProvider {
 
     private String post(String text, String system, int maximumTokens, boolean streaming)
             throws Exception {
-        String url = streaming ? streamUrl() : generateUrl();
-        EndpointPolicy.requireSafeEndpoint(url);
-        return http.post(URI.create(url), requestBody(text, system, maximumTokens), headers());
-    }
-
-    private String generateUrl() {
-        return base + "/" + model + GENERATE;
-    }
-
-    private String streamUrl() {
-        return base + "/" + model + STREAM_GENERATE + "?alt=sse";
+        // The endpoint was validated when the provider was built, and both URLs are resolved then
+        // too: re-running the endpoint policy here cost a Pattern compile per check on every line
+        // and threw away the corrected URI it returned.
+        return http.post(streaming ? streamUri : generateUri,
+                requestBody(text, system, maximumTokens), headers());
     }
 
     private Map<String, String> headers() {
@@ -404,11 +629,13 @@ public final class GeminiTranslationProvider implements TranslationProvider {
     String requestBody(String text, String system, int maximumTokens, boolean jsonObject) {
         StringBuilder body = new StringBuilder(text.length() + 320).append('{');
         if (system != null && !system.trim().isEmpty()) {
+            // Closes the part, the parts array and the systemInstruction object, in that order:
+            // "}]}" rather than "]}]", which left the object open and every request a 400.
             body.append("\"systemInstruction\":{\"parts\":[{\"text\":")
-                    .append(JsonStrings.quote(system)).append("]}],");
+                    .append(JsonStrings.quote(system)).append("}]},");
         }
         body.append("\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":")
-                .append(JsonStrings.quote(text)).append("]}]")
+                .append(JsonStrings.quote(text)).append("}]}]")
                 .append(",\"generationConfig\":{\"temperature\":0,\"maxOutputTokens\":")
                 .append(maximumTokens)
                 .append(jsonObject ? ",\"responseMimeType\":\"application/json\"" : "")
@@ -420,7 +647,7 @@ public final class GeminiTranslationProvider implements TranslationProvider {
      * Gemini can be asked for a JSON object through {@code generationConfig.responseMimeType}.
      *
      * <p>Declared here so a batch path can ask in this provider's own dialect instead of the shared
-     * request builder guessing; Gemini has no batch path yet.
+     * request builder guessing; {@link #translateBatch} is that caller.
      */
     public static JsonOutputMode jsonOutputMode() {
         return JsonOutputMode.RESPONSE_MIME_TYPE;
@@ -451,7 +678,18 @@ public final class GeminiTranslationProvider implements TranslationProvider {
         // The ListModels reply puts the resource name ("models/gemini-2.5-flash") in "name" and the
         // bare id in "baseModelId", so the settings screen can store either form. Only the bare id
         // belongs in the URL, because generateUrl already supplies the /models segment.
-        String prefix = "models/";
-        return value.startsWith(prefix) ? value.substring(prefix.length()) : value;
+        // A model pasted straight from the API reference also carries the method
+        // (".../gemini-2.5-flash:generateContent"); keeping it produced
+        // "{model}:generateContent:generateContent" and an unexplainable 404, so the same cleanup
+        // the endpoint gets is applied here.
+        String stripped = stripMethod(value);
+        int segment = stripped.lastIndexOf('/');
+        if (segment >= 0) {
+            stripped = stripped.substring(segment + 1);
+        }
+        if (stripped.isEmpty()) {
+            throw new IllegalArgumentException("Gemini model is required");
+        }
+        return stripped;
     }
 }

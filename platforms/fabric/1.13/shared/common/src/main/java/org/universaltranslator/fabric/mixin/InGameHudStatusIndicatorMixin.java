@@ -5,7 +5,6 @@ import net.minecraft.client.gui.GameGui;
 import net.minecraft.client.gui.GuiElement;
 import net.minecraft.client.render.TextRenderer;
 import net.minecraft.client.render.platform.Window;
-import net.minecraft.client.resource.language.I18n;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -18,6 +17,7 @@ import org.universaltranslator.core.HudIndicatorVisibility;
 import org.universaltranslator.core.OutgoingTranslationPreview;
 import org.universaltranslator.core.TranslationActivity;
 import org.universaltranslator.fabric.FabricTranslationRuntime;
+import org.universaltranslator.fabric.OrnitheClientAccess;
 import org.universaltranslator.fabric.TranslationRenderContext;
 
 /**
@@ -38,8 +38,9 @@ import org.universaltranslator.fabric.TranslationRenderContext;
  * <p>All state lives in locals on purpose: a mixin that declares extra fields or helper methods
  * risks colliding with members of the target class.
  *
- * <p>The label is looked up through {@code I18n.translate}, which is present on every version this
- * file is compiled against.
+ * <p>The label comes from {@code I18n.translate} through {@link HudLabels}, which is present on every
+ * version this file is compiled against; that class also keeps the lookup and the width walk off the
+ * per-frame path.
  */
 @Mixin(GameGui.class)
 abstract class InGameHudStatusIndicatorMixin {
@@ -71,8 +72,20 @@ abstract class InGameHudStatusIndicatorMixin {
                 break;
         }
         Minecraft client = Minecraft.getInstance();
+        // The injection sits at the RETURN of the HUD render, which still runs while F1 hides the
+        // HUD: without this the square and its label stayed on an otherwise empty screen and were
+        // painted over the chat and the hotbar.
+        if (client == null || OrnitheClientAccess.hudHidden(client)) {
+            return;
+        }
         Window window = client.window;
         if (window == null) {
+            return;
+        }
+        TextRenderer font = client.textRenderer;
+        if (font == null) {
+            // The renderer is null while a resource reload swaps it, so both the preview and the
+            // label below would NPE out of the render thread; the check has to come first.
             return;
         }
         int windowWidth = window.getGuiScaledWidth();
@@ -118,8 +131,8 @@ abstract class InGameHudStatusIndicatorMixin {
             TranslationRenderContext.pushTextInput();
             try {
                 int previewY = Math.max(0, windowHeight - 60);
-                int previewX = windowWidth / 2 - client.textRenderer.getWidth(outgoingPreview) / 2;
-                client.textRenderer.drawWithShadow(outgoingPreview, (float) previewX, (float) previewY, 0xFFFFFFFF);
+                int previewX = windowWidth / 2 - HudLabels.width(font, outgoingPreview) / 2;
+                font.drawWithShadow(outgoingPreview, (float) previewX, (float) previewY, 0xFFFFFFFF);
             } finally {
                 TranslationRenderContext.popTextInput();
             }
@@ -137,21 +150,22 @@ abstract class InGameHudStatusIndicatorMixin {
         } else if (content == HudIndicatorContent.PROVIDER) {
             label = quickSettings.getProvider();
         } else if (content == HudIndicatorContent.ACTIVITY && TranslationActivity.isTranslating()) {
-            label = I18n.translate("value.universal_translator.hud_content.activity");
+            label = HudLabels.activity();
         }
         if (label == null || label.isEmpty()) {
             return;
         }
-        TextRenderer font = client.textRenderer;
         // This version hooks TextRenderer.getWidth and TextRenderer.draw in order to translate what
         // it renders, so measuring or drawing the label unguarded would feed the indicator's own
         // text back into the translation path.
         TranslationRenderContext.pushTextInput();
         try {
-            int labelWidth = font.getWidth(label);
+            int labelWidth = HudLabels.width(font, label);
             // Beside the square, never over it: a 6px square cannot hold "zh-TW", and a label
-            // centred on a right-corner square would run off the screen edge.
+            // centred on a right-corner square would run off the screen edge. Clamped afterwards,
+            // because the square can sit against either edge.
             int labelLeft = corner.isRight() ? left - 2 - labelWidth : right + 2;
+            labelLeft = Math.max(2, Math.min(windowWidth - labelWidth - 2, labelLeft));
             // y is the top of the text line, so centre it against the square by hand.
             int labelY = top + (size - 8) / 2;
             font.drawWithShadow(label, (float) labelLeft, (float) labelY, 0xFFFFFFFF);

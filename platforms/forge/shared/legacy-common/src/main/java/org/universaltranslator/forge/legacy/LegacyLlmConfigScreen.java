@@ -6,6 +6,7 @@ import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.client.resources.I18n;
 import org.universaltranslator.core.ModelListPaging;
+import org.universaltranslator.core.UiLimits;
 import org.universaltranslator.core.provider.OpenAiModelCatalog;
 
 import java.io.IOException;
@@ -24,8 +25,9 @@ final class LegacyLlmConfigScreen extends GuiScreen {
     private static final int ESCAPE_KEY = 1;
 
     private final LegacyConfigScreen parent;
-    private final String initialEndpoint;
-    private final String initialModel;
+    private String initialEndpoint;
+    private String initialModel;
+    private String initialApiKey = "";
     private final boolean hasStoredKey;
     private FontRenderer renderer;
     private GuiTextField endpoint;
@@ -53,18 +55,32 @@ final class LegacyLlmConfigScreen extends GuiScreen {
     @Override
     public void initGui() {
         buttonList.clear();
+        // initGui() also runs on every resize (window drag, F11, GUI scale). Re-applying the
+        // constructor snapshot silently discarded whatever had been typed, and the API key field had
+        // no value at all - so a pasted key vanished on the first resize and Save then wrote the
+        // previously stored key back.
+        if (endpoint != null) {
+            initialEndpoint = endpoint.getText();
+        }
+        if (model != null) {
+            initialModel = model.getText();
+        }
+        if (apiKey != null) {
+            initialApiKey = apiKey.getText();
+        }
         renderer = LegacyVersionAccess.fontRenderer();
         int fieldWidth = Math.max(180, Math.min(360, width - 20));
         int left = (width - fieldWidth) / 2;
         int top = Math.max(42, (height - 174) / 2);
         endpoint = new GuiTextField(10, renderer, left, top, fieldWidth, 20);
-        endpoint.setMaxStringLength(512);
+        endpoint.setMaxStringLength(UiLimits.ENDPOINT_MAX_CHARS);
         endpoint.setText(initialEndpoint);
         model = new GuiTextField(11, renderer, left, top + 36, fieldWidth, 20);
-        model.setMaxStringLength(128);
+        model.setMaxStringLength(UiLimits.MODEL_ID_MAX_CHARS);
         model.setText(initialModel);
         apiKey = new GuiTextField(12, renderer, left, top + 72, fieldWidth, 20);
-        apiKey.setMaxStringLength(512);
+        apiKey.setMaxStringLength(UiLimits.SECRET_MAX_CHARS);
+        apiKey.setText(initialApiKey);
         int gap = 8;
         int buttonWidth = (fieldWidth - gap) / 2;
         buttonList.add(new GuiButton(SAVE, left, top + 108, buttonWidth, 20,
@@ -94,6 +110,14 @@ final class LegacyLlmConfigScreen extends GuiScreen {
             setStatus(tr("error.universal_translator.llm_required"), true);
             return;
         }
+        try {
+            // The same policy the connection test applies. Saving without it wrote an arbitrary
+            // scheme, host and port into the endpoint every later translation request goes to.
+            org.universaltranslator.core.net.EndpointPolicy.requireSafeEndpoint(endpointValue);
+        } catch (RuntimeException rejected) {
+            setStatus(describe(rejected), true);
+            return;
+        }
         String enteredKey = apiKey.getText().trim();
         String keyValue = enteredKey.isEmpty()
                 ? parent.llmApiKey() : ("-".equals(enteredKey) ? "" : enteredKey);
@@ -116,7 +140,7 @@ final class LegacyLlmConfigScreen extends GuiScreen {
                 ? parent.llmApiKey() : ("-".equals(enteredKey) ? "" : enteredKey);
         fetching = true;
         setStatus(tr("screen.universal_translator.llm.fetching"), false);
-        Thread worker = new Thread(() -> {
+        LegacyScreenWorkers.execute(() -> {
             List<String> models = Collections.emptyList();
             String failure = "";
             try {
@@ -136,15 +160,32 @@ final class LegacyLlmConfigScreen extends GuiScreen {
             fetchedModels = models;
             modelPage = 0;
             modelListOpen = true;
+            releaseFieldFocus();
             setStatus("", false);
-        }, "universal-translator-model-list");
-        worker.setDaemon(true);
-        worker.start();
+        });
     }
 
     private void setStatus(String message, boolean error) {
         status = message;
         statusIsError = error;
+    }
+
+    /**
+     * Drops the keyboard focus of every field while the catalog overlay owns the screen.
+     *
+     * <p>The overlay covers the form, but the fields underneath kept the focus, so a keystroke typed
+     * into a field the player could not see and the next Save wrote it.
+     */
+    private void releaseFieldFocus() {
+        if (endpoint != null) {
+            endpoint.setFocused(false);
+        }
+        if (model != null) {
+            model.setFocused(false);
+        }
+        if (apiKey != null) {
+            apiKey.setFocused(false);
+        }
     }
 
     private static String describe(Exception error) {
