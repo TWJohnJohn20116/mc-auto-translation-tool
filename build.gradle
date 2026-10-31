@@ -789,7 +789,17 @@ tasks.register("validateSharedPlatformLayouts") {
                         "platforms/forge/26.x/shared/common/src/main/java/org/universaltranslator/forge/ScreenWorkers.java",
                         "platforms/forge/modern/1.16.5/src/main/java/org/universaltranslator/forge/UniversalTranslatorScreens.java"],
                 "org.universaltranslator.fabric.mixin.HudLabels"          : [
-                        "platforms/fabric/shared/hud-indicator/src/client/java/org/universaltranslator/fabric/mixin/HudLabels.java"],
+                        "platforms/fabric/shared/hud-indicator/src/client/java/org/universaltranslator/fabric/mixin/HudLabels.java",
+                        // The pre-1.16 trees do not mount shared/hud-indicator (that directory is wired
+                        // into platforms/fabric/legacy/shared.gradle only), and each of them resolves the
+                        // activity label through a different HUD API, so each keeps its own copy. No two
+                        // of these share a source set: 1.13's legacy.gradle and ornithe.gradle mount
+                        // shared/common or legacy-1.13.2 respectively, never both.
+                        "platforms/fabric/1.0-1.8/shared/common/src/main/java/org/universaltranslator/fabric/mixin/HudLabels.java",
+                        "platforms/fabric/1.8-1.12/shared/common/src/main/java/org/universaltranslator/fabric/mixin/HudLabels.java",
+                        "platforms/fabric/1.13/shared/common/src/main/java/org/universaltranslator/fabric/mixin/HudLabels.java",
+                        "platforms/fabric/1.13/shared/legacy-1.13.2/src/main/java/org/universaltranslator/fabric/mixin/HudLabels.java",
+                        "platforms/fabric/1.14-1.15/shared/family/1.14-1.15-common/src/client/java/org/universaltranslator/fabric/mixin/HudLabels.java"],
                 "org.universaltranslator.fabric.mixin.HudIndicatorLabels" : [
                         "platforms/fabric/1.20/shared/family/1.20.1/src/client/java/org/universaltranslator/fabric/mixin/HudIndicatorLabels.java",
                         "platforms/fabric/1.21/shared/common/src/client/java/org/universaltranslator/fabric/mixin/HudIndicatorLabels.java"],

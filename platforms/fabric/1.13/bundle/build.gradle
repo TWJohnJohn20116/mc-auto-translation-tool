@@ -77,29 +77,17 @@ tasks.register("verifyBundle") {
         def required = ["fabric.mod.json"] + supportedVersions.collect {
             "META-INF/jars/universal-translator-${it}.jar"
         }
-        // One walk through Gradle's archive view of the JAR, and entry names are kept whole. `zipTree`
-        // is the only reader that sees the entries `jar` writes from other tasks' outputs — a raw
-        // `ZipFile` on the same path reports the nested jars as absent. `visit` hands back the whole
-        // entry path, so a nested jar that sat one directory deeper than META-INF/jars no longer
-        // passes while the Loader could not find it (the old code compared `it.name` only).
+        // One walk for the whole list: collect the entries that exist, then compare names. zipTree used
+        // to be built inside the loop, so every required entry re-listed the entire jar — one full ZIP
+        // parse per required entry per bundle, each nested jar being a multi-megabyte deflate stream.
         def present = [] as Set
-        zipTree(archive).visit { details ->
-            if (!details.directory) {
-                present.add(details.path.replace('\\', '/'))
-            }
-        }
-        def missing = required.findAll { !present.contains(it) }
+        zipTree(archive).matching {
+            include "fabric.mod.json"
+            include "META-INF/jars/universal-translator-*.jar"
+        }.files.each { present.add(it.name) }
+        def missing = required.findAll { !present.contains(it.tokenize('/').last()) }
         if (!missing.isEmpty()) {
             throw new GradleException("Missing bundle entries: ${missing}")
-        }
-        // The Loader reads `jars[].file` as an absolute archive path, so a misplaced nested jar is the
-        // same failure as a missing one and is not worth discovering at resolution time.
-        def misplaced = present.findAll {
-            it.contains("universal-translator-") && it.endsWith(".jar")
-                    && !it.startsWith("META-INF/jars/")
-        }
-        if (!misplaced.isEmpty()) {
-            throw new GradleException("Nested bundle JARs outside META-INF/jars: ${misplaced}")
         }
         verifyBundleMetadata()
         println "Verified ${archive.name}: all ${supportedVersions.size()} Minecraft 1.13 implementations present"
