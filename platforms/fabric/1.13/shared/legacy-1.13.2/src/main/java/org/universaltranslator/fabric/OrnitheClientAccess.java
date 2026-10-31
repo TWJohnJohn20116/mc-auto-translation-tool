@@ -36,6 +36,32 @@ public final class OrnitheClientAccess {
         client().setScreen(screen);
     }
 
+    /**
+     * True when F1 has hidden the HUD.
+     *
+     * <p>The only read of that flag in this layer, so a mapping drift costs one line here instead of
+     * one call site in the HUD hook — the same shape the three sibling copies use
+     * ({@code 1.0-1.8}, {@code 1.8-1.12}, {@code 1.13/shared/common}). The member differs on
+     * purpose: this tree compiles against {@code net.legacyfabric:yarn:1.13.2+build.604}, and that
+     * mapping set leaves the {@code GameOptions} boolean behind this flag <em>without a name</em>.
+     * So neither {@code hideGui} (the ploceus/feather name that does compile on 1.13.0/1.13.1) nor
+     * {@code hudHidden} (the yarn name that arrives with 1.14) exists here, and both spellings are a
+     * {@code cannot find symbol} on this tree. What the mapping does name is
+     * {@code MinecraftClient.isHudEnabled()}: public static, and in the shipped 1.13.2 class it is
+     * literally {@code return instance != null && instance.options != null && !instance.options.<flag>},
+     * so it is the flag's own accessor and already null-safe on both the client and its options.
+     *
+     * <p>{@code client} is still checked for null so this method keeps the contract of the three
+     * sibling copies (no client, nothing hidden), even though the vanilla accessor resolves the
+     * singleton itself.
+     */
+    public static boolean hudHidden(MinecraftClient client) {
+        if (client == null) {
+            return false;
+        }
+        return !MinecraftClient.isHudEnabled();
+    }
+
     public static void setScreen(Screen screen) {
         openScreen(screen);
     }

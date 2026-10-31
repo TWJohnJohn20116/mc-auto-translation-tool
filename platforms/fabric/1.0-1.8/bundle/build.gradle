@@ -38,6 +38,8 @@ jar {
 }
 ext.jarLicenseName = "LICENSE_universal_translator_bundle"
 apply from: rootProject.file("gradle/jar-contents.gradle")
+// The mod-list icon: one file under platforms/shared/lang/json, not a copy per bundle.
+apply from: rootProject.file("gradle/bundle-icon.gradle")
 // The reverse check every bundle needs: the presence checks below only prove that everything in
 // supportedVersions was packed, and the jar block builds that list from the same variable, so they
 // cannot see a fabric.mod.json that declares versions nobody builds. That is exactly how this

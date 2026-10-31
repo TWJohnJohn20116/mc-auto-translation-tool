@@ -880,21 +880,16 @@ tasks.register("validateSharedPlatformLayouts") {
         // the key out again is invisible to it: the build stays green and the new copy keeps
         // resolving a key that no lang file has after the next rename, which is how the four copies
         // drifted apart in the first place. So the literal is scanned for instead of enumerated; it
-        // may only appear in its own definition plus the copies nobody has moved onto
-        // HudLabelCache.ACTIVITY_KEY yet. Both directions throw, because an entry left behind after
-        // one of those copies is fixed would let the gap reopen unnoticed.
+        // may only appear where HudLabelCache itself defines it. Both directions throw, because an
+        // entry left behind after the last copy is fixed would let the gap reopen unnoticed.
         def hudActivityKey = "value.universal_translator.hud_content.activity"
         def hudActivityKeySources = [
-                "translator-core/src/main/java/org/universaltranslator/core/HudLabelCache.java",
-                // 26.x paints its own HUD label and still resolves it from the literal; it is mounted
-                // by every fabric 26.x target and ships in fabric-all.
-                "platforms/fabric/26.x/shared/common/src/client/java/org/universaltranslator/fabric/mixin/HudIndicatorPainter.java"
+                "translator-core/src/main/java/org/universaltranslator/core/HudLabelCache.java"
         ]
-        // Same reasoning for the interval: these are the only HUD label intervals still written as a
-        // literal instead of taking HudLabelCache.REFRESH_MILLIS.
-        def hudLabelRefreshLiterals = [
-                "platforms/fabric/26.x/shared/common/src/client/java/org/universaltranslator/fabric/mixin/HudIndicatorPainter.java"
-        ]
+        // Same reasoning for the interval, and the empty list is deliberate: no file may declare a
+        // HUD label interval of its own any more, so the next literal is a red light immediately
+        // instead of being waved through by an enumeration nobody remembered to extend.
+        def hudLabelRefreshLiterals = []
         def hudOwnLabelRefresh = ~/(?m)^\s*(?:private|public|protected)\s+static\s+final\s+long\s+\w*(?:ACTIVITY|LABEL|HUD)\w*REFRESH\w*\s*=\s*\d+/
         def hudActivityKeySites = new TreeSet<String>()
         def hudLabelRefreshSites = new TreeSet<String>()
@@ -1916,7 +1911,7 @@ tasks.register("verifyPublishedRelease") {
 // be evaluated and ${...} placeholders never need expanding.
 tasks.register("validateResourceMetadata") {
     group = "verification"
-    description = "Checks the shared fabric.mod.json authors value and the legacy .lang key sets."
+    description = "Checks the shared fabric.mod.json authors value, the legacy .lang key sets and the one mod-list icon."
 
     // The one canonical value; the launcher, Modrinth and CurseForge all show it verbatim.
     def expectedAuthors = "我小张7272635"
@@ -1932,6 +1927,30 @@ tasks.register("validateResourceMetadata") {
     }
     inputs.files(metadataFiles)
     inputs.dir(langRoot)
+
+    // The mod-list icon has one source. Ten Fabric bundles used to carry byte-identical copies of
+    // it (4,004 bytes, same SHA-256 each), so a redraw meant editing eleven files and every copy
+    // that fell behind stayed green — no task in `check` ever read a PNG. gradle/bundle-icon.gradle
+    // feeds all ten bundles from platforms/shared/lang/json, and both standalone Forge 1.8.9/1.12.2
+    // builds copy the same entry, so this gate checks the two facts that keep it that way: exactly
+    // one copy exists and it is a PNG, and every metadata file that names an icon names that copy.
+    def iconRelative = "assets/universal_translator/icon.png"
+    def iconFiles = fileTree(rootDir) {
+        include "platforms/**/${iconRelative}"
+        exclude "**/build/**"
+        exclude "**/.gradle/**"
+    }
+    // Forge picks its mod-list logo from two different places: mods.toml's `logoFile` (1.13+, read
+    // from the JAR root) and mcmod.info's `logoFile` (1.8.9/1.12.2). Both name the same image, so
+    // both are read here instead of trusting the copy-paste that produced them.
+    def logoMetadataFiles = fileTree(rootDir) {
+        include "platforms/**/src/**/META-INF/*.toml"
+        include "platforms/**/src/**/mcmod.info"
+        exclude "**/build/**"
+        exclude "**/.gradle/**"
+    }
+    inputs.files(iconFiles)
+    inputs.files(logoMetadataFiles)
 
     // A .lang line is `key=value`; MC's reader skips blank lines and `#` comments, and so does this.
     def readLang = { File source ->
@@ -2011,9 +2030,46 @@ tasks.register("validateResourceMetadata") {
                 }
             }
         }
+        // One icon file next to a real PNG, and every declaration pointing at that one file.
+        def iconCopies = iconFiles.files
+        if (iconCopies.size() != 1) {
+            problems << "expected exactly 1 ${iconRelative} under platforms/, found " +
+                    "${iconCopies.size()}: " + iconCopies.collect { it }.join(", ")
+        }
+        def iconFile = new File(langRoot, "json/${iconRelative}")
+        if (!iconFile.isFile()) {
+            problems << "${iconFile}: missing, and it is the one image every declaring mod ships"
+        } else {
+            def signature = new byte[8]
+            iconFile.withInputStream { stream -> stream.read(signature) }
+            def signatureHex = signature.encodeHex().toString()
+            if (signatureHex != "89504e470d0a1a0a") {
+                problems << "${iconFile}: not a PNG (signature ${signatureHex})"
+            }
+        }
+        metadataFiles.each { metadata ->
+            def declared = metadata.getText("UTF-8") =~ /"icon"\s*:\s*"([^"]*)"/
+            if (declared.find() && declared.group(1) != iconRelative) {
+                problems << "${metadata}: icon is ${declared.group(1)}, expected ${iconRelative}"
+            }
+        }
+        logoMetadataFiles.each { metadata ->
+            def text = metadata.getText("UTF-8")
+            def declared = null
+            if (metadata.name.endsWith(".toml")) {
+                def tomlLogo = text =~ /(?m)^[ \t]*logoFile[ \t]*=[ \t]*"([^"]*)"/
+                declared = tomlLogo.find() ? tomlLogo.group(1) : null
+            } else {
+                def infoLogo = text =~ /"logoFile"\s*:\s*"([^"]*)"/
+                declared = infoLogo.find() ? infoLogo.group(1) : null
+            }
+            if (declared != null && !declared.endsWith(iconRelative)) {
+                problems << "${metadata}: logoFile is ${declared}, expected a path ending in ${iconRelative}"
+            }
+        }
         if (!problems.isEmpty()) {
             throw new GradleException(
-                    "Resource metadata drifted (authors or legacy language keys):\n" + problems.join("\n"))
+                    "Resource metadata drifted (authors, legacy language keys or the mod-list icon):\n" + problems.join("\n"))
         }
     }
 }

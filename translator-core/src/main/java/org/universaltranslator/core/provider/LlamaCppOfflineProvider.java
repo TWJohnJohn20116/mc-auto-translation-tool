@@ -340,8 +340,8 @@ public final class LlamaCppOfflineProvider
     private void startServer(long token) throws Exception {
         requireCurrentStartup(token);
         Files.createDirectories(root);
-        Path server = ensureEngine();
-        Path model = ensureModel();
+        Path server = ensureEngine(token);
+        Path model = ensureModel(token);
         // A close() during a multi-hundred-megabyte download must not be turned into
         // an automatic engine repair or into a five-minute retry backoff.
         requireCurrentStartup(token);
@@ -362,7 +362,7 @@ public final class LlamaCppOfflineProvider
                     engineRepairAttempted = true;
                     status = "离线引擎启动失败，正在自动修复";
                     deleteTree(engineInstallDirectory());
-                    server = ensureEngine();
+                    server = ensureEngine(token);
                     try {
                         startServer(server, model, true, token);
                         return;
@@ -398,8 +398,11 @@ public final class LlamaCppOfflineProvider
             int port = reserveLoopbackPort();
             Path log = root.resolve("llama-server.log");
             long logStart = Files.isRegularFile(log) ? Files.size(log) : 0L;
+            // Copying the model to its native alias is the same multi-hundred-megabyte wait as the
+            // download, so it takes the same hook: a startup that was superseded must not keep
+            // writing into a directory nobody will read.
             Path nativeModel = OfflineProcessSupport.prepareModelPathForNativeProcess(
-                    model, modelSha256);
+                    model, modelSha256, () -> !isCurrentStartup(token));
             int processors = Runtime.getRuntime().availableProcessors();
             // The model shares the machine with Minecraft's render thread. Two inference
             // threads are enough for this small model and avoid sustained frame drops on
@@ -496,7 +499,14 @@ public final class LlamaCppOfflineProvider
         return new IOException(message, failure);
     }
 
-    private Path ensureEngine() throws IOException {
+    /**
+     * Installs the engine, and stops the transfer as soon as this startup was superseded.
+     *
+     * @param token the startup claim this call acts for
+     * @throws InterruptedException when the startup was cancelled; the partial archive is kept so
+     *         the next attempt resumes instead of starting over
+     */
+    private Path ensureEngine(long token) throws IOException, InterruptedException {
         OfflineEngineAsset asset = OfflineEngineAsset.current();
         Path engineRoot = engineRoot(asset);
         Path installed = engineInstallDirectory(asset);
@@ -513,7 +523,7 @@ public final class LlamaCppOfflineProvider
         status = "正在下载离线引擎（约 " + Math.max(1L, asset.size / 1_000_000L) + " MB）";
         Path archive = engineRoot.resolve(asset.archiveName);
         VerifiedDownloader.download(asset.downloadSources(), archive, asset.size, asset.sha256,
-                progressListener("正在下载离线引擎"));
+                progressListener("正在下载离线引擎"), () -> !isCurrentStartup(token));
         status = "离线引擎下载并校验完成";
         Path staging = installed.resolveSibling("installing");
         deleteTree(staging);
@@ -551,7 +561,17 @@ public final class LlamaCppOfflineProvider
         return root.resolve("engines").resolve("b9637-" + asset.platformId);
     }
 
-    private Path ensureModel() throws IOException {
+    /**
+     * Downloads the model if it is missing, and stops the transfer as soon as this startup was
+     * superseded. The model is the longest lived request in the offline package: without the hook a
+     * closed world or a switched provider kept a gigabyte transfer writing into a directory nobody
+     * would read, with the throughput floor as its only brake.
+     *
+     * @param token the startup claim this call acts for
+     * @throws InterruptedException when the startup was cancelled; the partial file is kept so the
+     *         next attempt resumes instead of starting over
+     */
+    private Path ensureModel(long token) throws IOException, InterruptedException {
         Path model = root.resolve("models").resolve(modelId).resolve(modelFile);
         if (Files.isRegularFile(model) && isInstalledModelVerified(model)) {
             return model;
@@ -565,7 +585,8 @@ public final class LlamaCppOfflineProvider
                 ? java.util.Collections.singletonList(modelUri)
                 : Arrays.asList(modelChinaUri, modelUri);
         Path downloaded = VerifiedDownloader.download(
-                sources, model, modelSize, modelSha256, progressListener("正在下载离线模型"));
+                sources, model, modelSize, modelSha256, progressListener("正在下载离线模型"),
+                () -> !isCurrentStartup(token));
         status = "离线模型下载并校验完成";
         rememberDownloadedModelVerification(downloaded);
         return downloaded;

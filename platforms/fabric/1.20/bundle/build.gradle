@@ -77,6 +77,8 @@ jar {
 }
 ext.jarLicenseName = "LICENSE_universal_translator_bundle"
 apply from: rootProject.file("gradle/jar-contents.gradle")
+// The mod-list icon: one file under platforms/shared/lang/json, not a copy per bundle.
+apply from: rootProject.file("gradle/bundle-icon.gradle")
 // The reverse direction: a fabric.mod.json that declares a version this jar does not ship would pass
 // every presence check below, and the Loader then fails that version at resolution time.
 ext.bundleSupportedVersions = supportedVersions

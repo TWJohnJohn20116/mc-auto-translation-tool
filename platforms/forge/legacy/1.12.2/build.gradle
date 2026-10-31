@@ -40,6 +40,14 @@ sourceSets.main.resources.srcDir file("../../../../platforms/shared/lang/legacy-
 processResources {
     filteringCharset = "UTF-8"
     inputs.property "version", project.version
+    // Same one-source icon as 1.8.9 (and as every other release JAR): the entry is copied from
+    // platforms/shared/lang/json by path because this build is standalone. Only the icon — the
+    // 1.13+ lang JSON in that directory is never read by 1.12.2.
+    // mcmod.info's logoFile goes through the same getClass().getResourceAsStream(logoFile) as 1.8.9
+    // (see that build), hence the leading slash: it is a classpath name, not an assets/ path.
+    from("../../../../platforms/shared/lang/json/assets/universal_translator/icon.png") {
+        into "assets/universal_translator"
+    }
     filesMatching("mcmod.info") {
         expand version: project.version
     }

@@ -38,6 +38,16 @@ sourceSets.main.resources.srcDir file("../../../../platforms/shared/lang/legacy-
 processResources {
     filteringCharset = "UTF-8"
     inputs.property "version", project.version
+    // The mod-list icon is the same 4,004-byte file every other release JAR ships, and it has one
+    // source: platforms/shared/lang/json. This build is standalone, so
+    // rootProject.file("gradle/bundle-icon.gradle") is out of reach and the single entry is copied
+    // by path. Only the icon: that directory also holds the 1.13+ lang JSON, which 1.8.9 never reads.
+    // mcmod.info's logoFile is read by net.minecraftforge.fml.client.GuiModList#updateCache through
+    // getClass().getResourceAsStream(logoFile) on Forge's own class, so the value declared there is a
+    // leading-slash classpath name: a bare "assets/…" would resolve against net/minecraftforge/fml/client/.
+    from("../../../../platforms/shared/lang/json/assets/universal_translator/icon.png") {
+        into "assets/universal_translator"
+    }
     filesMatching("mcmod.info") {
         expand version: project.version
     }

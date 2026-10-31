@@ -1,6 +1,7 @@
 package org.universaltranslator.core.provider;
 
 import org.universaltranslator.core.net.HttpStatusException;
+import org.universaltranslator.core.net.TranslationBudgetExceededException;
 import org.universaltranslator.core.net.TranslationEndpointUnavailableException;
 
 import java.io.IOException;
@@ -62,6 +63,13 @@ final class FailurePolicy {
             if (current instanceof InterruptedException) {
                 return false;
             }
+            // A stall that ran out the transport's whole budget is a verdict, not a hiccup: no
+            // provider can answer the identical request differently, so handing it to the fallback
+            // engine only charges for the same text a second time. The subtype test has to come
+            // before the socket timeout below, because it is one.
+            if (current instanceof TranslationBudgetExceededException) {
+                return false;
+            }
             if (current instanceof SocketTimeoutException) {
                 return true;
             }
@@ -85,6 +93,11 @@ final class FailurePolicy {
     static boolean retryableAsGroup(Throwable failure) {
         Throwable current = failure;
         for (int depth = 0; current != null && depth < MAXIMUM_CAUSE_DEPTH; depth++) {
+            // Same verdict as above: an exhausted transport budget answers the resend identically,
+            // so one more paid request for the whole group cannot change the outcome.
+            if (current instanceof TranslationBudgetExceededException) {
+                return false;
+            }
             if (current instanceof SocketTimeoutException) {
                 return true;
             }

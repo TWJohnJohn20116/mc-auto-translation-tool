@@ -8,6 +8,7 @@ import org.universaltranslator.core.HomeQuickSettingsState;
 import org.universaltranslator.core.HudIndicatorContent;
 import org.universaltranslator.core.HudIndicatorCorner;
 import org.universaltranslator.core.HudIndicatorSettings;
+import org.universaltranslator.core.HudLabelCache;
 import org.universaltranslator.core.OutgoingTranslationPreview;
 import org.universaltranslator.core.TranslationActivity;
 import org.universaltranslator.fabric.FabricTranslationRuntime;
@@ -27,15 +28,13 @@ import org.universaltranslator.fabric.TranslationRenderContext;
  * members of the class it targets.
  */
 final class HudIndicatorPainter {
-    /**
-     * How long the localized activity label stays cached.
-     *
-     * <p>Resolving it costs a {@code TranslatableContents}, a language-table lookup and a fresh
-     * {@code String} on every frame the indicator shows "translating". The player can change the
-     * language while the game runs, so the value is refreshed once per second instead of being
-     * fixed for the session.
-     */
-    private static final long ACTIVITY_LABEL_REFRESH_MILLIS = 1000L;
+    // The refresh interval and the activity key live in HudLabelCache so this cache and its
+    // siblings cannot drift apart; only the translation call differs per generation.
+    //
+    // Resolving the label costs a {@code TranslatableContents}, a language-table lookup and a fresh
+    // {@code String} on every frame the indicator shows "translating". The player can change the
+    // language while the game runs, so the value expires after {@code HudLabelCache.REFRESH_MILLIS}
+    // instead of being fixed for the session.
     private static String cachedActivityLabel;
     private static long cachedActivityLabelAt;
     /** The label's component, rebuilt only when the label string it wraps changes. */
@@ -44,12 +43,10 @@ final class HudIndicatorPainter {
     private static String cachedPreviewValue;
     private static Component cachedPreviewComponent;
     /**
-     * How long a measured width stays valid; the same refresh as the activity label, because a
-     * language change or a resource reload swaps the font's metrics.
-     */
-    private static final long LABEL_WIDTH_REFRESH_MILLIS = 1000L;
-    /**
      * Last measured labels and their widths.
+     *
+     * <p>They stay valid for {@code HudLabelCache.REFRESH_MILLIS}, the same interval as the activity
+     * label: a language change or a resource reload swaps the font's metrics.
      *
      * <p>Two slots, not one: the label is measured on every frame the indicator is shown, and a
      * single slot would be overwritten whenever the preview and the label swap, which is the one
@@ -67,11 +64,10 @@ final class HudIndicatorPainter {
     private static String activityLabel() {
         long now = System.currentTimeMillis();
         String cached = cachedActivityLabel;
-        if (cached != null && now - cachedActivityLabelAt < ACTIVITY_LABEL_REFRESH_MILLIS) {
+        if (cached != null && now - cachedActivityLabelAt < HudLabelCache.REFRESH_MILLIS) {
             return cached;
         }
-        String resolved = Component.translatable(
-                "value.universal_translator.hud_content.activity").getString();
+        String resolved = Component.translatable(HudLabelCache.ACTIVITY_KEY).getString();
         cachedActivityLabel = resolved;
         cachedActivityLabelAt = now;
         return resolved;
@@ -110,7 +106,8 @@ final class HudIndicatorPainter {
     private static int labelWidth(Font font, Component text, String key) {
         long now = System.currentTimeMillis();
         for (int slot = 0; slot < WIDTH_SLOTS; slot++) {
-            if (key != null && key.equals(widthText[slot]) && now - widthAt[slot] < LABEL_WIDTH_REFRESH_MILLIS) {
+            if (key != null && key.equals(widthText[slot])
+                    && now - widthAt[slot] < HudLabelCache.REFRESH_MILLIS) {
                 return widthValue[slot];
             }
         }

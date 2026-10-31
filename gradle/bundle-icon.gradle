@@ -1,0 +1,25 @@
+// The mod-list icon, from one file.
+//
+// Ten Fabric bundles each carried their own byte-identical copy of the 4,004-byte
+// platforms/shared/lang/json/assets/universal_translator/icon.png — same SHA-256, eleven files to
+// redraw, and ten chances to ship a stale image, because nothing in the build ever read a PNG.
+// platforms/shared/lang/json is already the resource root every other tree mounts
+// (platforms/forge/shared.gradle, platforms/forge/modern/shared.gradle, platforms/neoforge/shared.gradle,
+// platforms/neoforge/1.20.1/build.gradle, platforms/fabric/*/shared.gradle, and both
+// platforms/forge/legacy/*/build.gradle), so a bundle only needs this one entry: copying the whole
+// directory would drag the lang JSON into a bundle jar whose nested members already carry them.
+//
+// Apply it next to the jar contents, in every project whose fabric.mod.json declares
+// "icon": "assets/universal_translator/icon.png":
+//
+//     apply from: rootProject.file("gradle/bundle-icon.gradle")
+processResources {
+    from(rootProject.file("platforms/shared/lang/json/assets/universal_translator/icon.png")) {
+        into "assets/universal_translator"
+    }
+    // Jar/Copy default to INCLUDE, which accepts a second copy of the same path silently. EXCLUDE
+    // turns a re-added local copy into one entry instead of two. The local copy registered by the
+    // java plugin comes first, so it still wins while it exists — deleting the copies is what makes
+    // this file the source, not this strategy.
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}

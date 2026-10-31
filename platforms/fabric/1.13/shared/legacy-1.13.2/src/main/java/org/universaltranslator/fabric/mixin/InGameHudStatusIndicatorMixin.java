@@ -17,6 +17,7 @@ import org.universaltranslator.core.HudIndicatorVisibility;
 import org.universaltranslator.core.OutgoingTranslationPreview;
 import org.universaltranslator.core.TranslationActivity;
 import org.universaltranslator.fabric.FabricTranslationRuntime;
+import org.universaltranslator.fabric.OrnitheClientAccess;
 import org.universaltranslator.fabric.TranslationRenderContext;
 
 /**
@@ -74,12 +75,12 @@ abstract class InGameHudStatusIndicatorMixin {
         }
         // The injection sits at the RETURN of the HUD render, which still runs while F1 hides the
         // HUD: without this the square and its label stayed on an otherwise empty screen and were
-        // painted over the chat and the hotbar.
-        // No F1 guard here: this layer is compiled against the ploceus (legacy) mappings, where the
-        // flag this file would have to read is not called hideGui (that name belongs to the ornithe
-        // layer, which reaches it through OrnitheClientAccess). Reading either spelling from this
-        // layer fails to compile, and the two layers cannot share an accessor because they never
-        // mount the same source set.
+        // painted over the chat and the hotbar. The flag cannot be read by name on this mapping set
+        // (see OrnitheClientAccess#hudHidden), so the read lives there with the rest of this layer's
+        // mapping-specific surface instead of being dropped here.
+        if (OrnitheClientAccess.hudHidden(client)) {
+            return;
+        }
         int[] framebufferWidth = new int[1];
         int[] framebufferHeight = new int[1];
         long handle = GLFW.glfwGetCurrentContext();

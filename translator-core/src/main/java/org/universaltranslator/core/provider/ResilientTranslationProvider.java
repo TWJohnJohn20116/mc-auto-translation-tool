@@ -5,6 +5,7 @@ import org.universaltranslator.core.TranslationProvider;
 import org.universaltranslator.core.TranslationRequest;
 import org.universaltranslator.core.TranslationStreamListener;
 import org.universaltranslator.core.net.HttpStatusException;
+import org.universaltranslator.core.net.TranslationBudgetExceededException;
 import org.universaltranslator.core.net.TranslationEndpointUnavailableException;
 
 import java.io.IOException;
@@ -221,6 +222,12 @@ final class ResilientTranslationProvider implements TranslationProvider, AutoClo
         }
         if (exception instanceof HttpStatusException) {
             return ((HttpStatusException) exception).isRetryable();
+        }
+        // A transfer that ran out the whole budget will run out of it again: the request is
+        // deterministic, so the remaining attempts only spend the same money on the same answer.
+        // The subtype test has to come before the timeout test below, because it is one.
+        if (exception instanceof TranslationBudgetExceededException) {
+            return false;
         }
         // A read or connect timeout is a network failure worth another attempt, and it is also an
         // InterruptedIOException, so it has to be recognised before the cancellation test below.

@@ -122,8 +122,11 @@ public final class TranslationCoordinator implements AutoCloseable {
     /**
      * Provider of a dropped session, handed to the worker that leaves last instead of being torn down
      * under it. {@code close(long)} writes this before it looks at {@link #runningWorkers} again, so
-     * either that worker or the closing thread runs the teardown -- never both, and never while a
-     * worker is still inside {@code provider.translate(...)}.
+     * either that worker or the closing thread runs the teardown, never both. Only a close that skipped
+     * the wait hands it over; a close that waited its budget -- a timeout included -- keeps the
+     * synchronous teardown, and so may close this provider while a worker is still inside
+     * {@code provider.translate(...)}: that is the trade-off {@code close(long)} records, with the
+     * provider's own shutdown hook covering the child process at the end.
      */
     private volatile AutoCloseable deferredProviderClose;
     /** Guards the once-only run of that deferred teardown. */
@@ -1035,11 +1038,13 @@ public final class TranslationCoordinator implements AutoCloseable {
     }
 
     /**
-     * Runs the provider teardown of a session that was dropped while a worker was still inside it.
+     * Runs the provider teardown that {@link #close(long)} deferred, once.
      *
-     * <p>Called by the closing thread when no worker is left, and by the worker that leaves last
-     * otherwise. The claim keeps it to one of them: a second call is a no-op, which is what makes the
-     * two entry points safe without a lock.
+     * <p>Called by the closing thread whenever that close waited its budget ({@code waitMillis > 0L},
+     * a timeout included) or found no worker left, and by the worker that leaves last otherwise: the
+     * same split as the condition in {@link #close(long)} and the count in the worker's own
+     * {@code finally}. The claim keeps it to one of them: a second call is a no-op, which is what
+     * makes the two entry points safe without a lock.
      */
     private void releaseDeferredProvider() {
         final AutoCloseable deferred = deferredProviderClose;

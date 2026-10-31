@@ -6,6 +6,7 @@
     "version": "${version}",
     "mcversion": "1.12.2",
     "authorList": ["我小张7272635"],
+    "logoFile": "/assets/universal_translator/icon.png",
     "url": "https://space.bilibili.com/3546631091783712",
     "clientSideOnly": true
   }
