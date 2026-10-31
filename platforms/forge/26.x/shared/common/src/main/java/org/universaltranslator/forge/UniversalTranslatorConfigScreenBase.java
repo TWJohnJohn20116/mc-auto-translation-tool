@@ -557,13 +557,13 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         try {
             String prompt = customPrompt == null
                     ? base.customSystemPrompt()
-                    : TranslationPrompt.fromEditorText(customPrompt.getValue());
+                    : TranslationPrompt.clampEditorText(customPrompt.getValue());
             ForgeConfig updated = base.withPromptSettings(quality, prompt);
             if (updated.enabled) {
                 updated.validateProviderConfiguration();
             }
             ForgeTranslationRuntime.initialize(updated);
-            updated.save();
+            ForgeConfigWriter.saveNow(updated);
             setTestStatus(tr("screen.universal_translator.diagnostics.settings_saved"), false);
         } catch (Exception exception) {
             setTestStatus(tr("screen.universal_translator.diagnostics.settings_failed",
@@ -804,7 +804,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
             }
             runtimeChanged = true;
             ForgeTranslationRuntime.initialize(updated);
-            updated.save();
+            ForgeConfigWriter.saveNow(updated);
             onClose();
         } catch (Exception exception) {
             if (runtimeChanged) {

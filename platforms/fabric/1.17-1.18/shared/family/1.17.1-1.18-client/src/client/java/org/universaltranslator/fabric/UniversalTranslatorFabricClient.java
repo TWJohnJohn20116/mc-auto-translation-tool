@@ -123,7 +123,12 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
 
         @Override
         protected void registerStopHook(Runnable onStop) {
-            ClientLifecycleEvents.CLIENT_STOPPING.register(client -> onStop.run());
+            ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
+                // The screens' shared pool is dropped here so a closed game does not keep two daemon
+                // threads (and whatever request they are waiting on) alive.
+                ScreenWorkers.shutdown();
+                onStop.run();
+            });
         }
 
         @Override

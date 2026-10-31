@@ -20,9 +20,9 @@
     {"file": "META-INF/jars/universal-translator-1.16.5.jar"}
   ],
   "depends": {
-    "fabricloader": ">=0.19.3",
+    "fabricloader": ">=${loaderFloor}",
     "minecraft": ["1.16", "1.16.1", "1.16.2", "1.16.3", "1.16.4", "1.16.5"],
-    "java": ">=8",
+    "java": ">=${javaFloor}",
     "${fabricDependency}": "*",
     "universal_translator": ">=${version}"
   }

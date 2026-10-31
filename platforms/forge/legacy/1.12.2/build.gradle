@@ -43,6 +43,19 @@ processResources {
     filesMatching("mcmod.info") {
         expand version: project.version
     }
+    // Minecraft 1.11 renamed the language files from en_US.lang to en_us.lang while 1.8.9, which
+    // shares this resource directory, still reads the uppercase name and one directory can hold one
+    // spelling. The lowercase alias is generated here so the two spellings cannot drift apart.
+    project.sourceSets.main.resources.srcDirs.each { resourceRoot ->
+        def langDir = new File(resourceRoot, "assets/universal_translator/lang")
+        if (langDir.isDirectory()) {
+            from(langDir) {
+                include "*.lang"
+                rename { String name -> name.toLowerCase(Locale.ROOT) }
+                into "assets/universal_translator/lang"
+            }
+        }
+    }
 }
 
 jar {

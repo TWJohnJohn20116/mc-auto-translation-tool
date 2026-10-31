@@ -42,7 +42,7 @@ sourceSets {
         resources.srcDir new File(sharedRoot, "src/main/resources")
         resources.srcDir new File(bothRoot, "src/main/resources")
         resources.srcDir rootProject.file("platforms/shared/lang/json")
-        resources.srcDir rootProject.file("platforms/shared/lang/legacy")
+        // Minecraft 1.13+ only reads assets/<ns>/lang/*.json, so platforms/shared/lang/legacy is dead weight here.
     }
 }
 

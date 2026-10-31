@@ -113,7 +113,6 @@ def platformProjects = [
         "platform-fabric-1.21.9"        : "platforms/fabric/1.21/versions/1.21.9",
         "platform-fabric-1.21.10"       : "platforms/fabric/1.21/versions/1.21.10",
         "platform-fabric-1.21.11"       : "platforms/fabric/1.21/versions/1.21.11",
-        "platform-fabric-1.21.4-1.21.5": "platforms/fabric/1.21/shared-1.21.4-1.21.5",
         "platform-fabric-1.21.x"        : "platforms/fabric/1.21/bundle",
         "platform-fabric-26.1"          : "platforms/fabric/26.x/26.1",
         "platform-fabric-26.1.1"        : "platforms/fabric/26.x/26.1.1",
@@ -201,13 +200,12 @@ gradle.ext.platformDependencies = platformDependencies
 // 檢查只看 platform-fabric-*：每個 Fabric 專案都必須是某個 bundle 的成員，否則就必須出現在例外清單。
 def fabricPublishableProjects = new LinkedHashSet<String>(platformDependencies.keySet())
 platformDependencies.values().each { fabricPublishableProjects.addAll(it as Collection) }
-def fabricSelectionExemptProjects = [
-        // 合併式模組：一顆 JAR 宣告同時支援 1.21.4 與 1.21.5，目前由 mc1.21.x-fabric bundle 覆蓋，
-        // 所以 build.yml 會建置它、卻沒有任何清單收集它。要嘛刪掉它（連同 build.yml 的 matrix 項），
-        // 要嘛把它加進 platformDependencies 與 prepare-release 的目標清單；在那個決定之前，這裡
-        // 記錄它是刻意的例外。
-        "platform-fabric-1.21.4-1.21.5"
-] as Set
+// 例外清單目前是空的。唯一用過它的 `platform-fabric-1.21.4-1.21.5` 已於第四輪審計 B07-004 刪除：
+// 它與 `platform-fabric-1.21.5` 同設定、只多一個 `archivesName`，產出的 JAR 不被任何 bundle 或
+// `downloads/` 收集，卻每個 PR 都吃掉一個完整 Loom 專案；1.21.4／1.21.5 本來就由
+// `platform-fabric-1.21.x` 覆蓋。留一個空清單是刻意的：新增例外要改這裡，而新增「建置但不發布」
+// 的模組會由下面的 undeclaredProjects 檢查立刻擋下。
+def fabricSelectionExemptProjects = [] as Set
 gradle.ext.fabricSelectionExemptProjects = fabricSelectionExemptProjects
 def undeclaredProjects = platformProjects.keySet().findAll {
     it.startsWith("platform-fabric-") &&
@@ -299,6 +297,16 @@ gradle.ext.treeJavaTarget = { String prefix ->
     if (releases == null) {
         throw new GradleException(
                 "No Java release is registered for '${prefix}' in settings.gradle's treeJavaRelease")
+    }
+    // A tree that spans two releases (fabric/1.20 is [17, 21], forge/modern [8, 17]) cannot answer
+    // "which release does this tree compile for", and returning the highest one would silently move
+    // the lower half of that tree up a bytecode version while levelBounds keeps declaring both — the
+    // same "change A, B stays behind" gap the table exists to close. Fail instead of guessing.
+    if (releases[0] != releases[1]) {
+        throw new GradleException(
+                "treeJavaTarget('${prefix}') is only for trees compiled for a single release, but " +
+                        "that tree spans ${releases}; give it its own ext and read it where the two " +
+                        "halves are told apart")
     }
     return releases[1]
 }

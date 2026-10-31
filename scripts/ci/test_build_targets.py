@@ -4,6 +4,10 @@
 build.yml 裡的靜態 matrix（AGENTS.md 要求 build.yml 維持靜態 matrix）。兩份清單一旦分叉，
 會同時出現「名稱打對卻沒有 job」與「名稱被判成不存在」，而且只有 workflow_dispatch 才看得出來。
 這裡把分叉變成 PR 上的紅燈：改 matrix 就一起改 JSON，反之亦然。
+
+另外兩件事也釘在這裡，因為 `scripts/ci/build-targets.json` 是唯一被文件指名的權威清單：
+`legacy-targets.yml` 與 `prepare-release.yml` 那兩份 heredoc JSON 的「目標 → JDK」必須與
+`build.gradle` 的 26.x toolchain 前綴一致，否則清單與 matrix 一起寫錯時仍會全綠。
 """
 
 import json
@@ -18,6 +22,43 @@ TARGETS = ROOT / "scripts" / "ci" / "build-targets.json"
 JOB_HEADER = re.compile(r"^  ([A-Za-z][A-Za-z0-9_-]*):\s*$")
 MATRIX_ENTRY = re.compile(r"^          - target:\s*(\S+)\s*$")
 MATRIX_KEY = re.compile(r"^            ([A-Za-z][A-Za-z0-9_-]*):\s*(.*?)\s*$")
+TARGET_ENTRY = re.compile(r'"target":\s*"([^"]+)"')
+
+PREPARE_WORKFLOW = ROOT / ".github" / "workflows" / "prepare-release.yml"
+LEGACY_WORKFLOW = ROOT / ".github" / "workflows" / "legacy-targets.yml"
+
+# build.gradle 的 subprojects 區塊只對這三個前綴給 Java 25 toolchain，其餘一律 21。三個字串在那裡
+# 是逐字寫的，而「哪個目標用哪個 JDK」在四份清單（build.yml matrix、build-targets.json、
+# legacy-targets.yml、prepare-release.yml）各講一次：兩份都錯成 21 時既有的 JSON↔matrix 比對仍然
+# 全綠，實際建置卻在 setup-java 裝了 21 之後才以 "release version 25 not supported" 失敗
+# （AGENTS.md 記載的 2026-10-06 型態）。改 build.gradle:13-15 的前綴時，這裡要跟著改。
+TOOLCHAIN_25_PREFIXES = ("platform-fabric-26.", "platform-forge-26.", "platform-neoforge-26.")
+
+
+def expected_java(project):
+    """build.gradle:13-15 的 toolchain 規則：26.x 的三個前綴要 25，其餘 21。"""
+    return "25" if project.startswith(TOOLCHAIN_25_PREFIXES) else "21"
+
+
+def target_entries(path, with_project=False):
+    """從 workflow 的 run: 區塊抓出每個目標的 target／java（必要時含 project）。
+
+    不用 YAML 解析器：清單嵌在 heredoc 裡、每筆是一個單行物件，逐行比對就夠，而筆數由呼叫端斷言
+    ——形狀被改掉時會變成抓不到，若不鎖筆數就會靜默通過。
+    """
+    entries = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith('{"target"'):
+            continue
+        entry = {"target": TARGET_ENTRY.search(stripped).group(1)}
+        java = re.search(r'"java":\s*"(\d+)"', stripped)
+        entry["java"] = java.group(1) if java else None
+        if with_project:
+            project = re.search(r'"project":\s*"([^"]*)"', stripped)
+            entry["project"] = project.group(1) if project else None
+        entries.append(entry)
+    return entries
 
 
 def workflow_text():
@@ -127,6 +168,67 @@ class BuildTargetsTest(unittest.TestCase):
             block,
             "release-assets 不得再用「非 PR 就驗」近似資產存在",
         )
+
+    def test_platform_java_matches_the_toolchain_prefixes(self):
+        # 這一條與上面的 JSON↔matrix 比對互補：那條只證明兩份清單相同，兩份一起寫錯時仍全綠。
+        for entry in targets()["platform"]:
+            self.assertEqual(
+                expected_java("platform-" + entry["target"]),
+                entry["java"],
+                "scripts/ci/build-targets.json 的 %s 與 build.gradle 的 toolchain 前綴不一致"
+                % entry["target"],
+            )
+
+    def test_legacy_java_matches_the_toolchain_prefixes(self):
+        for entry in targets()["legacy"]:
+            self.assertEqual(
+                expected_java("platform-" + entry["target"]),
+                entry["java"],
+                "scripts/ci/build-targets.json 的 legacy 目標 %s 與 build.gradle 的 toolchain 前綴不一致"
+                % entry["target"],
+            )
+
+    def test_prepare_release_java_matches_the_toolchain_prefixes(self):
+        entries = target_entries(PREPARE_WORKFLOW, with_project=True)
+        # 48 是 prepare-release 的目標數，也是 publish-release 的 expected 陣列長度；抓不到就代表
+        # 清單形狀變了，不能讓下面的斷言在空集合上通過。
+        self.assertEqual(48, len(entries), "prepare-release.yml 的目標清單筆數變了")
+        self.assertTrue(
+            all(entry["java"] for entry in entries),
+            "prepare-release.yml 的每一筆目標都必須帶 java",
+        )
+        twenty_six = sorted(
+            entry["target"] for entry in entries if expected_java(entry["project"]) == "25"
+        )
+        with_25 = sorted(entry["target"] for entry in entries if entry["java"] == "25")
+        self.assertEqual(
+            twenty_six,
+            with_25,
+            "prepare-release.yml 裡 26.x 的目標與 java: \"25\" 的目標必須是同一批",
+        )
+        # 這兩個是獨立 Gradle 建置（platforms/forge/legacy/*），JDK 8 寫在各自的 setup-java。
+        self.assertEqual(
+            ["mc1.12.2-forge", "mc1.8.9-forge"],
+            sorted(entry["target"] for entry in entries if entry["project"] == ""),
+            "prepare-release.yml 只有獨立 Forge 舊版目標可以沒有 project",
+        )
+
+    def test_legacy_targets_java_matches_the_toolchain_prefixes(self):
+        entries = target_entries(LEGACY_WORKFLOW)
+        self.assertEqual(21, len(entries), "legacy-targets.yml 的目標清單筆數變了")
+        self.assertEqual(
+            ["forge-legacy-1.12.2", "forge-legacy-1.8.9"],
+            sorted(entry["target"] for entry in entries if entry["java"] is None),
+            "legacy-targets.yml 只有兩個獨立 Forge 舊版目標不帶 java",
+        )
+        for entry in entries:
+            if entry["java"] is None:
+                continue
+            self.assertEqual(
+                expected_java("platform-" + entry["target"]),
+                entry["java"],
+                "legacy-targets.yml 的 %s 與 build.gradle 的 toolchain 前綴不一致" % entry["target"],
+            )
 
 
 if __name__ == "__main__":

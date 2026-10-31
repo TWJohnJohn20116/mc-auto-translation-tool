@@ -806,13 +806,15 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         try {
             String prompt = customPrompt == null
                     ? base.customSystemPrompt()
-                    : TranslationPrompt.fromEditorText(customPrompt.getText());
+                    : TranslationPrompt.clampEditorText(customPrompt.getText());
             FabricConfig updated = base.withProvider(provider).withPromptSettings(quality, prompt);
             if (updated.enabled) {
                 updated.validateProviderConfiguration();
             }
             FabricTranslationRuntime.initialize(updated);
-            updated.save();
+            // Same writer as the F8 toggles: two threads writing this file let an older queued
+            // snapshot land after the newer one and silently revert what the player just saved.
+            FabricTranslationRuntimeBase.saveInBackgroundAndWait(updated);
             setTestStatus(tr("screen.universal_translator.diagnostics.settings_saved"), false);
         } catch (Exception exception) {
             setTestStatus(tr("screen.universal_translator.diagnostics.settings_failed",
@@ -967,7 +969,9 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
             }
             runtimeChanged = true;
             FabricTranslationRuntime.initialize(updated);
-            updated.save();
+            // Same writer as the F8 toggles: two threads writing this file let an older queued
+            // snapshot land after the newer one and silently revert what the player just saved.
+            FabricTranslationRuntimeBase.saveInBackgroundAndWait(updated);
             status = tr("status.universal_translator.saved");
             // Drawn once before the screen goes away; closing in this callback meant the success
             // line never appeared anywhere, so Save gave no feedback unless it failed.

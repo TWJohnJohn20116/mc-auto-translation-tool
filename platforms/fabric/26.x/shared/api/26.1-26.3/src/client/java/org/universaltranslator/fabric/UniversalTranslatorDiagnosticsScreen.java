@@ -294,7 +294,7 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
     }
 
     /**
-     * Runs one export on a worker from the screen pool instead of the render thread.
+     * Runs one export on the screen's export worker instead of the render thread.
      *
      * <p>Both exports write a zip and read the whole debug log (up to two megabytes, redacted line
      * by line on the way in). On the render thread that froze the game for as long as the disk
@@ -308,7 +308,7 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
         }
         exporting = true;
         refreshExportButtons();
-        ScreenWorkerPool.execute(() -> {
+        ScreenWorkerPool.export(() -> {
             String message;
             boolean failed;
             try {

@@ -117,7 +117,7 @@ abstract class InGameHudStatusIndicatorMixin {
             try {
                 graphics.drawCenteredString(
                         font,
-                        HudStatusLabels.label(outgoingPreview),
+                        HudStatusLabels.preview(outgoingPreview),
                         previewCenterX, previewY, 0xFFFFFFFF);
             } finally {
                 TranslationRenderContext.popTextInput();

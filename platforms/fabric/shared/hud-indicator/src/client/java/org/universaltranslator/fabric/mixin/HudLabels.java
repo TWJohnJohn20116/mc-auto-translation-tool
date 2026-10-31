@@ -2,6 +2,7 @@ package org.universaltranslator.fabric.mixin;
 
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.resource.language.I18n;
+import org.universaltranslator.core.HudLabelCache;
 
 /**
  * Frame-to-frame caches for what the HUD indicator writes.
@@ -21,15 +22,9 @@ import net.minecraft.client.resource.language.I18n;
  * class it targets.
  */
 final class HudLabels {
-    /**
-     * How long a cached value stays valid.
-     *
-     * <p>The player can change the language while the game runs and a resource reload swaps the font,
-     * so both values are refreshed once per second instead of being fixed for the session. Nothing
-     * here holds on to the {@code TextRenderer}: keeping the old instance to key the width on would
-     * have pinned the previous font for as long as the game runs.
-     */
-    private static final long REFRESH_MILLIS = 1000L;
+    // The interval and the activity key live in HudLabelCache so this cache and the three sibling
+    // copies cannot drift apart. Nothing here holds on to the TextRenderer either: keeping the old
+    // instance to key the width on would have pinned the previous font for as long as the game runs.
     private static String cachedActivity;
     private static long cachedActivityAt;
     /**
@@ -57,10 +52,10 @@ final class HudLabels {
     static String activity() {
         long now = System.currentTimeMillis();
         String cached = cachedActivity;
-        if (cached != null && now - cachedActivityAt < REFRESH_MILLIS) {
+        if (cached != null && now - cachedActivityAt < HudLabelCache.REFRESH_MILLIS) {
             return cached;
         }
-        String resolved = I18n.translate("value.universal_translator.hud_content.activity");
+        String resolved = I18n.translate(HudLabelCache.ACTIVITY_KEY);
         cachedActivity = resolved;
         cachedActivityAt = now;
         return resolved;
@@ -76,7 +71,8 @@ final class HudLabels {
     static int width(TextRenderer renderer, String text) {
         long now = System.currentTimeMillis();
         for (int slot = 0; slot < WIDTH_SLOTS; slot++) {
-            if (text != null && text.equals(widthText[slot]) && now - widthAt[slot] < REFRESH_MILLIS) {
+            if (text != null && text.equals(widthText[slot])
+                    && now - widthAt[slot] < HudLabelCache.REFRESH_MILLIS) {
                 return widthValue[slot];
             }
         }

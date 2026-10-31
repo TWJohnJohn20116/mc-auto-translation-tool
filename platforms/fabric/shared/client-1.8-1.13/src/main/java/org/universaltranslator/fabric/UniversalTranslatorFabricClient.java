@@ -4,6 +4,7 @@ import net.fabricmc.api.ClientModInitializer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.client.gui.screen.Screen;
+import org.universaltranslator.core.ShutdownBudget;
 
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -33,9 +34,11 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
      *
      * <p>The runtime's own close settles open requests and waits up to five seconds for a worker
      * parked in a provider read, then flushes the whole cache store; running that inline on the hook
-     * made "close the game" wait for all of it with no upper bound.
+     * made "close the game" wait for all of it with no upper bound. The bound is therefore the one from
+     * {@link ShutdownBudget}, which is longer than that close: a join shorter than the wait inside it
+     * returned while the store flush was still running, and nothing else writes that burst.
      */
-    private static final long SHUTDOWN_JOIN_MILLIS = 1500L;
+    private static final long SHUTDOWN_JOIN_MILLIS = ShutdownBudget.TEARDOWN_JOIN_MILLIS;
 
     private UniversalTranslatorFabricClient() {
     }
@@ -73,6 +76,9 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
         tickHook = null;
         Runnable hook = stopHook;
         stopHook = null;
+        // Flush a queued settings write before the teardown is attempted, so the write does not wait
+        // behind a session close that can spend its whole budget on a worker parked in a provider read.
+        FabricTranslationRuntimeBase.drainPendingSaves();
         if (hook == null) {
             return;
         }

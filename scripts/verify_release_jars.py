@@ -156,7 +156,7 @@ def _expected_class_major(label: str) -> int | None:
 
 
 def _validate_class_versions(
-    archive: zipfile.ZipFile, expected_major: int | None
+    archive: zipfile.ZipFile, expected_major: int | None, verify_crc: bool = False
 ) -> None:
     if expected_major is None:
         return
@@ -167,10 +167,17 @@ def _validate_class_versions(
         # instead of decompressed in full: ZipFile.read() inflated every .class of every JAR twice
         # per push main, while this needs 8 bytes of each. `file_size` keeps the old "shorter than a
         # header" rejection, which a partial read cannot express on its own.
+        #
+        # A streamed entry is closed before EOF, so its CRC32 is never checked: integrity of the
+        # class entries rests on --checksum-file's SHA-256. verify_crc=True restores the full read
+        # (and with it the CRC check) for callers that verify a JAR without a checksum file.
         if archive.getinfo(name).file_size < 8:
             raise VerificationError(f"invalid class file header: {name}")
-        with archive.open(name) as handle:
-            header = handle.read(8)
+        if verify_crc:
+            header = archive.read(name)
+        else:
+            with archive.open(name) as handle:
+                header = handle.read(8)
         if len(header) < 8 or header[:4] != b"\xca\xfe\xba\xbe":
             raise VerificationError(f"invalid class file header: {name}")
         major = struct.unpack(">H", header[6:8])[0]
@@ -310,6 +317,7 @@ def _validate_fabric(
     label: str,
     expected_version: str | None,
     expected_class_major: int | None,
+    verify_class_crc: bool = False,
 ) -> JarResult:
     metadata = _read_json(archive, "fabric.mod.json")
     if not isinstance(metadata, dict):
@@ -354,6 +362,7 @@ def _validate_fabric(
             f"{label}!/{nested_name}",
             expected_version,
             _class_major_for_minecraft(nested_match.group(1)),
+            verify_class_crc,
         )
         nested_count += 1
     return JarResult(label, "fabric", mixin_count, nested_count)
@@ -493,6 +502,7 @@ def verify_jar_bytes(
     label: str,
     expected_version: str | None = None,
     expected_class_major: int | None = None,
+    verify_class_crc: bool = False,
 ) -> JarResult:
     if expected_version is None:
         expected_version = _expected_release_version(label)
@@ -501,11 +511,11 @@ def verify_jar_bytes(
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             _validate_archive_paths(archive)
-            _validate_class_versions(archive, expected_class_major)
+            _validate_class_versions(archive, expected_class_major, verify_class_crc)
             names = set(archive.namelist())
             if "fabric.mod.json" in names:
                 return _validate_fabric(
-                    archive, label, expected_version, expected_class_major
+                    archive, label, expected_version, expected_class_major, verify_class_crc
                 )
             if "META-INF/mods.toml" in names:
                 return _validate_forge(
@@ -524,6 +534,9 @@ def verify_jar_bytes(
         # zipfile 對「加密的 entry」「不支援的壓縮方法」「CRC 錯誤」丟的是 RuntimeError／
         # zlib.error／NotImplementedError。只捕捉 BadZipFile 會讓這些情況以 Python traceback 結束，
         # 而 48 顆 × 數千個 entry 的驗證最需要的正是「哪一顆的哪個 entry」。
+        # CRC 錯誤只在真的讀到 EOF 的 entry 上才會出現：中繼資料檔與授權檔走完整讀取，`.class`
+        # 只在 --verify-class-crc 下如此（預設串流讀 8 bytes，完整性由 --checksum-file 的 SHA-256
+        # 負責，見 _validate_class_versions 的說明）。
         raise VerificationError(f"invalid ZIP/JAR {label}: {error}") from error
 
 
@@ -574,9 +587,11 @@ def _read_file_or_split_jar(path: Path) -> bytes:
     raise VerificationError(f"checksum target is missing: {path}")
 
 
-def verify_jar(path: Path) -> JarResult:
+def verify_jar(path: Path, verify_class_crc: bool = False) -> JarResult:
     try:
-        return verify_jar_bytes(_read_file_or_split_jar(path), str(path))
+        return verify_jar_bytes(
+            _read_file_or_split_jar(path), str(path), verify_class_crc=verify_class_crc
+        )
     except OSError as error:
         raise VerificationError(f"could not read JAR: {error}") from error
 
@@ -637,6 +652,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("jars", nargs="*", type=Path)
     parser.add_argument("--checksum-file", type=Path)
     parser.add_argument("--require-complete-checksums", action="store_true")
+    parser.add_argument(
+        "--verify-class-crc",
+        action="store_true",
+        help=(
+            "read every .class entry in full so zipfile checks its CRC32; without it the header "
+            "check streams 8 bytes per entry and integrity relies on --checksum-file"
+        ),
+    )
     args = parser.parse_args(argv)
     if not args.jars and not args.checksum_file:
         parser.error("provide at least one JAR or --checksum-file")
@@ -648,7 +671,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.checksum_file, args.require_complete_checksums
             )
         for jar in args.jars:
-            result = verify_jar(jar)
+            result = verify_jar(jar, args.verify_class_crc)
             print(
                 f"OK {result.loader:13} mixins={result.mixins:2} "
                 f"nested={result.nested:2} {result.label}"

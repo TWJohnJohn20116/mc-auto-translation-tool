@@ -92,10 +92,27 @@ final class BatchGatherer {
     private final int batchSize;
     /** How many groups of one job may be in request at the same time. */
     private final int maximumLeadersPerJob;
+    /**
+     * The same pacing {@link ResilientTranslationProvider} applies, for the requests this class
+     * sends on its own.
+     *
+     * <p>The resilient layer awaits its gate once per translation call, and a batch sends more than
+     * one request from inside that call: the whole-group retry, and one repair request per line the
+     * reply did not answer. Those bypassed {@code api-min-request-interval-ms} entirely, so the most
+     * expensive request there is — eight lines and a large completion budget — went out twice within
+     * a few hundred milliseconds. One extra gate can only ever be more conservative than the outer
+     * one; the interval is the number the user already set.
+     */
+    private final RequestGate gate;
     private long windowMillis;
 
     BatchGatherer(int batchSize, long windowMillis) {
-        this(batchSize, windowMillis, 1);
+        this(batchSize, windowMillis, 1, TranslationTuning.DEFAULT_REQUEST_INTERVAL_MILLIS);
+    }
+
+    BatchGatherer(int batchSize, long windowMillis, int maximumLeadersPerJob) {
+        this(batchSize, windowMillis, maximumLeadersPerJob,
+                TranslationTuning.DEFAULT_REQUEST_INTERVAL_MILLIS);
     }
 
     /**
@@ -103,11 +120,15 @@ final class BatchGatherer {
      * @param windowMillis how long a leader waits for siblings
      * @param maximumLeadersPerJob how many groups of one job may be in request at the same time; 1 is
      *                            the historical one-leader-per-job behaviour
+     * @param requestIntervalMillis smallest spacing between two requests this gatherer sends, in
+     *                              milliseconds; 0 sends them as fast as the workers allow
      */
-    BatchGatherer(int batchSize, long windowMillis, int maximumLeadersPerJob) {
+    BatchGatherer(int batchSize, long windowMillis, int maximumLeadersPerJob,
+            int requestIntervalMillis) {
         this.batchSize = Math.max(1, batchSize);
         this.windowMillis = Math.max(0L, windowMillis);
         this.maximumLeadersPerJob = Math.max(1, maximumLeadersPerJob);
+        this.gate = new RequestGate(requestIntervalMillis);
     }
 
     /** Widens or narrows the collection window; the test seam and the configuration both use it. */
@@ -306,6 +327,10 @@ final class BatchGatherer {
             requests.add(entry.request);
         }
         List<String> translated = null;
+        // Paced like any other request to this endpoint: the outer gate is claimed once per
+        // translation call, and a batch sends several requests from inside one. The wait is outside
+        // the try below, because an interruption here is a cancellation, not a batch failure.
+        gate.await();
         try {
             translated = work.translateGroup(requests);
         } catch (Exception batchFailure) {
@@ -317,6 +342,9 @@ final class BatchGatherer {
                 // rate-limit window, which is exactly the pattern an endpoint reads as scanning.
                 if (FailurePolicy.retryableAsGroup(batchFailure)) {
                     awaitGroupRetry(batchFailure);
+                    // The reissued request is a request like any other, so the interval the user
+                    // configured applies to it as well rather than only the backoff above.
+                    gate.await();
                     translated = work.translateGroup(requests);
                 } else {
                     throw batchFailure;
@@ -337,7 +365,9 @@ final class BatchGatherer {
                 throw new InterruptedException("A batched translation was cancelled");
             }
             // Per-line repair: a reply that answered seven of eight lines costs one extra request
-            // for the eighth, instead of resending all eight.
+            // for the eighth, instead of resending all eight. It is a request of its own, so it is
+            // paced like one — otherwise one failed batch produced eight unpaced requests.
+            gate.await();
             translateAlone(entry, work);
         }
     }

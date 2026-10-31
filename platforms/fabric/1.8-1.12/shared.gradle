@@ -58,6 +58,17 @@ sourceSets {
     }
 }
 
+// Minecraft 1.11 renamed the language files from en_US.lang to en_us.lang, while 1.10 and earlier only
+// read the uppercase name and one source directory can hold one spelling. The lowercase alias is
+// generated at build time instead of being committed, so the two spellings cannot drift apart, and
+// only for the versions that resolve the lowercase name.
+def lowerCaseLangRoots = []
+if (gameVersion.startsWith("1.11") || gameVersion.startsWith("1.12")) {
+    lowerCaseLangRoots = sourceSets.main.resources.srcDirs.findAll {
+        new File(it, "assets/universal_translator/lang").isDirectory()
+    }
+}
+
 processResources {
     // expand() reads the template with the platform default charset unless this is set, so a jar
     // built on a Windows dev box decoded the UTF-8 fabric.mod.json differently than CI did.
@@ -73,6 +84,13 @@ processResources {
                 "minecraftVersion": gameVersion,
                 "loaderVersion": project.ext.ornitheLoaderVersion
         )
+    }
+    lowerCaseLangRoots.each { resourceRoot ->
+        from(new File(resourceRoot, "assets/universal_translator/lang")) {
+            include "*.lang"
+            rename { String name -> name.toLowerCase(Locale.ROOT) }
+            into "assets/universal_translator/lang"
+        }
     }
 }
 

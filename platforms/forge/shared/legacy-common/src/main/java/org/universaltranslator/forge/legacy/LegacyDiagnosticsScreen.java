@@ -193,7 +193,7 @@ final class LegacyDiagnosticsScreen extends GuiScreen {
         try {
             LegacyConfig updated = config.withDebugLog(debugEnabled);
             LegacyTranslationRuntime.initialize(updated);
-            updated.save();
+            LegacyConfigWriter.saveNow(updated);
             Path configFile = updated.configFile();
             DebugLog.global().configure(
                     configFile.resolveSibling(DebugLog.FILE_NAME), debugEnabled);

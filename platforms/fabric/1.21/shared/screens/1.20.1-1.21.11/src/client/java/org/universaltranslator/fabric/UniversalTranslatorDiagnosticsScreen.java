@@ -309,7 +309,7 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
         }
         exporting = true;
         refreshExportButtons();
-        ScreenWorkerPool.execute(() -> {
+        ScreenWorkerPool.export(() -> {
             String message;
             boolean failed;
             try {

@@ -2,8 +2,11 @@ package org.universaltranslator.forge;
 
 import org.universaltranslator.core.DebugLog;
 
+import java.io.IOException;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
@@ -38,7 +41,7 @@ final class ForgeConfigWriter {
         if (config == null) {
             return;
         }
-        writer().execute(new Runnable() {
+        Runnable task = new Runnable() {
             @Override
             public void run() {
                 try {
@@ -56,7 +59,63 @@ final class ForgeConfigWriter {
                     }
                 }
             }
-        });
+        };
+        try {
+            writer().execute(task);
+        } catch (RejectedExecutionException shuttingDown) {
+            // The executor is only ever shut down while the game closes, and the check in writer()
+            // cannot hold a lock across execute(): a write rejected here would silently lose the
+            // toggle, so it is performed on the caller instead.
+            task.run();
+        }
+    }
+
+    /**
+     * Waits for the queued writes to land, then writes {@code config} on the calling thread.
+     *
+     * <p>The settings screen's Save has to be the last write: {@link #saveOffTick} only preserves the
+     * order of the calls made on one thread, so a queued F8 toggle or Home snapshot could otherwise
+     * land after the Save and put the old values back. The screen also needs a synchronous result to
+     * report a failure through {@code status.universal_translator.save_failed}.
+     *
+     * @param config configuration to write; {@code null} does nothing
+     */
+    static void saveNow(final ForgeConfig config) throws IOException {
+        if (config == null) {
+            return;
+        }
+        drainQueuedWrites();
+        config.save();
+    }
+
+    /**
+     * Blocks until every write queued so far has run.
+     *
+     * <p>The barrier is an empty task: a single-thread executor runs it after everything ahead of
+     * it, so returning from {@code get()} means the queue is empty. A write that failed inside its
+     * own task reports through {@code onFailure}, so its exception never reaches this call.
+     */
+    private static void drainQueuedWrites() {
+        ExecutorService current;
+        synchronized (LOCK) {
+            current = writer;
+        }
+        if (current == null) {
+            return;
+        }
+        try {
+            current.submit(new Runnable() {
+                @Override
+                public void run() {
+                    // Nothing to do: reaching the end of the queue is the whole point.
+                }
+            }).get();
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        } catch (ExecutionException | RejectedExecutionException ignored) {
+            // A closed writer, or a failure already reported by a queued task: the synchronous write
+            // that follows is the authoritative one either way.
+        }
     }
 
     /**

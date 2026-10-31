@@ -336,11 +336,14 @@ need this argument.
 
 ## Release JAR verification
 
-The root check validates every tracked release JAR and its checksum:
-
-```bash
-./gradlew check
-```
+The `./gradlew check` task that every pull request runs does **not** validate release assets: it needs
+`downloads/<mod_version>`, a directory that only exists once a release has been prepared, so hooking
+it back into `check` would lock the version bump to the required check (C2-163). Release assets are
+validated by three tasks: `./gradlew verifyReleaseJars` checks any built JAR (ZIP/metadata/Mixin/
+refmap/version selection), `./gradlew verifyPreparedReleaseAssets` checks the 48 JARs of
+`downloads/<version>` plus the 31 reduced installable ones, and `./gradlew verifyPublishedRelease`
+aggregates both and is invoked explicitly by `prepare-release.yml` and by the `release-assets` job of
+`build.yml` (that job skips the step entirely when `downloads/<mod_version>` is absent).
 
 To validate arbitrary build outputs directly, pass them to the standalone verifier:
 
@@ -355,7 +358,9 @@ It checks ZIP structure, expanded metadata, entrypoints, declared Mixin classes 
 Fabric JARs, legacy Forge runtime mappings, SHA-256 values, and checksum-manifest coverage. Legacy
 Fabric and Forge `build` tasks run the same verifier against their generated release JARs.
 
-The publish workflow reduces the 48 release build artifacts to 31 directly installable JARs. It
+Validation and reduction are two separate steps: validation only confirms the artifacts are
+structurally sound, reduction changes how many artifacts exist. The publish workflow reduces the 48
+release build artifacts to 31 directly installable JARs. It
 flattens all 51 Fabric implementations into one Loader-selected bundle, broadens four Forge
 families after confirming compatible payloads, and keeps Forge/NeoForge 1.20.1 as separately
 verified loader-specific JARs. Different APIs remain separate. Reproduce and validate
@@ -376,7 +381,7 @@ claims that contradict the published artifacts:
 
 | Kind | Contents | Published with a release |
 | --- | --- | --- |
-| Release target (48) | Fabric 1.13–26.3, Forge 1.8.9–26.2, NeoForge 1.20.1–26.2 | Yes, reduced to 31 installable JARs |
+| Release target (48) | Fabric 1.13–26.3 (continuous), Forge 1.8.9 / 1.12.2 / 1.16.5 / 1.18.2 / 1.19.2 / 1.20.1 / 1.21, 1.21.1, 1.21.3–1.21.11 / 26.1–26.2 (gap versions are rejected by `mods.toml`), NeoForge 1.20.1–26.2 (one JAR each) | Yes, reduced to 31 installable JARs |
 | Source-only bundle (2) | `fabric-1.0-1.8.x` (26 of 1.3.1–1.8.8) and `fabric-1.8-1.12.x` (1.8.9–1.12.2, 15 versions) | No, built only by `legacy-targets.yml` and never present in `downloads/<version>/` |
 
 So `fabric-all` carries the 51 exact implementations for 1.13–26.3 only; 1.3.1–1.12.2 players have to

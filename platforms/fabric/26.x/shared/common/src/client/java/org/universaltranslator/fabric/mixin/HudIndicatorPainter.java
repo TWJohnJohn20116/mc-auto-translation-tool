@@ -43,6 +43,23 @@ final class HudIndicatorPainter {
     private static Component cachedLabelComponent;
     private static String cachedPreviewValue;
     private static Component cachedPreviewComponent;
+    /**
+     * How long a measured width stays valid; the same refresh as the activity label, because a
+     * language change or a resource reload swaps the font's metrics.
+     */
+    private static final long LABEL_WIDTH_REFRESH_MILLIS = 1000L;
+    /**
+     * Last measured labels and their widths.
+     *
+     * <p>Two slots, not one: the label is measured on every frame the indicator is shown, and a
+     * single slot would be overwritten whenever the preview and the label swap, which is the one
+     * case this cache exists for.
+     */
+    private static final int WIDTH_SLOTS = 2;
+    private static final String[] widthText = new String[WIDTH_SLOTS];
+    private static final int[] widthValue = new int[WIDTH_SLOTS];
+    private static final long[] widthAt = new long[WIDTH_SLOTS];
+    private static int widthNext;
 
     private HudIndicatorPainter() {
     }
@@ -80,6 +97,30 @@ final class HudIndicatorPainter {
         cachedPreviewValue = preview;
         cachedPreviewComponent = created;
         return created;
+    }
+
+    /**
+     * Width of {@code text} on {@code font}, measured at most once per second per distinct label.
+     *
+     * <p>Measuring walks every glyph of the string and the label is drawn on every frame, so this is
+     * the expensive half of the indicator. The key is the label string rather than the component:
+     * the component is already cached by {@link #labelComponent(String)}, so the string is the only
+     * value that changes when the setting does.
+     */
+    private static int labelWidth(Font font, Component text, String key) {
+        long now = System.currentTimeMillis();
+        for (int slot = 0; slot < WIDTH_SLOTS; slot++) {
+            if (key != null && key.equals(widthText[slot]) && now - widthAt[slot] < LABEL_WIDTH_REFRESH_MILLIS) {
+                return widthValue[slot];
+            }
+        }
+        int measured = font == null || text == null ? 0 : font.width(text);
+        int slot = widthNext;
+        widthNext = (slot + 1) % WIDTH_SLOTS;
+        widthText[slot] = key;
+        widthValue[slot] = measured;
+        widthAt[slot] = now;
+        return measured;
     }
 
     /** Draws the indicator square, the outgoing preview and the optional label for this frame. */
@@ -202,7 +243,7 @@ final class HudIndicatorPainter {
                 // run through the hooked text paths.
                 TranslationRenderContext.pushTextInput();
                 try {
-                    int labelWidth = font.width(text);
+                    int labelWidth = labelWidth(font, text, label);
                     // Beside the square, never over it: a 6px square cannot hold "zh-TW", and a
                     // label centred on a right-corner square would run off the screen edge. The
                     // square itself is clamped above, so the label has to be clamped too.

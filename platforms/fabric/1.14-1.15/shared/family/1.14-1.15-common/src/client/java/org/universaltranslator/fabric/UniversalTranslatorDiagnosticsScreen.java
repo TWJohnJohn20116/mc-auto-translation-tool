@@ -141,7 +141,8 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
         try {
             FabricConfig updated = config.withDebugLog(debugEnabled);
             FabricTranslationRuntime.initialize(updated);
-            updated.save();
+            // Same writer as the F8 toggles, so an older queued snapshot cannot overwrite this one.
+            FabricTranslationRuntimeBase.saveInBackgroundAndWait(updated);
             Path configFile = updated.configFile();
             DebugLog.global().configure(
                     configFile.resolveSibling(DebugLog.FILE_NAME), debugEnabled);
@@ -282,7 +283,7 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
         }
         final Path configFile = config.configFile();
         final List<String> lines = diagnosticsLines();
-        ScreenWorkers.execute(() -> {
+        ScreenWorkers.export(() -> {
             String archiveName;
             try {
                 Path archive = DiagnosticsBundleExporter.export(

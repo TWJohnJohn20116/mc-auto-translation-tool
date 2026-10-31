@@ -1,8 +1,8 @@
 package org.universaltranslator.core.provider;
 
 /**
- * How many translations run at once, how many texts one request may carry, and how long a request
- * waits for siblings to batch with.
+ * How many translations run at once, how many texts one request may carry, how long a request waits
+ * for siblings to batch with, and the smallest spacing between two requests to one endpoint.
  *
  * <p>These are throughput settings, not prompt settings: none of them changes the system prompt or
  * the text a request carries. They are therefore deliberately kept out of
@@ -55,12 +55,24 @@ public final class TranslationTuning {
     private final int workers;
     private final int batchSize;
     private final int batchWindowMillis;
+    private final int requestIntervalMillis;
 
     public TranslationTuning(int workers, int batchSize, int batchWindowMillis) {
+        this(workers, batchSize, batchWindowMillis, DEFAULT_REQUEST_INTERVAL_MILLIS);
+    }
+
+    /**
+     * @param requestIntervalMillis smallest spacing between two requests to one endpoint, in
+     *                              milliseconds; 0 sends as fast as the worker pool allows
+     */
+    public TranslationTuning(int workers, int batchSize, int batchWindowMillis,
+            int requestIntervalMillis) {
         this.workers = clamp(workers, MINIMUM_WORKERS, MAXIMUM_WORKERS);
         this.batchSize = clamp(batchSize, MINIMUM_BATCH_SIZE, MAXIMUM_BATCH_SIZE);
         this.batchWindowMillis = clamp(batchWindowMillis,
                 MINIMUM_BATCH_WINDOW_MILLIS, MAXIMUM_BATCH_WINDOW_MILLIS);
+        this.requestIntervalMillis = clamp(requestIntervalMillis,
+                MINIMUM_REQUEST_INTERVAL_MILLIS, MAXIMUM_REQUEST_INTERVAL_MILLIS);
     }
 
     /**
@@ -107,6 +119,19 @@ public final class TranslationTuning {
     }
 
     /**
+     * Smallest spacing between two requests to one endpoint, in milliseconds.
+     *
+     * <p>{@link ResilientTranslationProvider} owns the gate for one translation call, but a batch
+     * sends more than one request from inside a single call: one whole-group retry, and one repair
+     * request per line the reply did not answer. Those requests bypassed that gate entirely, so
+     * {@code api-min-request-interval-ms} meant nothing on the most expensive request there is. The
+     * value travels here so the batch layer can pace them with the same number the outer gate uses.
+     */
+    public int requestIntervalMillis() {
+        return requestIntervalMillis;
+    }
+
+    /**
      * Whether one request may carry more than one text.
      *
      * <p>{@code batch-size = 1} turns batching off completely: the provider then translates every
@@ -140,9 +165,10 @@ public final class TranslationTuning {
         return clamp(parsed, minimum, maximum);
     }
 
-    /** The two settings this object actually decides; the worker count is not one of them. */
+    /** The settings this object actually decides; the worker count is not one of them. */
     @Override
     public String toString() {
-        return "batchSize=" + batchSize + ", batchWindowMillis=" + batchWindowMillis;
+        return "batchSize=" + batchSize + ", batchWindowMillis=" + batchWindowMillis
+                + ", requestIntervalMillis=" + requestIntervalMillis;
     }
 }

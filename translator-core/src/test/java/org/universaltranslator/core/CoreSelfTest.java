@@ -59,12 +59,14 @@ public final class CoreSelfTest {
         publishesOutgoingTranslationWhileItIsGenerated();
         boundsOutgoingPreviewState();
         exposesRenderTranslationFailures();
+        stopsRetryingAProviderThatRepeatsTheSource();
         sanitizesProviderLabelsForLogs();
         protectsLiteralsOffTheRenderThread();
         boundsBusyLobbyTranslationWork();
         rateLimitsBusyLobbyWithoutStarvingTooltips();
         doesNotTranslateCompletedOutputAgain();
         persistsOnlyHashedCacheKeys();
+        flushesDespiteAnUnfinishedLoad();
         ignoresMalformedPersistentCache();
         protectsPlayerNames();
         protectsNetworkAddresses();
@@ -86,6 +88,7 @@ public final class CoreSelfTest {
         reportsOfflineStartupDiagnostics();
         matchesTencentCloudOfficialSignatureVector();
         keepsOriginalTextInBilingualMode();
+        keepsPartlyTranslatedLinesInBilingualMode();
         fallsBackFromOfflineToApi();
         verifiesDownloadedFileHashes();
         reportsVerifiedDownloadProgress();
@@ -416,6 +419,135 @@ public final class CoreSelfTest {
         }
     }
 
+    /**
+     * Bilingual mode remembers the lines it could already answer, including a partly translated list.
+     *
+     * <p>An item tooltip is rebuilt from its components on every frame while its lines arrive one
+     * request at a time, so honouring only the answers of a fully translated list looked all of the
+     * other lines up again every frame for as long as the tooltip stayed open.
+     */
+    private static void keepsPartlyTranslatedLinesInBilingualMode() throws Exception {
+        final CountDownLatch release = new CountDownLatch(1);
+        final AtomicInteger calls = new AtomicInteger();
+        TranslationProvider provider = new TranslationProvider() {
+            @Override
+            public String id() {
+                return "bilingual-lines-test";
+            }
+
+            @Override
+            public String translate(TranslationRequest request) throws Exception {
+                calls.incrementAndGet();
+                String text = request.getText();
+                if ("Coins: 42".equals(text)) {
+                    return "\u91d1\u5e01: 42";
+                }
+                // Held back until the test releases it: the frames in between are the partly
+                // translated list, which is the state this memo has to honour.
+                release.await(5L, TimeUnit.SECONDS);
+                return "\u5728\u7ebf\u73a9\u5bb6";
+            }
+        };
+        try (RenderTranslationSession session = new RenderTranslationSession(
+                provider, "auto", "zh-CN", new TranslationCache(100), 2,
+                TranslationDisplayMode.ORIGINAL_AND_TRANSLATED)) {
+            // The third line is already Chinese, so it never reaches the provider and never counts as
+            // an answered line: the list stays partly translated for good.
+            List<String> lines = Arrays.asList(
+                    "Coins: 42", "Players online", "\u670d\u52a1\u5668\u516c\u544a");
+            assertEquals(lines, session.lookupLines(lines, TextKind.TOOLTIP));
+            assertReadOnly(session.lookupLines(lines, TextKind.TOOLTIP));
+
+            List<String> partly = lines;
+            long deadline = System.currentTimeMillis() + 2000L;
+            do {
+                Thread.sleep(10L);
+                partly = session.lookupLines(lines, TextKind.TOOLTIP);
+            } while (partly.equals(lines) && System.currentTimeMillis() < deadline);
+            assertEquals(3, partly.size());
+            assertEquals("Coins: 42 \u00a78| \u00a7f\u91d1\u5e01: 42", partly.get(0));
+            assertEquals("Players online", partly.get(1));
+            assertReadOnly(partly);
+
+            // The answered line is served from the memo, so the frames that follow submit nothing and
+            // the unanswered line is not looked up again either while its request is still out.
+            int callsWhilePartlyTranslated = calls.get();
+            for (int index = 0; index < 5; index++) {
+                assertEquals(partly, session.lookupLines(lines, TextKind.TOOLTIP));
+            }
+            assertEquals(callsWhilePartlyTranslated, calls.get());
+
+            release.countDown();
+            List<String> translated = partly;
+            deadline = System.currentTimeMillis() + 2000L;
+            do {
+                Thread.sleep(10L);
+                translated = session.lookupLines(lines, TextKind.TOOLTIP);
+            } while (translated.equals(partly) && System.currentTimeMillis() < deadline);
+            assertEquals(3, translated.size());
+            assertEquals("Players online \u00a78| \u00a7f\u5728\u7ebf\u73a9\u5bb6", translated.get(1));
+            assertEquals("\u670d\u52a1\u5668\u516c\u544a", translated.get(2));
+            assertReadOnly(translated);
+            // Same three lines again: the memo carries the outcome, so this is the hit path.
+            assertEquals(translated, session.lookupLines(lines, TextKind.TOOLTIP));
+            assertReadOnly(session.lookupLines(lines, TextKind.TOOLTIP));
+
+            // A list whose every line is answered is served by the memo alone.
+            List<String> both = Arrays.asList("Coins: 42", "Players online");
+            assertEquals(Arrays.asList(
+                    "Coins: 42 \u00a78| \u00a7f\u91d1\u5e01: 42",
+                    "Players online \u00a78| \u00a7f\u5728\u7ebf\u73a9\u5bb6"), session.lookupLines(both, TextKind.TOOLTIP));
+            assertReadOnly(session.lookupLines(both, TextKind.TOOLTIP));
+            // The empty list is an exit of its own and has to be read-only as well, which is why the
+            // helper cannot probe it with set(0, ...).
+            assertTrue(session.lookupLines(Collections.<String>emptyList(), TextKind.TOOLTIP).isEmpty());
+            assertReadOnly(session.lookupLines(Collections.<String>emptyList(), TextKind.TOOLTIP));
+        } finally {
+            release.countDown();
+        }
+    }
+
+    /**
+     * A provider that answers with the source text is asked once, not once every thirty seconds.
+     *
+     * <p>"Java Edition", "Hypixel Network" and an item lore line such as "Requires Java 17" are the
+     * strings a model hands back untouched, and the correct answer for them is no answer at all. The
+     * verdict is final for the session: remembering it is what stops one scoreboard line from costing
+     * a paid request every {@code FAILURE_RETRY_MILLIS} for as long as the world stays loaded, and
+     * what keeps the failure line out of the HUD.
+     */
+    private static void stopsRetryingAProviderThatRepeatsTheSource() throws Exception {
+        final AtomicInteger calls = new AtomicInteger();
+        TranslationProvider echo = new TranslationProvider() {
+            @Override
+            public String id() {
+                return "unchanged-output-test";
+            }
+
+            @Override
+            public String translate(TranslationRequest request) {
+                calls.incrementAndGet();
+                return request.getText();
+            }
+        };
+        try (RenderTranslationSession session = new RenderTranslationSession(
+                echo, "auto", "zh-CN", 100, 1)) {
+            assertEquals("Java Edition", session.lookup("Java Edition", TextKind.OTHER));
+            long deadline = System.currentTimeMillis() + 2000L;
+            while (calls.get() == 0 && System.currentTimeMillis() < deadline) {
+                Thread.sleep(10L);
+            }
+            assertEquals(1, calls.get());
+            Thread.sleep(80L);
+            for (int index = 0; index < 20; index++) {
+                assertEquals("Java Edition", session.lookup("Java Edition", TextKind.OTHER));
+            }
+            Thread.sleep(80L);
+            assertEquals(1, calls.get());
+            assertTrue(session.lastFailureStatus().isEmpty());
+        }
+    }
+
     private static void fallsBackFromOfflineToApi() throws Exception {
         CountingProvider primary = new CountingProvider(true);
         CountingProvider fallback = new CountingProvider(false);
@@ -667,16 +799,23 @@ public final class CoreSelfTest {
         }
     }
 
-    /** Asserts that a list handed to a render bridge cannot be edited by it. */
+    /**
+     * Asserts that a list handed to a render bridge cannot be edited by it.
+     *
+     * <p>An empty answer has no index to overwrite, and {@code set(0, ...)} on it throws
+     * {@link IndexOutOfBoundsException} rather than {@link UnsupportedOperationException}, so the
+     * exit an empty list takes is probed through {@code add} and {@code remove} instead. All three
+     * together are what "read-only" has to mean: a list that refuses {@code set} but accepts
+     * {@code add} still hands its caller a list it can grow.
+     */
     private static void assertReadOnly(java.util.List<String> lines) {
-        boolean rejected;
-        try {
-            lines.set(0, "mutated");
-            rejected = false;
-        } catch (UnsupportedOperationException expected) {
-            rejected = true;
+        assertThrows(UnsupportedOperationException.class, () -> lines.add("mutated"));
+        if (lines.isEmpty()) {
+            assertThrows(UnsupportedOperationException.class, () -> lines.remove(0));
+            return;
         }
-        assertTrue(rejected);
+        assertThrows(UnsupportedOperationException.class, () -> lines.set(0, "mutated"));
+        assertThrows(UnsupportedOperationException.class, () -> lines.remove(0));
     }
 
     private static void exposesRenderTranslationFailures() throws Exception {
@@ -773,6 +912,31 @@ public final class CoreSelfTest {
         assertFalse(persisted.contains("Server secret text"));
         PersistentTranslationCache second = new PersistentTranslationCache(file, 10);
         assertEquals("\u670d\u52a1\u5668\u6587\u672c", second.get("Server secret text"));
+    }
+
+    /**
+     * A shutdown flush is the only chance the deferred entries get, so it writes even when the
+     * deferred read has not published yet.
+     *
+     * <p>The read can be stuck on a network-synced configuration folder while the world is being
+     * changed, so the wait for it stays bounded; what changed is that reaching the bound no longer
+     * drops the burst. The file's own entries are folded in first, so the write can only add to it.
+     */
+    private static void flushesDespiteAnUnfinishedLoad() throws Exception {
+        Path directory = Files.createTempDirectory("universal-translator-flush-");
+        Path file = directory.resolve("cache.properties");
+        PersistentTranslationCache first = new PersistentTranslationCache(file, 10);
+        first.put("Server secret text", "\u670d\u52a1\u5668\u6587\u672c");
+        first.flush();
+        // A session whose deferred read has not published: memory holds only what this session
+        // translated itself, while the file still holds everything the previous session wrote.
+        PersistentTranslationCache second = new PersistentTranslationCache(file, 10);
+        second.simulateLoadInFlightForTest(20L);
+        second.put("Burst text", "\u7a81\u53d1\u6587\u672c");
+        second.flush();
+        PersistentTranslationCache third = new PersistentTranslationCache(file, 10);
+        assertEquals("\u7a81\u53d1\u6587\u672c", third.get("Burst text"));
+        assertEquals("\u670d\u52a1\u5668\u6587\u672c", third.get("Server secret text"));
     }
 
     private static void protectsPlayerNames() {
@@ -1375,8 +1539,16 @@ public final class CoreSelfTest {
                 "Translation engine", "翻译引擎"));
         // An answer identical to its source is a provider that did nothing. Accepting it cached the
         // source as that line's own translation and repainted it in the translated colour.
-        assertThrows(IllegalArgumentException.class, () -> TranslationOutputValidator.requireValid(
-                "Welcome aboard", "Welcome aboard"));
+        assertThrows(TranslationOutputValidator.UnchangedOutputException.class,
+                () -> TranslationOutputValidator.requireValid("Welcome aboard", "Welcome aboard"));
+        // The verdict is a type of its own, not just any rejection: the session and the coordinator
+        // route this one to "this text needs no translation" and every other rejection to the retry
+        // table, and a plain IllegalArgumentException would buy the same unchanged answer again
+        // every thirty seconds for as long as the line stays on screen.
+        assertThrows(TranslationOutputValidator.UnchangedOutputException.class,
+                () -> TranslationOutputValidator.requireValid("Java Edition", "Java Edition"));
+        assertThrows(TranslationOutputValidator.UnchangedOutputException.class,
+                () -> TranslationOutputValidator.requireValid("GG WP", "GG WP"));
         // ... while an identical Han answer is a real translation, and a short reply is a real answer.
         assertEquals("日本語", TranslationOutputValidator.requireValid("日本語", "日本語"));
         assertEquals("OK", TranslationOutputValidator.requireValid("OK", "OK"));
@@ -1436,6 +1608,20 @@ public final class CoreSelfTest {
         String clampedPair = TranslationPrompt.clampForEditor(splitPair);
         assertEquals(UiLimits.PROMPT_MAX_CHARS - 1, clampedPair.length());
         assertFalse(Character.isHighSurrogate(clampedPair.charAt(clampedPair.length() - 1)));
+        // The field is sized for the escaped form, so it accepts more characters than the stored limit
+        // and the save path used to write exactly what the field held: a plain-text prompt of 8000
+        // characters reached the properties file unchanged, was cut to PROMPT_MAX_CHARS the next time
+        // the screen opened, and the save after that wrote the cut version back. Decoding before the
+        // cut is the single decision point that keeps those two lengths from drifting apart.
+        String plainText = repeat("a", 6000);
+        assertEquals(UiLimits.PROMPT_MAX_CHARS, TranslationPrompt.clampEditorText(plainText).length());
+        assertEquals(UiLimits.PROMPT_MAX_CHARS,
+                TranslationPrompt.clampEditorText(TranslationPrompt.toEditorText(plainText)).length());
+        // A prompt whose escaped form is longer than the stored limit while the prompt itself is not
+        // has to survive untouched: 4003 characters with 800 line breaks need 4803 escaped ones.
+        String multiline = repeat("line\n", 800) + "end";
+        assertEquals(multiline,
+                TranslationPrompt.clampEditorText(TranslationPrompt.toEditorText(multiline)));
     }
 
     private static void preservesRecentUserMessages() {

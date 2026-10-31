@@ -315,29 +315,35 @@ public final class ForgeTranslationRuntime {
         return translated;
     }
 
-    static synchronized void shutdown() {
-        RenderTranslationSession active = session;
-        session = null;
-        // Clear the published settings too, not just the session. Leaving them behind made a failed
-        // initialize() permanent: session == null meant "nothing translates", while the HUD read
-        // cachedHome.enabled == true and kept painting the "translation is on" indicator,
-        // diagnostics() reported a provider that no longer exists, and requireActiveConfig() handed
-        // the broken configuration back to the HUD toggles, which then saved it over the file.
-        activeConfig = null;
-        activeProvider = null;
-        cachedHome = null;
-        diagnosticsSnapshot = null;
-        diagnosticsSnapshotAt = 0L;
-        protectedPlayerNames = Collections.emptyList();
-        protectedPlayerNamesExpireAt = 0L;
-        RECENT_USER_TEXT.clear();
-        outgoingTail = CompletableFuture.completedFuture(null);
-        invalidateRenderMemo();
-        // Both caches outlive the session on purpose (they are shared by every snapshot of the same
-        // file), so releasing the configuration is the point where they are dropped instead.
-        ForgeConfig.clearCaches();
+    static void shutdown() {
+        RenderTranslationSession active;
+        synchronized (ForgeTranslationRuntime.class) {
+            active = session;
+            session = null;
+            // Clear the published settings too, not just the session. Leaving them behind made a failed
+            // initialize() permanent: session == null meant "nothing translates", while the HUD read
+            // cachedHome.enabled == true and kept painting the "translation is on" indicator,
+            // diagnostics() reported a provider that no longer exists, and requireActiveConfig() handed
+            // the broken configuration back to the HUD toggles, which then saved it over the file.
+            activeConfig = null;
+            activeProvider = null;
+            cachedHome = null;
+            diagnosticsSnapshot = null;
+            diagnosticsSnapshotAt = 0L;
+            protectedPlayerNames = Collections.emptyList();
+            protectedPlayerNamesExpireAt = 0L;
+            RECENT_USER_TEXT.clear();
+            outgoingTail = CompletableFuture.completedFuture(null);
+            invalidateRenderMemo();
+            // Both caches outlive the session on purpose (they are shared by every snapshot of the same
+            // file), so releasing the configuration is the point where they are dropped instead.
+            ForgeConfig.clearCaches();
+        }
         // The queued writes are the ones this runtime accepted; let them land, then stop the writer so
-        // no daemon thread outlives the configuration it was writing.
+        // no daemon thread outlives the configuration it was writing. Both waits below are bounded but
+        // long -- two seconds for the queue, up to five for a session with a worker parked in a
+        // provider read -- so they run outside the class monitor: initialize() takes that same monitor
+        // from the render thread on a settings change, and holding it here froze one frame meanwhile.
         ForgeConfigWriter.shutdown();
         if (active != null) {
             active.close();
@@ -502,7 +508,10 @@ public final class ForgeTranslationRuntime {
         Minecraft client = Minecraft.getInstance();
         if (active == null || config == null || !config.allows(kind)
                 || TranslationRenderContext.isTextInput()) {
-            return originals;
+            // The same read-only answer the core hands back. A bridge that renders with translation on
+            // and then off must not see the list become editable: the first set/sort/add that works in
+            // one state throws UnsupportedOperationException in the other, once per frame.
+            return originals == null ? null : Collections.unmodifiableList(originals);
         }
         return active.lookupLines(originals, kind);
     }

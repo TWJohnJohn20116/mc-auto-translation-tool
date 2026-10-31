@@ -124,11 +124,15 @@ processResources {
     }
 }
 
+def javaReleaseTarget = gradle.ext.treeJavaTarget("platforms/fabric/26.x/")
+// Handed to the class-file gate applied below, so the bytecode is checked against the same number the
+// compiler is given instead of a second copy of it.
+ext.fabricReleaseJava = javaReleaseTarget
 tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
     // Read from settings.gradle's treeJavaRelease so the compile target and the Mixin bounds derived
     // from the same table cannot disagree.
-    options.release = gradle.ext.treeJavaTarget("platforms/fabric/26.x/")
+    options.release = javaReleaseTarget
 }
 
 java {
@@ -136,6 +140,10 @@ java {
 }
 
 apply from: rootProject.file("gradle/jar-contents.gradle")
+apply from: rootProject.file("gradle/fabric-release-jar-verify.gradle")
+// A mixin class that no shipped mixins.json lists is compiled, shipped and never applied, and
+// required:true never complains about that direction.
+apply from: rootProject.file("gradle/fabric-mixin-config-verify.gradle")
 
 ext.modmenuApiFamily = "mojmap"
 ext.modmenuClientSourceSet = "client"

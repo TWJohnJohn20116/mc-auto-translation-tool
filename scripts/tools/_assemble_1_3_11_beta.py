@@ -39,7 +39,7 @@ SCRIPTS_DIR = ROOT / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from release_layout import PART_SIZE, part_suffix  # noqa: E402  (需要先設好 sys.path)
+from release_layout import PART_SIZE, VERSION_PATTERN, part_suffix  # noqa: E402  (需要先設好 sys.path)
 
 #: 48 個發布目標的權威清單（prepare-release.yml 的 TARGETS_JSON）。
 PREPARE_WORKFLOW = ROOT / ".github" / "workflows" / "prepare-release.yml"
@@ -60,7 +60,15 @@ PLATFORM_PROJECT = re.compile(r'^\s*"(platform-[^"]+)"\s*:', re.MULTILINE)
 def get_version() -> str:
     for line in (ROOT / "gradle.properties").read_text(encoding="utf-8").splitlines():
         if line.startswith("mod_version="):
-            return line.split("=", 1)[1].strip()
+            value = line.split("=", 1)[1].strip()
+            # 同一條字元白名單（release_layout.VERSION_PATTERN ↔ read-mod-version.sh）：這個值會被
+            # 拼進 downloads/<version> 與 find -name，含 * 或 [ 時下面的 staging／backup 清理會
+            # 命中意料之外的目錄。
+            if not VERSION_PATTERN.fullmatch(value):
+                raise SystemExit(
+                    f"gradle.properties 的 mod_version 含不允許的字元：'{value}'"
+                )
+            return value
     raise SystemExit("gradle.properties 讀不到 mod_version")
 
 

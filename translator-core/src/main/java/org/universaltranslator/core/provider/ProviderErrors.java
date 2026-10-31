@@ -71,11 +71,23 @@ final class ProviderErrors {
             return false;
         }
         for (int index = 0; index < FATAL_CODES.length; index++) {
-            if (FATAL_CODES[index].equals(code)) {
+            if (inFamily(code, FATAL_CODES[index])) {
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * Whether {@code code} is {@code family} itself or one of its {@code family.something} members.
+     *
+     * <p>These vendors name one verdict with a suffix — {@code AuthFailure.SignatureFailure},
+     * {@code InvalidTimeStamp.Expired}, {@code InvalidAccessKeyId.NotFound} — so an exact match only
+     * ever covered the bare form, and the four providers whose codes always carry a suffix were
+     * never paused at all.
+     */
+    private static boolean inFamily(String code, String family) {
+        return code.equals(family) || code.startsWith(family + ".");
     }
 
     /**
@@ -182,11 +194,22 @@ final class ProviderErrors {
             "APIGW.0308", "TooManyRequests", "RateLimitExceeded"
     };
 
-    /** Codes whose next step is a change on the account side; see {@link #isFatal}. */
+    /**
+     * Codes whose next step is a change on the account side; see {@link #isFatal}.
+     *
+     * <p>An entry also stands for its {@code entry.something} family (see {@link #inFamily}), so
+     * {@code AuthFailure} covers {@code AuthFailure.SignatureFailure} and {@code InvalidAccessKeyId}
+     * covers {@code InvalidAccessKeyId.NotFound}. The list used to hold only the seven codes Baidu,
+     * Tencent and Youdao answer with, which meant the four vendors that re-sign every request —
+     * Aliyun, Volcengine, Huawei Cloud and iFlytek — were never paused: a wrong key cost one signed,
+     * handshaked request per line for the whole session.
+     */
     private static final String[] FATAL_CODES = {
             "54004", "FailedOperation.NoFreeAmount",
             "54001", "108", "202",
-            "52003", "AuthFailure"
+            "52003", "AuthFailure",
+            "InvalidAccessKeyId", "SignatureDoesNotMatch", "InvalidTimeStamp",
+            "InvalidCredential", "CBS.0001", "10165"
     };
 
     private static boolean isRateLimited(String code) {
@@ -230,13 +253,16 @@ final class ProviderErrors {
         if (code == null) {
             return "";
         }
-        if ("54004".equals(code) || "FailedOperation.NoFreeAmount".equals(code)) {
+        if ("54004".equals(code) || inFamily(code, "FailedOperation.NoFreeAmount")) {
             return "; the account has no translation quota left, top it up before translating again";
         }
-        if ("54001".equals(code) || "108".equals(code) || "202".equals(code)) {
+        if ("54001".equals(code) || "108".equals(code) || "202".equals(code)
+                || inFamily(code, "SignatureDoesNotMatch") || inFamily(code, "InvalidTimeStamp")) {
             return "; the request signature was rejected, check the secret/API key field for this provider";
         }
-        if ("52003".equals(code) || "AuthFailure".equals(code)) {
+        if ("52003".equals(code) || inFamily(code, "AuthFailure")
+                || inFamily(code, "InvalidAccessKeyId") || inFamily(code, "InvalidCredential")
+                || inFamily(code, "CBS.0001") || "10165".equals(code)) {
             return "; the credential was not accepted, check the key field for this provider";
         }
         if ("54005".equals(code)) {

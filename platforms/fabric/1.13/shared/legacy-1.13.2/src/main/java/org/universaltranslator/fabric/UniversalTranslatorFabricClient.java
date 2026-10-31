@@ -4,6 +4,7 @@ import net.fabricmc.api.ClientModInitializer;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.client.gui.screen.Screen;
+import org.universaltranslator.core.ShutdownBudget;
 
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -27,8 +28,14 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
     private static volatile Runnable stopHook;
     /** Set once the runtime has been shut down, so the JVM hook cannot run the body twice. */
     private static volatile boolean shutdownRequested;
-    /** Upper bound on how long the JVM shutdown hook waits for the teardown before letting it exit. */
-    private static final long SHUTDOWN_JOIN_MILLIS = 1500L;
+    /**
+     * Upper bound on how long the JVM shutdown hook waits for the teardown before letting it exit.
+     *
+     * <p>{@link ShutdownBudget#TEARDOWN_JOIN_MILLIS} is longer than the session close it joins: a join
+     * shorter than that returned while the store flush inside the close was still running, and no
+     * later path writes the burst it carries.
+     */
+    private static final long SHUTDOWN_JOIN_MILLIS = ShutdownBudget.TEARDOWN_JOIN_MILLIS;
 
     private UniversalTranslatorFabricClient() {
     }
@@ -66,15 +73,18 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
         ScreenWorkers.shutdown();
         Runnable hook = stopHook;
         stopHook = null;
+        // Flush a queued settings write before the teardown is attempted, so the write does not wait
+        // behind a session close that can spend its whole budget on a worker parked in a provider read.
+        FabricTranslationRuntimeBase.drainPendingSaves();
         if (hook == null) {
             return;
         }
         // Bounded wait instead of running the teardown inline: it closes the coordinator (which
         // settles open requests, shuts its workers down and waits up to 5 s for them) and then
         // flushes the whole cache store, so running it on the JVM shutdown hook made "close the
-        // game" wait for all of that with no upper bound. The hook here only waits 1.5 s; a teardown
-        // still running after that is cut short by the JVM exiting, and the store's own flush path
-        // covers whatever did not get written.
+        // game" wait for all of that with no upper bound. The join budget is longer than that close
+        // on purpose, so the flush is not cut short; a teardown that still outlives it is ended by
+        // the JVM exiting.
         final Thread teardown = new Thread(hook, "universal-translator-stop");
         teardown.setDaemon(false);
         teardown.start();

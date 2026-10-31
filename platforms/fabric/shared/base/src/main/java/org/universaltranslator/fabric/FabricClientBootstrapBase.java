@@ -155,6 +155,9 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
         registerStopHook(new Runnable() {
             @Override
             public void run() {
+                // Flush a queued settings write first: the teardown below can spend seconds closing
+                // the session, and a write queued behind it would never be finished.
+                FabricTranslationRuntimeBase.drainPendingSaves();
                 FabricTranslationRuntime.shutdown();
             }
         });

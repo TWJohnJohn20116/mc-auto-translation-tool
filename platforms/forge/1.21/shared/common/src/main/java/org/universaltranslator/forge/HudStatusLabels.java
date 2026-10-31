@@ -1,6 +1,7 @@
 package org.universaltranslator.forge;
 
 import net.minecraft.network.chat.Component;
+import org.universaltranslator.core.HudLabelCache;
 
 /**
  * Frame-to-frame caches for the strings the HUD indicator writes.
@@ -15,14 +16,23 @@ import net.minecraft.network.chat.Component;
  * player can change the language while the game runs.
  */
 public final class HudStatusLabels {
-    /** How long a cached value stays valid. */
-    private static final long REFRESH_MILLIS = 1000L;
-
+    // The interval and the activity key live in HudLabelCache so this cache and the three sibling
+    // copies cannot drift apart; only the translation call differs per loader.
     private static String cachedActivity;
     private static long cachedActivityAt;
     private static String cachedLabelText;
     private static Component cachedLabel;
     private static long cachedLabelAt;
+    /**
+     * The outgoing preview's own slot.
+     *
+     * <p>The indicator draws the preview and the content label in the same frame, so one shared slot
+     * made each call evict what the other had just built and both were rebuilt every frame — the
+     * allocation the cache exists to remove.
+     */
+    private static String cachedPreviewText;
+    private static Component cachedPreview;
+    private static long cachedPreviewAt;
 
     private HudStatusLabels() {
     }
@@ -36,11 +46,10 @@ public final class HudStatusLabels {
     public static String activity() {
         long now = System.currentTimeMillis();
         String cached = cachedActivity;
-        if (cached != null && now - cachedActivityAt < REFRESH_MILLIS) {
+        if (cached != null && now - cachedActivityAt < HudLabelCache.REFRESH_MILLIS) {
             return cached;
         }
-        String resolved = Component.translatable(
-                "value.universal_translator.hud_content.activity").getString();
+        String resolved = Component.translatable(HudLabelCache.ACTIVITY_KEY).getString();
         cachedActivity = resolved;
         cachedActivityAt = now;
         return resolved;
@@ -49,21 +58,41 @@ public final class HudStatusLabels {
     /**
      * {@code text} as a component, built once per second per distinct string.
      *
-     * <p>Keyed on the value: the language and provider labels only change when a setting does, and
-     * the outgoing preview only while a translation is landing, so a static label stops allocating a
-     * {@code MutableComponent} and a {@code Style} on every frame.
+     * <p>Keyed on the value: the language and provider labels only change when a setting does, so a
+     * static label stops allocating a {@code MutableComponent} and a {@code Style} on every frame.
+     * This is the content label's slot; {@link #preview(String)} is the outgoing preview's.
      */
     public static Component label(String text) {
         long now = System.currentTimeMillis();
         Component cached = cachedLabel;
         if (cached != null && text != null && text.equals(cachedLabelText)
-                && now - cachedLabelAt < REFRESH_MILLIS) {
+                && now - cachedLabelAt < HudLabelCache.REFRESH_MILLIS) {
             return cached;
         }
         Component built = Component.literal(text == null ? "" : text);
         cachedLabelText = text;
         cachedLabel = built;
         cachedLabelAt = now;
+        return built;
+    }
+
+    /**
+     * {@code text} as a component for the outgoing chat preview, which has its own slot.
+     *
+     * <p>Same one-second, value-keyed rule as {@link #label(String)}; the preview only changes while
+     * a translation is landing, so this keeps it to one build per distinct value.
+     */
+    public static Component preview(String text) {
+        long now = System.currentTimeMillis();
+        Component cached = cachedPreview;
+        if (cached != null && text != null && text.equals(cachedPreviewText)
+                && now - cachedPreviewAt < HudLabelCache.REFRESH_MILLIS) {
+            return cached;
+        }
+        Component built = Component.literal(text == null ? "" : text);
+        cachedPreviewText = text;
+        cachedPreview = built;
+        cachedPreviewAt = now;
         return built;
     }
 }

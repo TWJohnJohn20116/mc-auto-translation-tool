@@ -43,6 +43,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 
 /** Shared state and layout for Forge 1.16.5 screens with a MatrixStack render bridge. */
 abstract class UniversalTranslatorConfigScreenBase extends Screen {
@@ -534,13 +535,13 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         try {
             String prompt = customPrompt == null
                     ? base.customSystemPrompt()
-                    : TranslationPrompt.fromEditorText(customPrompt.getValue());
+                    : TranslationPrompt.clampEditorText(customPrompt.getValue());
             ForgeConfig updated = base.withPromptSettings(quality, prompt);
             if (updated.enabled) {
                 updated.validateProviderConfiguration();
             }
             ForgeTranslationRuntime.initialize(updated);
-            updated.save();
+            ForgeConfigWriter.saveNow(updated);
             setTestStatus(tr("screen.universal_translator.diagnostics.settings_saved"), false);
         } catch (Exception exception) {
             setTestStatus(tr("screen.universal_translator.diagnostics.settings_failed",
@@ -686,7 +687,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
             }
             runtimeChanged = true;
             ForgeTranslationRuntime.initialize(updated);
-            updated.save();
+            ForgeConfigWriter.saveNow(updated);
             status = tr("status.universal_translator.saved");
             onClose();
         } catch (Exception exception) {
@@ -1686,7 +1687,7 @@ abstract class UniversalTranslatorDiagnosticsScreenBase extends Screen {
         try {
             ForgeConfig updated = live.withDebugLog(debugEnabled);
             ForgeTranslationRuntime.initialize(updated);
-            updated.save();
+            ForgeConfigWriter.saveNow(updated);
             Path configFile = updated.configFile();
             DebugLog.global().configure(
                     configFile.resolveSibling(DebugLog.FILE_NAME), debugEnabled);
@@ -2209,19 +2210,67 @@ interface ForgeScreenCanvas {
  * of presses left several identically named threads behind (the same name in {@code jstack} and in
  * {@code latest.log}) and every click paid for a fresh thread plus its stack reservation. Two daemon
  * workers are enough: each of those actions already has a flag that keeps a second one from starting
- * while the first runs, so nothing queues up here.
+ * while the first runs, so nothing queues up here. The pool is daemon-only and is still released on
+ * the way out: this class owns the only reference to it, a single {@code Runtime.addShutdownHook}
+ * registered below covers every exit path, and {@link #execute} asks for a replacement pool if a
+ * button is pressed once that hook has already dropped it.
  */
 final class ScreenWorkers {
-    private static final ExecutorService WORKERS = Executors.newFixedThreadPool(2, task -> {
-        Thread thread = new Thread(task, "universal-translator-screen-worker");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private static ExecutorService workers = create();
+
+    static {
+        // Runs once, on class load. The screens that submit work have no lifecycle of their own, so
+        // this is the only place a game exit can be observed from here.
+        Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+            @Override
+            public void run() {
+                shutdown();
+            }
+        }, "universal-translator-screen-worker-shutdown"));
+    }
 
     private ScreenWorkers() {
     }
 
     static void execute(Runnable task) {
-        WORKERS.execute(task);
+        for (int attempt = 0; attempt < 2; attempt++) {
+            try {
+                current().execute(task);
+                return;
+            } catch (RejectedExecutionException shuttingDown) {
+                // The pool current() handed out was closed by a shutdown before execute() reached it.
+                // Running the task here would put the button's model fetch or diagnostics export on
+                // the thread that pressed it, so the next pass asks current() for the replacement
+                // pool instead; only a shutdown that closes that one too drops the task.
+            }
+        }
+    }
+
+    /**
+     * Drops the pool.
+     *
+     * <p>The next {@link #execute} builds a fresh one, so no caller has to know whether the hook has
+     * already run.
+     */
+    static synchronized void shutdown() {
+        if (workers != null) {
+            workers.shutdownNow();
+            workers = null;
+        }
+    }
+
+    private static synchronized ExecutorService current() {
+        if (workers == null) {
+            workers = create();
+        }
+        return workers;
+    }
+
+    private static ExecutorService create() {
+        return Executors.newFixedThreadPool(2, task -> {
+            Thread thread = new Thread(task, "universal-translator-screen-worker");
+            thread.setDaemon(true);
+            return thread;
+        });
     }
 }

@@ -64,7 +64,7 @@ flowchart TD
 | `platforms/fabric/1.8-1.12/` | 中期 Fabric | 1.8.9 ~ 1.12.2 (15 個版本) | Ornithe Fabric | **Java 8** | Loom Ornithe |
 | `platforms/fabric/1.13/` | 扁平化轉折 | 1.13, 1.13.1, 1.13.2 | Ornithe / LegacyFabric | **Java 8** | Loom Ornithe |
 | `platforms/fabric/1.14-1.15/` | 官方早期 Loom | 1.14.0 ~ 1.15.2 (8 個版本) | Fabric Loom | **Java 8** | Fabric Loom 1.17 |
-| `platforms/fabric/1.16/versions/1.16.5/`| 經典 1.16.5 | 1.16.5 | Fabric Loom | **Java 8** | Fabric Loom 1.17 |
+| `platforms/fabric/1.16/versions/`（1.16–1.16.5 共 6 個）| 1.16 家族 | 1.16 ~ 1.16.5 (6 個版本) | Fabric Loom | **Java 8** | Fabric Loom 1.17 |
 | `platforms/fabric/1.17-1.18/`| 現代轉折版 | 1.17.0 ~ 1.18.2 (5 個版本) | Fabric Loom | **Java 17**| Fabric Loom 1.17 |
 | `platforms/fabric/1.19/` | 1.19 家族 | 1.19.0 ~ 1.19.4 (5 個版本) | Fabric Loom | **Java 17**| Fabric Loom 1.17 |
 | `platforms/fabric/1.20/` | 1.20 家族 | 1.20.0 ~ 1.20.6 (7 個版本) | Fabric Loom | **Java 17/21**| Fabric Loom 1.17 |
@@ -72,11 +72,12 @@ flowchart TD
 | `platforms/fabric/26.x/` | 已發布（26.1–26.3） | 26.1, 26.1.1, 26.1.2, 26.2, 26.3 | Fabric Loom | **Java 25**| Fabric Loom 1.17 |
 | `platforms/forge/modern/` | 現代過渡 Forge | 1.16.5, 1.18.2, 1.19.2, 1.20.1 | Forge | **Java 8/17** | ForgeGradle 5.1 |
 | `platforms/forge/1.21/` | 現代 Forge 1.21 | 1.21.0 ~ 1.21.11 | Forge | **Java 21**| ForgeGradle 6 / NeoDev |
-| `platforms/forge/26.x/` | 未來 Forge | 26.1 ~ 26.2 | Forge | **Java 25**| ForgeGradle / NeoDev |
+| `platforms/forge/26.x/` | 已發布（26.1–26.2） | 26.1 ~ 26.2 | Forge | **Java 25**| ForgeGradle / NeoDev |
 | `platforms/neoforge/` | NeoForge 獨立系列 | 1.20.1, 1.20.x, 1.21.x, 26.x | NeoForge | **Java 17/21/25**| ModDev Gradle |
 
-> 本表只做速查；每個 bundle 的版本數以 `docs/Zh-cn/BUILDING.md` 對應章節為權威（該檔逐 bundle 說明，
-> 新增版本時只改那裡，本表僅在整批增減時跟著動）。
+> 本表只做速查：每個 bundle 的版本數以 `docs/Zh-cn/BUILDING.md` 對應章節為權威（該檔逐 bundle 說明，
+> 新增版本時只改那裡），目錄路徑與目錄內容以 `settings.gradle` 的 `projectDir` 及實際目錄為權威；
+> 本表只在整批增減時跟著動。
 
 ---
 
@@ -86,7 +87,7 @@ flowchart TD
 * **根目錄的 `legacy/`（Forge 1.8.9 與 1.12.2）**：
   Minecraft 1.8.9 與 1.12.2 的 Forge 官方外掛（ForgeGradle 2.x）是 2016 年前後的古老產物，**強制依賴 Gradle 4.9 且與 Gradle 8.x 完全不相容**。因此它們不能作為根專案的 subproject，必須獨立放在根目錄自成一個 Gradle 專案（擁有自己的 `gradlew` 與 `build.gradle`）。
 * **`platforms/fabric/legacy/`**：
-  這是 Fabric 體系中的過渡期專案（1.16.5、1.19.2、1.20.1），以及存放 `shared/` 跨版本 API 轉接層的代碼庫，它依然受根專案的 Gradle 8.14 統一管理。
+  這裡只放 `shared/`（`shared.gradle`）跨版本 API 轉接層，本身沒有任何版本專案。1.16.5、1.19.2、1.20.1 的專案目錄分別在 `platforms/fabric/1.16/versions/1.16.5`、`platforms/fabric/1.19/versions/1.19.2`、`platforms/fabric/1.20/versions/1.20.1`（見 `settings.gradle` 的 `projectDir`），它們依然受根專案的 Gradle 8.14 統一管理。
 
 ---
 

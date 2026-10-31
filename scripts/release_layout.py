@@ -21,6 +21,13 @@ PART_SIZE = 614400
 #: ``<name>.jar.part-aa`` .. ``<name>.jar.part-zz``, 676 parts maximum.
 PART_PATTERN = re.compile(r"^(?P<jar>.+\.jar)\.part-(?P<suffix>[a-z]{2})$")
 
+#: Literal copy of the ``mod_version`` whitelist in ``scripts/ci/read-mod-version.sh``. A value that
+#: passes there is spliced into ``find -name`` patterns and ``rm -rf`` targets, so the local producer
+#: (``scripts/tools/_assemble_1_3_11_beta.py``) has to reject the same values: it used to accept
+#: anything after ``mod_version=`` as long as it stripped clean. ``scripts/ci/test_ci_docs.py``
+#: compares this string with the shell script so the two cannot drift.
+VERSION_PATTERN = re.compile(r"^[0-9]+([.][0-9]+)*([_-][0-9A-Za-z.-]+)?$")
+
 
 def part_suffix(index: int) -> str:
     """The suffix of part ``index`` (0 -> ``aa``, 25 -> ``az``, 26 -> ``ba``)."""

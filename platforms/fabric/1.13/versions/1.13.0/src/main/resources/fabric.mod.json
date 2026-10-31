@@ -10,5 +10,5 @@
   "environment": "client",
   "entrypoints": {"client": ["org.universaltranslator.fabric.UniversalTranslatorFabricClient"]},
   "mixins": ["universal-translator.fabric.mixins.json"],
-  "depends": {"fabricloader": ">=0.19.3", "minecraft": "1.13", "java": ">=8"}
+  "depends": {"fabricloader": ">=${loaderVersion}", "minecraft": "1.13", "java": ">=8"}
 }

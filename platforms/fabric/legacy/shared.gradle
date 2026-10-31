@@ -280,6 +280,14 @@ if (splitEnvironment) {
             }
         }
     }
+    // Two of the six shared HUD/input mixins hook targets that 1.19.3 removed: ChatHud.render's
+    // (MatrixStack;I) became (MatrixStack;III), and SignEditScreen.render moved to
+    // AbstractSignEditScreen. The 1.19.3-1.19.4 family layer carries its own pair for those, so
+    // compiling these two as well only put dead classes and refmap entries into the released jars —
+    // and no config may name them (the targets are gone, so `required: true` would refuse to start).
+    if (gameVersion.startsWith("1.19.3") || gameVersion.startsWith("1.19.4")) {
+        sourceSets.client.java.exclude "**/SignEditScreenMixin.java", "**/ChatHudContextMixin.java"
+    }
 } else {
     sourceSets {
         main {
@@ -415,6 +423,9 @@ java {
 }
 
 apply from: rootProject.file("gradle/jar-contents.gradle")
+// A mixin class that no shipped mixins.json lists is compiled, shipped and never applied — the
+// failure mode 1.19.3-1.19.4 shipped with — and required:true never complains about the reverse.
+apply from: rootProject.file("gradle/fabric-mixin-config-verify.gradle")
 
 // verify_release_jars.py derives its class-file ceiling from the published file name, and a platform
 // artifact is called mc-auto-translation-tool-fabric-<mc version>-<mod version>.jar, which never

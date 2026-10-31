@@ -119,6 +119,9 @@ public final class RenderedTextBridge {
      * every server-provided style survives; flattening the component into a single literal keeps
      * only the style of the node it was flattened from. Returns {@code null} when the visible text
      * already renders with the root's own style, so the caller keeps the ordinary path.
+     *
+     * <p>Invariant: a rebuild may only be returned when the runs cover every visible character, so
+     * no node can drop out of the line.
      */
     private static Text translateStyledSiblings(Text text) {
         List<String> texts = new ArrayList<String>();
@@ -126,6 +129,17 @@ public final class RenderedTextBridge {
         List<Style> styles = new ArrayList<Style>();
         collectStyledLeaves(text, texts, styleKeys, styles);
         if (texts.isEmpty()) {
+            return null;
+        }
+        // A rebuild has to cover every visible character. A non-literal child (a server key message)
+        // puts its own text into getString() but never into the run list, so rebuilding a mixed line
+        // silently dropped that part of it; falling back to the whole-line path keeps the text and
+        // only loses the per-run styles.
+        int covered = 0;
+        for (String piece : texts) {
+            covered += piece.length();
+        }
+        if (covered != text.getString().length()) {
             return null;
         }
         boolean sourceHasColor = text.getStyle().getColor() != null;

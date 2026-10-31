@@ -1,0 +1,91 @@
+// Class-file gate for the Fabric trees that publish one JAR per Minecraft version.
+//
+// verify_release_jars.py derives its class-file ceiling from the published file name, and a platform
+// artifact is called mc-auto-translation-tool-fabric-<mc version>-<mod version>.jar: RELEASE_JAR never
+// matches that, so _expected_class_major() returns null and the Java gate is skipped for the project
+// that produced it. platforms/fabric/legacy stages a copy under the published name and runs the whole
+// release verifier against it; this script is the same class-version gate for the trees that stage
+// nothing, without dragging the other release rules (licences, mixin inventory, nested JAR names)
+// into a platform build that is not a release asset.
+//
+// Apply it after `options.release` has been configured:
+//
+//     ext.fabricReleaseJava = gradle.ext.treeJavaTarget("platforms/fabric/1.21/")
+//     apply from: rootProject.file("gradle/fabric-release-jar-verify.gradle")
+//
+// Two checks, because either one alone has passed while the artifact was still wrong:
+//   1. the number the compiler was actually given equals ext.fabricReleaseJava — a table and a
+//      hard-coded options.release that disagree is exactly the "silently compiled for another
+//      target" failure this gate exists for;
+//   2. no class in the remapped JAR is above Java + 44 (1.21 -> 65, 25 -> 69) — a toolchain or a
+//      shaded dependency that ignored --release shows up here instead of at run time.
+if (!project.ext.has("fabricReleaseJava")) {
+    throw new GradleException(
+            "Missing fabricReleaseJava before applying gradle/fabric-release-jar-verify.gradle")
+}
+def releaseJava = project.ext.fabricReleaseJava as int
+def expectedMajor = releaseJava + 44
+def remapped = tasks.named("remapJar")
+
+tasks.register("verifyBuiltJar") {
+    group = "verification"
+    description = "Checks the remapped JAR really is compiled for Java ${releaseJava} (class major ${expectedMajor})."
+    dependsOn remapped
+    inputs.file(remapped.flatMap { it.archiveFile })
+    inputs.property "expectedClassMajor", expectedMajor
+    doLast {
+        // Check 1: the compiler target and the number this gate was handed come from one table.
+        tasks.withType(JavaCompile).each { compile ->
+            def declared = compile.options.release.getOrNull()
+            if (declared != null && declared != releaseJava) {
+                throw new GradleException(
+                        "${compile.path} compiles with options.release = ${declared} but " +
+                                "fabricReleaseJava is ${releaseJava}: the table and the compiler " +
+                                "disagree, so the class-file gate below would check the wrong bound.")
+            }
+        }
+        def archive = remapped.get().archiveFile.get().asFile
+        if (!archive.isFile()) {
+            throw new GradleException("Missing remapped JAR ${archive}")
+        }
+        def offending = []
+        new java.util.zip.ZipFile(archive).withCloseable { zip ->
+            zip.entries().each { entry ->
+                // Only the header is read: magic and the major version are the first eight bytes, so
+                // a 3,000-class JAR costs eight bytes per entry instead of a full inflate.
+                if (!entry.name.endsWith(".class") || entry.size < 8) {
+                    return
+                }
+                byte[] header = new byte[8]
+                zip.getInputStream(entry).withCloseable { stream ->
+                    int read = 0
+                    while (read < 8) {
+                        int step = stream.read(header, read, 8 - read)
+                        if (step < 0) {
+                            break
+                        }
+                        read += step
+                    }
+                    if (read < 8) {
+                        throw new GradleException(
+                                "${entry.name} in ${archive.name} is shorter than a class header")
+                    }
+                }
+                int major = ((header[6] & 0xFF) << 8) | (header[7] & 0xFF)
+                if (major > expectedMajor) {
+                    offending.add("${entry.name} (major ${major})".toString())
+                }
+            }
+        }
+        if (!offending.isEmpty()) {
+            throw new GradleException(
+                    "${archive.name}: ${offending.size()} class file(s) above the declared Java " +
+                            "${releaseJava} (class major ${expectedMajor}): " +
+                            offending.take(5).join(", "))
+        }
+    }
+}
+
+tasks.named("build").configure {
+    dependsOn tasks.named("verifyBuiltJar")
+}

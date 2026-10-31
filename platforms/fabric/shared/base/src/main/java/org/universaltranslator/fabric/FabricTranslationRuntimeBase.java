@@ -27,11 +27,14 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -125,18 +128,27 @@ public abstract class FabricTranslationRuntimeBase {
      * write per key press on the tick thread, in a directory that may live on a synced drive. One
      * daemon thread keeps the writes in press order, is created on the first toggle, and never
      * holds the JVM open.
+     *
+     * <p>Not {@code final}: the writer's lifetime is the class, while the {@code shutdown()} that
+     * used to close it belongs to one runtime initialization. A startup that failed while the game
+     * kept running therefore closed the only writer for the rest of the process, and every later
+     * F8 went back to writing on the client tick thread. It is rebuilt on demand instead, exactly
+     * like {@code ScreenWorkers.current()}.
      */
-    private static final ExecutorService SAVE_WRITER = Executors.newSingleThreadExecutor(
-            new ThreadFactory() {
-                @Override
-                public Thread newThread(Runnable runnable) {
-                    Thread thread = new Thread(runnable, "universal-translator-save-writer");
-                    thread.setDaemon(true);
-                    return thread;
-                }
-            });
+    private static volatile ExecutorService saveWriter;
+    /** Guards the {@link #saveWriter} hand-off; never held across a write. */
+    private static final Object SAVE_WRITER_LOCK = new Object();
+    /**
+     * Set by {@link #drainPendingSaves()} once the process is going away.
+     *
+     * <p>A writer built after that point would be a daemon thread nothing waits for, so writes from
+     * here on happen on the caller instead of a queue that would be dropped.
+     */
+    private static volatile boolean savesDrained;
     /** How long {@link #shutdown()} waits for a queued write; the file itself is a few hundred bytes. */
     private static final long SAVE_WRITER_SHUTDOWN_MILLIS = 2_000L;
+    /** How long the settings screen's Save waits for its own write before resuming the frame. */
+    private static final long SAVE_WRITER_WAIT_MILLIS = 500L;
 
     protected FabricTranslationRuntimeBase() {
     }
@@ -237,6 +249,9 @@ public abstract class FabricTranslationRuntimeBase {
         synchronized (outgoingLock) {
             outgoingTail = CompletableFuture.completedFuture(null);
         }
+        // A session that starts after a shutdown gets its background writer back, even in the rare
+        // process that initialized, shut down and initialized again.
+        savesDrained = false;
         closeInBackground(replaced);
     }
 
@@ -338,41 +353,46 @@ public abstract class FabricTranslationRuntimeBase {
         return active.lookup(original, kind);
     }
 
-    synchronized void shutdown() {
-        RenderTranslationSession active = session;
-        session = null;
-        activeProvider = null;
-        protectedPlayerNames = Collections.emptyList();
-        protectedPlayerNamesExpireAt = 0L;
-        recentUserText.clear();
-        recentUserTextPresent = false;
-        // Everything the render hooks and the diagnostics screen read is part of the session: a
-        // snapshot left behind after this point showed the HUD, the status line and the diagnostics
-        // export the state of a translation that is no longer running.
-        activeConfig = null;
-        cachedHome = null;
-        cachedModelFile = null;
-        cachedModelBytes = -1L;
-        cachedCacheBytes = -1L;
-        cachedBytesExpireAt = 0L;
-        diagnosticsSnapshot = null;
-        if (activeRuntime == this) {
-            activeRuntime = null;
+    void shutdown() {
+        RenderTranslationSession active;
+        synchronized (this) {
+            active = session;
+            session = null;
+            activeProvider = null;
+            protectedPlayerNames = Collections.emptyList();
+            protectedPlayerNamesExpireAt = 0L;
+            recentUserText.clear();
+            recentUserTextPresent = false;
+            // Everything the render hooks and the diagnostics screen read is part of the session: a
+            // snapshot left behind after this point showed the HUD, the status line and the diagnostics
+            // export the state of a translation that is no longer running.
+            activeConfig = null;
+            cachedHome = null;
+            cachedModelFile = null;
+            cachedModelBytes = -1L;
+            cachedCacheBytes = -1L;
+            cachedBytesExpireAt = 0L;
+            diagnosticsSnapshot = null;
+            if (activeRuntime == this) {
+                activeRuntime = null;
+            }
+            synchronized (outgoingLock) {
+                outgoingTail = CompletableFuture.completedFuture(null);
+            }
         }
-        synchronized (outgoingLock) {
-            outgoingTail = CompletableFuture.completedFuture(null);
-        }
-        if (active != null) {
-            active.close();
-        }
+        // The two waits below are bounded but long: a queued write gets two seconds and a session close
+        // up to five for a worker parked in a provider read. They run outside the instance monitor
+        // because initialize() -- called from the render thread on a settings change or an F8 press --
+        // takes that same monitor, and holding it for the whole teardown froze one frame for up to
+        // seven seconds whenever a shutdown overlapped a settings change.
         // Wait for a queued configuration write before the process goes away: the writer thread is a
         // daemon, so nothing else would finish it and the file could be left half written. The write
-        // is a few hundred bytes, and this is the game-closing path, not a per-frame one.
-        SAVE_WRITER.shutdown();
-        try {
-            SAVE_WRITER.awaitTermination(SAVE_WRITER_SHUTDOWN_MILLIS, TimeUnit.MILLISECONDS);
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
+        // is a few hundred bytes, and this is the game-closing path, not a per-frame one. Drained
+        // before the session: close() blocks for up to five seconds on a worker parked in a provider
+        // read, and a queued save behind it never finishes inside the shutdown hook's own budget.
+        drainSaveWriter();
+        if (active != null) {
+            active.close();
         }
     }
 
@@ -565,7 +585,10 @@ public abstract class FabricTranslationRuntimeBase {
         if (active == null || config == null || !config.allows(kind)
                 || isTranslatorScreen(currentScreen())
                 || TranslationRenderContext.isTextInput()) {
-            return originals;
+            // The same read-only answer the core hands back. A bridge that renders with translation on
+            // and then off must not see the list become editable: the first set/sort/add that works in
+            // one state throws UnsupportedOperationException in the other, once per frame.
+            return originals == null ? null : Collections.unmodifiableList(originals);
         }
         return active.lookupLines(originals, kind);
     }
@@ -727,12 +750,20 @@ public abstract class FabricTranslationRuntimeBase {
      * runtime has already switched to the new configuration by this point, so the write can happen
      * a moment later without changing what the player sees.
      *
-     * <p>A writer that has already been shut down (game closing) takes the write synchronously, so
-     * no save is ever dropped.
+     * <p>The settings screen's Save goes through this method too, so the two writers that can touch
+     * the same file share one thread and therefore one order: a queued F8 snapshot can no longer
+     * land after a newer Save of the whole form.
+     *
+     * <p>Once the process is shutting down, the write happens here instead, so no save is ever
+     * dropped.
      */
     static void saveInBackground(FabricConfig config) {
+        if (savesDrained) {
+            writeConfig(config);
+            return;
+        }
         try {
-            SAVE_WRITER.execute(new Runnable() {
+            saveWriter().execute(new Runnable() {
                 @Override
                 public void run() {
                     writeConfig(config);
@@ -740,6 +771,105 @@ public abstract class FabricTranslationRuntimeBase {
             });
         } catch (RejectedExecutionException shuttingDown) {
             writeConfig(config);
+        }
+    }
+
+    /** The current writer, rebuilt when a previous {@code shutdown()} closed the one before it. */
+    private static ExecutorService saveWriter() {
+        ExecutorService writer = saveWriter;
+        if (writer != null && !writer.isShutdown()) {
+            return writer;
+        }
+        synchronized (SAVE_WRITER_LOCK) {
+            writer = saveWriter;
+            if (writer == null || writer.isShutdown()) {
+                writer = Executors.newSingleThreadExecutor(
+                        new ThreadFactory() {
+                            @Override
+                            public Thread newThread(Runnable runnable) {
+                                Thread thread = new Thread(runnable, "universal-translator-save-writer");
+                                thread.setDaemon(true);
+                                return thread;
+                            }
+                        });
+                saveWriter = writer;
+            }
+            return writer;
+        }
+    }
+
+    /**
+     * Waits for the queued configuration writes and closes the current writer.
+     *
+     * <p>Runs before the session teardown on purpose: a session close can spend seconds waiting for
+     * a worker parked in a provider read, and a write scheduled behind it is lost when the shutdown
+     * hook's own budget runs out first.
+     */
+    private static void drainSaveWriter() {
+        ExecutorService writer;
+        synchronized (SAVE_WRITER_LOCK) {
+            writer = saveWriter;
+            saveWriter = null;
+        }
+        if (writer == null) {
+            return;
+        }
+        writer.shutdown();
+        try {
+            writer.awaitTermination(SAVE_WRITER_SHUTDOWN_MILLIS, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * Flushes pending configuration writes from a JVM shutdown hook, before the runtime teardown is
+     * attempted.
+     *
+     * <p>The hooks call this before they start the teardown, so a session close that spends its whole
+     * budget on a worker parked in a provider read cannot keep the write from landing. After this call
+     * no writer is built again: a late save writes on the caller, which is the only path that still
+     * survives the process.
+     */
+    static void drainPendingSaves() {
+        savesDrained = true;
+        drainSaveWriter();
+    }
+
+    /**
+     * Writes one configuration on the save writer and waits a bounded time for it.
+     *
+     * <p>The settings screen's Save used to call {@code FabricConfig.save()} on the client thread
+     * while the F8 toggles queued their own snapshot on the writer, so an older queued snapshot
+     * could land after the newer whole-form save. Both writers now share one thread and therefore
+     * one order; the bounded wait keeps the "saved" message honest without letting a slow disk
+     * freeze the screen.
+     */
+    static void saveInBackgroundAndWait(FabricConfig config) {
+        if (savesDrained) {
+            writeConfig(config);
+            return;
+        }
+        Future<?> pending;
+        try {
+            pending = saveWriter().submit(new Runnable() {
+                @Override
+                public void run() {
+                    writeConfig(config);
+                }
+            });
+        } catch (RejectedExecutionException shuttingDown) {
+            writeConfig(config);
+            return;
+        }
+        try {
+            pending.get(SAVE_WRITER_WAIT_MILLIS, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        } catch (ExecutionException failed) {
+            // writeConfig logs its own failure and never throws; nothing left to report here.
+        } catch (TimeoutException slowDisk) {
+            // Still queued in press order; the screen does not wait for a synced drive.
         }
     }
 

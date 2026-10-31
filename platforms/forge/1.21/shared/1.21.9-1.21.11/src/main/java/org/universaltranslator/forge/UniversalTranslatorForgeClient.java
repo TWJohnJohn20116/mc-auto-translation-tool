@@ -142,6 +142,12 @@ public final class UniversalTranslatorForgeClient {
             // broken setting from the UI; a silent return here is what made the entry a dead key.
             config = ForgeTranslationRuntime.diagnosticsConfig();
             if (config == null) {
+                // shutdown() drops the live copy on a failed load, so the snapshot this process did
+                // manage to read is the only one left to edit; without it this whole branch is
+                // unreachable, because liveOrLoad only throws when the live copy is already null.
+                config = ForgeConfig.lastLoaded();
+            }
+            if (config == null) {
                 UniversalTranslatorForgeMod.LOGGER.error(LogMessages.SETTINGS_OPEN_FAILED, exception);
                 return;
             }
@@ -157,6 +163,19 @@ public final class UniversalTranslatorForgeClient {
             ForgeConfig config = ForgeConfig.liveOrLoad(FMLPaths.CONFIGDIR.get());
             client.setScreen(new UniversalTranslatorConfigScreen(client.screen, config));
         } catch (Exception exception) {
+            // Same fallback as the title-screen entry: a configuration that cannot be re-read is
+            // the case this screen exists for, so it opens on the last snapshot this process had.
+            ForgeConfig fallback = ForgeTranslationRuntime.diagnosticsConfig();
+            if (fallback == null) {
+                fallback = ForgeConfig.lastLoaded();
+            }
+            if (fallback != null) {
+                UniversalTranslatorForgeMod.LOGGER.warn(
+                        "Translation settings could not be re-read; opening the last loaded copy",
+                        exception);
+                client.setScreen(new UniversalTranslatorConfigScreen(client.screen, fallback));
+                return;
+            }
             UniversalTranslatorForgeMod.LOGGER.error(LogMessages.SETTINGS_OPEN_FAILED, exception);
             client.gui.setOverlayMessage(
                     Component.translatable("message.universal_translator.settings_open_failed"), false);

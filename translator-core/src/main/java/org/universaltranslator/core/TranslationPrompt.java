@@ -320,6 +320,24 @@ public final class TranslationPrompt {
     }
 
     /**
+     * Turns the text of the settings screen's prompt field into the value that may be stored.
+     *
+     * <p>The single decision point for "what the field is allowed to produce". The field is sized for
+     * the escaped form ({@link UiLimits#PROMPT_EDITOR_MAX_CHARS}), which is up to twice the stored
+     * form, so a plain-text prompt of 8000 characters used to fit the field, be written to the
+     * properties file unchanged, and then be cut to {@link UiLimits#PROMPT_MAX_CHARS} the next time
+     * the screen opened -- and the save after that wrote the cut version back, losing the rest with no
+     * message at all. Decoding first and cutting here means the value that reaches the file is the
+     * value the screen will show again, and {@link #bounded} logs the cut when it happens.
+     *
+     * @param value raw editor text, possibly {@code null}
+     * @return the decoded prompt, cut to the stored limit
+     */
+    public static String clampEditorText(String value) {
+        return bounded(fromEditorText(value), UiLimits.PROMPT_MAX_CHARS);
+    }
+
+    /**
      * Turns the escape sequences a single-line editor produces into the characters they stand for, so
      * a prompt written in the in-game box reads the same as one written in
      * {@code universal-translator.properties} (where {@code Properties.load} does the same thing).

@@ -36,6 +36,9 @@ jobs:
   plan:
     name: 解析版本與目標
     runs-on: ubuntu-24.04
+    # 與 build.yml 的 plan 同值。這一支卡住時佔的是 concurrency: prepare-release（不取消），
+    # 後面所有發布都會排隊等它吃滿預設的 360 分鐘。
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.resolve.outputs.version }}
       matrix: ${{ steps.resolve.outputs.matrix }}
@@ -380,6 +383,23 @@ jobs:
             echo "發布目錄必須剛好有 $EXPECTED_COUNT 顆目標 JAR，實際 $count 顆" >&2
             exit 1
           fi
+
+      - name: 產生可安裝清單（release-assets.txt）
+        if: needs.plan.outputs.full == 'true'
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          # downloads/<版本>/release-assets.txt 是四份 README 與官網唯一的「真實檔名」權威：
+          # 31 個可安裝檔名只有 prepare_release_assets.py 推得出來（fabric-all 加四個 Forge
+          # 家族合併），而 downloads/ 只由這支 workflow 提交，所以在這裡跑同一支腳本、只留清單。
+          # 少了這一步，網站測試裡「有 manifest 就以它為權威」的分支永遠走不到。
+          python3 scripts/prepare_release_assets.py \
+            --release-dir "downloads/$VERSION" \
+            --output-dir build/release-assets \
+            --version "$VERSION"
+          cp build/release-assets/release-assets.txt "downloads/$VERSION/release-assets.txt"
+          echo "可安裝清單 $(grep -c . "downloads/$VERSION/release-assets.txt") 行"
 
       - name: 移除舊版本的 downloads 目錄
         if: needs.plan.outputs.full == 'true'

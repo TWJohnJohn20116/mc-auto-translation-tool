@@ -10,7 +10,6 @@ import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import org.universaltranslator.core.ModelListPaging;
 import org.universaltranslator.core.provider.OpenAiModelCatalog;
-import org.universaltranslator.core.FocusHelper;
 
 /**
  * OpenAI-compatible LLM settings for Fabric 1.3.1-1.8.8; 1.8.9-1.12.2 use the same-named file under
@@ -193,18 +192,30 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
     /**
      * Takes the focus off every field while the catalog covers the form.
      *
-     * <p>{@code charTyped} is delivered to the focused widget only, so a screen that merely stopped
-     * drawing its fields still sent the typing into a field the player could not see.
+     * <p>{@code keyPressed} already swallows the keystrokes here, so this is the second line of
+     * defence: a field that cannot be edited keeps the characters out even if a later version routes
+     * them through a different callback.
+     *
+     * <p>Clearing a field's own focus needs an accessor the game renames at runtime, so the
+     * reflective call this used to make found nothing and guarded nothing at all. The editability
+     * switch exists on every generation; {@link #restoreFieldEditing()} hands it back.
      */
     private void releaseFieldFocus() {
-        if (endpoint != null) {
-            FocusHelper.clear(endpoint);
-        }
-        if (model != null) {
-            FocusHelper.clear(model);
-        }
-        if (apiKey != null) {
-            FocusHelper.clear(apiKey);
+        setFieldEditing(endpoint, false);
+        setFieldEditing(model, false);
+        setFieldEditing(apiKey, false);
+    }
+
+    /** Gives the form its editing back once the picker is gone. */
+    private void restoreFieldEditing() {
+        setFieldEditing(endpoint, true);
+        setFieldEditing(model, true);
+        setFieldEditing(apiKey, true);
+    }
+
+    private static void setFieldEditing(TextFieldWidget field, boolean editable) {
+        if (field != null) {
+            field.setEditable(editable);
         }
     }
 
@@ -308,7 +319,10 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
         }
         super.render(mouseX, mouseY, partialTicks);
         if (modelListOpen) {
+            releaseFieldFocus();
             renderModelList(mouseX, mouseY);
+        } else {
+            restoreFieldEditing();
         }
     }
 

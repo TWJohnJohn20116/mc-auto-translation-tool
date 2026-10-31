@@ -181,7 +181,7 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
         try {
             ForgeConfig updated = live.withDebugLog(debugEnabled);
             ForgeTranslationRuntime.initialize(updated);
-            updated.save();
+            ForgeConfigWriter.saveNow(updated);
             Path configFile = updated.configFile();
             DebugLog.global().configure(
                     configFile.resolveSibling(DebugLog.FILE_NAME), debugEnabled);

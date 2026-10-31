@@ -40,6 +40,20 @@ class PreparationError(RuntimeError):
     pass
 
 
+#: 可安裝資產清單的檔名。網站測試以 `downloads/<版本>/release-assets.txt` 為 31 個可安裝檔名的權威。
+MANIFEST_NAME = "release-assets.txt"
+
+
+def installable_manifest(names) -> str:
+    """`release-assets.txt` 的內容：可安裝檔名排序後一行一個。
+
+    31 個「可直接安裝」的檔名是發布階段才合併出來的（四個 Forge 家族 + fabric-all），靜態上無法從
+    48 個目標 JAR 推出，所以四份 README 與官網一直是手抄的。這份清單是「文件 ↔ 真實資產」比對的
+    唯一真憑實據；沒有它，四邊一起漂移也照樣全綠。
+    """
+    return "".join(f"{name}\n" for name in sorted(names))
+
+
 @dataclass(frozen=True)
 class ForgeFamily:
     """一個合併後的 Forge 家族：成員各一顆 JAR，共用同一份 payload。
@@ -472,7 +486,17 @@ def prepare_release(
         encoding="ascii",
         newline="\n",
     )
-    return [*assets, checksum]
+    # 31 個「可直接安裝」的檔名是發布階段才合併出來的（四個 Forge 家族 + fabric-all），
+    # 靜態上無法從 downloads/<版本>/ 的 48 個目標 JAR 推出，所以四份 README 與官網
+    # 一直都是手抄的。這裡把同一批產物的檔名寫成清單，讓文件與網站測試有一個真的產生者：
+    # 沒有這份檔案時，任何「文件 ↔ 真實資產」的比對都只是文件自我一致。
+    manifest = output_dir / MANIFEST_NAME
+    manifest.write_text(
+        installable_manifest(path.name for path in assets),
+        encoding="ascii",
+        newline="\n",
+    )
+    return [*assets, checksum, manifest]
 
 
 def main(argv: list[str] | None = None) -> int:

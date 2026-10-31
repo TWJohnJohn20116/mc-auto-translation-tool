@@ -9,8 +9,16 @@ on:
       - "downloads/**"
       - "gradle.properties"
       - "CHANGELOG.md"
+      # 版本號白名單是這支 workflow 的入口（下面 `read-mod-version.sh`）：它的語意被改壞時，
+      # `build.yml` 的 lint 只看得到語法（`bash -n`），要等下一次真正的發布才以 ::error:: 失敗。
+      # 只列這一個檔案，不要整包 scripts/ci/** 進來——那會讓任何 CI 腳本改動都跑一次發布。
+      - "scripts/ci/read-mod-version.sh"
       - "scripts/prepare_release_assets.py"
       - "scripts/verify_release_jars.py"
+      # 文件也要觸發：下面的「比對四份 README 的檔名與真實可安裝資產」只有同時看到資產與文件時
+      # 才有意義，而「改了家族名卻漏改其中一份 README」正是這種只動文件的 push。
+      - "README.md"
+      - "docs/**"
   workflow_dispatch:
 
 permissions:
@@ -155,6 +163,40 @@ jobs:
             --checksum-file "$ASSET_DIR/SHA256SUMS.txt" \
             --require-complete-checksums \
             "${jars[@]}"
+
+      - name: 比對四份 README 的檔名與真實可安裝資產
+        if: steps.version.outputs.skip != 'true'
+        shell: bash
+        env:
+          ASSET_DIR: ${{ runner.temp }}/release-assets
+        run: |
+          set -euo pipefail
+          # 這是整條管線裡唯一「文件 ↔ 真實資產」同時在場的位置：$ASSET_DIR 是剛由
+          # prepare_release_assets.py 產生的可安裝 JAR，四份 README 是手抄的。沒有這一步，
+          # 一次家族改名會讓四份 README 與官網共 5 處同時指向不存在的資產，而
+          # check／website／publish-release 全部綠燈。
+          find "$ASSET_DIR" -maxdepth 1 -type f -name '*.jar' -printf '%f\n' | sort \
+            > "$RUNNER_TEMP/asset-names.txt"
+          failed=0
+          for readme in README.md docs/Zh-cn/README.md docs/Zh-tw/README.md docs/en/README.md; do
+            # grep 找不到任何檔名時離開碼是 1，在 pipefail 下會讓整步失敗；這裡要的是「空集合」
+            # 走下面的紅燈分支並印出檔案名，所以吞掉離開碼。
+            grep -o 'MCAutoTranslationTool-[A-Za-z0-9.-]*\.jar' "$readme" | sort -u \
+              > "$RUNNER_TEMP/doc-names.txt" || true
+            if [[ ! -s "$RUNNER_TEMP/doc-names.txt" ]]; then
+              echo "::error::$readme 沒有任何 MCAutoTranslationTool-*.jar 檔名"
+              failed=1
+              continue
+            fi
+            if ! diff -u "$RUNNER_TEMP/doc-names.txt" "$RUNNER_TEMP/asset-names.txt"; then
+              echo "::error::$readme 的 JAR 檔名與 $ASSET_DIR 的可安裝資產不一致（差異見上）"
+              failed=1
+            fi
+          done
+          if [[ "$failed" -ne 0 ]]; then
+            exit 1
+          fi
+          echo "四份 README 的 $(grep -c . "$RUNNER_TEMP/asset-names.txt") 個檔名與可安裝資產一致"
 
       - name: 建立或更新 GitHub Release
         if: steps.version.outputs.skip != 'true'

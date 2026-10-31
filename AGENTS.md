@@ -98,7 +98,9 @@ git -c 'credential.helper=' -c 'credential.helper=!gh auth git-credential' push 
      Forge 的 `build/release`）
    - 舊版 Fabric bundle 1.3.1–1.15 → artifact 名稱 `legacy-fabric-<target>`
    - 獨立 Forge 1.8.9／1.12.2 → artifact 名稱 `forge-legacy-1.8.9`、`forge-legacy-1.12.2`
-   - 可直接安裝的正式版 JAR → artifact 名稱 `release-assets`（`build/release-assets/*.jar` 與 `SHA256SUMS.txt`）
+   - 可直接安裝的正式版 JAR → artifact 名稱 `release-assets`（`build/release-assets/*.jar` 與
+     `SHA256SUMS.txt`）；只有 `workflow_dispatch` 的執行才有，push `main` 的發布驗證由
+     `publish-release.yml` 負責一次（同一個 commit 不重複解壓 48 顆 JAR）
 
 6. 確認你要的 job 真的有跑，而不是被略過：`gh run view <run-id> --json jobs` 中該 job 的
    `conclusion` 不能是 `skipped`。分支保護要求的檢查是單一的 **`CI 總結`**（彙總 job）：只有全部
@@ -194,6 +196,7 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
    缺少這個區段會讓發布失敗。
 4. 推送到 `origin/main`。workflow 只在這些路徑變動時觸發：`downloads/**`、`gradle.properties`、
    `CHANGELOG.md`、`scripts/prepare_release_assets.py`、`scripts/verify_release_jars.py`、
+   `scripts/ci/read-mod-version.sh`（版本號白名單是這支 workflow 的入口邏輯）、
    `publish-release.yml` 自己。
 5. workflow 會驗證 48 顆 JAR 與 checksum、縮減成 **31 顆可直接安裝 JAR**（加 `SHA256SUMS.txt` 共
    32 個資產），再建立或更新 `v<mod_version>` Release；版本號含 `-` 者視為 prerelease。

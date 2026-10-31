@@ -155,7 +155,7 @@ abstract class InGameHudStatusIndicatorMixin {
                 TranslationRenderContext.pushTextInput();
                 int labelWidth;
                 try {
-                    labelWidth = font.getWidth(text);
+                    labelWidth = HudIndicatorLabels.width(font, text, label);
                     // Beside the square, never over it: a 6px square cannot hold "zh-TW", and a
                     // label centred on a right-corner square would run off the screen edge. The
                     // square itself is clamped above, so the label has to be clamped too.

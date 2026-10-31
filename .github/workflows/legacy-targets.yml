@@ -35,6 +35,9 @@ jobs:
   plan:
     name: 解析建置目標
     runs-on: ubuntu-24.04
+    # 與 build.yml 的 plan 同值：這裡沒有 Gradle、只有一段 python 與 jq，卡住時不該吃滿預設
+    # 360 分鐘（每週排程懸置會掩蓋其他目標真正的失敗）。
+    timeout-minutes: 10
     outputs:
       fabric_matrix: ${{ steps.resolve.outputs.fabric_matrix }}
       fabric_count: ${{ steps.resolve.outputs.fabric_count }}

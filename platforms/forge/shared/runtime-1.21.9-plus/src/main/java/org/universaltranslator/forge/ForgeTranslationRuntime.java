@@ -16,6 +16,7 @@ import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.RecentUserText;
 import org.universaltranslator.core.TranslationResult;
 import org.universaltranslator.core.TranslationStatusLocalizer;
+import org.universaltranslator.core.DebugLog;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -200,9 +201,9 @@ public final class ForgeTranslationRuntime {
         closeInBackground(replaced);
     }
 
-    /** Teardowns queued but not finished; caps the reaper's backlog (see {@link #closeInBackground}). */
+    /** Teardowns queued but not finished, reported by {@link #closeInBackground}. */
     private static final AtomicInteger PENDING_TEARDOWNS = new AtomicInteger();
-    /** Backlog the reaper accepts before the caller performs the teardown itself. */
+    /** Backlog depth worth one debug-log line; the queue itself is never truncated. */
     private static final int MAX_PENDING_TEARDOWNS = 2;
 
     /**
@@ -212,24 +213,20 @@ public final class ForgeTranslationRuntime {
      * never one that was already handed to the reaper.
      *
      * <p>The reaper is a single unbounded queue, so a burst of switches — holding F8 down, or a
-     * HUD drag that re-initializes several times a second — used to queue one live session with its
-     * thread pool and caches per press, each worth up to five seconds of teardown. Past
-     * {@link #MAX_PENDING_TEARDOWNS} the caller now performs the teardown itself: the tick that
-     * switched pays the cost instead of the process growing an unbounded backlog of live sessions.
+     * HUD drag that re-initializes several times a second — queues one live session with its thread
+     * pool and caches per press, each worth up to five seconds of teardown. That backlog is never
+     * handed back to the caller: {@link #PENDING_TEARDOWNS} reports its depth, and past
+     * {@link #MAX_PENDING_TEARDOWNS} the depth is recorded in the debug log, because performing the
+     * teardown here would block the client tick for up to five seconds per press — exactly the
+     * freeze this reaper exists to prevent.
      */
     private static void closeInBackground(final RenderTranslationSession replaced) {
         if (replaced == null) {
             return;
         }
-        if (PENDING_TEARDOWNS.incrementAndGet() > MAX_PENDING_TEARDOWNS) {
-            try {
-                replaced.close();
-            } catch (Throwable ignored) {
-                // Same contract as the reaper body: a teardown must never take the caller down.
-            } finally {
-                PENDING_TEARDOWNS.decrementAndGet();
-            }
-            return;
+        if (PENDING_TEARDOWNS.incrementAndGet() == MAX_PENDING_TEARDOWNS + 1) {
+            DebugLog.global().log("runtime", "teardown", "backlog",
+                    "pending", Integer.toString(MAX_PENDING_TEARDOWNS + 1));
         }
         try {
             SESSION_REAPER.execute(new Runnable() {
@@ -304,27 +301,34 @@ public final class ForgeTranslationRuntime {
                 || screen instanceof UniversalTranslatorLlmConfigScreen;
     }
 
-    static synchronized void shutdown() {
-        RenderTranslationSession active = session;
-        session = null;
-        // Clear the published settings too, not just the session. Leaving them behind made a failed
-        // initialize() permanent: session == null meant "nothing translates", while the HUD read
-        // cachedHome.enabled == true and kept painting the "translation is on" indicator,
-        // diagnostics() reported a provider that no longer exists, and requireActiveConfig() handed
-        // the broken configuration back to the Home toggles, which then saved it over the file.
-        activeConfig = null;
-        activeProvider = null;
-        cachedHome = null;
-        diagnosticsSnapshot = null;
-        diagnosticsSnapshotAt = 0L;
-        protectedPlayerNames = Collections.emptyList();
-        protectedPlayerNamesExpireAt = 0L;
-        RECENT_USER_TEXT.clear();
-        outgoingTail = CompletableFuture.completedFuture(null);
-        invalidateRenderMemo();
-        // Both caches outlive the session on purpose (they are shared by every snapshot of the same
-        // file), so releasing the configuration is the point where they are dropped instead.
-        ForgeConfig.clearCaches();
+    static void shutdown() {
+        RenderTranslationSession active;
+        synchronized (ForgeTranslationRuntime.class) {
+            active = session;
+            session = null;
+            // Clear the published settings too, not just the session. Leaving them behind made a failed
+            // initialize() permanent: session == null meant "nothing translates", while the HUD read
+            // cachedHome.enabled == true and kept painting the "translation is on" indicator,
+            // diagnostics() reported a provider that no longer exists, and requireActiveConfig() handed
+            // the broken configuration back to the Home toggles, which then saved it over the file.
+            activeConfig = null;
+            activeProvider = null;
+            cachedHome = null;
+            diagnosticsSnapshot = null;
+            diagnosticsSnapshotAt = 0L;
+            protectedPlayerNames = Collections.emptyList();
+            protectedPlayerNamesExpireAt = 0L;
+            RECENT_USER_TEXT.clear();
+            outgoingTail = CompletableFuture.completedFuture(null);
+            invalidateRenderMemo();
+            // Both caches outlive the session on purpose (they are shared by every snapshot of the same
+            // file), so releasing the configuration is the point where they are dropped instead.
+            ForgeConfig.clearCaches();
+        }
+        // Both waits below are bounded but long -- two seconds for the write queue, up to five for a
+        // session with a worker parked in a provider read -- so they run outside the class monitor:
+        // initialize() takes that same monitor from the render thread on a settings change, and holding
+        // it here froze one frame meanwhile.
         ForgeConfigWriter.shutdown();
         if (active != null) {
             active.close();
@@ -475,7 +479,10 @@ public final class ForgeTranslationRuntime {
         Minecraft client = Minecraft.getInstance();
         if (active == null || config == null || !config.allows(kind)
                 || TranslationRenderContext.isTextInput()) {
-            return originals;
+            // The same read-only answer the core hands back. A bridge that renders with translation on
+            // and then off must not see the list become editable: the first set/sort/add that works in
+            // one state throws UnsupportedOperationException in the other, once per frame.
+            return originals == null ? null : Collections.unmodifiableList(originals);
         }
         return active.lookupLines(originals, kind);
     }

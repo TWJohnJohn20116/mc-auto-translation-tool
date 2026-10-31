@@ -58,6 +58,13 @@ public final class RenderTranslationSession implements AutoCloseable {
      * on screen at the same time, so the drawn lines do not evict each other between frames.
      */
     private static final int STRIPPED_MEMO_SLOTS = 64;
+    /**
+     * Slots of the tooltip-line memos. Two or three lists are on screen at once (an item tooltip next
+     * to a HUD panel, a WAILA-style overlay over the inventory), and with a single slot an alternating
+     * A/B/A/B sequence missed on every frame. Four slots cover the alternating case while keeping only
+     * a few dozen line references alive.
+     */
+    private static final int LINE_MEMO_SLOTS = 4;
 
     private final TranslationCoordinator coordinator;
     private final String providerCategory;
@@ -106,13 +113,20 @@ public final class RenderTranslationSession implements AutoCloseable {
     private volatile boolean closed;
     /** When {@link #reclaimExpiredPending} may run again; see the interval constant. */
     private volatile long nextPendingReclaimAtMillis;
-    // Single-slot memo for the tooltip join. Screen.getTooltipFromItem calls the line path once per
-    // frame with the same list instance, so without this every frame built a fresh ~1 KB String and
-    // re-hashed it inside the lookup key. Reuse is decided by element identity, so a list that really
-    // changed can never serve a stale join.
-    private volatile JoinedLines joinedLines;
-    /** Finished output of {@link #lookupLines} in translated-only mode, if the last call had one. */
-    private volatile LinesMemo translatedLinesMemo;
+    // Memo for the tooltip join. Screen.getTooltipFromItem calls the line path once per frame with
+    // the same list instance, so without this every frame built a fresh ~1 KB String and re-hashed it
+    // inside the lookup key. The slot is only where a candidate is looked for: it is accepted after
+    // comparing the contents it was built from, and the entry keeps its own copy of those lines, so a
+    // caller that edits its list in place can never be served the previous frame's join.
+    private final AtomicReferenceArray<JoinedLines> joinedLines =
+            new AtomicReferenceArray<JoinedLines>(LINE_MEMO_SLOTS);
+    /**
+     * Finished output of {@link #lookupLines} in translated-only mode, one slot per line list. A
+     * single slot meant the alternating tooltips of one screen rebuilt the join, the lookup and the
+     * split of both lists on every frame.
+     */
+    private final AtomicReferenceArray<LinesMemo> translatedLinesMemo =
+            new AtomicReferenceArray<LinesMemo>(LINE_MEMO_SLOTS);
     /** Finished output of {@link #lookupLines} in bilingual mode, for the lines it already answered. */
     private volatile LinesMemo bilingualLinesMemo;
     /**
@@ -122,7 +136,17 @@ public final class RenderTranslationSession implements AutoCloseable {
      * thread every frame. A single slot is not a memo for this path: the drawn lines take turns, so a
      * second formatted line on screen made every lookup a miss and copied the whole line again.
      */
-    private final AtomicReferenceArray<StrippedFormatting> stripped =
+    private final AtomicReferenceArray<StrippedFormatting> strippedInputs =
+            new AtomicReferenceArray<StrippedFormatting>(STRIPPED_MEMO_SLOTS);
+    /**
+     * The same memo for our own translated output. It is a second array because the two questions have
+     * different populations: every formatted line the hooks see asks "is this our own output", while
+     * only the lines we produced ask for their stripped form. Sharing one array let the hundreds of
+     * new formatted labels a lobby produces per second evict the entries of the stable translated
+     * lines, so those were stripped -- a StringBuilder plus a copy of the whole line -- again on every
+     * frame, which is the cost that made the memo worth adding.
+     */
+    private final AtomicReferenceArray<StrippedFormatting> strippedOutputs =
             new AtomicReferenceArray<StrippedFormatting>(STRIPPED_MEMO_SLOTS);
     private volatile String lastFailureStatus = "";
     /**
@@ -408,6 +432,15 @@ public final class RenderTranslationSession implements AutoCloseable {
             retryAfter.remove(key);
             return false;
         }
+        if (isUnchangedOutput(error)) {
+            // The provider handed the source text back, so it has nothing to translate here. That is
+            // a final verdict, not a failure worth retrying: queuing it made the line cost one paid
+            // request every FAILURE_RETRY_MILLIS for the rest of the session. Remembering it is the
+            // exit the "nothing translatable" path already uses.
+            retryAfter.remove(key);
+            rememberRejected(key);
+            return false;
+        }
         if (error != null || result == null || result.isFailure()) {
             // Bound on the map, not on the insertion-order queue: ConcurrentLinkedQueue.size() walks
             // every node, and this check runs inside the session monitor on every failure callback --
@@ -526,7 +559,9 @@ public final class RenderTranslationSession implements AutoCloseable {
      *
      * <p>Every return value is read-only, so a caller cannot edit an answer that several frames share
      * and cannot observe that the first frame handed it a mutable list while a later frame handed it an
-     * unmodifiable one.
+     * unmodifiable one. A platform wrapper that answers a render call without reaching this method --
+     * translation switched off, a settings screen, the chat input -- has to wrap its own list the same
+     * way, or the contract holds only while translation is running.
      */
     public List<String> lookupLines(List<String> originals, TextKind kind) {
         if (originals == null) {
@@ -586,11 +621,12 @@ public final class RenderTranslationSession implements AutoCloseable {
         // The whole result is remembered, not just the join: a hit means the joined line is already
         // translated, so splitting it again only rebuilt n substrings for a list that cannot have
         // changed since the last frame.
-        LinesMemo memo = translatedLinesMemo;
+        int slot = lineMemoSlot(originals, effectiveKind);
+        LinesMemo memo = translatedLinesMemo.get(slot);
         if (memo != null && memo.matches(originals, effectiveKind)) {
             return memo.output();
         }
-        JoinedLines joined = joinedLines(originals);
+        JoinedLines joined = joinedLines(originals, slot);
         String originalText = joined.text;
         if (originalText == null) {
             return Collections.unmodifiableList(originals);
@@ -603,8 +639,9 @@ public final class RenderTranslationSession implements AutoCloseable {
         if (translatedLines.size() != originals.size()) {
             return Collections.unmodifiableList(originals);
         }
-        translatedLinesMemo = new LinesMemo(originals, effectiveKind, translatedLines);
-        return translatedLinesMemo.output();
+        LinesMemo rebuilt = new LinesMemo(originals, effectiveKind, translatedLines);
+        translatedLinesMemo.set(slot, rebuilt);
+        return rebuilt.output();
     }
 
     /**
@@ -709,17 +746,26 @@ public final class RenderTranslationSession implements AutoCloseable {
         private final String text;
 
         private JoinedLines(List<String> source, String text) {
-            this.source = source;
+            // A copy, for the same reason LinesMemo copies its own source: the memo is accepted by
+            // comparing contents, and the list the tooltip path passes is the one it fills in place.
+            // Holding the caller's instance made an edited list equal to its own stale entry, so the
+            // previous frame's join was returned for the new lines -- and the translation of the old
+            // item stayed on the new one for as long as the list kept changing.
+            this.source = Collections.unmodifiableList(new ArrayList<String>(source));
             this.text = text;
         }
     }
 
     /**
-     * Joins the lines with {@code '\n'}, reusing the previous result when the same lines are passed
+     * Joins the lines with {@code '\n'}, reusing an earlier result when the same lines are passed
      * again, and reports {@code null} text when one line cannot survive the round trip.
+     *
+     * <p>{@code slot} only says where to look; the entry found there is accepted after
+     * {@link #sameLines} confirmed its contents, so a list that shares the slot with another list
+     * costs one rebuild instead of a wrong answer.
      */
-    private JoinedLines joinedLines(List<String> originals) {
-        JoinedLines previous = joinedLines;
+    private JoinedLines joinedLines(List<String> originals, int slot) {
+        JoinedLines previous = joinedLines.get(slot);
         if (previous != null && sameLines(previous.source, originals)) {
             return previous;
         }
@@ -728,7 +774,7 @@ public final class RenderTranslationSession implements AutoCloseable {
             String line = originals.get(index);
             if (line == null || line.indexOf('\n') >= 0 || line.indexOf('\r') >= 0) {
                 JoinedLines unjoinable = new JoinedLines(originals, null);
-                joinedLines = unjoinable;
+                joinedLines.set(slot, unjoinable);
                 return unjoinable;
             }
             if (index > 0) {
@@ -737,7 +783,7 @@ public final class RenderTranslationSession implements AutoCloseable {
             joined.append(line);
         }
         JoinedLines result = new JoinedLines(originals, joined.toString());
-        joinedLines = result;
+        joinedLines.set(slot, result);
         return result;
     }
 
@@ -746,10 +792,38 @@ public final class RenderTranslationSession implements AutoCloseable {
      *
      * <p>Content, not identity: the tooltip path rebuilds its list from the components on every
      * frame, so an identity check would never hit. Equal lines always join to the same text, so a
-     * content match can never serve a stale join.
+     * content match can never serve a stale join -- provided {@code cached} is a snapshot and not the
+     * caller's own list, which is why both memos store a copy.
      */
     private static boolean sameLines(List<String> cached, List<String> current) {
         return cached != null && cached.equals(current);
+    }
+
+    /**
+     * Slot of {@code lines} in the two translated-only line memos ({@code joinedLines} and
+     * {@code translatedLinesMemo}).
+     *
+     * <p>A content hash, because identity would put every rebuilt tooltip list in a new slot; the
+     * same FNV-1a mix the protected-literal signature uses, and no allocation. It is a hint only: the
+     * memo verifies the whole list before it answers, so a collision costs one rebuild.
+     */
+    private static int lineMemoSlot(List<String> lines, TextKind kind) {
+        int hash = 0x811c9dc5;
+        for (int index = 0; index < lines.size(); index++) {
+            String line = lines.get(index);
+            if (line != null) {
+                for (int offset = 0; offset < line.length(); offset++) {
+                    hash ^= line.charAt(offset);
+                    hash *= 0x01000193;
+                }
+            }
+            // Separates adjacent lines so ["ab", "c"] cannot hash like ["a", "bc"].
+            hash ^= 0x1f;
+            hash *= 0x01000193;
+        }
+        hash ^= kind.ordinal();
+        hash *= 0x01000193;
+        return (hash ^ (hash >>> 16)) & (LINE_MEMO_SLOTS - 1);
     }
 
     /**
@@ -843,7 +917,7 @@ public final class RenderTranslationSession implements AutoCloseable {
             // which is why the strip is not attempted unconditionally.
             return false;
         }
-        String unformatted = strippedVariant(text);
+        String unformatted = strippedVariant(strippedInputs, text);
         return unformatted != text && translatedOutputs.containsKey(unformatted);
     }
 
@@ -859,37 +933,33 @@ public final class RenderTranslationSession implements AutoCloseable {
         if (output.indexOf('\u00a7') < 0) {
             return;
         }
-        StrippedFormatting cached = stripped.get(strippedSlot(output));
-        if (cached != null && cached.source == output) {
-            rememberRenderedOutput(cached.result);
-            return;
-        }
-        rememberRenderedOutput(strippedVariant(output));
+        rememberRenderedOutput(strippedVariant(strippedOutputs, output));
     }
 
     /**
-     * The formatting-stripped form of {@code text}, remembered by identity.
+     * The formatting-stripped form of {@code text}, remembered by identity in {@code memo}.
      *
      * <p>{@code TranslationTextStyling.stripLegacyFormatting} builds a StringBuilder and copies the
      * line character by character whenever a formatting code is present, and the re-entry guard asked
      * for that copy on every frame for a text that is not yet known to be one of our outputs. Identity
-     * is enough to reuse the answer because a {@link String} never changes its contents, and the memo
+     * is enough to reuse the answer because a {@link String} never changes its contents, and each memo
      * holds one slot per line on screen, so two drawn lines no longer evict each other between frames.
      */
-    private String strippedVariant(String text) {
+    private static String strippedVariant(
+            AtomicReferenceArray<StrippedFormatting> memo, String text) {
         int slot = strippedSlot(text);
-        StrippedFormatting cached = stripped.get(slot);
+        StrippedFormatting cached = memo.get(slot);
         if (cached != null && cached.source == text) {
             return cached.result;
         }
         StrippedFormatting computed = new StrippedFormatting(
                 text, TranslationTextStyling.stripLegacyFormatting(text));
-        stripped.set(slot, computed);
+        memo.set(slot, computed);
         return computed.result;
     }
 
     /**
-     * Slot of {@code text} in {@link #stripped}.
+     * Slot of {@code text} in a {@link StrippedFormatting} memo.
      *
      * <p>The identity hash of a string never changes, so the same line always lands in the same slot.
      * Two different lines that share one slot only take turns without ever seeing each other's result,
@@ -963,6 +1033,22 @@ public final class RenderTranslationSession implements AutoCloseable {
         // spin here, and neither must a provider that wraps the same failure indefinitely.
         for (int depth = 0; current != null && depth < 16; depth++) {
             if (current instanceof TranslationCoordinator.SessionClosedException) {
+                return true;
+            }
+            Throwable cause = current.getCause();
+            current = cause == current ? null : cause;
+        }
+        return false;
+    }
+
+    /**
+     * Whether {@code error} is the validator's "the provider answered with the source text" verdict,
+     * looking through the stage wrappers a chained future adds.
+     */
+    private static boolean isUnchangedOutput(Throwable error) {
+        Throwable current = error;
+        for (int depth = 0; current != null && depth < 16; depth++) {
+            if (current instanceof TranslationOutputValidator.UnchangedOutputException) {
                 return true;
             }
             Throwable cause = current.getCause();
@@ -1114,11 +1200,14 @@ public final class RenderTranslationSession implements AutoCloseable {
         rejected.clear();
         rejectedOrder.clear();
         // The line-path memos answer from the tables that were just emptied.
-        translatedLinesMemo = null;
+        for (int slot = 0; slot < LINE_MEMO_SLOTS; slot++) {
+            translatedLinesMemo.set(slot, null);
+            joinedLines.set(slot, null);
+        }
         bilingualLinesMemo = null;
-        joinedLines = null;
         for (int slot = 0; slot < STRIPPED_MEMO_SLOTS; slot++) {
-            stripped.set(slot, null);
+            strippedInputs.set(slot, null);
+            strippedOutputs.set(slot, null);
         }
         clearFailureStatus();
         nextPendingReclaimAtMillis = 0L;

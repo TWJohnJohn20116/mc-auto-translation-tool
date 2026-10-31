@@ -32,11 +32,21 @@ def implementationJars = supportedVersions.collectEntries { gameVersion ->
     [(gameVersion): project(":platform-fabric-${gameVersion}").tasks.named("remapJar")]
 }
 
+// The one declared loader/java floor for all five members. It has to be the weakest requirement
+// among them: a single jar has to stay installable for every release it ships, so the stricter
+// per-version floor stays where it belongs, in that member's own fabric.mod.json. Declaring the
+// number once here keeps it from being hand-copied into the template and drifting.
+ext.bundleLoaderFloor = "0.19.3"
+ext.bundleJavaFloor = "17"
+
 processResources {
     inputs.property "version", project.version
     inputs.property "fabricDependency", gradle.ext.fabricApiModId
+    inputs.property "loaderFloor", project.ext.bundleLoaderFloor
+    inputs.property "javaFloor", project.ext.bundleJavaFloor
     filesMatching("fabric.mod.json") {
-        expand "version": project.version, "fabricDependency": gradle.ext.fabricApiModId
+        expand "version": project.version, "fabricDependency": gradle.ext.fabricApiModId,
+                "loaderFloor": project.ext.bundleLoaderFloor, "javaFloor": project.ext.bundleJavaFloor
     }
 }
 
@@ -63,17 +73,30 @@ tasks.register("verifyBundle") {
         def required = ["fabric.mod.json"] + supportedVersions.collect {
             "META-INF/jars/universal-translator-${it}.jar"
         }
-        // One walk for the whole list: collect the entries that exist, then compare names. zipTree used
-        // to be built inside the loop, so every required entry re-listed the entire jar — one full ZIP
-        // parse per required entry per bundle, each nested jar being a multi-megabyte deflate stream.
+        // One walk of the central directory, and entry names are kept whole. zipTree used to be built
+        // inside the loop (one full ZIP parse per required entry per bundle) and handed back temp
+        // files, so the comparison had already been reduced to `it.name` — a nested jar that sat one
+        // directory deeper than META-INF/jars still passed while the Loader could not find it.
         def present = [] as Set
-        zipTree(archive).matching {
-            include "fabric.mod.json"
-            include "META-INF/jars/universal-translator-*.jar"
-        }.files.each { present.add(it.name) }
-        def missing = required.findAll { !present.contains(it.tokenize('/').last()) }
+        new java.util.zip.ZipFile(archive).withCloseable { zip ->
+            zip.entries().each { entry ->
+                if (!entry.directory) {
+                    present.add(entry.name)
+                }
+            }
+        }
+        def missing = required.findAll { !present.contains(it) }
         if (!missing.isEmpty()) {
             throw new GradleException("Missing bundle entries: ${missing}")
+        }
+        // The Loader reads `jars[].file` as an absolute archive path, so a misplaced nested jar is the
+        // same failure as a missing one and is not worth discovering at resolution time.
+        def misplaced = present.findAll {
+            it.contains("universal-translator-") && it.endsWith(".jar")
+                    && !it.startsWith("META-INF/jars/")
+        }
+        if (!misplaced.isEmpty()) {
+            throw new GradleException("Nested bundle JARs outside META-INF/jars: ${misplaced}")
         }
         verifyBundleMetadata()
         println "Verified ${archive.name}: all ${supportedVersions.size()} Minecraft 1.19 implementations present"

@@ -303,7 +303,7 @@ final class UniversalTranslatorDiagnosticsScreen extends UniversalTranslatorScre
         }
         exporting = true;
         refreshExportButtons();
-        ScreenWorkerPool.execute(new Runnable() {
+        ScreenWorkerPool.export(new Runnable() {
             @Override
             public void run() {
                 String message;

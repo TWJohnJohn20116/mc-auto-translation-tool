@@ -12,6 +12,7 @@ import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Collections;
+import java.util.concurrent.ConcurrentHashMap;
 import org.universaltranslator.core.UserAgent;
 import org.universaltranslator.core.net.CryptoSupport;
 
@@ -20,6 +21,20 @@ public final class VerifiedDownloader {
     private static final int MAX_REDIRECTS = 8;
     /** Smallest progress step reported to the caller; the final byte is always reported. */
     private static final long PROGRESS_STEP_BYTES = 1024L * 1024L;
+    /**
+     * SHA-256 mismatches a partial file may produce before its existing prefix is trusted again.
+     *
+     * <p>Dropping the whole partial on every mismatch is safe, and it is the first answer because the
+     * resume offset is a length nothing ever verified — keeping it made one corrupt prefix
+     * uninstallable. It is also the wrong answer for the other failure this class meets: a proxy or
+     * CDN that corrupts one range deterministically leaves every byte outside that range correct, so
+     * always restarting from zero can never converge while a kept prefix gets past it. The prefix is
+     * therefore trusted only once a full restart has been shown not to help.
+     */
+    private static final int SHA_MISMATCH_RESTARTS_BEFORE_KEEPING_PREFIX = 2;
+    /** How many mismatches one partial file has produced in this process, keyed by its path. */
+    private static final ConcurrentHashMap<String, Integer> SHA_MISMATCH_STREAK =
+            new ConcurrentHashMap<String, Integer>();
 
     /** Receives verified byte progress without owning any UI or platform code. */
     public interface ProgressListener {
@@ -119,6 +134,7 @@ public final class VerifiedDownloader {
         } else if (offset == expectedSize) {
             if (isVerifiedContent(partial, expectedSha256)) {
                 progress.onProgress(expectedSize, expectedSize);
+                forgetMismatch(partial);
                 moveVerifiedPartial(partial, destination);
                 ModelVerificationCache.forget(partial);
                 ModelVerificationCache.remember(destination, expectedSha256);
@@ -191,16 +207,23 @@ public final class VerifiedDownloader {
         }
         String actualSha256 = sha256(partial);
         if (!expectedSha256.equalsIgnoreCase(actualSha256)) {
-            // Nothing in this file is known to be right. The resume offset is only the length of
+            // Nothing in this file is known to be right: the resume offset is only the length of
             // bytes no verification ever covered, so keeping the part written before this attempt
-            // replayed the same mismatch forever: one broken prefix made the asset uninstallable,
-            // re-downloading the remainder on every launch. Dropping the partial costs one mirror's
-            // progress and is the only state the next attempt can safely start from.
-            discardUnverifiedTail(partial, 0L);
+            // replayed the same mismatch forever and one broken prefix made the asset uninstallable.
+            // Dropping the partial is therefore the first answer. It is not the only one: a range one
+            // proxy or CDN corrupts deterministically leaves everything outside it correct, and that
+            // case converges only if the prefix survives. Which of the two this is cannot be told from
+            // one mismatch, so the prefix is trusted once full restarts have shown they do not help.
+            boolean keepPrefix = keepPrefixAfterMismatch(partial);
+            discardUnverifiedTail(partial, keepPrefix ? offset : 0L);
             throw new IOException("Downloaded file failed SHA-256 verification; "
-                    + partial.getFileName() + " was discarded, so the next attempt starts from the "
-                    + "first byte");
+                    + partial.getFileName()
+                    + (keepPrefix
+                            ? " was truncated to the " + offset + "-byte prefix the next attempt"
+                                    + " resumes from"
+                            : " was discarded, so the next attempt starts from the first byte"));
         }
+        forgetMismatch(partial);
         progress.onProgress(expectedSize, expectedSize);
         moveVerifiedPartial(partial, destination);
         ModelVerificationCache.remember(destination, expectedSha256);
@@ -235,6 +258,30 @@ public final class VerifiedDownloader {
                 // A leftover partial is retried from its recorded length next time.
             }
         }
+    }
+
+    /**
+     * Notes one SHA-256 mismatch of {@code partial}.
+     *
+     * @param partial partial file that failed verification
+     * @return {@code true} when full restarts have already been shown not to help
+     */
+    private static boolean keepPrefixAfterMismatch(Path partial) {
+        String key = streakKey(partial);
+        Integer previous = SHA_MISMATCH_STREAK.get(key);
+        int streak = previous == null ? 1 : previous.intValue() + 1;
+        SHA_MISMATCH_STREAK.put(key, Integer.valueOf(streak));
+        return streak > SHA_MISMATCH_RESTARTS_BEFORE_KEEPING_PREFIX;
+    }
+
+    /** Forgets the mismatch memory of {@code partial}, which now verifies. */
+    private static void forgetMismatch(Path partial) {
+        SHA_MISMATCH_STREAK.remove(streakKey(partial));
+    }
+
+    /** Identity of one partial file in {@link #SHA_MISMATCH_STREAK}. */
+    private static String streakKey(Path partial) {
+        return partial.toAbsolutePath().normalize().toString();
     }
 
     /**

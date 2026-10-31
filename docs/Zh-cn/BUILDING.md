@@ -311,11 +311,12 @@ Wrapper 固定 Gradle 2.14.1，ForgeGradle 使用 2.1 系列，Forge 固定
 
 ## 发布 JAR 验证与缩减
 
-根检查会验证所有已跟踪的发布 JAR 及 SHA-256：
-
-```bash
-./gradlew check
-```
+PR 必经的 `./gradlew check` **不验证发布资产**：它需要 `downloads/<mod_version>`，而那个目录是发布后
+才存在的，把它挂回 `check` 会让「改版本号」与「必经检查」互锁（C2-163）。发布资产的验证入口是三个：
+`./gradlew verifyReleaseJars` 验证任意已构建的 JAR（ZIP/metadata/Mixin/refmap/选版）；
+`./gradlew verifyPreparedReleaseAssets` 验证 `downloads/<版本>` 的 48 颗与缩减后的 31 颗；
+`./gradlew verifyPublishedRelease` 是上面两者的聚合，由 `prepare-release.yml` 与 `build.yml` 的
+`release-assets` job 明确调用（后者在 `downloads/<mod_version>` 不存在时整步略过）。
 
 也可直接验证任意构建产物：
 
@@ -327,7 +328,7 @@ python3 scripts/verify_release_jars.py path/to/mod.jar
 Forge 旧版运行时映射、版本一致性、checksum 内容与覆盖范围。Fabric/Forge 1.16.5、
 1.19.2 与 1.20.1 的 `build` 任务也会验证它们生成的 JAR。
 
-发布流程会将 48 个发布构建产物缩减为 31 个可直接安装的 JAR：51 个 Fabric 实现会
+验证与缩减是两件事：验证只确认产物结构正确，缩减才改变产物数量。发布流程会将 48 个发布构建产物缩减为 31 个可直接安装的 JAR：51 个 Fabric 实现会
 放进一个由 Loader 自动选版的 JAR；四组 Forge 版本在 payload 兼容时扩宽范围；
 Forge／NeoForge 1.20.1 保留为分别验证的加载器专用 JAR。不同 API 仍保持独立：
 
@@ -342,7 +343,7 @@ python3 scripts/prepare_release_assets.py \
 
 | 类别 | 内容 | 是否随正式版发布 |
 | --- | --- | --- |
-| 发布目标（48 个） | 覆盖 Fabric 1.13–26.3、Forge 1.8.9–26.2、NeoForge 1.20.1–26.2 | 是，缩减为 31 个可安装 JAR |
+| 发布目标（48 个） | Fabric 1.13–26.3（连续）、Forge 1.8.9／1.12.2／1.16.5／1.18.2／1.19.2／1.20.1／1.21、1.21.1、1.21.3–1.21.11／26.1–26.2（缺口版本由 `mods.toml` 拒绝载入）、NeoForge 1.20.1–26.2（每版一颗） | 是，缩减为 31 个可安装 JAR |
 | source-only bundle（2 个） | `fabric-1.0-1.8.x`（1.3.1–1.8.8 中的 26 个版本）与 `fabric-1.8-1.12.x`（1.8.9–1.12.2，15 个版本） | 否，只在 `legacy-targets.yml` 建置，从不出现在 `downloads/<版本>/` |
 
 所以 `fabric-all` 只含 1.13–26.3 的 51 个精确实作；1.3.1–1.12.2 的玩家要自行构建这两个 bundle。

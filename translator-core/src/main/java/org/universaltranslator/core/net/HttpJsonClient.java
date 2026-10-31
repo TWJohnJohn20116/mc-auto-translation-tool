@@ -622,24 +622,29 @@ public final class HttpJsonClient {
     }
 
     /**
-     * Reads a body up to {@link #MAX_RESPONSE_BYTES} and no further than {@code deadlineNanos}.
+     * Reads a body up to {@link #MAX_RESPONSE_BYTES} and no further than {@code deadlineNanos}
+     * without progress.
      *
      * <p>The byte bound alone never terminates a body that arrives slowly: a peer sending one byte
      * just before every read timeout keeps the request alive forever while staying under the size
-     * limit. The deadline turns that into an ordinary read failure.
+     * limit. The deadline turns that into an ordinary read failure — and it bounds <em>silence</em>,
+     * not the total time: a reasoning model that takes longer than four read timeouts to produce a
+     * long answer while the socket keeps delivering is a healthy answer, not a failed one. A body
+     * that stops arriving is still failed, and an absolute ceiling keeps a peer that trickles one
+     * byte per window from holding a worker forever. This is the same two-bound shape
+     * {@link DeadlineInputStream} uses for a streamed body, so one setting means one thing on both
+     * paths.
      *
-     * <p>This is the total-budget path: it exists for a non-streaming body, whose caller receives
-     * nothing until the whole answer is in. A streamed body goes through
-     * {@link DeadlineInputStream}, which is bounded on silence instead.
-     *
-     * @param deadlineNanos absolute {@link System#nanoTime()} value to stop at
+     * @param deadlineNanos absolute {@link System#nanoTime()} value the first no-progress window
+     *                      ends at
      */
     private static String readBounded(InputStream input, long deadlineNanos) throws IOException {
         return readBounded(input, deadlineNanos, MAX_RESPONSE_BYTES, false);
     }
 
     /**
-     * Reads a body up to {@code limit} bytes and no further than {@code deadlineNanos}.
+     * Reads a body up to {@code limit} bytes and no further than {@code deadlineNanos} without
+     * progress.
      *
      * @param truncate {@code true} to keep what arrived at {@code limit} instead of failing on size,
      *         which is what an error body needs: the status matters more than its tail
@@ -654,6 +659,14 @@ public final class HttpJsonClient {
             byte[] buffer = new byte[8192];
             int total = 0;
             int count;
+            // The deadline handed in bounds silence, and every read that delivers bytes re-arms it, so
+            // an answer that keeps arriving is never cut off at a fixed wall clock — the same shape
+            // DeadlineInputStream uses for a streamed body. The absolute ceiling still exists so a
+            // peer that trickles one byte per window cannot hold a worker for the session.
+            long progressBudgetNanos = Math.max(1L, deadlineNanos - System.nanoTime());
+            long progressDeadlineNanos = deadlineNanos;
+            long absoluteDeadlineNanos = System.nanoTime()
+                    + MAXIMUM_TIME_BUDGET_MILLIS * 1000L * 1000L;
             while ((count = source.read(buffer)) >= 0) {
                 total += count;
                 if (total > limit) {
@@ -663,9 +676,18 @@ public final class HttpJsonClient {
                     output.write(buffer, 0, count - (total - limit));
                     break;
                 }
-                if (System.nanoTime() - deadlineNanos > 0L) {
+                long now = System.nanoTime();
+                if (now - absoluteDeadlineNanos > 0L) {
                     throw new java.net.SocketTimeoutException(
                             "Translation response exceeded its total time budget");
+                }
+                if (now - progressDeadlineNanos > 0L) {
+                    throw new java.net.SocketTimeoutException(
+                            "Translation response received no data for "
+                                    + (progressBudgetNanos / 1000000L) + " ms");
+                }
+                if (count > 0) {
+                    progressDeadlineNanos = now + progressBudgetNanos;
                 }
                 output.write(buffer, 0, count);
             }

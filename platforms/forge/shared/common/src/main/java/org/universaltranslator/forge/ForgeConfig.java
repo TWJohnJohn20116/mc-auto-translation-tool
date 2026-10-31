@@ -53,6 +53,16 @@ final class ForgeConfig {
      */
     private static volatile DiskCopy diskCopy;
 
+    /**
+     * The last snapshot this process built, kept after the live one is dropped.
+     *
+     * <p>{@link ForgeTranslationRuntime#shutdown()} clears {@code activeConfig} when a load fails,
+     * which is exactly the case where the player needs the settings screen to repair the file. Only
+     * the successful path of {@link #load(Path)} writes this, so it can never present a
+     * configuration that was never readable.
+     */
+    private static volatile ForgeConfig lastLoaded;
+
     /** One read of the configuration file: its parsed contents plus the stamp they were read at. */
     private static final class DiskCopy {
         final Path file;
@@ -278,6 +288,7 @@ final class ForgeConfig {
         // platform passes through at startup, so no runtime has to know about statistics.
         TranslationStats.global().attach(file.resolveSibling(TranslationStats.FILE_NAME));
         DebugLog.global().configure(file.resolveSibling(DebugLog.FILE_NAME), loaded.debugLog());
+        lastLoaded = loaded;
         return loaded;
     }
 
@@ -297,6 +308,16 @@ final class ForgeConfig {
     public static ForgeConfig liveOrLoad(Path configDirectory) throws IOException {
         ForgeConfig live = ForgeTranslationRuntime.diagnosticsConfig();
         return live == null ? load(configDirectory) : live;
+    }
+
+    /**
+     * The last configuration this process loaded, or {@code null} before the first success.
+     *
+     * <p>Used only by the settings entry points' failure branch: it is the copy to edit when the
+     * live one is gone and the file cannot be read again.
+     */
+    static ForgeConfig lastLoaded() {
+        return lastLoaded;
     }
 
     /**

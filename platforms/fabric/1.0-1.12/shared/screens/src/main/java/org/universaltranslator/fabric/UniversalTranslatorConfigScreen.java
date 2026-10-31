@@ -501,14 +501,15 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
         try {
             String prompt = customPrompt == null
                     ? base.customSystemPrompt()
-                    : TranslationPrompt.fromEditorText(customPrompt.getText());
+                    : TranslationPrompt.clampEditorText(customPrompt.getText());
             FabricConfig updated = base.withPromptSettings(quality, prompt);
             if (updated.enabled) {
                 updated.validateProviderConfiguration();
             }
             runtimeChanged = true;
             FabricTranslationRuntime.initialize(updated);
-            updated.save();
+            // Same writer as the F8 toggles, so an older queued snapshot cannot overwrite this one.
+            FabricTranslationRuntimeBase.saveInBackgroundAndWait(updated);
             setTestStatus(tr("screen.universal_translator.diagnostics.settings_saved"), false);
         } catch (Exception exception) {
             if (runtimeChanged) {
@@ -1122,7 +1123,8 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
             }
             runtimeChanged = true;
             FabricTranslationRuntime.initialize(updated);
-            updated.save();
+            // Same writer as the F8 toggles, so an older queued snapshot cannot overwrite this one.
+            FabricTranslationRuntimeBase.saveInBackgroundAndWait(updated);
             OrnitheClientAccess.openScreen(parent);
         } catch (Exception exception) {
             if (runtimeChanged) {

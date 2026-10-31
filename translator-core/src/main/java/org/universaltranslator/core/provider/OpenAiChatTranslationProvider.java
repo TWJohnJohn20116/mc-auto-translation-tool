@@ -56,14 +56,6 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
      */
     private static final int MAXIMUM_BATCH_COMPLETION_TOKENS = REASONING_COMPLETION_TOKENS * 2;
     /**
-     * How many times one batch budget may be halved after the endpoint refused it.
-     *
-     * <p>Three steps reach the smallest values these endpoints ship with; more would spend a paid
-     * request per step on an endpoint that will never accept a larger batch than its own cap, and
-     * the per-line repair already costs one request per line.
-     */
-    private static final int MAXIMUM_BATCH_BUDGET_REDUCTIONS = 3;
-    /**
      * How long this endpoint is left off the streaming path after one stream failed inside its
      * budget.
      *
@@ -150,14 +142,18 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
     /** Remembers an endpoint whose event stream never declares its own end. */
     private final StreamCompletionMemory streamMemory = new StreamCompletionMemory();
     /**
-     * Largest completion budget one batch has been observed to accept, lowered only by an actual
-     * refusal.
+     * Largest completion budget one batch has been observed to accept, keyed by the number of texts
+     * that batch carried and lowered only by an actual refusal.
      *
      * <p>Without it every batch of the session asked for the same value the endpoint had already
      * rejected: an endpoint capped at 8192 spent one refused request, one refused retry and then
      * sixteen single-line repairs on <em>every</em> batch, where the correct cost is one request.
+     * The reduction loop that learns the value is {@link BatchBudget}, so the two providers that
+     * gained a batch path later cannot rebuild the same defect on their own. See
+     * {@link BatchBudget.ByEntries} for why the batch size is part of the key.
      */
-    private volatile int acceptedBatchTokens = MAXIMUM_BATCH_COMPLETION_TOKENS;
+    private final BatchBudget.ByEntries acceptedBatchTokens =
+            new BatchBudget.ByEntries(MAXIMUM_BATCH_COMPLETION_TOKENS);
 
     /**
      * Groups nearby texts into one request, and decides who waits for whom.
@@ -285,7 +281,9 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         this.jsonOutput = jsonOutput == null ? JsonOutputMode.NONE : jsonOutput;
         TranslationTuning effectiveTuning = tuning == null ? TranslationTuning.DEFAULTS : tuning;
         this.gatherer = new BatchGatherer(effectiveTuning.batchSize(),
-                effectiveTuning.batchWindowMillis(), effectiveTuning.maximumConcurrentBatches());
+                effectiveTuning.batchWindowMillis(),
+                effectiveTuning.maximumConcurrentBatches(),
+                effectiveTuning.requestIntervalMillis());
         // The cache key has to name the endpoint and the header the credential travels in, not just
         // the model: two hosts that serve the same model name are not the same engine, and before
         // this the second one was never asked. Only the address and the header *name* are hashed, so
@@ -437,7 +435,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         // Usage and the trace describe a translation, so they are recorded for one that passed the
         // output validator: a rejected answer used to be counted as tokens spent and as an answer.
         String validated = TranslationOutputValidator.requireValid(request.getText(), translated);
-        recordUsage(response);
+        recordUsage(root);
         DebugLog.global().logResponse(providerId, request.getKind().name(), translated);
         return validated;
     }
@@ -482,11 +480,13 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
      *
      * <p>Only the ordinary response body carries {@code usage}; the event stream of a streamed
      * request does not, so a streamed line contributes to the request and latency counters but not
-     * to the token totals.
+     * to the token totals. The parsed document is handed in rather than the body, because both
+     * callers already parsed it to read the translation: giving the text back made every request
+     * pay for a second full parse of a multi-kilobyte answer.
      */
-    private void recordUsage(String response) {
-        if (response != null && response.indexOf("\"usage\"") >= 0) {
-            TranslationStats.global().recordUsage(providerId, response);
+    private void recordUsage(Object root) {
+        if (root instanceof Map && ((Map<?, ?>) root).containsKey("usage")) {
+            TranslationStats.global().recordParsedUsage(providerId, root);
         }
     }
 
@@ -607,10 +607,12 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         StreamAttempt attempt = new StreamAttempt();
         String body = requestBody(system, text, maximumTokens, false, true);
         StringBuilder accumulated = new StringBuilder(64);
-        // Characters already handed to the listener. Publishing the whole accumulation on every delta
-        // made one translation copy O(n^2) characters — a 1000-character answer behind 1000 deltas is
-        // half a megabyte of throwaway strings on the path the player waits on.
-        int[] published = new int[1];
+        // Publishing the whole accumulation on every delta made one translation copy O(n^2)
+        // characters — a 1000-character answer behind 1000 deltas is half a megabyte of throwaway
+        // strings on the path the player waits on. The threshold, and the closing publish that makes
+        // the last preview complete, both live in the publisher so the three streaming providers
+        // cannot drift apart.
+        ProviderSupport.PreviewPublisher preview = new ProviderSupport.PreviewPublisher(listener);
         try (HttpJsonClient.StreamedResponse response =
                      http.postStreaming(endpoint, body, credentialHeaders())) {
             if (!EventStream.isEventStream(response.getContentType())) {
@@ -629,19 +631,17 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             }
             try {
                 // One budget for one stream: the instant {@code HttpJsonClient} already computed for
-                // this response, which {@code api-read-timeout-ms} decides. A second constant here
-                // overrode that setting — a user who raised it for a slow endpoint still lost the
-                // stream at 180 s, and a user who lowered it was still tolerated for 180 s.
+                // this response, which {@code api-read-timeout-ms} decides, capped by the ceiling
+                // every streaming provider shares — without it one setting meant five minutes here
+                // and twenty on this path, which is the same disagreement in the other direction.
                 long deadlineNanos = response.getDeadlineNanos();
-                long progressBudgetMillis = Math.max(1L,
-                        (deadlineNanos - System.nanoTime()) / 1000000L);
+                long progressBudgetMillis = ProviderSupport.stallBudgetMillis(response);
                 // A keep-alive-only stream, or a session that is being closed, has to be able to end
                 // the read: the parser stops for silence and for its payload bounds, and only this
                 // wrapper can turn an interrupt into a failure while nothing is arriving.
                 ServerSentEvents.read(
                         StreamWatchdog.arm(streamBody, progressBudgetMillis),
-                        payload -> readEvent(providerId, payload, accumulated, listener, attempt,
-                                published),
+                        payload -> readEvent(providerId, payload, accumulated, attempt, preview),
                         deadlineNanos);
             } catch (IOException streamFailure) {
                 // A body that stopped arriving, or one that exceeded a byte bound, is not a rejection
@@ -664,10 +664,8 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         // still long enough to pass the validator, so without this test it would be written to the
         // persistent cache as a finished translation.
         if (attempt.complete && accumulated.length() > 0) {
-            if (published[0] != accumulated.length()) {
-                // The throttle may have held the tail back; the preview has to end up complete.
-                listener.onPartialText(accumulated.toString());
-            }
+            // The throttle may have held the tail back; the preview has to end up complete.
+            preview.finish(accumulated);
             attempt.content = accumulated.toString();
         }
         return attempt;
@@ -677,17 +675,15 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
      * Handles one event. Only {@code delta.content} is translation: {@code delta.reasoning_content}
      * is the model's chain of thought and must never be shown as the answer.
      *
-     * @param published how many characters the listener has already been handed, in a one-element
-     *                  array so the count survives across events
+     * @param preview hands the accumulated answer to the listener once it grew by a step
      * @return {@code false} to stop reading, after the sentinel or a relay-side error
      */
     private static boolean readEvent(
             String provider,
             String payload,
             StringBuilder accumulated,
-            TranslationStreamListener listener,
             StreamAttempt attempt,
-            int[] published
+            ProviderSupport.PreviewPublisher preview
     ) {
         if ("[DONE]".equals(payload.trim())) {
             // The sentinel is the unambiguous end: it needs no reading of a finish reason, and a
@@ -709,10 +705,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             DebugLog.global().logStreamEvent(provider, "delta", delta.length());
             // One callback per PARTIAL_TEXT_STEP_CHARS instead of one per delta: every callback used
             // to copy the whole accumulation, which is quadratic in the length of the answer.
-            if (accumulated.length() - published[0] >= ProviderSupport.PARTIAL_TEXT_STEP_CHARS) {
-                published[0] = accumulated.length();
-                listener.onPartialText(accumulated.toString());
-            }
+            preview.append(accumulated);
             // A relay may put the finish reason on the very chunk that carries the last text, so the
             // completion test runs here as well instead of only on the events that follow.
             markFinished(attempt, root);
@@ -869,7 +862,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             DebugLog.global().logRequest(providerId, model, endpoint.toString(),
                     group.get(0).getKind().name(), batchPreview(group));
         }
-        String response = postBatchWithinBudget(system, user, maximumTokens);
+        String response = postBatchWithinBudget(system, user, maximumTokens, group.size());
         Object root = JsonTree.parseOrNull(response);
         List<String> parsed = parseBatch(root, response, group.size());
         if (parsed == null && maximumTokens < REASONING_COMPLETION_TOKENS
@@ -877,7 +870,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             reasoningModel = true;
             int reasoningBudget = Math.min(REASONING_COMPLETION_TOKENS, acceptedReasoningTokens);
             if (reasoningBudget > maximumTokens) {
-                response = postBatchWithinBudget(system, user, reasoningBudget);
+                response = postBatchWithinBudget(system, user, reasoningBudget, group.size());
                 root = JsonTree.parseOrNull(response);
                 parsed = parseBatch(root, response, group.size());
             }
@@ -885,7 +878,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         if (parsed == null) {
             throw missingContent(root, response);
         }
-        recordUsage(response);
+        recordUsage(root);
         DebugLog.global().logResponse(providerId, group.get(0).getKind().name(),
                 parsed.size() + " entries");
         return parsed;
@@ -920,7 +913,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
     private int batchBudget(String requestBody, int entries) {
         int requested = ChatBudget.batchCompletionBudget(requestBody, entries,
                 MAXIMUM_BATCH_COMPLETION_TOKENS, MINIMUM_COMPLETION_TOKENS);
-        return Math.min(requested, acceptedBatchTokens);
+        return Math.min(requested, acceptedBatchTokens.forEntries(entries).budget());
     }
 
     /**
@@ -1158,31 +1151,14 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
      *
      * <p>Only a budget the endpoint actually accepted is recorded, and only when a refusal forced it
      * down: one refused request — including one refusing the <em>input</em> for being too long — must
-     * not narrow every later batch of the session.
+     * not narrow every later batch of that size. The loop itself is {@link BatchBudget}, so the
+     * three batching providers cannot drift apart on what may lower a budget, and the memory is held
+     * per batch size (see {@link #acceptedBatchTokens}).
      */
-    private String postBatchWithinBudget(String system, String text, int budget) throws Exception {
-        int attempt = budget;
-        int reductions = 0;
-        while (true) {
-            try {
-                String response = postBatch(system, text, attempt);
-                if (attempt < budget && attempt < acceptedBatchTokens) {
-                    acceptedBatchTokens = attempt;
-                }
-                return response;
-            } catch (HttpStatusException rejected) {
-                if (!rejectsCompletionBudget(rejected)
-                        || reductions >= MAXIMUM_BATCH_BUDGET_REDUCTIONS) {
-                    throw rejected;
-                }
-                int reduced = halvedBudget(attempt);
-                if (reduced >= attempt) {
-                    throw rejected;
-                }
-                attempt = reduced;
-                reductions++;
-            }
-        }
+    private String postBatchWithinBudget(String system, String text, int budget, int entries)
+            throws Exception {
+        return BatchBudget.post(acceptedBatchTokens.forEntries(entries), budget,
+                MINIMUM_COMPLETION_TOKENS, attempt -> postBatch(system, text, attempt));
     }
 
     /**
@@ -1305,7 +1281,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
      * @return half of it
      */
     private static int halvedBudget(int budget) {
-        return Math.max(MINIMUM_COMPLETION_TOKENS, budget / 2);
+        return BatchBudget.halved(budget, MINIMUM_COMPLETION_TOKENS);
     }
 
     /**
@@ -1316,8 +1292,12 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
      * budget. A message about the <em>input</em> being too long mentions "too long" and "exceed" as
      * well, and treating it as an output-budget refusal cut the thinking model's budget in half for a
      * request that had nothing to do with it.
+     *
+     * <p>Package-private because {@link BatchBudget} makes the same decision for the other two
+     * batching providers: a second copy of this whitelist is how the reduction loop would start
+     * firing on input-length refusals again.
      */
-    private static boolean rejectsCompletionBudget(HttpStatusException failure) {
+    static boolean rejectsCompletionBudget(HttpStatusException failure) {
         if (failure.getStatusCode() < 400 || failure.getStatusCode() >= 500) {
             return false;
         }
@@ -1328,7 +1308,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             return false;
         }
         return message.contains("max_tokens") || message.contains("max_completion_tokens")
-                || message.contains("max output");
+                || message.contains("max_output_tokens") || message.contains("max output");
     }
 
     /**

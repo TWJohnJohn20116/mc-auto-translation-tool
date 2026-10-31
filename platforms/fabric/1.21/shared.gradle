@@ -26,9 +26,8 @@ def sourceLayers = [
 ]
 
 // Groovy's String.minus removes the first occurrence of the substring, not a prefix, so this only
-// worked while the project name contained "platform-fabric-" exactly once (platform-fabric-1.21.4-1.21.5
-// needs ext.fabricSourceVersion to opt out). Strip the prefix explicitly and print the project path
-// with the derived value so a mis-registration is traceable.
+// worked while the project name contained "platform-fabric-" exactly once. Strip the prefix
+// explicitly and print the project path with the derived value so a mis-registration is traceable.
 def sourceVersion = project.ext.has("fabricSourceVersion") ?
         project.ext.fabricSourceVersion.toString() :
         (project.name.startsWith("platform-fabric-")
@@ -226,11 +225,15 @@ processResources {
     }
 }
 
+def javaReleaseTarget = gradle.ext.treeJavaTarget("platforms/fabric/1.21/")
+// Handed to the class-file gate applied below, so the bytecode is checked against the same number the
+// compiler is given instead of a second copy of it.
+ext.fabricReleaseJava = javaReleaseTarget
 tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
     // Read from settings.gradle's treeJavaRelease so the compile target and the Mixin bounds derived
     // from that same table cannot disagree.
-    options.release = gradle.ext.treeJavaTarget("platforms/fabric/1.21/")
+    options.release = javaReleaseTarget
 }
 
 java {
@@ -238,6 +241,10 @@ java {
 }
 
 apply from: rootProject.file("gradle/jar-contents.gradle")
+apply from: rootProject.file("gradle/fabric-release-jar-verify.gradle")
+// A mixin class that no shipped mixins.json lists is compiled, shipped and never applied, and
+// required:true never complains about that direction.
+apply from: rootProject.file("gradle/fabric-mixin-config-verify.gradle")
 
 ext.modmenuApiFamily = "yarn"
 ext.modmenuClientSourceSet = "client"

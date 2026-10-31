@@ -46,10 +46,14 @@ final class ResilientTranslationProvider implements TranslationProvider, AutoClo
     private final long minimumIntervalMillis;
     /** One request per interval; the same gate {@link TencentHunyuanProvider} uses. */
     private final RequestGate gate;
-    /** The vendor message that paused this provider, or {@code null} while it is not paused. */
-    private volatile String fatalReason;
-    /** {@link System#nanoTime()} instant the pause ends; {@code 0} while nothing is paused. */
-    private volatile long fatalUntilNanos;
+    /**
+     * The pause a vendor verdict started, or {@code null} while this provider is not paused.
+     *
+     * <p>One reference rather than two fields: the vendor message and the instant the pause ends are
+     * one fact, and a reader that took them separately could observe an active pause still carrying
+     * the previous reason and report the wrong one to the user.
+     */
+    private volatile FatalPause fatalPause;
 
     ResilientTranslationProvider(
             TranslationProvider delegate,
@@ -241,11 +245,11 @@ final class ResilientTranslationProvider implements TranslationProvider, AutoClo
      * @throws ProviderErrors.FatalException the verdict that started the pause
      */
     private void awaitFatalCooldown() {
-        long until = fatalUntilNanos;
-        if (until == 0L || System.nanoTime() - until >= 0L) {
+        FatalPause pause = fatalPause;
+        if (pause == null || System.nanoTime() - pause.untilNanos >= 0L) {
             return;
         }
-        String reason = fatalReason == null ? "Translation is paused" : fatalReason;
+        String reason = pause.reason == null ? "Translation is paused" : pause.reason;
         throw new ProviderErrors.FatalException(reason
                 + " (paused for " + TimeUnit.NANOSECONDS.toSeconds(FATAL_COOLDOWN_NANOS)
                 + " s so no further request is paid for a failure that cannot change)", "");
@@ -257,11 +261,12 @@ final class ResilientTranslationProvider implements TranslationProvider, AutoClo
         if (fatal == null) {
             return;
         }
-        if (fatalReason == null || !fatalReason.equals(fatal.getMessage())) {
+        FatalPause previous = fatalPause;
+        if (previous == null || !String.valueOf(previous.reason).equals(fatal.getMessage())) {
             DebugLog.global().logFailure(delegate.id(), fatal);
         }
-        fatalReason = fatal.getMessage();
-        fatalUntilNanos = System.nanoTime() + FATAL_COOLDOWN_NANOS;
+        // Published in one assignment so no reader can pair this message with the previous deadline.
+        fatalPause = new FatalPause(fatal.getMessage(), System.nanoTime() + FATAL_COOLDOWN_NANOS);
     }
 
     /** The fatal failure inside one cause chain, or {@code null}. */
@@ -281,10 +286,20 @@ final class ResilientTranslationProvider implements TranslationProvider, AutoClo
     public void close() throws Exception {
         // The pause is instance state, so closing clears it: a provider that is reopened must not
         // inherit a verdict about a credential the user may have replaced meanwhile.
-        fatalReason = null;
-        fatalUntilNanos = 0L;
+        fatalPause = null;
         if (delegate instanceof AutoCloseable) {
             ((AutoCloseable) delegate).close();
+        }
+    }
+
+    /** One immutable pause: the vendor message and the {@link System#nanoTime()} instant it ends. */
+    private static final class FatalPause {
+        private final String reason;
+        private final long untilNanos;
+
+        private FatalPause(String reason, long untilNanos) {
+            this.reason = reason;
+            this.untilNanos = untilNanos;
         }
     }
 }

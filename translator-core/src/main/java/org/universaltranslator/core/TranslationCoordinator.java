@@ -23,7 +23,7 @@ import java.util.Collections;
  */
 public final class TranslationCoordinator implements AutoCloseable {
     private static final int MAX_QUEUED_TRANSLATIONS = 128;
-    private static final long WORKER_SHUTDOWN_TIMEOUT_MILLIS = 5_000L;
+    private static final long WORKER_SHUTDOWN_TIMEOUT_MILLIS = ShutdownBudget.SESSION_CLOSE_MILLIS;
     /**
      * Prefix of every key written to the store. Bumping it invalidates the stored translations, and
      * only that: the in-flight de-duplication key has its own version, because it only has to stay
@@ -47,6 +47,16 @@ public final class TranslationCoordinator implements AutoCloseable {
     private static final String VALIDATION_RULES_VERSION = "validate-v2";
     /** Prefix of the in-flight de-duplication key; never written to the store. */
     private static final String REQUEST_KEY_VERSION = "request-v1";
+    /**
+     * The one stored entry that records which {@link #CACHE_FORMAT_VERSION} and
+     * {@link #VALIDATION_RULES_VERSION} wrote the store's contents.
+     *
+     * <p>Reserved, and not a translation: the store hashes every key it is given, so this entry
+     * occupies a slot like any other and the disk store's own load path keeps it (a hashed key is
+     * always its fixed digest length), while no cache key built from a source line can ever hash to
+     * it. The leading NUL only keeps it out of the readable text space.
+     */
+    private static final String CACHE_GENERATION_KEY = "\u0000cache-generation";
 
     private final TranslationProvider provider;
     private final TranslationStore cache;
@@ -70,6 +80,8 @@ public final class TranslationCoordinator implements AutoCloseable {
     // by the next refresh; that turns the scan into one pass per refresh.
     private volatile LiteralsSignature literalsSignature;
     private final AtomicBoolean closed = new AtomicBoolean();
+    /** Guards the once-per-coordinator {@link #migrateStoredGeneration()} run. */
+    private final AtomicBoolean cacheGenerationChecked = new AtomicBoolean();
 
     public TranslationCoordinator(TranslationProvider provider, TranslationStore cache, int workerCount) {
         this.provider = Objects.requireNonNull(provider, "provider");
@@ -304,6 +316,49 @@ public final class TranslationCoordinator implements AutoCloseable {
     }
 
     /**
+     * Drops the stored translations of a previous {@link #CACHE_FORMAT_VERSION} or
+     * {@link #VALIDATION_RULES_VERSION} and records the current generation, once per coordinator.
+     *
+     * <p>Both versions are part of every stored key, so bumping either makes every existing entry
+     * unreachable at once: the first session after an upgrade misses on every line -- up to the whole
+     * store, ten thousand provider requests, billed ones for a paid provider -- and the old entries
+     * keep occupying the entry cap until the new ones push them out, so half the capacity stays
+     * unusable meanwhile. Nothing in the store can notice that on its own, because the prefix is
+     * hashed into the key, so the generation is kept next to the entries as one reserved entry.
+     *
+     * <p>Runs on a worker, never on the caller: this reads the disk store and may rewrite it, and the
+     * render path must not wait for either.
+     */
+    private void migrateStoredGeneration() {
+        // Only a store that outlives the process can hold a previous generation; the memory store is
+        // built empty together with this coordinator.
+        if (!(cache instanceof PersistentTranslationCache)) {
+            return;
+        }
+        if (!cacheGenerationChecked.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            String wanted = CACHE_FORMAT_VERSION + '\n' + VALIDATION_RULES_VERSION;
+            String stored = cache.get(CACHE_GENERATION_KEY);
+            if (wanted.equals(stored)) {
+                return;
+            }
+            cache.clear();
+            cache.put(CACHE_GENERATION_KEY, wanted);
+            // Written out now: a session that ended before its own flush would leave no generation
+            // behind and repeat this clear on the next launch, dropping a whole cache every time.
+            cache.flush();
+            DebugLog.global().log("cache", "generation-invalidated",
+                    "from", stored == null ? "none" : stored.replace('\n', ' '),
+                    "to", wanted.replace('\n', ' '));
+        } catch (RuntimeException failed) {
+            // A store that cannot be migrated must not fail the translation that ran into it.
+            DebugLog.global().logFailure("cache-generation", failed);
+        }
+    }
+
+    /**
      * The worker body: protect, translate segment by segment, validate the assembled text, then
      * commit or roll back.
      *
@@ -316,6 +371,9 @@ public final class TranslationCoordinator implements AutoCloseable {
     private void runWorker(final Submission submission, final CompletableFuture<TranslationResult> created) {
         final String text = submission.text;
         try {
+            // Once per coordinator, on this worker: the store still holds the entries of the previous
+            // key generation, and every one of them is unreachable under the current key.
+            migrateStoredGeneration();
             ProtectedText protectedText = ProtectedText.parse(
                     text, submission.protectedLiterals, submission.preserveHanText);
             if (!LanguageHeuristics.shouldTranslateToTarget(
@@ -340,17 +398,53 @@ public final class TranslationCoordinator implements AutoCloseable {
             pendingCommit.commit();
             created.complete(TranslationResult.success(text, restored));
         } catch (Exception exception) {
-            created.complete(TranslationResult.failure(text, failureMessage(exception)));
+            created.complete(settleFailure(text, exception));
         } catch (Throwable fatal) {
             // LinkageError/UnsatisfiedLinkError from the offline native library, OutOfMemoryError and
             // StackOverflowError are not Exception subtypes. Complete the future first so callers
             // never leak an in-flight entry, then let the fatal error propagate and kill the worker
             // thread.
-            created.complete(TranslationResult.failure(text, failureMessage(fatal)));
+            created.complete(settleFailure(text, fatal));
             throw fatal;
         } finally {
             inFlight.remove(submission.requestKey, created);
         }
+    }
+
+    /**
+     * The result one failed request settles with.
+     *
+     * <p>A provider that hands the source text back is not a failure the caller may retry: the render
+     * session classifies every failure as either "the service is down" or "this request can never
+     * succeed", and only the second verdict must stop the retries. Rejecting the answer with a plain
+     * exception made every unchanged line — a server name, a mod title, "Requires Java 17" in item
+     * lore — a retryable one, so the session bought the same unchanged answer again every
+     * {@code FAILURE_RETRY_MILLIS} for as long as the line stayed on screen and kept a permanent
+     * failure line in the HUD.
+     * Settling it as {@link TranslationResult#unchanged(String)} is the verdict the session already
+     * remembers once for text that holds nothing translatable.
+     */
+    private static TranslationResult settleFailure(String text, Throwable failure) {
+        if (repeatsSource(failure)) {
+            return TranslationResult.unchanged(text);
+        }
+        return TranslationResult.failure(text, failureMessage(failure));
+    }
+
+    /**
+     * Whether {@code failure} is the validator's "this answer is the source text" verdict, looking
+     * through the stage wrappers a chained request adds.
+     */
+    private static boolean repeatsSource(Throwable failure) {
+        Throwable current = failure;
+        for (int depth = 0; current != null && depth < 16; depth++) {
+            if (current instanceof TranslationOutputValidator.UnchangedOutputException) {
+                return true;
+            }
+            Throwable cause = current.getCause();
+            current = cause == current ? null : cause;
+        }
+        return false;
     }
 
     /**

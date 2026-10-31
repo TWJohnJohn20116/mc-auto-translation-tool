@@ -313,12 +313,18 @@ public final class OnlineProviderConfig {
      *
      * <p>The worker count is carried for the round trip only; no provider reads
      * {@link TranslationTuning#workers()}, because concurrency is decided by the platform's thread
-     * pool. Batching is the only thing a provider takes from here, through
+     * pool. Batching is what a provider takes from here, through
      * {@link TranslationTuning#batching()}, {@link TranslationTuning#batchSize()} and
-     * {@link TranslationTuning#batchWindowMillis()}.
+     * {@link TranslationTuning#batchWindowMillis()}, plus the request interval the batch layer has
+     * to pace its own retries and per-line repairs with — those requests are sent from inside one
+     * translation call, so the gate {@link ResilientTranslationProvider} owns never sees them.
      */
     public TranslationTuning tuning() {
-        return new TranslationTuning(translationWorkers(), batchSize(), batchWindowMillis());
+        return new TranslationTuning(translationWorkers(), batchSize(), batchWindowMillis(),
+                integer("api-min-request-interval-ms",
+                        TranslationTuning.DEFAULT_REQUEST_INTERVAL_MILLIS,
+                        TranslationTuning.MINIMUM_REQUEST_INTERVAL_MILLIS,
+                        TranslationTuning.MAXIMUM_REQUEST_INTERVAL_MILLIS));
     }
 
     /**

@@ -7,6 +7,9 @@ version = project.mod_version
 
 // Gradle itself runs on a modern JDK. Toolchains make compilation reproducible while
 // each module's existing options.release setting preserves its Java 8/17/21 bytecode target.
+// These three prefixes are also asserted against the four target lists (build-targets.json,
+// build.yml, legacy-targets.yml, prepare-release.yml) by scripts/ci/test_build_targets.py, so a
+// list that disagrees with them fails on a PR instead of in setup-java.
 subprojects {
     def requestedToolchain = providers.gradleProperty("toolchainVersion").orNull
     def requiredToolchain = requestedToolchain == null
@@ -23,6 +26,11 @@ subprojects {
         }
     }
 }
+
+// The bundle/aggregate metadata comparison lives in one script: each Fabric bundle applies it for its
+// own fabric.mod.json, and verifyReleaseAggregateMembership below uses the same comparison for the
+// fabric-all.jar metadata, which no other task reads.
+apply from: file("gradle/bundle-metadata-verify.gradle")
 
 tasks.register("validateMixinConfigs") {
     group = "verification"
@@ -147,6 +155,38 @@ tasks.register("validateMixinConfigs") {
                 )
             }
         }
+
+        // 1.19.3 and 1.19.4 moved two hooks onto hooks that no longer exist under the old name
+        // (SignEditScreen became AbstractSignEditScreen, ChatHud's render moved to the DrawContext
+        // generation), so the 1.19.3-1.19.4 family config lists the replacement classes while 1.19.2
+        // still lists the older ones. The two generations therefore disagree on exactly these pairs and
+        // on nothing else. That is the only record of which generation uses which implementation, and
+        // it was a comment-free split until now: rename one side or add a hook to one side and the
+        // other generation silently loses an injection, which `required: true` plus defaultRequire 1
+        // turns into a startup crash instead of a build error.
+        def supersededMixinPairs = [
+                "SignEditScreenMixin": "AbstractSignEditScreenMixin",
+                "ChatHudContextMixin" : "ChatHudRenderContextMixin"
+        ]
+        def familyBase = "platforms/fabric/1.19/shared/family/"
+        def clientHooks = { String family ->
+            def familyConfig = file(familyBase + family +
+                    "/src/main/resources/universal-translator.fabric.mixins.json")
+            if (!familyConfig.isFile()) {
+                throw new GradleException("Missing 1.19 Mixin config for ${family}: ${familyConfig}")
+            }
+            def parsedFamily = new groovy.json.JsonSlurper().parse(familyConfig)
+            return (parsedFamily.client ?: []).collect { it.toString() } as Set
+        }
+        def legacyHooks = clientHooks("1.19.2")
+        def replacedHooks = clientHooks("1.19.3-1.19.4")
+        def expectedReplacedHooks = legacyHooks.collect { key -> supersededMixinPairs.get(key) ?: key } as Set
+        if (replacedHooks != expectedReplacedHooks) {
+            throw new GradleException(
+                    "The 1.19.2 and 1.19.3-1.19.4 Mixin configs must differ by exactly " +
+                            "${supersededMixinPairs}: 1.19.2 lists ${legacyHooks.toList().sort()}, " +
+                            "1.19.3-1.19.4 lists ${replacedHooks.toList().sort()}")
+        }
     }
 }
 
@@ -223,13 +263,42 @@ tasks.register("validateResourcePackFormats") {
                     placeholders.add(matcher.group(1))
                 }
             }
+            // The declared name capitalises the placeholder, and matching it case sensitively is what
+            // makes the comparison see anything: "forgeResourcePackFormat" does not end with
+            // "resourcePackFormat", so every 26.x template used to look like a template with no
+            // coordinate at all and its declared 101/107 were never compared.
+            def coordinateNames = { String placeholder ->
+                // "resourcePackFormat" is declared as "forgeResourcePackFormat": the tail is the same
+                // word with its first letter capitalised.
+                def capitalized = placeholder.isEmpty() ? placeholder : placeholder.substring(0, 1).toUpperCase() + placeholder.substring(1)
+                def matches = []
+                declaredFormats.keySet().each { String declaredName ->
+                    if (!declaredName.endsWith(capitalized)) {
+                        return
+                    }
+                    // "packFormat" is also the tail of "forgeResourcePackFormat", which carries the
+                    // resource pack format - a different number.
+                    def prefix = declaredName.substring(0, declaredName.length() - capitalized.length())
+                    if (placeholder == "packFormat" && prefix.endsWith("Resource")) {
+                        return
+                    }
+                    matches.add(declaredName)
+                }
+                return matches
+            }
             def worlds = new TreeSet<Integer>()
             placeholders.each { name ->
-                declaredFormats.each { declaredName, values ->
-                    if (declaredName.endsWith(name)) {
-                        worlds.addAll(values)
-                    }
+                coordinateNames(name).each { declaredName ->
+                    worlds.addAll(declaredFormats.get(declaredName))
                 }
+            }
+            if (worlds.isEmpty() && !placeholders.isEmpty()) {
+                // A placeholder no module declares ships with the template unexpanded, so the game
+                // reads no usable format at all. Falling back to format 0 is what kept this check
+                // silent about exactly that case.
+                failures.add("${relativePath(template)} expands ${placeholders} but no module " +
+                        "declares a coordinate ending with it")
+                return
             }
             if (worlds.isEmpty()) {
                 // No coordinate at all: the bounds are literals, so there is one world to check.
@@ -274,20 +343,133 @@ tasks.register("validateDualLayerApiParity") {
         def pairs = [
                 ["platforms/forge/26.x/shared/api/26.1-26.1.2", "platforms/forge/26.x/shared/api/26.2"]
         ]
-        def declaredMethods = { File source ->
-            def names = new TreeSet<String>()
-            source.readLines("UTF-8").each { line ->
+        // A file that legitimately exists in one layer only still has to be named here, or the next
+        // omission is indistinguishable from it. ForgeLocalTextGuard is 26.2's own copy on purpose:
+        // platforms/forge/26.x/shared.gradle mounts platforms/forge/shared/local-guard-1.18.2-plus
+        // for the 26.1-26.1.2 layer, and 26.2 reads the chat field through client.gui.screen().
+        def dualLayerFileExempt = [
+                "src/main/java/org/universaltranslator/forge/ForgeLocalTextGuard.java"
+        ] as Set
+        // The other permitted difference: 26.2 forwards the rendered-input report to its own
+        // ForgeLocalTextGuard, while 26.1-26.1.2 reads the chat field reflectively and has nothing to
+        // feed. Both copies keep the seam's signature, which is what the shared mixin calls.
+        def dualLayerBodyExempt = [
+                ("src/main/java/org/universaltranslator/forge/ForgeChatInputTracker.java"):
+                        ["trackRenderedInput"] as Set
+        ]
+        // Name plus parameter count: comparing bare names called two methods equal when one copy had
+        // grown an argument, which is how the misses this task exists for survived a green check.
+        def declaredMembers = { File source ->
+            def members = new TreeSet<String>()
+            def lines = source.readLines("UTF-8")
+            def declaration = ~/^(?:(?:public|private|protected|static|final|abstract|synchronized)\s+)+[\w.<>\[\],\s?]+?\s(\w+)\s*\(/
+            lines.eachWithIndex { String line, int index ->
                 def trimmed = line.trim()
                 if (trimmed.isEmpty() || trimmed.startsWith("//") || trimmed.startsWith("*")
                         || trimmed.startsWith("/*")) {
                     return
                 }
-                def method = trimmed =~ /^(?:(?:public|private|protected|static|final|abstract|synchronized)\s+)+[\w.<>\[\],\s?]+?\s(\w+)\s*\(/
-                if (method.find()) {
-                    names.add(method.group(1))
+                def matcher = declaration.matcher(trimmed)
+                if (!matcher.find()) {
+                    return
                 }
+                // The parameter list is scanned across wrapped lines and at the declaration's own
+                // parenthesis depth, so a comma inside a generic argument or a nested annotation is
+                // not an argument separator and a declaration that wraps is still counted once.
+                def depth = 0
+                def angles = 0
+                def separators = 0
+                def empty = true
+                def closed = false
+                def firstLine = trimmed.substring(matcher.end() - 1)
+                for (int lineIndex = index; lineIndex < lines.size() && !closed; lineIndex++) {
+                    def text = lineIndex == index ? firstLine : lines[lineIndex]
+                    for (int position = 0; position < text.length(); position++) {
+                        def character = text.substring(position, position + 1)
+                        if (character == "(") {
+                            depth++
+                        } else if (character == ")") {
+                            depth--
+                            if (depth == 0) {
+                                closed = true
+                                break
+                            }
+                        } else if (depth == 1) {
+                            if (character == "<") {
+                                angles++
+                            } else if (character == ">") {
+                                angles = Math.max(0, angles - 1)
+                            } else if (character == "," && angles == 0) {
+                                separators++
+                                empty = false
+                            } else if (!character.trim().isEmpty()) {
+                                empty = false
+                            }
+                        }
+                    }
+                }
+                // A declaration whose parameter list never closes inside the file is not a method.
+                if (!closed) {
+                    return
+                }
+                members.add(matcher.group(1) + "/" + (empty ? 0 : separators + 1))
             }
-            return names
+            return members
+        }
+
+        // Comments, whitespace and the renames between the generations are normalised away, then the
+        // remaining text of each member is compared verbatim. Signature comparison alone cannot see
+        // the failure this task exists for: both copies keep declaring the same members while one of
+        // them gets the fix, which is exactly how the guard report, the row bound and the type cast
+        // survived a green check.
+        def normaliseBody = { String text ->
+            def normalised = text
+                    .replaceAll('(?s)/\\*.*?\\*/', '')
+                    .replaceAll('//[^\\n]*', '')
+                    .replaceAll('(?m)^\\s*import\\s[^;]*;', '')
+                    .replaceAll('\\s+', '')
+            // 26.2 moved the HUD behind client.gui.hud, renamed Gui to Hud and moved setScreen.
+            normalised = normalised
+                    .replaceAll('gui\\.hud\\.', 'gui.')
+                    .replaceAll('gui\\.setScreen', 'setScreen')
+                    .replaceAll('\\.gui\\.screen\\(\\)', '.screen')
+                    .replaceAll('\\bHud\\b', 'Gui')
+            return normalised
+        }
+        def memberBodies = { File source ->
+            def text = source.getText("UTF-8").replaceAll('(?s)/\\*.*?\\*/', '')
+            def lines = text.split('\\r?\\n', -1) as List
+            def starts = []
+            def labels = []
+            def seen = [:]
+            def declaration = ~/^(?:(?:public|private|protected|static|final|abstract|synchronized)\s+)+[\w.<>\[\],\s?]+?\s(\w+)\s*\(/
+            lines.eachWithIndex { String line, int index ->
+                def trimmed = line.trim()
+                if (trimmed.isEmpty() || trimmed.startsWith("//") || trimmed.startsWith("*")
+                        || trimmed.startsWith("/*")) {
+                    return
+                }
+                def matcher = declaration.matcher(trimmed)
+                if (!matcher.find()) {
+                    return
+                }
+                def name = matcher.group(1)
+                def occurrence = seen.containsKey(name) ? seen.get(name) + 1 : 0
+                seen.put(name, occurrence)
+                starts.add(index)
+                labels.add(occurrence == 0 ? name : name + "#" + occurrence)
+            }
+            def bodies = new LinkedHashMap<String, String>()
+            // Everything before the first declaration - the class header and the fields - is one
+            // member, so a field that only one copy has is reported as well.
+            def prefixEnd = starts.isEmpty() ? lines.size() : starts[0]
+            bodies.put("<fields>", normaliseBody.call(lines.subList(0, prefixEnd).join("\n")))
+            for (int position = 0; position < starts.size(); position++) {
+                def from = starts[position]
+                def to = position + 1 < starts.size() ? starts[position + 1] : lines.size()
+                bodies.put(labels[position], normaliseBody.call(lines.subList(from, to).join("\n")))
+            }
+            return bodies
         }
 
         def failures = []
@@ -297,24 +479,56 @@ tasks.register("validateDualLayerApiParity") {
             if (!leftRoot.isDirectory() || !rightRoot.isDirectory()) {
                 return
             }
-            fileTree(leftRoot) {
-                include "**/*.java"
-                exclude "**/build/**"
-            }.files.sort { it.absolutePath }.each { source ->
-                def relative = source.absolutePath.substring(leftRoot.absolutePath.length() + 1)
-                def counterpart = new File(rightRoot, relative)
-                if (!counterpart.isFile()) {
+            // Both directions: walking only the left layer could never see a file that exists in the
+            // right one alone, which is the other half of the same drift.
+            def relatives = new TreeSet<String>()
+            [leftRoot, rightRoot].each { File root ->
+                fileTree(root) {
+                    include "**/*.java"
+                    exclude "**/build/**"
+                }.files.each { source ->
+                    relatives.add(source.absolutePath.substring(root.absolutePath.length() + 1))
+                }
+            }
+            relatives.each { String relative ->
+                def left = new File(leftRoot, relative)
+                def right = new File(rightRoot, relative)
+                def normalised = relative.replace('\\', '/')
+                if (!left.isFile() || !right.isFile()) {
+                    if (!dualLayerFileExempt.contains(normalised)) {
+                        failures.add("${normalised} exists in ${left.isFile() ? pair[0] : pair[1]} " +
+                                "but not in ${left.isFile() ? pair[1] : pair[0]}; add the missing file " +
+                                "or list it in dualLayerFileExempt with the layer that makes the " +
+                                "omission safe")
+                    }
                     return
                 }
-                def leftMembers = declaredMethods(source)
-                def rightMembers = declaredMethods(counterpart)
+                def leftMembers = declaredMembers(left)
+                def rightMembers = declaredMembers(right)
                 def onlyLeft = new TreeSet<String>(leftMembers)
                 onlyLeft.removeAll(rightMembers)
                 def onlyRight = new TreeSet<String>(rightMembers)
                 onlyRight.removeAll(leftMembers)
                 if (!onlyLeft.isEmpty() || !onlyRight.isEmpty()) {
-                    failures.add("${relative} declares methods only in ${pair[0]} ${onlyLeft} " +
+                    failures.add("${normalised} declares members only in ${pair[0]} ${onlyLeft} " +
                             "and only in ${pair[1]} ${onlyRight}")
+                }
+                def exemptMembers = dualLayerBodyExempt.containsKey(normalised) ? dualLayerBodyExempt.get(normalised) : Collections.emptySet()
+                def leftBodies = memberBodies(left)
+                def rightBodies = memberBodies(right)
+                leftBodies.each { String member, String bodyText ->
+                    if (!rightBodies.containsKey(member)) {
+                        return
+                    }
+                    if (bodyText != rightBodies.get(member) && !exemptMembers.contains(member)) {
+                        failures.add("${normalised} has a different body for ${member} in the two " +
+                                "layers; the same fix has to land in both copies")
+                    }
+                }
+                rightBodies.each { String member, String bodyText ->
+                    if (!leftBodies.containsKey(member) && !exemptMembers.contains(member)) {
+                        failures.add("${normalised} declares ${member} only in ${pair[1]}")
+                    }
                 }
             }
         }
@@ -484,6 +698,146 @@ tasks.register("validateSharedPlatformLayouts") {
                     "Legacy shared files must not be copied back into version directories:\n" +
                             duplicated.sort().join("\n")
             )
+        }
+
+        // Minecraft 1.11 renamed lang/en_US.lang to lang/en_us.lang and 1.10 and earlier only read the
+        // uppercase name, so a single source directory cannot serve both ends of 1.8.9-1.12.2. Those
+        // trees generate the lowercase alias while they build; nothing else notices the rule being
+        // dropped, because the JAR still builds and the newer half of the range silently shows raw
+        // keys while the older half keeps working.
+        def lowerCaseLangAliasScripts = [
+                "platforms/fabric/1.8-1.12/shared.gradle",
+                "platforms/forge/legacy/1.12.2/build.gradle"
+        ]
+        def aliasProblems = lowerCaseLangAliasScripts.findAll { script ->
+            !file(script).getText("UTF-8").contains("name.toLowerCase(Locale.ROOT)")
+        }
+        if (!aliasProblems.isEmpty()) {
+            throw new GradleException(
+                    "These scripts serve Minecraft 1.11+, which reads lang/en_us.lang, but no longer " +
+                            "generate the lowercase alias of the uppercase source files:\n" +
+                            aliasProblems.join("\n")
+            )
+        }
+
+        // 1.13 switched to assets/<ns>/lang/*.json; a .lang directory mounted there is dead weight
+        // in every JAR and a second, silently ignored source for the same keys.
+        def legacyLangStillMounted = fileTree("platforms/fabric/1.13") {
+            include "*.gradle"
+        }.files.findAll { script ->
+            script.getText("UTF-8").readLines().any { line ->
+                if (line.trim().startsWith("//")) {
+                    return false
+                }
+                return line.contains("resources.srcDir") &&
+                        line.contains("platforms/shared/lang/legacy")
+            }
+        }
+        if (!legacyLangStillMounted.isEmpty()) {
+            throw new GradleException(
+                    "Fabric 1.13 only reads assets/**/lang/*.json; drop the platforms/shared/lang/legacy " +
+                            "mount from:\n" +
+                            legacyLangStillMounted.collect { relativePath(it) }.sort().join("\n")
+            )
+        }
+
+        // The four HUD label caches differ only in the translation call they wrap: the activity key
+        // and the refresh interval are the same value in all of them and live in HudLabelCache, which
+        // is what stopped the four copies from drifting apart by 1000L at a time.
+        def hudLabelCaches = [
+                "platforms/fabric/shared/hud-indicator/src/client/java/org/universaltranslator/fabric/mixin/HudLabels.java",
+                "platforms/fabric/1.20/shared/family/1.20.1/src/client/java/org/universaltranslator/fabric/mixin/HudIndicatorLabels.java",
+                "platforms/fabric/1.21/shared/common/src/client/java/org/universaltranslator/fabric/mixin/HudIndicatorLabels.java",
+                "platforms/forge/1.21/shared/common/src/main/java/org/universaltranslator/forge/HudStatusLabels.java"
+        ]
+        def ownRefreshConstant = ~/(?m)^\s*(?:private|public|protected)\s+static\s+final\s+long\s+\w*REFRESH\w*\s*=\s*\d+/
+        def hudProblems = hudLabelCaches.findAll { source ->
+            def text = file(source).getText("UTF-8")
+            if (!text.contains("HudLabelCache.REFRESH_MILLIS")) {
+                return true
+            }
+            if (!text.contains("HudLabelCache.ACTIVITY_KEY")) {
+                return true
+            }
+            return ownRefreshConstant.matcher(text).find()
+        }
+        if (!hudProblems.isEmpty()) {
+            throw new GradleException(
+                    "HUD label caches must take the activity key and the refresh interval from " +
+                            "HudLabelCache instead of declaring their own:\n" + hudProblems.join("\n"))
+        }
+
+        // A fully qualified name may exist more than once only in trees that never share a source
+        // set: one extra copy is a javac "duplicate class" failure for every target of that tree, and
+        // ForgeLocalTextGuard already did that once. The allowed copies are listed explicitly, since
+        // proving co-existence needs the whole srcDir graph of every target; this list is cheap and
+        // also catches a copy hidden as a second top-level class inside another file.
+        def singleCopyClasses = [
+                "org.universaltranslator.fabric.ScreenWorkers"            : [
+                        "platforms/fabric/1.0-1.12/shared/screens/src/main/java/org/universaltranslator/fabric/ScreenWorkers.java",
+                        "platforms/fabric/1.13/shared/screens/src/main/java/org/universaltranslator/fabric/ScreenWorkers.java",
+                        "platforms/fabric/1.14-1.15/shared/family/1.14-1.15-common/src/client/java/org/universaltranslator/fabric/ScreenWorkers.java",
+                        "platforms/fabric/legacy/shared/screens/1.16-1.18/src/client/java/org/universaltranslator/fabric/ScreenWorkers.java"],
+                "org.universaltranslator.fabric.ScreenWorkerPool"         : [
+                        "platforms/fabric/1.19/shared/screens/1.19-1.19.4/src/client/java/org/universaltranslator/fabric/ScreenWorkerPool.java",
+                        "platforms/fabric/1.21/shared/screens/1.20.1-1.21.11/src/client/java/org/universaltranslator/fabric/ScreenWorkerPool.java",
+                        "platforms/fabric/26.x/shared/api/26.1-26.3/src/client/java/org/universaltranslator/fabric/ScreenWorkerPool.java"],
+                "org.universaltranslator.forge.ScreenWorkers"             : [
+                        "platforms/forge/26.x/shared/common/src/main/java/org/universaltranslator/forge/ScreenWorkers.java",
+                        "platforms/forge/modern/1.16.5/src/main/java/org/universaltranslator/forge/UniversalTranslatorScreens.java"],
+                "org.universaltranslator.fabric.mixin.HudLabels"          : [
+                        "platforms/fabric/shared/hud-indicator/src/client/java/org/universaltranslator/fabric/mixin/HudLabels.java"],
+                "org.universaltranslator.fabric.mixin.HudIndicatorLabels" : [
+                        "platforms/fabric/1.20/shared/family/1.20.1/src/client/java/org/universaltranslator/fabric/mixin/HudIndicatorLabels.java",
+                        "platforms/fabric/1.21/shared/common/src/client/java/org/universaltranslator/fabric/mixin/HudIndicatorLabels.java"],
+                "org.universaltranslator.forge.HudStatusLabels"           : [
+                        "platforms/forge/1.21/shared/common/src/main/java/org/universaltranslator/forge/HudStatusLabels.java"],
+                "org.universaltranslator.forge.HomeButtonGeometry"        : [
+                        "platforms/forge/shared/common/src/main/java/org/universaltranslator/forge/HomeButtonGeometry.java"],
+                "org.universaltranslator.forge.ForgeConfigWriter"         : [
+                        "platforms/forge/shared/common/src/main/java/org/universaltranslator/forge/ForgeConfigWriter.java"],
+                "org.universaltranslator.forge.legacy.LegacyScreenWorkers": [
+                        "platforms/forge/shared/legacy-common/src/main/java/org/universaltranslator/forge/legacy/LegacyScreenWorkers.java"]
+        ]
+        def declaredTypes = [:]
+        ["platforms", "translator-core/src/main/java"].each { String scanRoot ->
+            fileTree(scanRoot) {
+                include "**/*.java"
+                exclude "**/build/**"
+                exclude "**/.gradle/**"
+            }.files.findAll { it.isFile() }.each { File source ->
+                def text = source.getText("UTF-8")
+                def packageMatcher = text =~ /(?m)^package\s+([\w.]+)\s*;/
+                def packageName = packageMatcher.find() ? packageMatcher.group(1) : ""
+                def typeMatcher = text =~ /(?m)^(?:(?:public|protected|private|final|abstract|static|strictfp|sealed|non-sealed)[ \t]+)*(?:class|interface|enum|record)[ \t]+(\w+)/
+                while (typeMatcher.find()) {
+                    def typeName = typeMatcher.group(1)
+                    def fqcn = packageName.isEmpty() ? typeName : packageName + "." + typeName
+                    def declaring = declaredTypes[fqcn]
+                    if (declaring == null) {
+                        declaring = new TreeSet<String>()
+                        declaredTypes[fqcn] = declaring
+                    }
+                    declaring.add(relativePath(source).replace('\\', '/'))
+                }
+            }
+        }
+        def copyProblems = []
+        singleCopyClasses.each { String fqcn, List<String> allowed ->
+            def declaring = declaredTypes[fqcn]
+            if (declaring == null) {
+                copyProblems.add("${fqcn} is declared nowhere, so this guard proves nothing")
+                return
+            }
+            def unexpected = declaring.findAll { !allowed.contains(it) }.sort()
+            if (!unexpected.isEmpty()) {
+                copyProblems.add("${fqcn} is also declared in ${unexpected.join(', ')}; add the copy to " +
+                        "the list only after checking it never shares a srcDir with the others")
+            }
+        }
+        if (!copyProblems.isEmpty()) {
+            throw new GradleException("Shared classes gained copies nobody declared:\n" +
+                    copyProblems.join("\n"))
         }
     }
 }
@@ -1074,23 +1428,43 @@ tasks.register("verifyReleaseAggregateMembership") {
         if (!archive.isFile()) {
             throw new GradleException("Missing release aggregate ${archive}; run :prepareReleaseAssets first.")
         }
-        def expected = (gradle.ext.fabricReleaseVersions as List).collect {
-            "META-INF/jars/universal-translator-${it}.jar"
-        }
-        def carried = [] as Set
+        def carried = [] as List
+        def metadata = null
         new java.util.zip.ZipFile(archive).withCloseable { zip ->
             zip.entries().each { entry ->
-                if (entry.name.endsWith(".jar")) {
-                    carried.add(entry.name)
+                def name = entry.name
+                if (name.startsWith("META-INF/jars/universal-translator-") && name.endsWith(".jar")) {
+                    carried.add(name.tokenize('/').last()
+                            .replace("universal-translator-", "")
+                            .replace(".jar", ""))
                 }
             }
+            def metadataEntry = zip.getEntry("fabric.mod.json")
+            if (metadataEntry == null) {
+                throw new GradleException("${archive.name} has no fabric.mod.json")
+            }
+            metadata = new groovy.json.JsonSlurper().parse(
+                    new InputStreamReader(zip.getInputStream(metadataEntry), "UTF-8"))
         }
-        def missing = expected.findAll { !carried.contains(it) }
-        if (!missing.isEmpty()) {
-            throw new GradleException(
-                    "${archive.name} does not carry every Fabric release implementation. Missing: " +
-                            missing.join(", ") + ". downloads/${project.mod_version} and " +
-                            "settings.gradle's platformDependencies are out of step.")
+        // The aggregate's own metadata is what Fabric Loader reads to pick a nested implementation,
+        // and nothing used to read it: a jars[] entry or a depends.minecraft entry that disagrees with
+        // the packed files ships a version the Loader either cannot select or refuses to load. The
+        // same comparison the ten bundles use applies here, and it needs no rebuilt downloads/.
+        project.ext.verifyBundleMetadataAgainst(metadata, carried)
+        // settings.gradle's fabricReleaseVersions is the code-side answer and changes with the code,
+        // while the aggregate is rebuilt only when downloads/<mod_version> is regenerated. Failing on
+        // a difference between them is the check/ interlock C2-163 removed, moved onto push main:
+        // adding a version and regenerating downloads/ can only land in different commits, and the
+        // required CI 總結 would be red for a reason unrelated to the change. The comparison still
+        // runs, as a warning that names what the next prepare-release run has to pick up.
+        def expected = (gradle.ext.fabricReleaseVersions as List).collect { it.toString() }
+        def absent = expected.findAll { !carried.contains(it) }
+        if (!absent.isEmpty()) {
+            logger.warn(
+                    "${archive.name} does not carry ${absent.join(', ')} from settings.gradle's " +
+                            "fabricReleaseVersions: downloads/${project.mod_version} predates that " +
+                            "version list. Re-run prepare-release.yml before publishing, otherwise " +
+                            "those Minecraft versions ship without an implementation.")
         }
     }
 }
@@ -1106,6 +1480,116 @@ tasks.register("verifyPublishedRelease") {
     dependsOn("verifyPreparedReleaseAssets", "verifyReleaseAggregateMembership")
 }
 
+// The resource invariants that one audit round had to restore by hand — the 57 fabric.mod.json
+// authors values that had lost their non-ASCII part, six .lang files missing 26 keys while carrying 11
+// dead ones, three .lang files named in the wrong case — had no gate at all: not one task in `check`
+// reads a metadata or a language file, so copying a template for a new version could undo all of it
+// with a green CI. This task is that gate. It reads the files as text, so no platform project has to
+// be evaluated and ${...} placeholders never need expanding.
+tasks.register("validateResourceMetadata") {
+    group = "verification"
+    description = "Checks the shared fabric.mod.json authors value and the legacy .lang key sets."
+
+    // The one canonical value; the launcher, Modrinth and CurseForge all show it verbatim.
+    def expectedAuthors = "我小张7272635"
+    def langRoot = file("platforms/shared/lang")
+    def jsonLangDir = new File(langRoot, "json/assets/universal_translator/lang")
+    def legacyLangDirs = ["legacy", "legacy-forge"].collect {
+        new File(langRoot, "${it}/assets/universal_translator/lang")
+    }
+    def metadataFiles = fileTree(rootDir) {
+        include "platforms/**/src/**/fabric.mod.json"
+        exclude "**/build/**"
+        exclude "**/.gradle/**"
+    }
+    inputs.files(metadataFiles)
+    inputs.dir(langRoot)
+
+    // A .lang line is `key=value`; MC's reader skips blank lines and `#` comments, and so does this.
+    def readLang = { File source ->
+        def entries = [:]
+        source.getText("UTF-8").readLines().each { line ->
+            def trimmed = line.trim()
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                return
+            }
+            def separator = trimmed.indexOf("=")
+            if (separator > 0) {
+                entries.put(trimmed.substring(0, separator).trim(), trimmed.substring(separator + 1))
+            }
+        }
+        return entries
+    }
+
+    doLast {
+        def problems = []
+        metadataFiles.each { metadata ->
+            def authors = metadata.getText("UTF-8") =~ /(?s)"authors"\s*:\s*\[(.*?)\]/
+            if (!authors.find()) {
+                problems << "${metadata}: no authors array"
+                return
+            }
+            if (authors.group(1).replaceAll("\\s", "") != "\"${expectedAuthors}\"") {
+                problems << "${metadata}: authors is ${authors.group(1).trim()}, expected [\"${expectedAuthors}\"]"
+            }
+        }
+        ["en_us", "zh_cn", "zh_tw"].each { locale ->
+            def jsonFile = new File(jsonLangDir, "${locale}.json")
+            if (!jsonFile.isFile()) {
+                problems << "${jsonFile}: missing"
+                return
+            }
+            def reference = new groovy.json.JsonSlurper().parse(jsonFile, "UTF-8")
+            def seen = []
+            legacyLangDirs.each { directory ->
+                if (!directory.isDirectory()) {
+                    problems << "${directory}: missing"
+                    return
+                }
+                def wanted = (locale + ".lang").toLowerCase(Locale.ROOT)
+                def matching = directory.listFiles().findAll {
+                    it.isFile() && it.name.toLowerCase(Locale.ROOT) == wanted
+                }
+                if (matching.isEmpty()) {
+                    problems << "${directory}: no ${locale}.lang, so MC finds none of those keys"
+                }
+                matching.each { candidate ->
+                    def entries = readLang(candidate)
+                    def missing = reference.keySet() - entries.keySet()
+                    def extra = entries.keySet() - reference.keySet()
+                    if (!missing.isEmpty()) {
+                        problems << "${candidate}: ${missing.size()} keys missing from ${jsonFile.name} " +
+                                "(${missing.take(5).join(', ')})"
+                    }
+                    if (!extra.isEmpty()) {
+                        problems << "${candidate}: ${extra.size()} keys not in ${jsonFile.name} " +
+                                "(${extra.take(5).join(', ')})"
+                    }
+                    // Every copy of one locale has to be the same text. legacy and legacy-forge serve
+                    // the same Minecraft versions from two directories, and the only comparison they
+                    // ever had was a human diff; a name in the other case is a third copy.
+                    if (!seen.isEmpty()) {
+                        def firstFile = seen.get(0).get(0)
+                        def firstEntries = seen.get(0).get(1)
+                        def drifted = entries.findAll { key, value ->
+                            firstEntries.containsKey(key) && firstEntries.get(key) != value
+                        }.keySet()
+                        if (!drifted.isEmpty()) {
+                            problems << "${candidate}: ${drifted.size()} values differ from ${firstFile.name} " +
+                                    "(${drifted.take(5).join(', ')})"
+                        }
+                    }
+                    seen << [candidate, entries]
+                }
+            }
+        }
+        if (!problems.isEmpty()) {
+            throw new GradleException(
+                    "Resource metadata drifted (authors or legacy language keys):\n" + problems.join("\n"))
+        }
+    }
+}
+
 tasks.named("check") {
     dependsOn(
             "validateDualLayerApiParity",
@@ -1115,6 +1599,7 @@ tasks.named("check") {
             "validateOutgoingTranslationReentryGuards",
             "validateOpaqueDiagnosticsTextColors",
             "validateOpaqueSelectionTextColors",
+            "validateResourceMetadata",
             "validateResourcePackFormats",
             "validateSharedPlatformLayouts"
     )

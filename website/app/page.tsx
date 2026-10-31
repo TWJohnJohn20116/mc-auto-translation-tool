@@ -5,10 +5,15 @@ import type { Metadata } from "next";
 // them behind; the CI version check reads this exact declaration.
 const releaseVersion = "1.4";
 
+// 這個數字在頁面上出現三次（metadata description、Fabric 卡片說明、卡片版本欄），
+// 但它真正的權威是 `platforms/fabric/*/versions` 的實作目錄總數；測試會拿目錄數與
+// 這個常數、以及四份 README 的同一句互比，所以新增一個 Fabric 版本時三處都不會漏。
+const fabricImplementations = 51;
+
 export const metadata: Metadata = {
   title: `MC 自动翻译工具｜${releaseVersion} 正式版`,
   description:
-    `MC 自动翻译工具 ${releaseVersion} 正式版，下载按 Fabric／Forge／NeoForge 分组；Fabric 单一 JAR 内含 51 个精确版本实现（1.13–1.13.2、1.14–1.15.2、1.16–1.16.5、1.17–1.18.2、1.19–1.19.4、1.20–1.20.6、1.21–1.21.11、26.1–26.3），要求 Fabric Loader 0.19.3 或更新；Forge 覆盖 1.8.9、1.12.2、1.16.5、1.18.2、1.19.2、1.20.1、1.21／1.21.1／1.21.3–1.21.5、1.21.6–1.21.8、1.21.9–1.21.11、26.1–26.1.2、26.2；NeoForge 为 19 个版本各一颗独立 JAR（1.20.1、1.20.4、1.20.6、1.21–1.21.11、26.1–26.1.2、26.2），没有 1.20.2 与 1.20.3。1.0.0–1.12.2 的 Fabric／Ornithe 目标仍需自行构建。`,
+    `MC 自动翻译工具 ${releaseVersion} 正式版，下载按 Fabric／Forge／NeoForge 分组；Fabric 单一 JAR 内含 ${fabricImplementations} 个精确版本实现（1.13–1.13.2、1.14–1.15.2、1.16–1.16.5、1.17–1.18.2、1.19–1.19.4、1.20–1.20.6、1.21–1.21.11、26.1–26.3），要求 Fabric Loader 0.19.3 或更新；Forge 覆盖 1.8.9、1.12.2、1.16.5、1.18.2、1.19.2、1.20.1、1.21／1.21.1／1.21.3–1.21.5、1.21.6–1.21.8、1.21.9–1.21.11、26.1–26.1.2、26.2；NeoForge 为 19 个版本各一颗独立 JAR（1.20.1、1.20.4、1.20.6、1.21–1.21.11、26.1–26.1.2、26.2），没有 1.20.2 与 1.20.3。1.0.0–1.12.2 的 Fabric／Ornithe 目标仍需自行构建。`,
 };
 
 const features = [
@@ -35,7 +40,7 @@ const features = [
 ];
 
 const versions = [
-  ["1.3.1–1.8.8 中的 26 个版本、1.8.9–1.12.2", "Fabric（Legacy／Ornithe bundle）", "源码可构建，未随 1.4 发布", "planned"],
+  ["1.3.1–1.8.8 中的 26 个版本、1.8.9–1.12.2", "Fabric（Legacy／Ornithe bundle）", `源码可构建，未随 ${releaseVersion} 发布`, "planned"],
   ["1.8.9、1.12.2", "Forge", "正式版已发布", "ready"],
   ["1.13–1.13.2、1.14–1.15.2", "Fabric 单一 JAR（Loader ≥ 0.19.3）", "正式版已发布", "ready"],
   ["1.16–1.20.6", "Fabric 单一 JAR（按已实现版本）", "正式版已发布", "ready"],
@@ -58,11 +63,11 @@ const releaseFile = (target: string) => releaseJar(`mc${target}`);
 const downloadGroups = [
   {
     title: "Fabric",
-    note: "一个 JAR 内含 51 个精确版本实现：1.13–1.13.2、1.14–1.15.2、1.16–1.16.5、1.17–1.18.2、1.19–1.19.4、1.20–1.20.6、1.21–1.21.11、26.1–26.3。前提是 Fabric Loader ≥ 0.19.3（bundle 的 fabric.mod.json 就是这么声明的）；低于此版本会在加载阶段报依赖错误，整个模组不加载。1.14–1.14.2 为引导实现。",
+    note: `一个 JAR 内含 ${fabricImplementations} 个精确版本实现：1.13–1.13.2、1.14–1.15.2、1.16–1.16.5、1.17–1.18.2、1.19–1.19.4、1.20–1.20.6、1.21–1.21.11、26.1–26.3。前提是 Fabric Loader ≥ 0.19.3（bundle 的 fabric.mod.json 就是这么声明的）；低于此版本会在加载阶段报依赖错误，整个模组不加载。1.14–1.14.2 为引导实现。`,
     featured: true,
     items: [
       {
-        version: "1.13–1.21.11、26.1–26.3（51 个精确版本）",
+        version: `1.13–1.21.11、26.1–26.3（${fabricImplementations} 个精确版本）`,
         loader: "Fabric 全版本单一 JAR",
         java: "Java 随游戏为 8 / 17 / 21 / 25；Fabric Loader ≥ 0.19.3",
         file: releaseJar("fabric-all"),
@@ -282,7 +287,7 @@ export default function Home() {
         <div className="downloadIntro">
           <span className="sectionKicker light">{releaseVersion} 正式版</span>
           <h2>免费使用，也欢迎一起把它做得更好。</h2>
-          <p>先选加载器，再选 Minecraft 版本。本次提供 31 个经过校验的 JAR。更新前请删除 1.4-beta5 及更早版本，只保留与你的 Minecraft 版本及加载器完全对应的 1.4 文件。</p>
+          <p>先选加载器，再选 Minecraft 版本。本次提供 31 个经过校验的 JAR。更新前请删除 mods 文件夹里所有旧版本的 MCAutoTranslationTool-* 文件（不分版本号），只保留与你的 Minecraft 版本及加载器完全对应的 {releaseVersion} 文件。</p>
         </div>
         <div className="downloadGroups">
           {downloadGroups.map((group) => (

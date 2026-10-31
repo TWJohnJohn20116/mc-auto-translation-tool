@@ -25,10 +25,15 @@ pnpm test
 类型剥离；低于该版本会在 import 阶段直接失败，而不是把全部测试 skip 掉后回传成功。
 
 `rendered-html.test.mjs` 还会把页面渲染出的下载档名与根 `README.md`、三份 `docs/*/README.md`
-逐一比对（同一批 31 个档名被手抄了五份，原本没有任何关卡），并在
-`downloads/<releaseVersion>/release-assets.txt` 存在时以它为准再比一次（不存在时只提示、
-不红灯，这样版本号 bump 后 `downloads/` 还没重新产生时网站检查不会先坏）。
-改发布目标或家族档名时这些文件必须一起改，否则网站检查会红。
+逐一比对（同一批 31 个档名被手抄了五份，原本没有任何关卡），权威则是
+`downloads/<releaseVersion>/release-assets.txt`：那份清单由 `scripts/prepare_release_assets.py`
+与 31 颗可安装 JAR 同一批产生（`prepare-release.yml` 把它写进 `downloads/<版本>/` 并随 PR 提交），
+测试在它存在时以它为准再比一次。它不存在时只提示、不红灯——版本号 bump 后 `downloads/`
+还没重新产生时，网站检查不该先坏；这个窗口一过就该看到清单。
+同一支测试还会把两个头条数字绑回产生端：「48 个发布目标」比对 `prepare-release.yml` 的
+`TARGETS_JSON` 笔数，「51 个精确版本实现」比对 `platforms/fabric/*/versions` 的实作目录数
+（`26.x` 的版本目录直接挂在 bundle 根）。改发布目标、家族档名或新增 Fabric 版本时，
+这五份文件与 `page.tsx` 必须一起改，否则网站检查会红。
 
 ## 部署
 

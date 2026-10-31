@@ -2,13 +2,15 @@
 :: Batch script to add Windows Defender exclusions for Gradle & MCAutoTranslationTool
 :: Must be run as Administrator
 ::
-:: 專案目錄由腳本自身位置推導（原本硬編 D:\Code\mc-auto-translation-tool），
-:: Gradle 快取沿用既有的 GRADLE_USER_HOME，未設定時才退到 <repo>\build\gradle-user-home。
+:: 專案目錄由腳本自身位置推導（原本硬編 D:\Code\mc-auto-translation-tool）。
+:: Gradle 快取的 fallback 只由 ci\set-defender-exclusions.ps1 決定（GRADLE_USER_HOME，否則
+:: %USERPROFILE%\.gradle）。批次檔先前也有一份 fallback，值是 <repo>\build\gradle-user-home，
+:: 與 .ps1 不同而且通常不存在——Add-MpPreference 對不存在的路徑不報錯，於是腳本回報成功，
+:: 真正的快取卻完全沒被排除。
 
 setlocal
 set "PROJECT_DIR=%~dp0.."
 for %%I in ("%PROJECT_DIR%") do set "PROJECT_DIR=%%~fI"
-if not defined GRADLE_USER_HOME set "GRADLE_USER_HOME=%PROJECT_DIR%\build\gradle-user-home"
 
 net session >nul 2>&1
 if %errorLevel% neq 0 (
@@ -38,8 +40,6 @@ if errorlevel 1 (
 )
 
 echo.
-echo Windows Defender exclusions successfully configured:
-echo   - Folder: %PROJECT_DIR%
-echo   - Folder: %GRADLE_USER_HOME%
+echo Windows Defender exclusions successfully configured. The applied folders are listed above.
 echo.
 pause

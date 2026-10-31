@@ -117,7 +117,6 @@ screen.universal_translator.home.open=翻譯設定
 screen.universal_translator.option.player_names=玩家名稱翻譯：%s
 screen.universal_translator.blocked_keywords=翻譯屏蔽關鍵詞
 screen.universal_translator.blocked_keywords_hint=屏蔽關鍵詞（逗號分隔，最多 100 筆、每筆 128 字）
-
 screen.universal_translator.tab.general=常規
 screen.universal_translator.tab.scopes=範圍
 screen.universal_translator.tab.engine=引擎

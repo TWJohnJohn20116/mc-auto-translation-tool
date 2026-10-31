@@ -5,7 +5,6 @@
     {"target": "fabric-1.19.x", "java": "21", "bundle": true},
     {"target": "fabric-1.20.x", "java": "21", "bundle": true},
     {"target": "fabric-1.21.x", "java": "21", "bundle": true},
-    {"target": "fabric-1.21.4-1.21.5", "java": "21", "bundle": false},
     {"target": "fabric-26.x", "java": "25", "bundle": true},
     {"target": "neoforge-1.20.1", "java": "21", "bundle": false},
     {"target": "forge-1.21.1", "java": "21", "bundle": false},

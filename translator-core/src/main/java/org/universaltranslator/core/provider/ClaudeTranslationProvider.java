@@ -54,14 +54,6 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
     /** {@code stop_reason} of an answer cut off at {@code max_tokens}. */
     private static final String STOP_REASON_MAX_TOKENS = "max_tokens";
     private static final String PROBE_TEXT = "ping";
-    /**
-     * Largest progress budget one stream is given, in milliseconds.
-     *
-     * <p>The budget follows the remaining {@code api-read-timeout-ms} window, which is what the user
-     * configured; the ceiling only stops a genuinely stuck endpoint from holding a worker for the
-     * whole four-times-default window. A fixed 180 s here overrode the setting in both directions.
-     */
-    private static final long STREAM_PROGRESS_BUDGET_CEILING_MILLIS = 300000L;
 
     private final URI endpoint;
     private final String apiKey;
@@ -78,6 +70,17 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
      * remembered so the next line starts there.
      */
     private volatile int acceptedOutputTokens = MAXIMUM_TOKENS_LIMIT;
+    /**
+     * Largest batch completion budget this endpoint accepted, per batch size, lowered only by an
+     * actual refusal.
+     *
+     * <p>The batch path remembered nothing, so an endpoint whose output cap sits below the budget a
+     * batch asked for answered 400 on every batch of the session, and each refusal was followed by
+     * one request per line. See {@link BatchBudget}: the loop that learns the value is shared with
+     * the other two batching providers, and {@link BatchBudget.ByEntries} keeps one small batch from
+     * lowering the budget of every later batch of the session.
+     */
+    private final BatchBudget.ByEntries acceptedBatchTokens;
     /** Set once this endpoint proved it cannot answer with an event stream. */
     private volatile boolean streamingUnsupported;
     /**
@@ -143,8 +146,11 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
         this.id = ProviderCacheKey.of("claude", this.model, this.endpoint,
                 "anthropic-version=" + API_VERSION, this.prompt.signature());
         TranslationTuning effectiveTuning = tuning == null ? TranslationTuning.DEFAULTS : tuning;
+        this.acceptedBatchTokens = new BatchBudget.ByEntries(ESCALATED_TOKENS_LIMIT);
         this.gatherer = new BatchGatherer(effectiveTuning.batchSize(),
-                effectiveTuning.batchWindowMillis(), effectiveTuning.maximumConcurrentBatches());
+                effectiveTuning.batchWindowMillis(),
+                effectiveTuning.maximumConcurrentBatches(),
+                effectiveTuning.requestIntervalMillis());
         this.work = new BatchGatherer.Work() {
             @Override
             public String translateAlone(TranslationRequest request) throws Exception {
@@ -197,7 +203,8 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
         int budget = completionBudget(text);
         String system = TranslationPrompt.single(prompt, request);
         String response = post(text, system, budget, false);
-        String translated = extractContent(response);
+        Object root = JsonTree.parseOrNull(response);
+        String translated = extractContent(root, response);
         String stopReason = JsonStrings.readStringField(response, STOP_REASON_FIELD);
         if (STOP_REASON_MAX_TOKENS.equals(stopReason)) {
             // The answer hit max_tokens. Reporting "raise the budget" was useless — nothing in the
@@ -210,7 +217,8 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
                 // Quote the budget the request really used: reporting the pre-escalation value in
                 // the failure message sent the reader looking for a limit that no longer applied.
                 budget = escalated;
-                translated = extractContent(response);
+                root = JsonTree.parseOrNull(response);
+                translated = extractContent(root, response);
                 stopReason = JsonStrings.readStringField(response, STOP_REASON_FIELD);
                 if (translated != null && !translated.trim().isEmpty()
                         && !STOP_REASON_MAX_TOKENS.equals(stopReason)) {
@@ -227,7 +235,7 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
         // reason, while a cut-off answer is distinguishable from a short one only here.
         requireCompleteAnswer(stopReason, budget);
         if (response.indexOf("\"usage\"") >= 0) {
-            TranslationStats.global().recordUsage("claude:" + model, response);
+            TranslationStats.global().recordParsedUsage("claude:" + model, root);
         }
         DebugLog.global().logResponse("claude:" + model, request.getKind().name(), translated);
         return TranslationOutputValidator.requireValid(text, translated);
@@ -237,8 +245,10 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
      * Sends every text of one group as one JSON object in a single request.
      *
      * <p>Anthropic has no output-format field, so the object is requested with a prefilled assistant
-     * turn holding the opening brace — the reply continues from that brace, which is why the brace has
-     * to be put back before the body is parsed. Every entry the model did not answer stays
+     * turn holding the opening brace — the reply continues from that brace, which is why the brace is
+     * put back first. A relay that ignores the prefill answers with the whole object, and a small
+     * model answers with a numbered list; both are read as well rather than throwing a batch away.
+     * Every entry the model did not answer stays
      * {@code null}, and {@link BatchGatherer} repairs exactly those lines with a request of their own.
      *
      * @return one entry per group member in order, with {@code null} for a line the reply did not
@@ -247,16 +257,24 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
     private List<String> translateBatch(List<TranslationRequest> group) throws Exception {
         String user = ProviderSupport.batchUserBody(group);
         String system = TranslationPrompt.batch(prompt, group.get(0));
-        int budget = ChatBudget.batchCompletionBudget(user, group.size(), ESCALATED_TOKENS_LIMIT,
-                MINIMUM_COMPLETION_TOKENS);
+        // 8192 is what one truncated line is escalated to, not what a batch starts at: an endpoint
+        // whose own cap is 4096 answered 400 to every batch of the session, and each refusal cost a
+        // request per line afterwards. The single path's ceiling is the one to start from; the
+        // reduction loop below discovers anything lower once and remembers it.
+        int budget = Math.min(ChatBudget.batchCompletionBudget(user, group.size(),
+                Math.max(MAXIMUM_TOKENS_LIMIT, acceptedOutputTokens), MINIMUM_COMPLETION_TOKENS),
+                acceptedBatchTokens.forEntries(group.size()).budget());
         DebugLog.global().logRequest("claude:" + model, model, endpoint.toString(),
                 group.get(0).getKind().name(), user);
-        String response = http.post(endpoint, requestBody(user, system, budget, false, true),
-                headers());
+        String response = BatchBudget.post(acceptedBatchTokens.forEntries(group.size()), budget,
+                MINIMUM_COMPLETION_TOKENS,
+                attempt -> http.post(endpoint, requestBody(user, system, attempt, false, true),
+                        headers()));
+        Object root = JsonTree.parseOrNull(response);
         if (response != null && response.indexOf("\"usage\"") >= 0) {
-            TranslationStats.global().recordUsage("claude:" + model, response);
+            TranslationStats.global().recordParsedUsage("claude:" + model, root);
         }
-        String content = extractContent(response);
+        String content = extractContent(root, response);
         // A reply cut off at max_tokens is a truncated object, and its last entry would look like a
         // short translation. Reporting the batch as unusable sends every line down the single path,
         // where the budget is escalated and each answer is judged on its own.
@@ -264,8 +282,7 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
         if (content == null || (stopReason != null && !STOP_REASON_END_TURN.equals(stopReason))) {
             throw new IllegalStateException(ProviderJson.describeMissingContent("Claude", response));
         }
-        List<String> parsed = OpenAiChatTranslationProvider.parseJsonBatch(
-                '{' + content, group.size());
+        List<String> parsed = ProviderSupport.parseBatchReply(content, group.size(), true);
         if (parsed == null) {
             throw new IllegalStateException("Claude answered a batch without a JSON object");
         }
@@ -288,9 +305,10 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
         String text = request.getText();
         int budget = completionBudget(text);
         StringBuilder accumulated = new StringBuilder(64);
-        // Characters already handed to the listener. Copying the whole accumulation on every delta
-        // made one translation copy O(n^2) characters and pushed a full string at the UI per delta.
-        int[] published = new int[1];
+        // Copying the whole accumulation on every delta made one translation copy O(n^2) characters
+        // and pushed a full string at the UI per delta. The step and the closing publish live in the
+        // shared publisher, so this provider cannot drift from the other two.
+        ProviderSupport.PreviewPublisher preview = new ProviderSupport.PreviewPublisher(listener);
         // A stream reports how generation ended in its message_delta event, and message_stop is its
         // own statement that the answer is complete; both have to be captured while the body is
         // still being read. They are separate because only the latter proves the stream ended: a
@@ -307,11 +325,12 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
             // Bounded by wall clock, cancellation and raw bytes, so a relay that only sends
             // keep-alive comments cannot hold this worker for the rest of the session. The budget is
             // the one {@code api-read-timeout-ms} already decided for this response: a second,
-            // hidden 180 s constant here ignored the setting in both directions.
+            // hidden 180 s constant here ignored the setting in both directions, and a ceiling kept
+            // here instead of in ProviderSupport made the three streaming providers disagree about
+            // how long one silent stream may live.
             long deadlineNanos = response.getDeadlineNanos();
             ServerSentEvents.read(StreamWatchdog.arm(response.getBody(),
-                    Math.min(STREAM_PROGRESS_BUDGET_CEILING_MILLIS,
-                            response.getProgressBudgetMillis())), payload -> {
+                    ProviderSupport.stallBudgetMillis(response)), payload -> {
                 // One parse per event: the type, the stop reason, the text and the error test are
                 // fields of the same document, and looking each up separately rebuilt the whole tree
                 // five times for every fragment of the answer.
@@ -335,10 +354,7 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
                     accumulated.append(fragment);
                     // One callback per PARTIAL_TEXT_STEP_CHARS instead of one per delta: every
                     // callback used to copy the whole accumulation, which is O(n^2) per line.
-                    if (accumulated.length() - published[0] >= ProviderSupport.PARTIAL_TEXT_STEP_CHARS) {
-                        published[0] = accumulated.length();
-                        listener.onPartialText(accumulated.toString());
-                    }
+                    preview.append(accumulated);
                 } else if (JsonStrings.readStringField(payload, "error") != null) {
                     // Anthropic reports a failure as an ordinary event behind HTTP 200; stop and let
                     // the plain path produce the message the user has always seen.
@@ -399,10 +415,8 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
                     "characters", Integer.toString(accumulated.length()));
             return TranslationProvider.super.translateStreaming(request, listener);
         }
-        if (published[0] != accumulated.length()) {
-            // The throttle may have held the tail back; the preview has to end up complete.
-            listener.onPartialText(accumulated.toString());
-        }
+        // The throttle may have held the tail back; the preview has to end up complete.
+        preview.finish(accumulated);
         return TranslationOutputValidator.requireValid(text, accumulated.toString());
     }
 
@@ -453,7 +467,24 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
         if (response == null || response.trim().isEmpty()) {
             return null;
         }
-        return ProviderJson.joinField(response, "content", "text");
+        return extractContent(JsonTree.parseOrNull(response), response);
+    }
+
+    /**
+     * The same join over an already parsed reply.
+     *
+     * <p>The single-text path needs the fragments, the stop reason and the token counts of one body,
+     * and reading each of them from the raw text built the same document twice more.
+     *
+     * @param root the reply as returned by {@code JsonTree.parseOrNull}, or {@code null}
+     * @param response the same body as text
+     * @return the joined fragments, or {@code null} when the reply carried none
+     */
+    static String extractContent(Object root, String response) {
+        if (response == null || response.trim().isEmpty()) {
+            return null;
+        }
+        return ProviderJson.joinField(root, "content", "text");
     }
 
     /**

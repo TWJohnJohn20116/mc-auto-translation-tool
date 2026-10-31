@@ -33,23 +33,54 @@ tasks.matching { it.name == "jar" || it.name == "remapJar" || it.name == "source
 // createScreen out with @Override, so renaming the stub alone fails to compile; this task catches
 // the direction nothing else compares — both files renamed together to a name Mod Menu does not
 // have, which only shows up as AbstractMethodError when the player presses the config button.
-def contractSources = [
-        new File(modmenuRoot, "api/yarn/src/main/java/com/terraformersmc/modmenu/api/ConfigScreenFactory.java"),
-        new File(modmenuRoot, "api/mojmap/src/main/java/com/terraformersmc/modmenu/api/ConfigScreenFactory.java")
-]
+//
+// The expected name is pinned here rather than read back out of the stub. A check that only greps the
+// stub passes exactly when the stub and the integration were renamed to the same wrong name, so the
+// record has to live in a third file: renaming the pair now also has to edit this guard.
+//
+// Where the name comes from: com.terraformersmc.modmenu.api.ConfigScreenFactory declares
+// `S createScreen(Screen parent)` in every Mod Menu release the six bundles target (1.16-26.3). The
+// artifact is published on https://maven.terraformersmc.com/releases/ and on none of the
+// repositories this build resolves, so it cannot be compared against a resolved class from here.
+// Whenever Mod Menu is upgraded, re-check that method name against that artifact by hand
+// (see platforms/fabric/modmenu/README.md).
+def modmenuFactoryStubSignature = "createScreen(Screen parent);"
+def modmenuFactoryOverride = "public Screen createScreen(Screen parent)"
+def contractFamilies = ["yarn", "mojmap"]
+def contractStubs = contractFamilies.collect { family ->
+    new File(modmenuRoot, "api/${family}/src/main/java/com/terraformersmc/modmenu/api/ConfigScreenFactory.java")
+}
+def contractIntegrations = contractFamilies.collect { family ->
+    new File(modmenuRoot, "integration/${family}/src/client/java/org/universaltranslator/fabric/ModMenuIntegration.java")
+}
 tasks.register("verifyModMenuContract") {
     group = "verification"
-    description = "Checks the Mod Menu stubs declare createScreen(Screen) as the factory method."
-    inputs.files(contractSources)
+    description = "Checks both Mod Menu stubs and both call sites against the pinned createScreen(Screen)."
+    inputs.files(contractStubs + contractIntegrations)
     doLast {
-        contractSources.each { source ->
+        contractStubs.each { source ->
             // Whitespace is collapsed first so a reformatted signature is not reported as a rename.
             def body = source.getText("UTF-8").replaceAll("\\s+", " ")
-            if (!body.contains("createScreen(Screen parent);")) {
+            if (!body.contains(modmenuFactoryStubSignature)) {
                 throw new GradleException(
-                        "${source} does not declare 'createScreen(Screen parent);'. Mod Menu's " +
+                        "${source} does not declare '${modmenuFactoryStubSignature}'. Mod Menu's " +
                                 "factory method is createScreen, so any other name links fine and " +
                                 "then fails at run time with AbstractMethodError.")
+            }
+        }
+        contractIntegrations.each { source ->
+            def body = source.getText("UTF-8").replaceAll("\\s+", " ")
+            if (!body.contains(modmenuFactoryOverride)) {
+                throw new GradleException(
+                        "${source} does not override '${modmenuFactoryOverride}': the call site has " +
+                                "to name the method, or a stub renamed to its own wrong name still " +
+                                "compiles and only breaks when the button is pressed.")
+            }
+            // A lambda links against whatever the stub declares, so it loses the compile-time check.
+            if (!body.contains("new ConfigScreenFactory<Screen>()")) {
+                throw new GradleException(
+                        "${source} passes a lambda to getModConfigScreenFactory(); write the factory " +
+                                "out so the stub's method name is a compile-time dependency.")
             }
         }
     }

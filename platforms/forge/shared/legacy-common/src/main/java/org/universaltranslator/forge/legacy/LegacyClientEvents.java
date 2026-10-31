@@ -71,6 +71,8 @@ public final class LegacyClientEvents {
             "key.universal_translator.toggle_translation", Keyboard.KEY_F8, "MC Auto Translation Tool");
     private static File configDirectory;
     private static boolean registered;
+    /** Whether the shutdown hook that flushes queued configuration writes is already registered. */
+    private static boolean configFlushHookInstalled;
     private boolean connectedLastTick;
     private int joinHintTicks = -1;
     private String lastRuntimeStatus = "";
@@ -80,8 +82,31 @@ public final class LegacyClientEvents {
     private LegacyClientEvents() {
     }
 
+    /**
+     * Gives the queued configuration writes a bounded moment to land when the process ends.
+     *
+     * <p>Only the failed-startup path ever called {@code LegacyTranslationRuntime.shutdown()}, so the
+     * writer's own flush never ran: "press F8 and quit" dropped the toggle and the screen worker
+     * threads outlived the configuration they belonged to. A shutdown hook is the one seam this tree
+     * has without naming a stopping event of its own.
+     */
+    private static void installConfigFlushHook() {
+        if (configFlushHookInstalled) {
+            return;
+        }
+        configFlushHookInstalled = true;
+        try {
+            Runtime.getRuntime().addShutdownHook(
+                    new Thread(LegacyTranslationRuntime::shutdown, "universal-translator-config-flush"));
+        } catch (IllegalStateException alreadyStopping) {
+            // The JVM is already shutting down; no thread is left for a queued write to land on.
+            configFlushHookInstalled = false;
+        }
+    }
+
     static synchronized void initialize(File directory) {
         configDirectory = directory;
+        installConfigFlushHook();
         if (!registered) {
             ClientRegistry.registerKeyBinding(OPEN_SETTINGS);
             ClientRegistry.registerKeyBinding(TOGGLE_TRANSLATION);
@@ -116,7 +141,12 @@ public final class LegacyClientEvents {
             return;
         }
         try {
-            LegacyConfig config = LegacyConfig.load(configDirectory);
+            // The runtime already holds the configuration it is running; the file is only the answer
+            // before the first load succeeded.
+            LegacyConfig config = LegacyTranslationRuntime.diagnosticsConfig();
+            if (config == null) {
+                config = LegacyConfig.load(configDirectory);
+            }
             minecraft.displayGuiScreen(new LegacyConfigScreen(
                     LegacyVersionAccess.eventScreen(event), config));
         } catch (Exception exception) {

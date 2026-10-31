@@ -26,12 +26,16 @@ public final class LegacyScreenWorkers {
 
     /** Runs {@code task} on the next free shared worker. */
     public static void execute(Runnable task) {
-        try {
-            current().execute(task);
-        } catch (RejectedExecutionException shuttingDown) {
-            // A screen action during shutdown must still run: the caller is the client thread and
-            // the task only touches screen state.
-            task.run();
+        for (int attempt = 0; attempt < 2; attempt++) {
+            try {
+                current().execute(task);
+                return;
+            } catch (RejectedExecutionException shuttingDown) {
+                // The pool current() handed out was closed by a shutdown before execute() reached it.
+                // Running the task here would put the button's model fetch or diagnostics export on
+                // the thread that pressed it, so the next pass asks current() for the replacement
+                // pool instead; only a shutdown that closes that one too drops the task.
+            }
         }
     }
 

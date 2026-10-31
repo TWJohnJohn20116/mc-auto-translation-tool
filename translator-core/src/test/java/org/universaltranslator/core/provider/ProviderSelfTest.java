@@ -68,6 +68,9 @@ public final class ProviderSelfTest {
         retriesOnlyTheLinesTheBatchMissed();
         asksForAJsonObjectAndStopsAskingWhenRefused();
         streamsOpenAiResponsesAsTheyArrive();
+        publishesPreviewsAtTheDocumentedSteps();
+        streamsClaudeResponsesAsTheyArrive();
+        streamsGeminiResponsesAsTheyArrive();
         fallsBackWhenTheEndpointCannotStream();
         upgradesTheBudgetWhenAStreamCarriesOnlyReasoning();
         skipsStreamingWhenThereIsNoListener();
@@ -1047,8 +1050,31 @@ public final class ProviderSelfTest {
      * the concatenation of those pieces. The server writes seven bytes at a time, so a read boundary
      * lands inside a line and inside a multi-byte character — which is what a real network does to
      * the stream, and what the reader has to survive.
+     *
+     * <p>The answer is long enough to cross {@link ProviderSupport#PARTIAL_TEXT_STEP_CHARS} more than
+     * once. A five-character answer made the assertion this replaces ({@code partials.size() <= 3})
+     * true whether the answer was published in three steps, in one closing step, or not at all; the
+     * short case has its own contract in {@code publishesPreviewsAtTheDocumentedSteps}.
      */
     private static void streamsOpenAiResponsesAsTheyArrive() throws Exception {
+        // Eight deltas of twelve characters: 36, 72 and 96 characters cross the step, so the
+        // throttle, its repeat and the closing publish are each observable.
+        StringBuilder twelve = new StringBuilder();
+        for (int index = 0; index < 12; index++) {
+            twelve.append('\u5b57');
+        }
+        String delta = twelve.toString();
+        StringBuilder answer = new StringBuilder(96);
+        StringBuilder stream = new StringBuilder();
+        for (int index = 0; index < 8; index++) {
+            answer.append(delta);
+            stream.append("data: {\"choices\":[{\"delta\":{\"content\":\"").append(delta)
+                    .append("\"}}]}\n\n");
+        }
+        stream.append("data: [DONE]\n\n");
+        String expected = answer.toString();
+        String streamBody = stream.toString();
+
         ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
         server.setSoTimeout(5000);
         AtomicReference<String> body = new AtomicReference<String>();
@@ -1058,11 +1084,7 @@ public final class ProviderSelfTest {
                 HttpRequest request = readRequest(socket.getInputStream(),
                         "POST /v1/chat/completions HTTP/1.");
                 body.set(request.body);
-                writeEventStream(socket.getOutputStream(),
-                        "data: {\"choices\":[{\"delta\":{\"content\":\"你\"}}]}\n\n"
-                        + "data: {\"choices\":[{\"delta\":{\"content\":\"好，世\"}}]}\n\n"
-                        + "data: {\"choices\":[{\"delta\":{\"content\":\"界\"}}]}\n\n"
-                        + "data: [DONE]\n\n");
+                writeEventStream(socket.getOutputStream(), streamBody);
             } catch (Throwable failure) {
                 serverFailure.set(failure);
             }
@@ -1074,16 +1096,21 @@ public final class ProviderSelfTest {
                     "http://127.0.0.1:" + server.getLocalPort() + "/v1/chat/completions",
                     "", "stream-model", "openai-compatible");
             PartialCollector collector = new PartialCollector();
+            // A source this long is what makes a 96-character answer legitimate: the validator bounds
+            // the answer relative to the source and nothing else.
             String translated = provider.translateStreaming(new TranslationRequest(
-                    "Hello", "auto", "zh-TW", TextKind.CHAT), collector);
-            // (b) the result is the whole translation, and the last partial is that same string.
-            assertEquals("你好，世界", translated);
-            // (a) the answer is published as it arrives — one step per PARTIAL_TEXT_STEP_CHARS
-            // rather than one callback per delta — and the preview still ends up complete.
+                    "Hello there, this is a longer line to translate", "auto", "zh-TW",
+                    TextKind.CHAT), collector);
+            assertEquals(expected, translated);
+            // The answer really was published while it arrived: more than one preview, each longer
+            // than the last, and the last one is the complete translation.
             List<String> partials = collector.snapshot();
-            assertFalse(partials.isEmpty());
-            assertTrue(partials.size() <= 3);
-            assertEquals("你好，世界", partials.get(partials.size() - 1));
+            assertTrue(partials.size() >= 2);
+            assertTrue(partials.get(0).length() >= ProviderSupport.PARTIAL_TEXT_STEP_CHARS);
+            for (int index = 1; index < partials.size(); index++) {
+                assertTrue(partials.get(index).length() > partials.get(index - 1).length());
+            }
+            assertEquals(expected, partials.get(partials.size() - 1));
             assertTrue(body.get().contains("\"stream\":true"));
         } finally {
             server.close();
@@ -1091,6 +1118,186 @@ public final class ProviderSelfTest {
         }
         if (serverFailure.get() != null) {
             throw new AssertionError("Local streaming test server failed", serverFailure.get());
+        }
+    }
+
+    /**
+     * The throttle contract itself: one preview per step, and exactly one closing preview.
+     *
+     * <p>An answer shorter than a step gets no intermediate preview at all — that trade-off is what
+     * keeps a six-character HUD line from repainting twenty times — and a longer one is published at
+     * every step and once more at the end, so the preview never stops short of the answer.
+     */
+    private static void publishesPreviewsAtTheDocumentedSteps() {
+        PartialCollector shortAnswer = new PartialCollector();
+        ProviderSupport.PreviewPublisher shortPublisher =
+                new ProviderSupport.PreviewPublisher(shortAnswer);
+        shortPublisher.append("\u4f60");
+        shortPublisher.append("\u4f60\u597d\uff0c\u4e16");
+        shortPublisher.finish("\u4f60\u597d\uff0c\u4e16\u754c");
+        assertEquals(Collections.singletonList("\u4f60\u597d\uff0c\u4e16\u754c"),
+                shortAnswer.snapshot());
+
+        StringBuilder twelve = new StringBuilder();
+        for (int index = 0; index < 12; index++) {
+            twelve.append('\u5b57');
+        }
+        PartialCollector longAnswer = new PartialCollector();
+        ProviderSupport.PreviewPublisher longPublisher =
+                new ProviderSupport.PreviewPublisher(longAnswer);
+        StringBuilder accumulated = new StringBuilder(96);
+        for (int index = 0; index < 8; index++) {
+            accumulated.append(twelve);
+            longPublisher.append(accumulated);
+        }
+        longPublisher.finish(accumulated);
+        List<String> partials = longAnswer.snapshot();
+        assertEquals(3, partials.size());
+        assertEquals(ProviderSupport.PARTIAL_TEXT_STEP_CHARS * 3, partials.get(2).length());
+        assertEquals(accumulated.toString(), partials.get(2));
+    }
+
+    /** One twelve-character fragment of a Chinese answer. */
+    private static String streamedFragment() {
+        StringBuilder fragment = new StringBuilder(12);
+        for (int index = 0; index < 12; index++) {
+            fragment.append('\u5b57');
+        }
+        return fragment.toString();
+    }
+
+    /**
+     * Eight twelve-character fragments: 96 characters, which crosses the preview step at 36, 72 and
+     * 96, so one stream exercises both the throttle and the closing publish.
+     */
+    private static List<String> streamedFragments() {
+        return Collections.nCopies(8, streamedFragment());
+    }
+
+    /** The whole answer {@link #streamedFragments()} spells out. */
+    private static String streamedAnswer(List<String> fragments) {
+        StringBuilder answer = new StringBuilder(96);
+        for (int index = 0; index < fragments.size(); index++) {
+            answer.append(fragments.get(index));
+        }
+        return answer.toString();
+    }
+
+    /**
+     * Claude's success path publishes the answer while it arrives.
+     *
+     * <p>Only the OpenAI-compatible provider had a streaming test, and its assertion was satisfied by
+     * a single closing callback; this path and Gemini's were never executed by any test at all. A
+     * copy whose closing test drifted — the preview stopping at the last step, or the complete answer
+     * being discarded and the line paid for twice — left the build green.
+     */
+    private static void streamsClaudeResponsesAsTheyArrive() throws Exception {
+        List<String> fragments = streamedFragments();
+        String expected = streamedAnswer(fragments);
+        StringBuilder stream = new StringBuilder();
+        for (int index = 0; index < fragments.size(); index++) {
+            stream.append("data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",")
+                    .append("\"text\":\"").append(fragments.get(index)).append("\"}}\n\n");
+        }
+        stream.append("data: {\"type\":\"message_stop\"}\n\n");
+        String streamBody = stream.toString();
+
+        ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        AtomicReference<String> body = new AtomicReference<String>();
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread thread = new Thread(() -> {
+            try (Socket socket = server.accept()) {
+                HttpRequest request = readRequest(
+                        socket.getInputStream(), "POST /v1/messages HTTP/1.");
+                body.set(request.body);
+                writeEventStream(socket.getOutputStream(), streamBody);
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-claude-stream");
+        thread.setDaemon(true);
+        thread.start();
+        try {
+            ClaudeTranslationProvider provider = new ClaudeTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v1/messages",
+                    "claude-secret", "claude-test", new HttpJsonClient(2000, 2000),
+                    TranslationPrompt.Settings.standard());
+            PartialCollector collector = new PartialCollector();
+            String translated = provider.translateStreaming(new TranslationRequest(
+                    "Hello there, this is a longer line to translate", "auto", "zh-TW",
+                    TextKind.CHAT), collector);
+            assertEquals(expected, translated);
+            List<String> partials = collector.snapshot();
+            assertTrue(partials.size() >= 2);
+            for (int index = 1; index < partials.size(); index++) {
+                assertTrue(partials.get(index).length() > partials.get(index - 1).length());
+            }
+            assertEquals(expected, partials.get(partials.size() - 1));
+            assertTrue(body.get().contains("\"stream\":true"));
+        } finally {
+            server.close();
+            thread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local Claude streaming test server failed", serverFailure.get());
+        }
+    }
+
+    /**
+     * Gemini's success path publishes the answer while it arrives, and the finish reason on the last
+     * chunk is what proves the stream ended.
+     */
+    private static void streamsGeminiResponsesAsTheyArrive() throws Exception {
+        List<String> fragments = streamedFragments();
+        String expected = streamedAnswer(fragments);
+        StringBuilder stream = new StringBuilder();
+        for (int index = 0; index < fragments.size(); index++) {
+            String finish = index == fragments.size() - 1 ? ",\"finishReason\":\"STOP\"" : "";
+            stream.append("data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"")
+                    .append(fragments.get(index)).append("\"}]}").append(finish).append("}]}\n\n");
+        }
+        String streamBody = stream.toString();
+
+        ServerSocket server = new ServerSocket(0, 2, InetAddress.getByName("127.0.0.1"));
+        server.setSoTimeout(5000);
+        AtomicReference<String> requestLine = new AtomicReference<String>();
+        AtomicReference<Throwable> serverFailure = new AtomicReference<Throwable>();
+        Thread thread = new Thread(() -> {
+            try (Socket socket = server.accept()) {
+                HttpRequest request = readRequest(
+                        socket.getInputStream(), "POST /v1beta/models/");
+                requestLine.set(request.requestLine);
+                writeEventStream(socket.getOutputStream(), streamBody);
+            } catch (Throwable failure) {
+                serverFailure.set(failure);
+            }
+        }, "provider-self-test-gemini-stream");
+        thread.setDaemon(true);
+        thread.start();
+        try {
+            GeminiTranslationProvider provider = new GeminiTranslationProvider(
+                    "http://127.0.0.1:" + server.getLocalPort() + "/v1beta/models",
+                    "gemini-secret", "gemini-test", new HttpJsonClient(2000, 2000),
+                    TranslationPrompt.Settings.standard());
+            PartialCollector collector = new PartialCollector();
+            String translated = provider.translateStreaming(new TranslationRequest(
+                    "Hello there, this is a longer line to translate", "auto", "zh-TW",
+                    TextKind.CHAT), collector);
+            assertEquals(expected, translated);
+            List<String> partials = collector.snapshot();
+            assertTrue(partials.size() >= 2);
+            for (int index = 1; index < partials.size(); index++) {
+                assertTrue(partials.get(index).length() > partials.get(index - 1).length());
+            }
+            assertEquals(expected, partials.get(partials.size() - 1));
+            assertTrue(requestLine.get().contains("streamGenerateContent?alt=sse"));
+        } finally {
+            server.close();
+            thread.join(5000);
+        }
+        if (serverFailure.get() != null) {
+            throw new AssertionError("Local Gemini streaming test server failed", serverFailure.get());
         }
     }
 

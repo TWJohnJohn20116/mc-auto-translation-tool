@@ -775,13 +775,15 @@ final class LegacyConfigScreen extends GuiScreen {
         try {
             String prompt = customPrompt == null
                     ? base.customSystemPrompt()
-                    : TranslationPrompt.fromEditorText(customPrompt.getText());
+                    : TranslationPrompt.clampEditorText(customPrompt.getText());
             LegacyConfig updated = base.withPromptSettings(quality, prompt);
             if (updated.enabled) {
                 updated.validateProviderConfiguration();
             }
             LegacyTranslationRuntime.initialize(updated);
-            updated.save();
+            // Waits for the queued F8 / Home writes before writing: the Save is the last user action
+            // and a snapshot queued earlier must never land after it.
+            LegacyConfigWriter.saveNow(updated);
             setTestStatus(tr("screen.universal_translator.diagnostics.settings_saved"), false);
         } catch (Exception exception) {
             setTestStatus(tr("screen.universal_translator.diagnostics.settings_failed",
@@ -1107,7 +1109,7 @@ final class LegacyConfigScreen extends GuiScreen {
             }
             runtimeChanged = true;
             LegacyTranslationRuntime.initialize(updated);
-            updated.save();
+            LegacyConfigWriter.saveNow(updated);
             mc.displayGuiScreen(parent);
         } catch (Exception exception) {
             if (runtimeChanged) {

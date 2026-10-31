@@ -135,7 +135,9 @@ public final class TranslationOutputValidator {
         // proper noun, an abbreviation) and every rejection sends the line into the retry loop.
         if (output.equals(source) && countLatinLetters(source) >= MINIMUM_UNCHANGED_LATIN_LETTERS
                 && containsWhitespace(source)) {
-            throw new IllegalArgumentException("Translation output repeats the source text");
+            // Rejecting the text is right; the plain IllegalArgumentException was not, because it is
+            // also what a fixable failure throws. See UnchangedOutputException.
+            throw new UnchangedOutputException("Translation output repeats the source text");
         }
         // The prompt promises the same number of lines. Only a loss is rejected: a CJK target
         // legitimately wraps one long line into two, but nothing legitimate drops a line.
@@ -440,5 +442,22 @@ public final class TranslationOutputValidator {
         }
         String trimmed = source.trim();
         return !trimmed.isEmpty() && trimmed.charAt(0) == quote;
+    }
+
+    /**
+     * A provider answered with the source text, so this line is known not to be translatable by it.
+     *
+     * <p>{@link IllegalArgumentException} already tells the failure policy that the request cannot
+     * succeed here, but the render session could not tell this verdict from a fixable failure: it put
+     * the line back into the retry table every thirty seconds and bought the same unchanged answer for
+     * the rest of the session, where the "nothing translatable" path remembers the verdict once and
+     * asks never again. The subtype is the difference the session needs.
+     */
+    static final class UnchangedOutputException extends IllegalArgumentException {
+        private static final long serialVersionUID = 1L;
+
+        UnchangedOutputException(String message) {
+            super(message);
+        }
     }
 }

@@ -7,6 +7,9 @@
 # 共用這一份，白名單就只有一個地方可以漂。
 set -euo pipefail
 
+# 這條白名單的字面規則與 scripts/release_layout.py 的 VERSION_PATTERN 必須逐字相同：本機的
+# scripts/tools/_assemble_1_3_11_beta.py 用那一份驗同一個值（bash 讀不到 python 常數，所以只能
+# 兩份互相比對，scripts/ci/test_ci_docs.py 會斷言兩者一致）。
 version="$(sed -n 's/^mod_version=//p' gradle.properties | head -n 1)"
 if [[ -z "$version" || ! "$version" =~ ^[0-9]+([.][0-9]+)*([_-][0-9A-Za-z.-]+)?$ ]]; then
   echo "::error::gradle.properties 的 mod_version 是空值或含不允許的字元：'${version}'" >&2

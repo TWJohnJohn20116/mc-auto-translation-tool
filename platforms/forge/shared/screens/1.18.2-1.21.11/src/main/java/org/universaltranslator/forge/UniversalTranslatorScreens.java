@@ -580,13 +580,15 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         try {
             String prompt = customPrompt == null
                     ? base.customSystemPrompt()
-                    : TranslationPrompt.fromEditorText(customPrompt.getValue());
+                    : TranslationPrompt.clampEditorText(customPrompt.getValue());
             ForgeConfig updated = base.withPromptSettings(quality, prompt);
             if (updated.enabled) {
                 updated.validateProviderConfiguration();
             }
             ForgeTranslationRuntime.initialize(updated);
-            updated.save();
+            // Waits for the queued F8 / Home writes before writing: the Save is the last user action
+            // and a snapshot queued earlier must never land after it.
+            ForgeConfigWriter.saveNow(updated);
             setTestStatus(tr("screen.universal_translator.diagnostics.settings_saved"), false);
         } catch (Exception exception) {
             setTestStatus(tr("screen.universal_translator.diagnostics.settings_failed",
@@ -715,7 +717,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
             }
             runtimeChanged = true;
             ForgeTranslationRuntime.initialize(updated);
-            updated.save();
+            ForgeConfigWriter.saveNow(updated);
             status = tr("status.universal_translator.saved");
             onClose();
         } catch (Exception exception) {
@@ -1720,7 +1722,7 @@ abstract class UniversalTranslatorDiagnosticsScreenBase extends Screen {
         try {
             ForgeConfig updated = live.withDebugLog(debugEnabled);
             ForgeTranslationRuntime.initialize(updated);
-            updated.save();
+            ForgeConfigWriter.saveNow(updated);
             Path configFile = updated.configFile();
             DebugLog.global().configure(
                     configFile.resolveSibling(DebugLog.FILE_NAME), debugEnabled);

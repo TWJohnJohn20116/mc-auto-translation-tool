@@ -71,11 +71,11 @@ jobs:
           # 版本號在四個地方各有一份。過去漂移過一次（2026-10-06：UserAgent 停在 1.1，
           # 當時版本已是 1.3.11，每次下載模型都對外宣告三版前的版本號），這裡讓漂移在
           # PR 上就紅，而不是等使用者發現。
-          version="$(sed -n 's/^mod_version=//p' gradle.properties | head -n 1)"
-          if [[ -z "$version" ]]; then
-            echo "::error::gradle.properties 讀不到 mod_version"
-            exit 1
-          fi
+          # 版本號的讀取與字元白名單只有一份：scripts/ci/read-mod-version.sh。先前這裡是第三份
+          # 實作（同一條 sed、沒有白名單、沒有 strip），於是同一份 gradle.properties 在三個地方
+          # 有三種判定——`mod_version=1.4 `（尾隨空白）會讓下面的比對印出「'1.4' 但 mod_version
+          # 是 '1.4'」這種兩個值看起來一模一樣的紅燈。
+          version="$(bash scripts/ci/read-mod-version.sh)"
           agent="$(sed -n 's/.*MCAutoTranslationTool\/\([^"]*\)".*/\1/p' \
             translator-core/src/main/java/org/universaltranslator/core/UserAgent.java | head -n 1)"
           web="$(sed -n 's/^const releaseVersion = "\([^"]*\)";/\1/p' website/app/page.tsx | head -n 1)"
@@ -127,6 +127,19 @@ jobs:
           copies="$(grep -rl 'MCAutoTranslationTool/' translator-core/src/main/java | wc -l)"
           if [[ "$copies" -ne 1 ]]; then
             echo "::error::MCAutoTranslationTool/ 出現在 ${copies} 個檔案，應該只有 UserAgent.java 一處"
+            failed=1
+          fi
+          # 升級指示不得寫死版本號。`MCAutoTranslationTool-*` 這個通配語意本身已涵蓋全部舊版，
+          # 再括號補一句「某版及更早」就是第二份真相：bump 之後那句話會讓使用者保留上一版、
+          # 再放進新的一顆，而兩顆同 modId 的 JAR 同時在 mods/ 會讓遊戲拒絕啟動（Fabric 是
+          # Duplicate mod id，Forge／NeoForge 是 Duplicate mod），且畫面上沒有任何提示。
+          # 用 grep -c 而不是 grep -q：pipefail 下 grep -q 提早結束會讓上游收到 SIGPIPE，
+          # 管線狀態變成 141，這個判斷就永遠不成立（同上面 releaseVersion 那段的理由）。
+          upgrade_hint="$(grep -rnE '及更早|及較早|and earlier' README.md docs website/app 2>/dev/null \
+            | grep -E '[0-9]+[.][0-9]+' || true)"
+          if [[ -n "$upgrade_hint" ]]; then
+            echo "::error::升級指示寫死了版本號（下一次 bump 後會讓使用者同時留下兩顆同 modId 的 JAR）："
+            printf '%s\n' "$upgrade_hint"
             failed=1
           fi
           if [[ "$failed" -ne 0 ]]; then
@@ -240,6 +253,34 @@ jobs:
           python3 -m py_compile scripts/ci/*.py
           echo "composite action 與 scripts/ci 腳本檢查通過"
 
+      # read-mod-version.sh 是 Release 路徑上唯一的字元白名單（它的輸出被拼進 find -name 與
+      # rm -rf），但上面只驗了語法——白名單放寬成 `.+` 也一樣是合法語法。這裡用 fixture 驗行為。
+      # 腳本以相對路徑讀 gradle.properties，所以要在 fixture 目錄裡執行（env -C），否則會讀到
+      # 真的檔案、測試永遠通過；呼叫腳本本身用絕對路徑。
+      - name: 驗證版本白名單的行為
+        shell: bash
+        run: |
+          set -euo pipefail
+          script="$GITHUB_WORKSPACE/scripts/ci/read-mod-version.sh"
+          fixture="$RUNNER_TEMP/read-mod-version-fixture"
+          mkdir -p "$fixture"
+          for value in "1.4" "1.4-rc1" "1.4_rc1"; do
+            printf 'mod_version=%s\n' "$value" > "$fixture/gradle.properties"
+            actual="$(env -C "$fixture" bash "$script")"
+            if [[ "$actual" != "$value" ]]; then
+              echo "::error::read-mod-version.sh 對 '$value' 輸出 '$actual'" >&2
+              exit 1
+            fi
+          done
+          for value in "" "1.4 " "1.4*" "[1.4]"; do
+            printf 'mod_version=%s\n' "$value" > "$fixture/gradle.properties"
+            if env -C "$fixture" bash "$script" >/dev/null 2>&1; then
+              echo "::error::read-mod-version.sh 接受了不合法值：'$value'" >&2
+              exit 1
+            fi
+          done
+          echo "版本白名單行為符合預期"
+
       # scripts/*.py 的單元測試原本沒有任何 CI 入口（AGENTS.md 也禁止本機執行），於是
       # 「有測試」等於紙上覆蓋：600 KiB 分片尺寸、ZIP metadata、Forge 版本範圍這些契約
       # 都沒有東西守著。這裡只跑純 Python、不裝第三方依賴、不碰 Gradle，成本是幾秒。
@@ -267,11 +308,16 @@ jobs:
       targets: ${{ steps.resolve.outputs.targets }}
       forge_changed: ${{ steps.forge.outputs.changed }}
       release_dir_exists: ${{ steps.resolve.outputs.release_dir_exists }}
+      # 「上一個 commit 還有 downloads/<version>、這一個沒有」——與「還沒準備」不同（見 steps.resolve）。
+      release_removed: ${{ steps.resolve.outputs.release_removed }}
       # 五個 release-assets 步驟共用的唯一決策點（見 steps.resolve 的說明）。
       release_verify: ${{ steps.resolve.outputs.release_verify }}
     steps:
       - name: 取出原始碼
         uses: actions/checkout@v7
+        with:
+          # 下面要用 HEAD~1 區分「資產還沒準備」與「資產被刪掉」，depth 1 的 checkout 沒有 HEAD~1。
+          fetch-depth: 2
 
       - name: 解析要建置的目標
         id: resolve
@@ -325,11 +371,24 @@ jobs:
             release_dir_exists=true
           fi
           echo "release_dir_exists=$release_dir_exists" >> "$GITHUB_OUTPUT"
+          # 「目錄不存在」同時代表兩件事：還沒準備（升版後、prepare-release 之前）與被刪掉／路徑寫錯。
+          # 只有後者該紅，所以用 HEAD~1 判斷「上一個 commit 還帶著這個目錄」。checkout 是 fetch-depth: 2，
+          # HEAD~1 一定在；根 commit 上 rev-parse 會失敗，那時當成 false（不誤紅）。
+          release_removed=false
+          if [[ "$release_dir_exists" != "true" && -n "${release_version:-}" ]] \
+              && git rev-parse --verify -q HEAD~1 >/dev/null \
+              && git cat-file -e "HEAD~1:downloads/${release_version}" 2>/dev/null; then
+            release_removed=true
+          fi
+          echo "release_removed=$release_removed" >> "$GITHUB_OUTPUT"
           # release-assets 的五個步驟都只讀這一個輸出，語意收斂在一處：明確要求 release 關鍵字時
-          # 一律驗（缺資產就是真錯誤，要紅）；否則只在非 PR 且目錄存在時驗。
+          # 一律驗（缺資產就是真錯誤，要紅）；其餘只有在「手動觸發且目錄存在」時驗——prepare-release
+          # 會 dispatch 一次 build.yml 讓 release PR 產生 CI 總結。push main 一律不驗：同一個 commit
+          # 的發布驗證由 publish-release.yml 做一次（它才是擋住 Release 的那一道），否則 48 顆 JAR
+          # 會被完整解壓四輪、fabric-all.jar 被重建兩次。
           if [[ "${EVENT_NAME:-}" == "workflow_dispatch" && ",$requested," == *",release,"* ]]; then
             echo "release_verify=true" >> "$GITHUB_OUTPUT"
-          elif [[ "${EVENT_NAME:-}" != "pull_request" && -z "$requested" \
+          elif [[ "${EVENT_NAME:-}" == "workflow_dispatch" && -z "$requested" \
               && "$release_dir_exists" == "true" ]]; then
             echo "release_verify=true" >> "$GITHUB_OUTPUT"
           else
@@ -399,8 +458,6 @@ jobs:
           - target: fabric-1.21.x
             java: "21"
             bundle: true
-          - target: fabric-1.21.4-1.21.5
-            java: "21"
           - target: fabric-26.x
             java: "25"
             bundle: true
@@ -577,9 +634,20 @@ jobs:
       - name: 取出原始碼
         uses: actions/checkout@v7
 
+      # plan 的 release_removed：「上一個 commit 還帶著 downloads/<version>，這一個沒有」。那是
+      # 刪除或清空已發布的資產，不是「還沒準備」：五個驗證步驟在 release_verify=false 時全部略過、
+      # job 仍 success、CI 總結 綠，而 publish-release 對同一狀態只印一行 notice 就 exit 0。
+      # 這一步不看 release_verify，只在真的刪掉時紅。
+      - name: 確認發布目錄沒有被刪
+        if: needs.plan.outputs.release_removed == 'true'
+        run: |
+          echo "::error::downloads/<mod_version> 在上一個 commit 還存在、這個 commit 沒有了：已發布的資產被刪除或清空，請還原，或走 prepare-release.yml 重新產生" >&2
+          exit 1
+
       # 這四個步驟的條件都只讀 plan 的 release_verify：判斷收斂在 plan 一處，不再各自用觸發事件
-      # 近似「資產存在」。升版後、downloads/<新版本> 產生之前的 push main 會得到 false（步驟略過、
-      # job 仍 success），與 publish-release 對同一狀態的「跳過發布」一致。
+      # 近似「資產存在」。push main 恆為 false（同一個 commit 由 publish-release.yml 驗一次）；
+      # 升版後、downloads/<新版本> 產生之前的手動觸發也是 false（步驟略過、job 仍 success），
+      # 與 publish-release 對同一狀態的「跳過發布」一致。
       - name: 設定 Java 25
         if: needs.plan.outputs.release_verify == 'true'
         uses: actions/setup-java@v6
@@ -610,7 +678,9 @@ jobs:
       # 流程明確呼叫，這裡是呼叫點之一（另一個是 prepare-release.yml 的收集後驗證）。
       # 呼叫條件不能只看「非 PR 就驗」：升版後 downloads/<新版本> 還不存在的那一刻，這裡會跑
       # verifyReleaseJars／prepareReleaseAssets 並必然失敗，把互鎖從 PR 搬到 push main。條件由
-      # plan 的 release_verify 給出（明確要求 release 或目錄真的存在）。
+      # plan 的 release_verify 給出（明確要求 release 或「手動觸發且目錄真的存在」）。push main
+      # 不驗：同一份輸入由 publish-release.yml 驗一次，而 build.yml 的 CI 總結 在 push main 上
+      # 不擋任何東西，再解壓一輪只是把 48 顆 JAR 的完整驗證成本乘二。
       - name: 驗證所有發布 JAR 與 Fabric 選版
         id: build
         if: needs.plan.outputs.release_verify == 'true'
@@ -660,8 +730,8 @@ jobs:
         # 摘要本文只留一份：scripts/ci/write-build-summary.sh（差異只在上面三個 env）。
         run: bash scripts/ci/write-build-summary.sh
 
-  # 網站（website/）目前沒有其他檢查。這個 job 只在 PR 有動到 website/ 時才真的跑，
-  # 所以一般 PR 幾乎零成本；Dependabot 的 npm 更新 PR 才會被實際驗證。
+  # 網站（website/）目前沒有其他檢查。這個 job 只在 PR 有動到 website/、README.md 或 docs/ 時
+  # 才真的跑，所以一般 PR 幾乎零成本；Dependabot 的 npm 更新 PR 才會被實際驗證。
   website:
     name: 網站檢查
     runs-on: ubuntu-24.04
@@ -672,7 +742,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 判斷有沒有動到 website
+      - name: 判斷有沒有動到網站或文件
         id: changed
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -685,12 +755,21 @@ jobs:
             exit 0
           fi
           git fetch --no-tags --depth=1 origin "$BASE_REF"
-          if git diff --name-only FETCH_HEAD HEAD | grep -q '^website/'; then
+          # 條件不能只看 website/：`rendered-html.test.mjs` 的「兩份簡中 README 逐行相同」與
+          # 「31 個下載檔名同步」要防的正是「只改 docs/ 或 README.md」的 PR，而那種 PR 完全
+          # 不動 website/，於是整套 `pnpm test` 被略過、CI 總結 仍綠燈，錯誤的升級指示直接
+          # 進 main 首頁（第四輪 A14-001 的回歸就是這種形狀）。
+          # 用變數而不是 `| grep -q`：pipefail 下 grep -q 提早結束會讓 git diff 收到 SIGPIPE
+          # （管線狀態 141），判斷會從 true 變成 false，docs-only PR 就會被靜默略過。
+          changed="$(git diff --name-only FETCH_HEAD HEAD \
+            | grep -E '^(website/|README\.md$|docs/)' || true)"
+          if [[ -n "$changed" ]]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
-            echo "這個 PR 有動到 website/"
+            echo "這個 PR 動到 website/、README.md 或 docs/："
+            printf '%s\n' "$changed"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "這個 PR 沒有動到 website/，略過網站檢查"
+            echo "這個 PR 沒有動到 website/、README.md 或 docs/，略過網站檢查"
           fi
 
       - name: 設定 Node
@@ -730,6 +809,9 @@ jobs:
       - website
     if: always()
     runs-on: ubuntu-24.04
+    # 這是分支保護唯一的必要檢查：checkout 或 git 卡在 runner 網路上時，預設的 360 分鐘上限會讓
+    # 這個 PR 六小時內無法合併，`gh run watch` 也不會結束。它只有一次 checkout 與一段純 python。
+    timeout-minutes: 5
     steps:
       # 讀 .github/workflows/build.yml 自己的 jobs 清單，用來比對 needs 有沒有漏掉 job。新增 job
       # 而忘記加進 needs 時，那個 job 失敗不會讓 CI 總結 變紅、分支保護照樣放行，而 AGENTS.md 只把

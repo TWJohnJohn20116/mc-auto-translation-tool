@@ -29,7 +29,7 @@ abstract class InGameHudStatusIndicatorMixin {
             at = @At("RETURN"))
     private void universalTranslator$renderStatusIndicator(
             GuiGraphicsExtractor graphics, DeltaTracker deltaTracker, CallbackInfo callback) {
-        // 26.1 to 26.1.2 keep the HUD-hidden flag on Gui.hideGui; the 26.2+ layer renamed it.
-        HudIndicatorPainter.paint(graphics, Minecraft.getInstance().gui.hideGui);
+        // 26.1 to 26.1.2 expose the HUD-hidden state as Options.hideGui(); 26.2+ renamed it.
+        HudIndicatorPainter.paint(graphics, Minecraft.getInstance().options.hideGui());
     }
 }

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 
 async function render() {
@@ -305,9 +305,10 @@ test("keeps every documented download name in sync with the rendered page", asyn
     );
   }
 
-  // `scripts/prepare_release_assets.py` 若已寫出 `downloads/<版本>/release-assets.txt`
-  // （31 個可安裝檔名的權威清單），就以它為準再比一次。檔案不存在時只提示、不紅燈：
-  // 版本號 bump 後 `downloads/` 還沒重新產生時，網站檢查不該先壞掉。
+  // `downloads/<版本>/release-assets.txt` 是 31 個可安裝檔名的權威清單：它由
+  // `scripts/prepare_release_assets.py` 與可安裝 JAR 同一批產生，並由 `prepare-release.yml`
+  // 寫回 `downloads/<版本>/` 隨 PR 提交。存在時就以它為準再比一次；不存在時只提示、不紅燈——
+  // 版本號 bump 後 `downloads/` 還沒重新產生時，網站檢查不該先壞掉（那個窗口一過就該看到它）。
   let manifest = null;
   try {
     manifest = await readFile(
@@ -378,4 +379,119 @@ test("keeps the repository README and docs/Zh-cn/README.md saying the same thing
     [],
     "兩份簡中 README 已經漂移：同步內容，或把刻意不同的那一行加進 README_COPY_DRIFT_ALLOWED",
   );
+});
+
+// 兩個對外頭條數字（「48 個發布目標」與「51 個精確實作」）被手抄在十幾處，但真正決定它們的是
+// 產生端：`prepare-release.yml` 的 `TARGETS_JSON` 與 `platforms/fabric/*` 的實作目錄。先前只有
+// 「31 個可安裝 JAR」有守（文案宣稱的 N 必須等於渲染出的 `.jar` 連結數），於是新增一個 Fabric
+// 版本時 31 會逼人更新 `page.tsx`，而 48／51 可以同時錯在十幾處、CI 全綠——錯的還是使用者用來
+// 判斷「我的版本有沒有被支援」的那兩個數字。
+const TARGET_COUNT_CLAIMS = [
+  /(\d+)\s+个构建产物/,
+  /(\d+)\s+個建置產物/,
+  /(\d+)\s+build artifacts/,
+  /(\d+)\s+个发布构建产物/,
+  /(\d+)\s+個發佈建置產物/,
+  /(\d+)\s+release build artifacts/,
+  /发布目标（(\d+)\s+个）/,
+  /發佈目標（(\d+)\s+個）/,
+  /Release target\s+\((\d+)\)/,
+];
+
+const IMPLEMENTATION_CLAIMS = [
+  /(\d+)\s+个精确版本实现/,
+  /(\d+)\s+個精確版本實作/,
+  /(\d+)\s+exact-version implementations/,
+  /(\d+)\s+个 Fabric 实现/,
+  /(\d+)\s+個 Fabric 實作/,
+  /(\d+)\s+Fabric implementations/,
+  /(\d+)\s+个精确实作/,
+  /(\d+)\s+個精確實作/,
+];
+
+const COVERAGE_DOCS = [
+  "../../README.md",
+  "../../docs/Zh-cn/README.md",
+  "../../docs/Zh-tw/README.md",
+  "../../docs/en/README.md",
+  "../../docs/Zh-cn/BUILDING.md",
+  "../../docs/Zh-tw/BUILDING.md",
+  "../../docs/en/BUILDING.md",
+];
+
+// 除 26.x 之外，每個 bundle 的版本目錄在 `versions/` 底下；26.x 的版本目錄直接掛在 bundle 根
+// （`platforms/fabric/26.x/{26.1,…}`，同層還有 `bundle` 與 `shared`，那不是版本）。
+const FABRIC_VERSIONED_BUNDLES = ["1.13", "1.14-1.15", "1.16", "1.17-1.18", "1.19", "1.20", "1.21"];
+
+test("keeps the headline coverage numbers in sync with their producers", async () => {
+  // 48：權威是 `prepare-release.yml` 裡那份 TARGETS_JSON，不是任何文件裡的數字。
+  const prepareWorkflow = await readFile(
+    new URL("../../.github/workflows/prepare-release.yml", import.meta.url),
+    "utf8",
+  );
+  const targetsJson = prepareWorkflow.match(
+    /TARGETS_JSON="\$\(cat <<'JSON'\n([\s\S]*?)\n\s*JSON\n/,
+  )?.[1];
+  assert.ok(targetsJson, "prepare-release.yml 找不到 TARGETS_JSON heredoc");
+  const releaseTargets = JSON.parse(targetsJson);
+  assert.ok(releaseTargets.length > 0, "prepare-release.yml 的 TARGETS_JSON 解析出 0 個目標");
+
+  // 51：權威是實作目錄數（不寫死，也不問任何文件）。
+  const counts = await Promise.all([
+    ...FABRIC_VERSIONED_BUNDLES.map(
+      async (bundle) =>
+        (await readdir(new URL(`../../platforms/fabric/${bundle}/versions`, import.meta.url))).length,
+    ),
+    readdir(new URL("../../platforms/fabric/26.x", import.meta.url)).then(
+      (entries) => entries.filter((name) => /^\d/.test(name)).length,
+    ),
+  ]);
+  const implementations = counts.reduce((sum, count) => sum + count, 0);
+  assert.ok(implementations > 0, "platforms/fabric 的實作目錄數算成 0");
+
+  const pageSource = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const pageImplementations = Number(
+    pageSource.match(/const fabricImplementations = (\d+)/)?.[1] ?? NaN,
+  );
+  assert.equal(
+    pageImplementations,
+    implementations,
+    `app/page.tsx 的 fabricImplementations 是 ${pageImplementations}，但 versions/ 目錄合計 ${implementations}`,
+  );
+
+  const problems = [];
+  for (const relative of COVERAGE_DOCS) {
+    const text = await readFile(new URL(relative, import.meta.url), "utf8");
+    let mentionsTargets = false;
+    for (const pattern of TARGET_COUNT_CLAIMS) {
+      for (const [matched, digits] of text.matchAll(new RegExp(pattern.source, "g"))) {
+        mentionsTargets = true;
+        if (Number(digits) !== releaseTargets.length) {
+          problems.push(
+            `${relative}：「${matched}」寫 ${digits}，但 prepare-release.yml 有 ${releaseTargets.length} 個發布目標`,
+          );
+        }
+      }
+    }
+    let mentionsImplementations = false;
+    for (const pattern of IMPLEMENTATION_CLAIMS) {
+      for (const [matched, digits] of text.matchAll(new RegExp(pattern.source, "g"))) {
+        mentionsImplementations = true;
+        if (Number(digits) !== implementations) {
+          problems.push(
+            `${relative}：「${matched}」寫 ${digits}，但 versions/ 目錄合計 ${implementations} 個實作`,
+          );
+        }
+      }
+    }
+    // 這兩句話是使用者判斷「我的版本有沒有被支援」的第一手依據，所以不是「有寫就要對」，
+    // 而是每份文件都必須寫。
+    if (!mentionsTargets) {
+      problems.push(`${relative} 完全沒有寫發布目標數量（例如「48 个构建产物」）`);
+    }
+    if (!mentionsImplementations) {
+      problems.push(`${relative} 完全沒有寫 Fabric 實作數量（例如「51 个精确版本实现」）`);
+    }
+  }
+  assert.deepEqual(problems, [], "頭條數字與產生端不一致：改文件或改產生端，兩者必須同步");
 });

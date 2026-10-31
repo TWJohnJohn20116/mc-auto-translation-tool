@@ -11,6 +11,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.universaltranslator.forge.ForgeMixinDiagnostics;
 import org.universaltranslator.forge.ForgeTranslationRuntime;
+import org.universaltranslator.forge.HomeButtonGeometry;
 
 /** Adds a single title-screen entry that opens translation settings. */
 @Mixin(TitleScreen.class)
@@ -26,9 +27,10 @@ abstract class TitleScreenMixin extends Screen {
     private void universalTranslator$addQuickSettings(CallbackInfo callback) {
         ForgeMixinDiagnostics.optionalHookActive(
                 ForgeMixinDiagnostics.TITLE_SCREEN_ENTRY, "title-screen-entry");
-        int x = Math.max(4, this.width - 136);
+        int x = HomeButtonGeometry.x(this.width);
         addRenderableWidget(new Button(
-                x, 6, 132, 20, new TranslatableComponent("screen.universal_translator.home.open"),
+                x, HomeButtonGeometry.MARGIN_Y, HomeButtonGeometry.WIDTH, HomeButtonGeometry.HEIGHT,
+                new TranslatableComponent("screen.universal_translator.home.open"),
                 button -> ForgeTranslationRuntime.openSettingsScreen((Screen) (Object) this)));
     }
 }

@@ -31,7 +31,7 @@
     }
   ],
   "depends": {
-    "fabricloader": ">=0.19.3",
+    "fabricloader": ">=${loaderFloor}",
     "minecraft": [
       "1.17",
       "1.17.1",
@@ -39,7 +39,7 @@
       "1.18.1",
       "1.18.2"
     ],
-    "java": ">=17",
+    "java": ">=${javaFloor}",
     "${fabricDependency}": "*",
     "universal_translator": ">=${version}"
   }

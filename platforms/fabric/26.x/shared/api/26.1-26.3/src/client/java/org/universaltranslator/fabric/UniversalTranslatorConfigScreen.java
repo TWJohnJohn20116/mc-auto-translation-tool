@@ -536,7 +536,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         try {
             String prompt = customPrompt == null
                     ? original.customSystemPrompt()
-                    : TranslationPrompt.fromEditorText(customPrompt.getValue());
+                    : TranslationPrompt.clampEditorText(customPrompt.getValue());
             FabricConfig updated = writeBackBase().withPromptSettings(quality, prompt);
             if (updated.enabled) {
                 updated.validateProviderConfiguration();

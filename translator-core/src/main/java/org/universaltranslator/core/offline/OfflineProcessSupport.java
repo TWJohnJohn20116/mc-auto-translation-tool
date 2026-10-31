@@ -35,6 +35,20 @@ public final class OfflineProcessSupport {
     private static final boolean CASE_INSENSITIVE_PATHS =
             System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")
                     || System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("mac");
+    /** Suffix of a finished ASCII alias. */
+    private static final String ALIAS_SUFFIX = ".gguf";
+    /** Suffix of the sidecar that records an alias verification, see {@code ModelVerificationCache}. */
+    private static final String ALIAS_SIDECAR_SUFFIX = ".gguf.verified";
+    /** Suffix of the scratch file an alias copy is written to before it is moved into place. */
+    private static final String ALIAS_PARTIAL_SUFFIX = ".gguf.part";
+    /**
+     * How long a scratch file must have been untouched before another start may delete it.
+     *
+     * <p>Two instances of the game share this directory, and the one that is copying right now owns
+     * its own {@code .part}. Deleting it made that instance's move fail after it had already written
+     * the whole gigabyte, so the sweep only touches a scratch file that clearly has no writer left.
+     */
+    private static final long PARTIAL_GRACE_MILLIS = 10L * 60L * 1000L;
 
     private OfflineProcessSupport() {
     }
@@ -434,11 +448,43 @@ public final class OfflineProcessSupport {
                 if (name.startsWith(keepName)) {
                     continue;
                 }
+                // Only a finished alias, its sidecar and a scratch file nobody is writing are this
+                // sweep's business. Two instances of the game share the directory, and the one that
+                // is copying right now owns its ".part": deleting it made that instance's move fail
+                // after it had written the whole gigabyte. An unknown suffix is not a file this
+                // module ever created, so it is left alone as well.
+                boolean finishedAlias = name.endsWith(ALIAS_SUFFIX)
+                        || name.endsWith(ALIAS_SIDECAR_SUFFIX);
+                boolean abandonedScratch = (name.endsWith(ALIAS_PARTIAL_SUFFIX)
+                        || name.indexOf(ALIAS_SUFFIX + ".tmp-") >= 0)
+                        && isOlderThan(entry, PARTIAL_GRACE_MILLIS);
+                if (!finishedAlias && !abandonedScratch) {
+                    continue;
+                }
                 deleteQuietly(entry);
                 ModelVerificationCache.forget(entry);
             }
         } catch (IOException | RuntimeException unsupported) {
             // The sweep is hygiene only; failing to list a directory must not fail the start.
+        }
+    }
+
+    /**
+     * Whether {@code file} has been left untouched for at least {@code graceMillis}.
+     *
+     * <p>An unreadable timestamp counts as "still in use": the sweep is hygiene, so leaving one
+     * orphan behind is cheaper than deleting a file another instance is writing right now.
+     *
+     * @param file candidate to judge
+     * @param graceMillis quiet period that proves no writer still owns it
+     * @return {@code true} when the file is old enough to sweep
+     */
+    private static boolean isOlderThan(Path file, long graceMillis) {
+        try {
+            long modified = Files.getLastModifiedTime(file).toMillis();
+            return System.currentTimeMillis() - modified > graceMillis;
+        } catch (IOException | RuntimeException unknown) {
+            return false;
         }
     }
 

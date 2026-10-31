@@ -12,7 +12,7 @@
 | **`build_all.ps1`** | PowerShell | 全平台全量構建（利用 8 Worker + 常駐 Daemon + Build Cache 並行編譯）。目標分組對齊 `prepare-release.yml` 的 48 個發布目標；根目錄與 Gradle 快取由腳本位置與 `GRADLE_USER_HOME` 推導 | `.\scripts\build_all.ps1` |
 | **`build_single.ps1`** | PowerShell | 單一模組靶向編譯（自動切換對應 JDK）。實際耗時依目標與快取狀態而定，沒有固定秒數 | `.\scripts\build_single.ps1 fabric-1.21.4` |
 | **`prepare_release_assets.py`** | Python 3 | 將各平台產物組裝為發布用 JAR（含超壓縮 `fabric-all.jar` 與 SHA256 驗證碼） | `python scripts\prepare_release_assets.py --release-dir downloads\1.4 --output-dir build\release-assets --version 1.4` |
-| **`verify_release_jars.py`** | Python 3 | 檢驗發布資產的位元碼完整性與 Fabric Loader 解壓正確性 | `python scripts\verify_release_jars.py --checksum-file downloads\1.4\SHA256SUMS.txt --require-complete-checksums downloads\1.4\*.jar` |
+| **`verify_release_jars.py`** | Python 3 | 檢驗發布資產的位元碼完整性與 Fabric Loader 解壓正確性（`.class` 預設只串流讀 8 bytes 檔頭，完整性由 `--checksum-file` 的 SHA-256 負責；要逐 entry 完整讀取以恢復 CRC32 校驗時加 `--verify-class-crc`） | `python scripts\verify_release_jars.py --checksum-file downloads\1.4\SHA256SUMS.txt --require-complete-checksums downloads\1.4\*.jar` |
 | **`setup_defender_exclusions.bat`**| Batch / PS | 只將專案目錄與 Gradle 快取兩個資料夾加入 Windows Defender 排除名單；刻意**不**排除 `java.exe` 程序（那會關掉整台機器的即時掃描）。專案目錄由腳本位置推導 | 右鍵 ->「以系統管理員身分執行」 |
 
 ## 內部工具 (`tools/`)
@@ -43,7 +43,10 @@
   `bundle`）。`plan` 用它驗證 `-f targets=...` 的名稱，靜態 matrix 是它的投影；
   `ci/test_build_targets.py` 會交叉比對兩者，分叉就是 PR 紅燈。
 - `ci/set-defender-exclusions.ps1`：Defender 資料夾排除的**唯一**實作，路徑全部由 `$PSScriptRoot`
-  推導（批次檔不再把路徑插進 `-Command`）。呼叫端：`setup_defender_exclusions.bat`。
+  推導（批次檔不再把路徑插進 `-Command`）。Gradle 快取走 `GRADLE_USER_HOME`、未設定時退到
+  `~/.gradle`（與 `tools/_cache_paths.py` 同一條規則，批次檔不再自帶一份不同的 fallback）；
+  快取目錄不存在時以非零碼結束，不再讓 `Add-MpPreference` 對不存在的路徑無聲成功。
+  呼叫端：`setup_defender_exclusions.bat`。
 
 `scripts/ci/` 的 `*.sh` 由 `lint` job 逐檔 `bash -n`、`*.py` 逐檔 `py_compile`，`test_*.py` 由
 `python -m unittest discover -s scripts/ci` 執行（`scripts/ci` 沒有 `__init__.py`，`discover -s scripts`
