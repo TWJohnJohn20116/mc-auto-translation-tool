@@ -595,7 +595,7 @@ test("keeps every repository path quoted in the docs pointing at a real file or 
 // 兩類會被照抄的版本號：產物檔名（`...-1.3.9.jar`）與 commands 裡的 `downloads/1.4`、`--version 1.4`。
 // 前者今天就是錯的（現行 1.4），後者會在 bump 後失效——而 `downloads/` 只保留現行版本的目錄，
 // `prepare-release` 會把舊目錄整個刪掉，所以照著過期文件做必然失敗。
-const DOC_STALE_ARTIFACT = /mc-auto-translation-tool-[a-z0-9.\-]+?-\d+\.\d+(?:\.\d+)?(?:-[a-z0-9]+)?\.jar/g;
+const DOC_STALE_ARTIFACT = /mc-auto-translation-tool-[a-z0-9.-]+?-\d+\.\d+(?:\.\d+)?(?:-[a-z0-9]+)?\.jar/g;
 const DOC_STALE_RELEASE_DIR = /downloads\/\d+\.\d+(?:\.\d+)?/g;
 const DOC_STALE_VERSION_OPTION = /--version\s+\d+\.\d+(?:\.\d+)?/g;
 

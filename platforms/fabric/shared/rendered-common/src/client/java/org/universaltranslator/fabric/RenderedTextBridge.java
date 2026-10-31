@@ -5,6 +5,7 @@ import net.minecraft.text.OrderedText;
 import net.minecraft.text.Style;
 import net.minecraft.text.Text;
 import net.minecraft.text.StringVisitable;
+import net.minecraft.util.CharacterVisitor;
 import net.minecraft.util.Formatting;
 import org.universaltranslator.core.DebugLog;
 import org.universaltranslator.core.TranslationTextColor;
@@ -65,7 +66,7 @@ public final class RenderedTextBridge {
      * {@code StringBuilder} and a fresh {@code AtomicReference}, so every multi-style line paid
      * three more allocations per call on the path that exists to avoid allocating.
      */
-    private static final class RunScratch implements OrderedText.CharacterVisitor {
+    private static final class RunScratch implements CharacterVisitor {
         private final List<String> texts = new ArrayList<String>();
         private final List<Object> styleKeys = new ArrayList<Object>();
         private final List<Style> styles = new ArrayList<Style>();
@@ -127,7 +128,7 @@ public final class RenderedTextBridge {
      * <p>The visitor is the holder itself, so the {@code accept} call of every drawn line passes one
      * object that already exists instead of a lambda instance capturing the two fields above.
      */
-    private static final class Flattened implements OrderedText.CharacterVisitor {
+    private static final class Flattened implements CharacterVisitor {
         private final StringBuilder text = new StringBuilder();
         private Style first = Style.EMPTY;
         private boolean multiStyle;
