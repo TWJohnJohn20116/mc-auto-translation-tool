@@ -53,7 +53,7 @@ final class ForgeConfig {
      */
     private static volatile DiskCopy diskCopy;
     /**
-     * How many saves this process has started, on any configuration file.
+     * How many saves this process has staged for writing, on any configuration file.
      *
      * <p>A cached copy is only trusted while this has not moved since it was read. {@link #save()}
      * drops the copy inside the same monitor as the write, but a reader can read the entry just
@@ -566,7 +566,6 @@ final class ForgeConfig {
             }
         }
         synchronized (monitor) {
-            saveCounter++;
             writeAtomically();
             // What is on disk is now this snapshot, so no cached copy can be newer than it: keeping
             // the pre-save read would let the next toProperties() answer with the older keys.
@@ -575,6 +574,13 @@ final class ForgeConfig {
     }
 
     private void writeAtomically() throws IOException {
+        // Merge before the generation moves. The merge read can then still be answered by the copy
+        // withXxx() just built — this process has not touched the file since — where bumping first
+        // made the stamp differ and forced one open plus Properties.load on every single save.
+        Properties staged = toProperties();
+        // Advance the generation only now, and still before the move below: a reader that stats the
+        // new file must never pick up the older count and trust a stale copy.
+        saveCounter++;
         // Unique per attempt. Writers on the same path used to share one "<file>.tmp" name, and the
         // second writer's deleteIfExists removed the file the first one was still writing into.
         Path temporary = configFile.resolveSibling(
@@ -585,7 +591,7 @@ final class ForgeConfig {
             try (Writer writer = Files.newBufferedWriter(
                     temporary, StandardCharsets.UTF_8,
                     StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
-                toProperties().store(writer,
+                staged.store(writer,
                         "MC Auto Translation Tool - online translation may send selected game, mod, and modpack text to this endpoint");
             }
             try {

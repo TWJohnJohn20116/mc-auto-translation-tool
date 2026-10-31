@@ -28,6 +28,10 @@ PREPARE_WORKFLOW = ROOT / ".github" / "workflows" / "prepare-release.yml"
 LEGACY_WORKFLOW = ROOT / ".github" / "workflows" / "legacy-targets.yml"
 SETTINGS = ROOT / "settings.gradle"
 
+#: `platformProjects` 裡 Forge／NeoForge 的那一半。Fabric 那一半由 settings.gradle 的
+#: `undeclaredProjects` 在配置階段 throw，Forge 那一半由 `releaseOnlyForgeTargets` 明列例外。
+FORGE_NEOFORGE_DECLARATION = re.compile(r'"(platform-(?:forge|neoforge)-[^"]+)"\s*:')
+
 # build.gradle 的 subprojects 區塊只對這三個前綴給 Java 25 toolchain，其餘一律 21。三個字串在那裡
 # 是逐字寫的，而「哪個目標用哪個 JDK」在四份清單（build.yml matrix、build-targets.json、
 # legacy-targets.yml、prepare-release.yml）各講一次：兩份都錯成 21 時既有的 JSON↔matrix 比對仍然
@@ -260,6 +264,45 @@ class BuildTargetsTest(unittest.TestCase):
                 entry["java"],
                 "legacy-targets.yml 的 %s 與 build.gradle 的 toolchain 前綴不一致" % entry["target"],
             )
+
+    def test_every_forge_and_neoforge_project_is_built_or_declared(self):
+        # 「settings.gradle 有這個專案、卻沒有被任何 workflow 清單建置」在三棵樹裡只有兩棵會叫：
+        # Fabric 由 settings.gradle 的 undeclaredProjects throw、Forge 由 releaseOnlyForgeTargets 明列
+        # 例外，NeoForge 兩者都沒有。於是「加一個 NeoForge 版本進 platformProjects 而漏掉 48／23／21
+        # 三份清單」完全無聲：它永遠不建置、也不進 downloads/，而 AGENTS.md 記載的兩次事故
+        # （26. 前綴漏接、4 個 26.x 從未建置成功）都正好在這個載入器上。
+        settings = SETTINGS.read_text(encoding="utf-8")
+        declared = set(
+            FORGE_NEOFORGE_DECLARATION.findall(
+                settings.split("def platformProjects = [", 1)[1].split("\n]", 1)[0]
+            )
+        )
+        self.assertTrue(declared, "settings.gradle 的 platformProjects 找不到 Forge／NeoForge 專案")
+        release_only = set(
+            re.findall(
+                r'"(platform-forge-[^"]+)"',
+                settings.split("def releaseOnlyForgeTargets = [", 1)[1].split("]", 1)[0],
+            )
+        )
+        # prepare-release 的 project 已經是 "platform-…"；兩份靜態 matrix 的 target 是裸名，補前綴。
+        built = {
+            entry["project"]
+            for entry in target_entries(PREPARE_WORKFLOW, with_project=True)
+            if entry["project"]
+        } | {
+            "platform-" + entry["target"]
+            for job in ("platform-build", "legacy-build")
+            for entry in matrix_entries(job_block(workflow_text(), job))
+        }
+        # 刻意不建置的專案只能明列，理由寫在 AGENTS.md：net.neoforged:neoforge:20.2.93 在
+        # neoFormRuntimeDependenciesNeoForgeClasses 解析不到，所以它不屬於任何清單。
+        self.assertEqual(
+            {"platform-neoforge-1.20.2"},
+            declared - built - release_only,
+            "settings.gradle 的 Forge／NeoForge 專案既沒有被任何 workflow 清單建置、也不在 "
+            "releaseOnlyForgeTargets：它會永遠不建置也不發布，而且沒有任何訊號（新增目標要同步 "
+            "prepare-release.yml 的 TARGETS_JSON、build.yml 的 matrix 或 build-targets.json）",
+        )
 
     def test_release_bundle_calls_match_the_settings_table(self):
         # release-assets 的 -PtargetPlatform 與 8 個 verifyPreparedReleaseBundle 是 settings.gradle

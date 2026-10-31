@@ -184,8 +184,12 @@ public final class TranslationOutputValidator {
             throw new UnchangedOutputException("Translation output repeats the source text");
         }
         // The prompt promises the same number of lines. Only a loss is rejected: a CJK target
-        // legitimately wraps one long line into two, but nothing legitimate drops a line.
-        int sourceLines = lineCount(source);
+        // legitimately wraps one long line into two, but nothing legitimate drops a line. Both sides
+        // are counted after trimming, because the answer is trimmed above: counting the untrimmed
+        // source made every text that ends with a line break -- what the render session builds from a
+        // list whose last item is empty -- look one line shorter than it is, so it was rejected for
+        // good and retried every thirty seconds.
+        int sourceLines = lineCount(source.trim());
         if (sourceLines > 1 && lineCount(output) < sourceLines) {
             throw new IllegalArgumentException("Translation output dropped a line");
         }
@@ -259,8 +263,10 @@ public final class TranslationOutputValidator {
         if (!source.contains("\n") && (trimmed.contains("\n") || trimmed.contains("\r"))) {
             throw new IllegalArgumentException("Restored translation unexpectedly contains multiple lines");
         }
-        // Same loss rule as requireValid: the restored text keeps one line per source line.
-        int sourceLines = lineCount(source);
+        // Same loss rule as requireValid, with the same trimmed source: the restored text keeps one
+        // line per source line, and this call is the one that sees the whole text a list was joined
+        // into, so a leading or trailing line break would otherwise be counted as a lost line.
+        int sourceLines = lineCount(source.trim());
         if (sourceLines > 1 && lineCount(trimmed) < sourceLines) {
             throw new IllegalArgumentException("Restored translation dropped a line");
         }
@@ -299,16 +305,39 @@ public final class TranslationOutputValidator {
      * Whether {@code text} is exactly one of {@link #AMBIGUOUS_ECHO_PHRASES} and nothing else.
      *
      * <p>Only the whole value is compared, so the sentences keep their presence test: a restated
-     * prompt, or a sentence carrying a translation next to it, is still an echo.
+     * prompt, or a sentence carrying a translation next to it, is still an echo. One closing mark is
+     * allowed past the words themselves, because every prompt asks the model to preserve punctuation
+     * and a translated sentence therefore arrives with the source's full stop: requiring the bare
+     * sentence rejected that answer forever, and a rejection is the retry-every-thirty-seconds path.
      */
     private static boolean isAmbiguousEcho(String text) {
         String trimmed = text.trim();
+        String bare = stripClosingPunctuation(trimmed);
         for (int index = 0; index < AMBIGUOUS_ECHO_PHRASES.length; index++) {
-            if (AMBIGUOUS_ECHO_PHRASES[index].equalsIgnoreCase(trimmed)) {
+            if (AMBIGUOUS_ECHO_PHRASES[index].equalsIgnoreCase(trimmed)
+                    || AMBIGUOUS_ECHO_PHRASES[index].equalsIgnoreCase(bare)) {
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * Removes one closing sentence mark, so "Return only the translation." is read as the sentence.
+     *
+     * <p>Exactly one, and only the marks a sentence ends with: a question or a longer answer is a
+     * different text, and stripping repeatedly would let an echo hide behind a trail of punctuation.
+     */
+    private static String stripClosingPunctuation(String text) {
+        if (text.isEmpty()) {
+            return text;
+        }
+        char last = text.charAt(text.length() - 1);
+        if (last == '.' || last == '\u3002' || last == '\uFF0E'
+                || last == '!' || last == '\uFF01' || last == '?' || last == '\uFF1F') {
+            return text.substring(0, text.length() - 1).trim();
+        }
+        return text;
     }
 
     /**

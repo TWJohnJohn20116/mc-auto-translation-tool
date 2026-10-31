@@ -74,6 +74,10 @@ public final class DiagnosticsBundleExporter {
         Path temporary = output.resolveSibling(
                 output.getFileName().toString() + "." + UUID.randomUUID() + ".tmp");
         try {
+            // Owner-only before the archive exists: the temporary holds the configuration, the log
+            // slice and the report for the whole write, and the default mode of a shared POSIX
+            // profile is one every account on the machine can open.
+            DiagnosticsLogExporter.createOwnerOnlyTemporary(temporary);
             try (OutputStream file = Files.newOutputStream(temporary);
                     ZipOutputStream zip = new ZipOutputStream(file)) {
                 put(zip, "environment.txt", environment(platform));

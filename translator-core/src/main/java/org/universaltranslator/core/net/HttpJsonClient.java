@@ -114,7 +114,6 @@ public final class HttpJsonClient {
         // Set only when the response body was read to the end and closed, so the socket can go
         // back to the keep-alive pool instead of being torn down by disconnect().
         boolean connectionReusable = false;
-        long deadlineNanos = System.nanoTime() + timeBudgetNanos();
         // The ceiling is taken from this client's own budget, not from the class-wide maximum: a
         // client configured to fail fast used to keep a worker for thirty minutes anyway.
         long bodyDeadlineNanos = System.nanoTime() + absoluteBodyBudgetNanos();
@@ -148,8 +147,8 @@ public final class HttpJsonClient {
             // read: a body over the cap used to replace a 401 with a size IOException, which the
             // retry and fallback policies both treat as worth another paid attempt.
             if (status < 200 || status >= 300) {
-                HttpStatusException failure = statusFailure(connection, status, deadlineNanos,
-                        bodyDeadlineNanos, timeBudgetNanos());
+                HttpStatusException failure = statusFailure(connection, status, bodyDeadlineNanos,
+                        timeBudgetNanos());
                 // An error body that was read to its end leaves the socket reusable: the transport
                 // already paid for the whole response, so tearing the connection down only bought a
                 // TCP and TLS handshake on every retry of a 429 or a 503.
@@ -159,7 +158,7 @@ public final class HttpJsonClient {
                 throw failure;
             }
             InputStream stream = connection.getInputStream();
-            String response = stream == null ? "" : readBounded(decoded(stream), deadlineNanos,
+            String response = stream == null ? "" : readBounded(decoded(stream),
                     bodyDeadlineNanos, timeBudgetNanos());
             // The body was read to the end and closed, so the connection may be pooled. Any other
             // exit (non-2xx status, exception, unread body) still disconnects below.
@@ -185,14 +184,12 @@ public final class HttpJsonClient {
     /**
      * Builds the failure for a non-2xx status without ever letting the body decide the status.
      *
-     * @param deadlineNanos absolute {@link System#nanoTime()} value to stop reading the body at
      * @param absoluteDeadlineNanos absolute {@link System#nanoTime()} value no body may outlive
      * @param windowNanos length of one no-progress window of that body
      */
     private static HttpStatusException statusFailure(
             HttpURLConnection connection,
             int status,
-            long deadlineNanos,
             long absoluteDeadlineNanos,
             long windowNanos
     ) {
@@ -216,7 +213,7 @@ public final class HttpJsonClient {
             InputStream error = connection.getErrorStream();
             BoundedBody body = error == null
                     ? new BoundedBody("", true)
-                    : readBounded(decoded(error), deadlineNanos, absoluteDeadlineNanos,
+                    : readBounded(decoded(error), absoluteDeadlineNanos,
                             windowNanos, MAXIMUM_ERROR_BYTES, true);
             response = body.text;
             drained = body.drained;
@@ -374,7 +371,7 @@ public final class HttpJsonClient {
 
             int status = connection.getResponseCode();
             if (status < 200 || status >= 300) {
-                HttpStatusException failure = statusFailure(connection, status, deadlineNanos,
+                HttpStatusException failure = statusFailure(connection, status,
                         System.nanoTime() + absoluteBodyBudgetNanos(), timeBudgetNanos());
                 if (failure.isBodyDrained()) {
                     connectionReusable = true;
@@ -385,7 +382,7 @@ public final class HttpJsonClient {
             StreamedResponse response = new StreamedResponse(
                     connection, status, connection.getContentType(),
                     stream == null ? new ByteArrayInputStream(new byte[0])
-                            : new DeadlineInputStream(stream, connection, deadlineNanos,
+                            : new DeadlineInputStream(stream, connection,
                                     timeBudgetNanos(), absoluteBodyBudgetNanos()),
                     deadlineNanos);
             handedOver = true;
@@ -620,7 +617,6 @@ public final class HttpJsonClient {
         private DeadlineInputStream(
                 InputStream body,
                 HttpURLConnection connection,
-                long deadlineNanos,
                 long progressWindowNanos,
                 long absoluteBudgetNanos
         ) {
@@ -629,15 +625,18 @@ public final class HttpJsonClient {
             long now = System.nanoTime();
             // The window is a length, not what is left of the request budget: a stream whose headers
             // arrived after the request deadline used to get a one-nanosecond window and lose its
-            // first event. A deadline still in the future keeps capping the first window.
+            // first event, and a deadline still in the future capped the first window at whatever was
+            // left of the request instead of giving it a whole one.
             this.progressBudgetNanos = Math.max(1L, progressWindowNanos);
-            this.progressDeadlineNanos = deadlineNanos - now > 0L
-                    ? Math.min(deadlineNanos, now + this.progressBudgetNanos)
-                    : now + this.progressBudgetNanos;
+            this.progressDeadlineNanos = now + this.progressBudgetNanos;
             // Both halves follow this client's own budget now: the ceiling used to be the class-wide
             // thirty minutes, which left a fail-fast client holding a worker thirty times longer on
-            // the streaming path than on the ordinary one.
-            this.absoluteDeadlineNanos = now + Math.max(this.progressBudgetNanos, absoluteBudgetNanos);
+            // the streaming path than on the ordinary one. Six windows rather than two, because two
+            // windows of the sixty second floor cut off an answer this package itself records as
+            // healthy (a 4096-token answer needs 273 s at 15 tokens per second).
+            long ceilingNanos = Math.min(MAXIMUM_TIME_BUDGET_MILLIS * 1000L * 1000L,
+                    6L * this.progressBudgetNanos);
+            this.absoluteDeadlineNanos = now + Math.max(ceilingNanos, absoluteBudgetNanos);
         }
 
         @Override
@@ -716,8 +715,6 @@ public final class HttpJsonClient {
      * {@link DeadlineInputStream} uses for a streamed body, so one setting means one thing on both
      * paths.
      *
-     * @param deadlineNanos absolute {@link System#nanoTime()} value the request budget ends at; one
-     *                      still in the future caps the first window
      * @param absoluteDeadlineNanos absolute {@link System#nanoTime()} value the whole body has to
      *                      arrive by, derived from the caller's own budget
      * @param windowNanos length of one no-progress window, so it is a length and never what is left
@@ -725,11 +722,10 @@ public final class HttpJsonClient {
      */
     private static String readBounded(
             InputStream input,
-            long deadlineNanos,
             long absoluteDeadlineNanos,
             long windowNanos
     ) throws IOException {
-        return readBounded(input, deadlineNanos, absoluteDeadlineNanos, windowNanos,
+        return readBounded(input, absoluteDeadlineNanos, windowNanos,
                 MAX_RESPONSE_BYTES, false).text;
     }
 
@@ -742,7 +738,6 @@ public final class HttpJsonClient {
      */
     private static BoundedBody readBounded(
             InputStream input,
-            long deadlineNanos,
             long absoluteDeadlineNanos,
             long windowNanos,
             int limit,
@@ -762,9 +757,7 @@ public final class HttpJsonClient {
             // after that budget, which then failed a short answer that had already arrived in full.
             long startedNanos = System.nanoTime();
             long progressBudgetNanos = Math.max(1L, windowNanos);
-            long progressDeadlineNanos = deadlineNanos - startedNanos > 0L
-                    ? Math.min(deadlineNanos, startedNanos + progressBudgetNanos)
-                    : startedNanos + progressBudgetNanos;
+            long progressDeadlineNanos = startedNanos + progressBudgetNanos;
             long windowBytes = 0L;
             while ((count = source.read(buffer)) >= 0) {
                 total += count;

@@ -218,6 +218,45 @@ ext.verifyBundleMetadata = {
                                 "requirement ${weakestJava} (members ${memberJavas})")
             }
         }
+        // The stubs expand their own fabric.mod.json from their own build.gradle, so what they declare is
+        // a second copy of the two ext values reconciled above — and nothing compared them: a stub
+        // compiled against a newer Loader than its metadata advertised stayed green here and failed on
+        // the player's client instead. The placeholder is the single-copy form and passes; a literal
+        // passes only while it still equals the ext. Bundles without stub members declare no list.
+        def stubDrift = []
+        def stubVersions = project.ext.has("bundleStubVersions") ? project.ext.bundleStubVersions : []
+        stubVersions.each { version ->
+            def member = project.rootProject.findProject(":platform-fabric-${version}")
+            if (member == null
+                    || !member.ext.has("legacyLoaderVersion")
+                    || !member.ext.has("legacyJavaRelease")) {
+                stubDrift << "${version}: no project or no legacyLoaderVersion/legacyJavaRelease"
+                return
+            }
+            def template = new File(member.projectDir, "src/main/resources/fabric.mod.json")
+            if (!template.isFile()) {
+                stubDrift << "${version}: ${template} does not exist, so nothing shows what it declares"
+                return
+            }
+            def stubDepends = new groovy.json.JsonSlurper().parse(template).depends
+            def loaderRequirement = stubDepends == null ? null : stubDepends.get("fabricloader")
+            def javaRequirement = stubDepends == null ? null : stubDepends.get("java")
+            def expectedLoader = '>=' + member.ext.legacyLoaderVersion.toString()
+            def expectedJava = '>=' + member.ext.legacyJavaRelease.toString()
+            if (!(['>=$' + '{loaderVersion}', expectedLoader].contains(loaderRequirement))) {
+                stubDrift << "${version}: depends.fabricloader ${loaderRequirement} is neither the " +
+                        "loaderVersion placeholder nor ${expectedLoader}"
+            }
+            if (!(['>=$' + '{javaVersion}', expectedJava].contains(javaRequirement))) {
+                stubDrift << "${version}: depends.java ${javaRequirement} is neither the javaVersion " +
+                        "placeholder nor ${expectedJava}"
+            }
+        }
+        if (!stubDrift.isEmpty()) {
+            throw new GradleException(
+                    "${project.path}: stub member metadata disagrees with the ext values the floor is " +
+                            "derived from: ${stubDrift}")
+        }
     }
     // Same questions again, on the copy that goes into the jar. verifyBundle already dependsOn jar, so
     // processResources has run; a missing file therefore means the task order changed, not that the

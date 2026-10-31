@@ -41,6 +41,10 @@ def implementationJars = supportedVersions.collectEntries { gameVersion ->
 // number once here keeps it from being hand-copied into the template and drifting.
 ext.bundleLoaderFloor = "0.19.3"
 ext.bundleJavaFloor = "8"
+// The three stub members do not go through platforms/fabric/legacy/shared.gradle: their fabric.mod.json
+// is expanded by their own build.gradle, so what they declare is a second copy of exactly these two
+// numbers. Named here so gradle/bundle-metadata-verify.gradle can reconcile those members too.
+ext.bundleStubVersions = stubVersions
 
 processResources {
     inputs.property "version", project.version

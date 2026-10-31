@@ -160,6 +160,17 @@ public final class RenderedTextBridge {
     };
 
     /**
+     * How long one {@link LastResult} answer stays usable.
+     *
+     * <p>A duration rather than a tick boundary: the measuring hook of a line arrives shortly after
+     * its drawing hook and the per-tick reset lives in a class this bridge is compiled without, so
+     * fifty milliseconds is far above the repeat this exists to catch and far below the interval at
+     * which a line still waiting for an answer has to be asked again to look alive — the same bound
+     * the legacy bridge's frame memo uses.
+     */
+    private static final long FRAME_NANOS = 50L * 1_000_000L;
+
+    /**
      * The answer given to one input a moment ago, so the measuring hook of the same line does not
      * walk it again.
      *
@@ -174,16 +185,26 @@ public final class RenderedTextBridge {
      * configured colour, the same idea as the styling slot above — so a hit is by construction the
      * value a fresh call would return, and two components with equal text but different styles never
      * collide.
+     *
+     * <p>An answer is only trusted for the frame that produced it. Switching the target language
+     * changes neither the instance nor the colour, and a component whose request the provider had not
+     * answered yet has to be asked again — a slot without a time bound answered both of those with
+     * the value it took the first time, for as long as the instance stayed alive.
      */
     private static final class LastResult {
         private Object source;
         private TextKind kind;
         private TranslationTextColor color;
         private Object value;
+        /** When {@link #value} was stored, in {@link System#nanoTime()}. */
+        private long at;
 
         private Object find(Object candidate, TextKind candidateKind,
                 TranslationTextColor candidateColor) {
             if (source != candidate || kind != candidateKind || color != candidateColor) {
+                return null;
+            }
+            if (System.nanoTime() - at > FRAME_NANOS) {
                 return null;
             }
             return value;
@@ -194,6 +215,7 @@ public final class RenderedTextBridge {
             source = candidate;
             kind = candidateKind;
             color = candidateColor;
+            at = System.nanoTime();
             value = answer;
         }
 
@@ -202,6 +224,7 @@ public final class RenderedTextBridge {
             source = null;
             kind = null;
             color = null;
+            at = 0L;
             value = null;
         }
     }
@@ -315,8 +338,10 @@ public final class RenderedTextBridge {
             return styled;
         }
         if (original.equals(translated)) {
+            // Not stored: the answer here is the input itself, and the frame's own set above already
+            // answers the measuring hook, while a stored one kept whichever component was asked last
+            // on its original text after the provider had replied.
             TranslationRenderContext.rememberUnchanged(original);
-            LAST_TEXT.remember(text, kind, color, text);
             return text;
         }
         Text replacement = Text.literal(translated).setStyle(translatedStyle(text.getStyle()));
@@ -365,8 +390,9 @@ public final class RenderedTextBridge {
             }
         }
         if (visible.equals(translated)) {
+            // Same reason as the component overload: the frame's unchanged set answers the measuring
+            // hook, so nothing is gained by pinning the input in this slot.
             TranslationRenderContext.rememberUnchanged(visible);
-            LAST_ORDERED.remember(text, kind, color, text);
             return text;
         }
         MutableText replacement = Text.literal(translated).setStyle(translatedStyle(flattened.first));

@@ -470,12 +470,17 @@ test("keeps the headline coverage numbers in sync with their producers", async (
     `app/page.tsx 的 fabricImplementations 是 ${pageImplementations}，但 versions/ 目錄合計 ${implementations}`,
   );
 
-  // 19：權威是 `prepare-release.yml` 的 neoforge 目標數，它同時應該等於 `platforms/neoforge/**/versions`
-  // 的目錄數。數字對齊了但卡片少一張（或反之）一樣算漂移，所以三邊都比。
-  const neoforgeTargets = releaseTargets.filter((target) =>
-    target.target.endsWith("-neoforge"),
-  ).length;
-  let neoforgeDirectories = 0;
+  // 19：權威是 `prepare-release.yml` 的 neoforge 目標，它同時應該等於 `platforms/neoforge/**/versions`
+  // 的版本目錄。數字對齊了但卡片少一張（或反之）一樣算漂移，所以三邊都比。比的必須是**成員**而不是
+  // 數量：目標側有 1.20.1（獨立專案，沒有 `versions/`）、目錄側有 1.20.2（座標解析不到，不在
+  // `TARGETS_JSON`），兩個 19 純屬巧合，只比數量會在補上 1.20.2 時給出「目錄少了」的錯誤診斷。
+  const neoforgeTargetVersions = new Set(
+    releaseTargets
+      .filter((target) => target.target.endsWith("-neoforge"))
+      .map((target) => target.target.replace(/^mc/, "").replace(/-neoforge$/, "")),
+  );
+  const neoforgeTargets = neoforgeTargetVersions.size;
+  const neoforgeVersionDirs = new Set();
   for (const layer of await readdir(new URL("../../platforms/neoforge", import.meta.url))) {
     let versions = [];
     try {
@@ -486,12 +491,33 @@ test("keeps the headline coverage numbers in sync with their producers", async (
       // 沒有 `versions/` 的目錄不是版本層（`1.20.1` 是獨立專案、`shared` 是共用層）。
       continue;
     }
-    neoforgeDirectories += versions.length;
+    for (const version of versions) neoforgeVersionDirs.add(version);
   }
-  assert.equal(
-    neoforgeTargets,
-    neoforgeDirectories,
-    `prepare-release.yml 有 ${neoforgeTargets} 個 neoforge 目標，但 platforms/neoforge 的版本目錄是 ${neoforgeDirectories} 個`,
+  // 兩側各有一個結構例外，寫成具名斷言：任何一邊變動時這裡會直接說出是哪一邊改了，
+  // 而不是丟一句「目錄數對不上」把人推向去補目錄的錯誤方向。
+  assert.ok(
+    !neoforgeTargetVersions.has("1.20.2"),
+    "1.20.2 的座標解析不到，不該出現在 TARGETS_JSON；若修好了，請同步移除本例外與 page.tsx 的措辭",
+  );
+  assert.ok(
+    neoforgeVersionDirs.has("1.20.2"),
+    "platforms/neoforge/1.20/versions/1.20.2 仍被 settings.gradle 註冊，刪除前要一併改 settings.gradle",
+  );
+  const neoforgeMissingDirs = [...neoforgeTargetVersions].filter(
+    (version) => version !== "1.20.1" && !neoforgeVersionDirs.has(version),
+  );
+  assert.deepEqual(
+    neoforgeMissingDirs,
+    [],
+    `TARGETS_JSON 有、platforms/neoforge 沒有 versions/ 的版本：${neoforgeMissingDirs.join("、")}`,
+  );
+  const neoforgeMissingTargets = [...neoforgeVersionDirs].filter(
+    (version) => version !== "1.20.2" && !neoforgeTargetVersions.has(version),
+  );
+  assert.deepEqual(
+    neoforgeMissingTargets,
+    [],
+    `platforms/neoforge 有 versions/ 目錄、但 TARGETS_JSON 沒有目標的版本：${neoforgeMissingTargets.join("、")}`,
   );
   const neoforgeCards = (pageSource.match(/releaseFile\("[^"]*-neoforge"\)/g) ?? []).length;
   assert.equal(
@@ -697,6 +723,14 @@ test("keeps the version numbers hard-coded in the docs equal to gradle.propertie
   assert.ok(
     newestSection.startsWith(`## ${modVersion} - `),
     `CHANGELOG.md 最新的區段標題是「${newestSection}」，不是「## ${modVersion} - <日期>」`,
+  );
+  // 標題以外的內容沒有任何關卡（`DOC_FILES` 不含這份檔案），而 release notes 逐字取自本版區段。
+  // NeoForge 沒有家族合併，任何「a–b」範圍都會被讀成「每一版都有」，補不上的缺口必須明寫。
+  const notesBody = changelog.split(/^## /m)[1] ?? "";
+  assert.doesNotMatch(
+    notesBody,
+    /NeoForge\s+\d+\.\d+(?:\.\d+)?\s*[–—-]\s*\d+\.\d+(?:\.\d+)?/,
+    "CHANGELOG 的本版區段不得用範圍描述 NeoForge（它不是家族合併，範圍會被讀成每版都有）；請逐版列出或明確寫出缺口",
   );
 });
 

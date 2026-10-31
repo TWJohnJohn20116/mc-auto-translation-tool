@@ -27,14 +27,17 @@ sourceSets {
 }
 
 processResources {
-    // The five 1.14.3+ members expand these two keys through platforms/fabric/legacy/shared.gradle;
+    // The five 1.14.3+ members expand these keys through platforms/fabric/legacy/shared.gradle;
     // this stub expanded only "version", so a template naming the loader would have shipped the
     // placeholder verbatim and nothing would have said so. filteringCharset matches the shared script:
     // "authors" is non-ASCII and Copy.expand would otherwise read the template in the platform charset.
     filteringCharset = "UTF-8"
-    inputs.properties("version": project.version, "loaderVersion": project.ext.legacyLoaderVersion)
+    inputs.properties("version": project.version, "minecraftVersion": project.minecraft_1_14_1_version,
+            "loaderVersion": project.ext.legacyLoaderVersion, "javaVersion": project.ext.legacyJavaRelease)
     filesMatching("fabric.mod.json") {
-        expand("version": project.version, "loaderVersion": project.ext.legacyLoaderVersion)
+        expand("version": project.version, "minecraftVersion": project.minecraft_1_14_1_version,
+                "loaderVersion": project.ext.legacyLoaderVersion,
+                "javaVersion": project.ext.legacyJavaRelease)
     }
 }
 

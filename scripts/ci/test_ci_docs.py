@@ -18,6 +18,8 @@ DEFENDER = ROOT / "scripts" / "ci" / "set-defender-exclusions.ps1"
 POMS = ROOT / "scripts" / "tools" / "_gen_mojang_poms.py"
 VERSION_SCRIPT = ROOT / "scripts" / "ci" / "read-mod-version.sh"
 TARGETS = ROOT / "scripts" / "ci" / "build-targets.json"
+#: `downloads/<version>` 的手動生產者：它寫的檔名清單決定清單守衛會不會退化成略過。
+ASSEMBLE = ROOT / "scripts" / "tools" / "_assemble_1_3_11_beta.py"
 #: 四份 README 是「31 個可安裝檔名」的手抄副本（`publish-release.yml` 只在資產變動時才會比對）。
 READMES = (
     ROOT / "README.md",
@@ -178,6 +180,25 @@ class ScriptsReadmeTest(unittest.TestCase):
             installable_manifest(list_installable(release_dir, version)),
             manifest.read_text(encoding="utf-8"),
             "downloads/%s/%s 與 downloads/ 推導出的可安裝清單不一致" % (version, MANIFEST_NAME),
+        )
+
+    def test_manual_assembly_writes_the_installable_manifest(self):
+        # `downloads/<version>` 有兩個生產者：prepare-release.yml 寫清單，手動的 `_assemble_*.py` 只寫
+        # JAR 與 SHA256SUMS.txt。後者換目錄的方式是「舊目錄改名、staging 換上去、刪備份」，所以沒寫的
+        # 檔案不是被覆蓋而是消失——已提交的清單一消失，上面兩條清單守衛就走 skipTest，D12-405 補上的
+        # 「文件 ↔ 真實資產」比對整條失靈。這裡釘住產生端（不跑那支腳本：它會刪目錄，且在本機禁令內）。
+        text = ASSEMBLE.read_text(encoding="utf-8")
+        self.assertIn(
+            "from prepare_release_assets import",
+            text,
+            "_assemble 必須用 prepare_release_assets 的清單實作，不能自己再寫一份名稱規則",
+        )
+        expected = [line for line in text.splitlines() if "expected = set(names)" in line]
+        self.assertEqual(1, len(expected), "_assemble 找不到 'expected = set(names)' 那一行")
+        self.assertIn(
+            "MANIFEST_NAME",
+            expected[0],
+            "_assemble 的 expected 沒有 " + MANIFEST_NAME + "：缺清單的佈局不會被擋下",
         )
 
 

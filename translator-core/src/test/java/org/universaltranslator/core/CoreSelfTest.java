@@ -1568,6 +1568,12 @@ public final class CoreSelfTest {
         assertTrue(LanguageHeuristics.shouldTranslate("Return only the translation", "zh-CN"));
         assertFalse(LanguageHeuristics.shouldTranslate(
                 "Translate the user text to Simplified Chinese", "zh-CN"));
+        // Every prompt asks the model to preserve punctuation, so the answer arrives carrying the
+        // source's own full stop. Comparing the bare sentence only rejected that answer forever, and
+        // a rejection buys the same answer again every thirty seconds.
+        assertEquals("Return only the translation.", TranslationOutputValidator.requireValid(
+                "只返回译文。", "Return only the translation."));
+        assertTrue(LanguageHeuristics.shouldTranslate("Return only the translation.", "zh-CN"));
         // An answer identical to its source is a provider that did nothing. Accepting it cached the
         // source as that line's own translation and repainted it in the translated colour.
         assertThrows(TranslationOutputValidator.UnchangedOutputException.class,
@@ -1615,6 +1621,10 @@ public final class CoreSelfTest {
                 () -> TranslationOutputValidator.requireDisplaySafe("line one\nline two", "第一行"));
         assertEquals("第一行\n第二行\n第三行", TranslationOutputValidator.requireValid(
                 "line one\nline two\nline three", "第一行\n第二行\n第三行"));
+        // The list path joins lines with a break between them, so a list whose last item is empty
+        // arrives with a trailing break. Counting the untrimmed source made that text look one line
+        // shorter than it is and rejected it for good.
+        assertEquals("第一行\n", TranslationOutputValidator.requireDisplaySafe("Line one\n", "第一行\n"));
         assertFalse(LanguageHeuristics.shouldTranslate(
                 "Minecraft server interface text from auto to zh-CN", "zh-CN"));
     }

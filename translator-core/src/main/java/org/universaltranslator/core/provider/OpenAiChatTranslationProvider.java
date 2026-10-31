@@ -15,6 +15,8 @@ import org.universaltranslator.core.net.ServerSentEvents;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
+import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -404,6 +406,13 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
      */
     @Override
     public String translate(TranslationRequest request) throws Exception {
+        if (Thread.currentThread().isInterrupted()) {
+            // A closed session must not pay for one more request, and nothing waits for the answer
+            // any more: the coordinator has already settled every open request when it shuts the
+            // workers down. Without this the group below is still sent, and the batch path has no
+            // other place to notice the cancellation.
+            throw new InterruptedIOException("translation cancelled");
+        }
         // The offline loopback server is single threaded and its context window is 1024 tokens, so
         // it never batches; and a configured batch size of 1 asks for exactly the same thing.
         if (providerId.startsWith("offline-loopback") || !gatherer.batching()) {
@@ -414,6 +423,11 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
 
     /** Translates exactly one text with one request. */
     private String translateOne(TranslationRequest request) throws Exception {
+        if (Thread.currentThread().isInterrupted()) {
+            // A closed session must not keep sending one paid request per remaining line; the
+            // gatherer's own guard only covers the lines it repairs after a reply.
+            throw new InterruptedIOException("translation cancelled");
+        }
         String system = systemPrompt(request);
         boolean offline = providerId.startsWith("offline-loopback");
         int maximumTokens = completionBudget(request.getText(), offline);
@@ -431,6 +445,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             int escalatedBudget = reasoningBudget();
             if (escalatedBudget > maximumTokens) {
                 response = postWithAcceptedBudget(system, request.getText(), escalatedBudget, offline);
+                maximumTokens = escalatedBudget;
                 root = JsonTree.parseOrNull(response);
                 translated = extractContent(root, response);
             } else {
@@ -443,8 +458,28 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
                         + " output limit");
             }
         }
+        // An answer the endpoint itself reported as unfinished is the first half of the translation,
+        // not a short translation of a long text: the output validator bounds an answer from above
+        // but has no floor a half sentence would miss, and whatever it accepts is written into the
+        // persistent cache, so one truncated answer would be replayed for the rest of the
+        // installation. Ask once with the larger budget the thinking-model path already uses, and
+        // refuse the line when even that comes back cut.
+        String abnormal = abnormalFinishReason(JsonTree.stringAt(root, "choices[0].finish_reason"));
+        if (abnormal != null && !offline && reasoningBudget() > maximumTokens) {
+            response = postWithAcceptedBudget(system, request.getText(), reasoningBudget(), offline);
+            root = JsonTree.parseOrNull(response);
+            translated = extractContent(root, response);
+            abnormal = abnormalFinishReason(JsonTree.stringAt(root, "choices[0].finish_reason"));
+            // Quote the budget the request really used: the endpoint may have halved it on a refusal.
+            maximumTokens = reasoningBudget();
+        }
         if (translated == null || translated.trim().isEmpty()) {
             throw missingContent(root, response);
+        }
+        if (abnormal != null) {
+            throw new IllegalStateException("This endpoint cut the answer off at its output limit ("
+                    + "finish_reason: " + abnormal + ", " + maximumTokens + " tokens asked for);"
+                    + " shorten the text or raise the endpoint's output limit");
         }
         // Usage and the trace describe a translation, so they are recorded for one that passed the
         // output validator: a rejected answer used to be counted as tokens spent and as an answer.
@@ -658,6 +693,15 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
                         payload -> readEvent(providerId, payload, accumulated, attempt, preview),
                         deadlineNanos);
             } catch (IOException streamFailure) {
+                // A cancelled session is not a dropped body. Escaping here sends the plain path one
+                // more complete request after the worker was already asked to stop, and no one waits
+                // for the answer: the coordinator already settled the request. A socket read timeout
+                // is also an InterruptedIOException but is a transport failure, so it keeps the
+                // read-what-arrived behaviour below.
+                if (streamFailure instanceof InterruptedIOException
+                        && !(streamFailure instanceof SocketTimeoutException)) {
+                    throw streamFailure;
+                }
                 // A body that stopped arriving, or one that exceeded a byte bound, is not a rejection
                 // of the request: escaping here skipped the memory below, so every later line paid the
                 // same three attempts again. Reading whatever arrived and reporting "incomplete" is
@@ -750,6 +794,28 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
     }
 
     /**
+     * The finish reason that means the answer was cut short, or {@code null} when it ended normally.
+     *
+     * <p>The event stream already refused both of these, and the single-text path used to ignore the
+     * field altogether, so the one decision — did the model finish — had two answers and the one
+     * missing it fed truncated answers to the output validator, which has no floor. An absent or
+     * empty reason counts as a normal end, because an endpoint is free not to report one.
+     *
+     * @param finishReason value read from {@code choices[0].finish_reason}, or {@code null}
+     * @return {@code length} or {@code content_filter}, otherwise {@code null}
+     */
+    private static String abnormalFinishReason(String finishReason) {
+        if (finishReason == null) {
+            return null;
+        }
+        String reason = finishReason.trim();
+        if ("length".equals(reason) || "content_filter".equals(reason)) {
+            return reason;
+        }
+        return null;
+    }
+
+    /**
      * Marks the attempt complete when the event names a normal finish.
      *
      * <p>Not every relay sends the {@code [DONE]} sentinel: Azure OpenAI and several self-hosted
@@ -759,7 +825,8 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
      *
      * <p>Only a normal stop counts. {@code length} means the completion budget ran out mid-sentence
      * and {@code content_filter} means the provider cut the answer, so both are exactly the
-     * truncated results this completeness test exists to reject.
+     * truncated results this completeness test exists to reject — see
+     * {@link #abnormalFinishReason}, which the single-text path reads the same value through.
      *
      * @param attempt attempt to mark
      * @param root one parsed event payload
@@ -770,7 +837,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             return;
         }
         String reason = finishReason.trim();
-        if (reason.isEmpty() || "length".equals(reason) || "content_filter".equals(reason)) {
+        if (reason.isEmpty() || abnormalFinishReason(reason) != null) {
             return;
         }
         attempt.complete = true;

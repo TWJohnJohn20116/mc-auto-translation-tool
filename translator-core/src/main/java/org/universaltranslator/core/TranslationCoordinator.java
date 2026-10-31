@@ -25,6 +25,30 @@ public final class TranslationCoordinator implements AutoCloseable {
     private static final int MAX_QUEUED_TRANSLATIONS = 128;
     private static final long WORKER_SHUTDOWN_TIMEOUT_MILLIS = ShutdownBudget.SESSION_CLOSE_MILLIS;
     /**
+     * How many dropped sessions may keep their workers before a close that asked for no wait pays
+     * one anyway.
+     *
+     * <p>The platform runtimes bound the <em>closes in flight</em>, and a close that waits nothing is
+     * over at once, so that counter never describes a session whose workers are still parked in a
+     * provider read. This one does: four dropped sessions of the default worker count are sixteen
+     * threads, four of the maximum are sixty-four, which is where a held-down toggle key stops being
+     * free and the teardown backlog becomes an executor backlog instead.
+     */
+    private static final int MAXIMUM_LIVE_RETIRED = 4;
+    /**
+     * The wait a close that asked for none pays while {@link #MAXIMUM_LIVE_RETIRED} sessions are
+     * still lingering with interrupted workers. Short on purpose: those workers were interrupted and
+     * are on their way out, so this throttles how fast new sessions may stack up, it does not repeat
+     * the five-second budget.
+     */
+    private static final long RETIRED_SESSION_WAIT_MILLIS = 1_000L;
+    /**
+     * Dropped sessions whose workers have not left yet, across every coordinator in the process. The
+     * worker that leaves last decrements it, so it describes live sessions instead of closes and can
+     * never drift upwards.
+     */
+    private static final AtomicInteger LIVE_RETIRED = new AtomicInteger();
+    /**
      * Prefix of every key written to the store. Bumping it invalidates the stored translations, and
      * only that: the in-flight de-duplication key has its own version, because it only has to stay
      * stable inside one session. Sharing one constant meant that a disk format change silently
@@ -87,6 +111,23 @@ public final class TranslationCoordinator implements AutoCloseable {
      * store, so a worker that stored a segment while it was reading the file would lose it.
      */
     private final Object cacheGenerationGate = new Object();
+    /**
+     * Workers currently inside {@link #runWorker}, provider reads included. It is the one state that
+     * outlives {@link #close(long)}: a dropped session leaves this above zero until its last
+     * interrupted worker comes back, which is what {@link #LIVE_RETIRED} counts.
+     */
+    private final AtomicInteger runningWorkers = new AtomicInteger();
+    /** Guards the once-only entry this session owns in {@link #LIVE_RETIRED}. */
+    private final AtomicBoolean retirementCounted = new AtomicBoolean();
+    /**
+     * Provider of a dropped session, handed to the worker that leaves last instead of being torn down
+     * under it. {@code close(long)} writes this before it looks at {@link #runningWorkers} again, so
+     * either that worker or the closing thread runs the teardown -- never both, and never while a
+     * worker is still inside {@code provider.translate(...)}.
+     */
+    private volatile AutoCloseable deferredProviderClose;
+    /** Guards the once-only run of that deferred teardown. */
+    private final AtomicBoolean deferredProviderClaimed = new AtomicBoolean();
 
     public TranslationCoordinator(TranslationProvider provider, TranslationStore cache, int workerCount) {
         this.provider = Objects.requireNonNull(provider, "provider");
@@ -433,6 +474,7 @@ public final class TranslationCoordinator implements AutoCloseable {
      */
     private void runWorker(final Submission submission, final CompletableFuture<TranslationResult> created) {
         final String text = submission.text;
+        runningWorkers.incrementAndGet();
         try {
             // Once per coordinator, on this worker: the store still holds the entries of the previous
             // key generation, and every one of them is unreachable under the current key.
@@ -455,8 +497,23 @@ public final class TranslationCoordinator implements AutoCloseable {
                 // has to reach the provider again instead of being served a value that can never be
                 // displayed. Rethrown unchanged so the failure the caller reports keeps its type, its
                 // message and its cause.
-                pendingCommit.rollback(cache);
+                //
+                // A session that was closed under this request is the one verdict that is not about
+                // the text: nothing was checked for display, so the segments it already paid for stay
+                // where they are -- removing them deleted entries that had passed their own check and
+                // put that removal back on disk with the next session's flush.
+                pendingCommit.rollback(cache, isSessionClosed(rejected));
                 throw rejected;
+            }
+            // A text whose every segment came back untouched is not a translation. The validator no
+            // longer unwinds the request for one repeating segment, so the whole-request verdict is
+            // made here: it stays "this text needs no translation" instead of being committed as a
+            // success, which cached the source as its own translation and repainted it in the
+            // translated colour.
+            if (restored.equals(text)) {
+                pendingCommit.rollback(cache, false);
+                created.complete(TranslationResult.unchanged(text));
+                return;
             }
             // A request the close sweep already settled as "session closed" must not be counted as a
             // success afterwards: its caller never receives this result, and the counters are
@@ -476,6 +533,14 @@ public final class TranslationCoordinator implements AutoCloseable {
             throw fatal;
         } finally {
             inFlight.remove(submission.requestKey, created);
+            if (runningWorkers.decrementAndGet() == 0) {
+                // Nobody is left inside the provider, so this thread is the one that may tear it down,
+                // and the one that reports this dropped session as retired.
+                releaseDeferredProvider();
+                if (retirementCounted.compareAndSet(true, false)) {
+                    LIVE_RETIRED.decrementAndGet();
+                }
+            }
         }
     }
 
@@ -507,6 +572,22 @@ public final class TranslationCoordinator implements AutoCloseable {
         Throwable current = failure;
         for (int depth = 0; current != null && depth < 16; depth++) {
             if (current instanceof TranslationOutputValidator.UnchangedOutputException) {
+                return true;
+            }
+            Throwable cause = current.getCause();
+            current = cause == current ? null : cause;
+        }
+        return false;
+    }
+
+    /**
+     * Whether {@code failure} is the coordinator's own "this session was closed" verdict rather than
+     * something the text did, looking through the stage wrappers a chained request adds.
+     */
+    private static boolean isSessionClosed(Throwable failure) {
+        Throwable current = failure;
+        for (int depth = 0; current != null && depth < 16; depth++) {
+            if (current instanceof SessionClosedException) {
                 return true;
             }
             Throwable cause = current.getCause();
@@ -741,10 +822,26 @@ public final class TranslationCoordinator implements AutoCloseable {
                 if (translated == null || translated.trim().isEmpty()) {
                     throw new IllegalStateException("Provider returned an empty translation");
                 }
-                translated = TranslationOutputValidator.requireValid(core, translated);
+                try {
+                    translated = TranslationOutputValidator.requireValid(core, translated);
+                } catch (TranslationOutputValidator.UnchangedOutputException repeated) {
+                    // This segment is one the provider hands back untouched -- a brand name, a
+                    // "Requires" label -- while the rest of the text is translatable. The verdict
+                    // belongs to the segment, so it ends here instead of unwinding the request: the
+                    // remaining segments are still sent, and the entries this request already stored
+                    // stay. Nothing is counted, like the other "this segment needs no translation"
+                    // exit at the top of this method.
+                    return segment;
+                }
             } catch (Exception failure) {
-                stats.recordFailure(providerId, TranslationStats.reasonOf(failure),
-                        elapsedMillis(startedAt));
+                // A worker woken by close() reports the provider that was closed under it, and this is
+                // the failure side of the verdict the guard below already takes for successes: those
+                // counters are process-wide and persisted, so charging the failure here adds one the
+                // user never caused. The request itself is still settled as a failure.
+                if (!closed.get()) {
+                    stats.recordFailure(providerId, TranslationStats.reasonOf(failure),
+                            elapsedMillis(startedAt));
+                }
                 pendingCommit.recordFailure();
                 DebugLog.global().logFailure(providerId, failure);
                 throw failure;
@@ -791,14 +888,16 @@ public final class TranslationCoordinator implements AutoCloseable {
      * burst of switches (holding the toggle key down, a HUD drag) queues one teardown per press, and
      * every one of them waiting the full budget turns the backlog into minutes of held resource. The
      * wait is what keeps an interrupted worker from looping back into a provider that is about to be
-     * torn down, so it stays the default; the caller that has already dropped the session for good
-     * skips it, and therefore also accepts that its workers may still be inside the provider when it
-     * goes.
+     * torn down, so it stays the default; a caller that has already dropped the session for good skips
+     * it, and its provider is then not torn down under the workers either -- the teardown is handed to
+     * the worker that leaves last. What such a caller does not get for free is the throttle, so once
+     * {@link #MAXIMUM_LIVE_RETIRED} dropped sessions are still lingering this pays
+     * {@link #RETIRED_SESSION_WAIT_MILLIS} instead of nothing.
      *
      * <p>Everything that has to be durable happens before that wait: the store is flushed right after
      * the interrupt, so a caller that cuts this call short -- a stop hook joins it with a budget --
-     * loses no deferred entry. Nothing is queued for a later thread and no thread is started here: the
-     * provider teardown runs on this thread either way.
+     * loses no deferred entry. No thread is started here: the provider teardown runs on this thread
+     * whenever this call got its workers back, and on the last worker otherwise.
      */
     void close(long waitMillis) {
         if (!closed.compareAndSet(false, true)) {
@@ -839,11 +938,22 @@ public final class TranslationCoordinator implements AutoCloseable {
         // example ResilientTranslationProvider retrying an IOException) against an
         // already-closed endpoint and the offline provider kills its child process under a
         // live loopback call. Proceed after the bounded wait so a stuck provider cannot
-        // hang Minecraft shutdown.
+        // hang Minecraft shutdown, and let the teardown follow the last worker rather than
+        // this clock when this close was asked to skip that wait.
+        //
+        // A close that asked for no wait still pays a short one once too many dropped sessions are
+        // lingering: those workers keep their pool, their session state and -- offline -- a child
+        // process alive, and nothing else counts them, because a platform counter only sees the
+        // closes that are still running and a close that waits nothing is over at once.
+        long effectiveWaitMillis = waitMillis;
+        if (waitMillis == 0L && runningWorkers.get() > 0
+                && LIVE_RETIRED.get() >= MAXIMUM_LIVE_RETIRED) {
+            effectiveWaitMillis = RETIRED_SESSION_WAIT_MILLIS;
+        }
         boolean workersStopped = false;
         try {
             workersStopped = executor.awaitTermination(
-                    waitMillis, TimeUnit.MILLISECONDS);
+                    effectiveWaitMillis, TimeUnit.MILLISECONDS);
             if (!workersStopped && waitMillis > 0L) {
                 // The debug log instead of stderr: this used to be the only core path that wrote to
                 // stdout regardless of the debug-log switch, so it printed with no level and no
@@ -865,6 +975,11 @@ public final class TranslationCoordinator implements AutoCloseable {
         // Graceful, so a completion that is already queued still settles its future; no new request
         // can be registered after close(), and the sweep above has settled everything still in flight.
         completions.shutdown();
+        if (!workersStopped && runningWorkers.get() > 0) {
+            // The session is dropped with workers still inside it: that is what the platform counters
+            // cannot see, and what a burst of switches stacks.
+            countRetirement();
+        }
         if (provider instanceof AutoCloseable) {
             final AutoCloseable closing = (AutoCloseable) provider;
             if (!workersStopped) {
@@ -873,16 +988,60 @@ public final class TranslationCoordinator implements AutoCloseable {
                 // its own, so holding the toggle key down stacked hundreds of sessions, each with its
                 // own worker pool and -- offline -- its own child process, all of them waiting out the
                 // same bound. The provider belongs to this session alone (the platform builds one per
-                // session), so tearing it down here cannot reach a live one, and the worker that is
-                // still inside provider.translate(...) has already been interrupted: it can only
-                // report a failure nobody is waiting for.
+                // session), so tearing it down cannot reach a live one -- but done here it does reach
+                // the worker that is still inside provider.translate(...): a retrying provider would
+                // meet a closed endpoint on its way out and the offline provider would kill its child
+                // process under a live loopback call.
                 DebugLog.global().log("shutdown", "provider", "closed-with-live-workers");
             }
-            try {
-                closing.close();
-            } catch (Exception ignored) {
-                // Minecraft is shutting down or applying a replacement configuration.
+            deferredProviderClose = closing;
+            // Written before this second look at the worker count: either a worker is still inside the
+            // provider and tears it down on its way out, or none is left and this thread does it now.
+            // Only the caller that skipped the wait hands it over; one that waited its budget and did
+            // not get the workers back keeps the synchronous teardown, and the provider's own shutdown
+            // hook covers the child process when the process is going away.
+            if (waitMillis > 0L || runningWorkers.get() == 0) {
+                releaseDeferredProvider();
             }
+        }
+    }
+
+    /**
+     * Records that this session was dropped with workers still running, once, and releases the record
+     * when its last worker leaves.
+     *
+     * <p>The release is repeated here because a worker can leave between the check in
+     * {@link #close(long)} and the count above, and that worker looked for the record before it
+     * existed; without this second look the slot it holds would never be given back and every later
+     * close would pay the throttled wait.
+     */
+    private void countRetirement() {
+        if (!retirementCounted.compareAndSet(false, true)) {
+            return;
+        }
+        LIVE_RETIRED.incrementAndGet();
+        if (runningWorkers.get() == 0 && retirementCounted.compareAndSet(true, false)) {
+            LIVE_RETIRED.decrementAndGet();
+        }
+    }
+
+    /**
+     * Runs the provider teardown of a session that was dropped while a worker was still inside it.
+     *
+     * <p>Called by the closing thread when no worker is left, and by the worker that leaves last
+     * otherwise. The claim keeps it to one of them: a second call is a no-op, which is what makes the
+     * two entry points safe without a lock.
+     */
+    private void releaseDeferredProvider() {
+        final AutoCloseable deferred = deferredProviderClose;
+        if (deferred == null || !deferredProviderClaimed.compareAndSet(false, true)) {
+            return;
+        }
+        deferredProviderClose = null;
+        try {
+            deferred.close();
+        } catch (Exception ignored) {
+            // Minecraft is shutting down or applying a replacement configuration.
         }
     }
 
@@ -1050,14 +1209,20 @@ public final class TranslationCoordinator implements AutoCloseable {
          * for (a value stored by a version with laxer checks would otherwise be served, rejected and
          * re-served forever). A request with several entries never takes its other, still valid
          * entries down with it.
+         *
+         * @param keepStored whether the request ended without a display check -- its session was
+         *     closed while it was in flight -- so the entries it wrote are still valid and only a
+         *     rejected request's bookkeeping is left to settle
          */
-        private void rollback(TranslationStore store) {
-            for (CacheWrite write : storedKeys) {
-                removeIfUnchanged(store, write);
-            }
-            if (storedKeys.size() + adoptedKeys.size() <= 1) {
-                for (CacheWrite write : adoptedKeys) {
+        private void rollback(TranslationStore store, boolean keepStored) {
+            if (!keepStored) {
+                for (CacheWrite write : storedKeys) {
                     removeIfUnchanged(store, write);
+                }
+                if (storedKeys.size() + adoptedKeys.size() <= 1) {
+                    for (CacheWrite write : adoptedKeys) {
+                        removeIfUnchanged(store, write);
+                    }
                 }
             }
             // The request produced nothing usable, so its cache answers stay out of the hit rate and

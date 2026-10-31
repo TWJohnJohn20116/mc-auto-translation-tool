@@ -1,5 +1,6 @@
 package org.universaltranslator.forge;
 
+import net.minecraft.client.gui.Font;
 import net.minecraft.network.chat.Component;
 import org.universaltranslator.core.HudLabelCache;
 
@@ -33,6 +34,16 @@ public final class HudStatusLabels {
     private static String cachedPreviewText;
     private static Component cachedPreview;
     private static long cachedPreviewAt;
+    /**
+     * The label's measured width, keyed on the same string as {@link #label(String)}.
+     *
+     * <p>{@code Font.width} splits the text into glyph runs on the way to an advance sum, and the
+     * indicator asked for it every frame: the cost the class javadoc above lists. The modern and
+     * 26.x trees both cache it, so this slot is the one the two sibling copies were modelled on.
+     */
+    private static String cachedWidthText;
+    private static int cachedWidth;
+    private static long cachedWidthAt;
 
     private HudStatusLabels() {
     }
@@ -94,5 +105,26 @@ public final class HudStatusLabels {
         cachedPreview = built;
         cachedPreviewAt = now;
         return built;
+    }
+
+    /**
+     * Width of {@code text} in pixels, measured at most once per second per distinct string.
+     *
+     * <p>{@link #label(String)} builds the label with {@code Component.literal} and adds no style,
+     * so measuring the string answers what measuring the component answers and skips the split into
+     * glyph runs. The caller keeps this inside its text-input guard: the measurement is still the
+     * one place the width hook can reach the label.
+     */
+    public static int width(Font font, String text) {
+        long now = System.currentTimeMillis();
+        if (text != null && text.equals(cachedWidthText)
+                && now - cachedWidthAt < HudLabelCache.REFRESH_MILLIS) {
+            return cachedWidth;
+        }
+        int measured = font.width(text == null ? "" : text);
+        cachedWidthText = text;
+        cachedWidth = measured;
+        cachedWidthAt = now;
+        return measured;
     }
 }

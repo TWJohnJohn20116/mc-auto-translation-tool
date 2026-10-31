@@ -1435,9 +1435,10 @@ public final class RenderTranslationSession implements AutoCloseable {
      *
      * <p>For a session the player has already replaced. A burst of switches queues one of these per
      * press, and paying the full five-second worker budget on each one is what made a teardown
-     * backlog last minutes; this call returns as soon as the store is flushed and the provider is
-     * closed, and the provider belongs to this session alone. The store is still flushed first, so a
-     * burst of toggles cannot lose the translations that were already answered.
+     * backlog last minutes; this call returns as soon as the store is flushed, and the provider --
+     * which belongs to this session alone -- is torn down by the worker that leaves it last, so no
+     * worker of this session meets a closed endpoint on its way out. The store is still flushed first,
+     * so a burst of toggles cannot lose the translations that were already answered.
      */
     public void closeWithoutWaiting() {
         synchronized (this) {

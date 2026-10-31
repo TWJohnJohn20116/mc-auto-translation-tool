@@ -50,6 +50,16 @@ public final class ServerSentEvents {
     public static final long DEFAULT_TIME_BUDGET_MILLIS = 5 * 60 * 1000L;
 
     private static final long DEFAULT_TIME_BUDGET_NANOS = DEFAULT_TIME_BUDGET_MILLIS * 1000L * 1000L;
+    /**
+     * Fewest nanoseconds one no-progress window may be.
+     *
+     * <p>The budget is a length, not what is left of the caller's deadline: a caller that armed the
+     * parser late handed in a nearly spent remainder, and that same few seconds then re-armed every
+     * later window, so a burst-shaped answer — a chain of thought that pauses between segments —
+     * stayed failed for its whole length. The floor is the transport's own minimum window, so the two
+     * layers still agree on one setting.
+     */
+    private static final long MINIMUM_STALL_WINDOW_NANOS = 60 * 1000L * 1000L;
     private static final int READ_BUFFER_BYTES = 4096;
 
     /** Receives every {@code data:} payload until it asks to stop. */
@@ -89,7 +99,8 @@ public final class ServerSentEvents {
      * without ever tripping it, while an answer that keeps arriving is making progress.
      *
      * @param deadlineNanos absolute {@link System#nanoTime()} value a silent stream fails at; the
-     *         distance to now is the budget a stall is measured against
+     *         distance to now is the budget a stall is measured against, floored at
+     *         {@link #MINIMUM_STALL_WINDOW_NANOS} so a nearly spent remainder never becomes the window
      * @return number of payload characters handed to the handler
      * @throws IOException when the stream fails, exceeds a bound, or stops delivering data
      */
@@ -102,7 +113,7 @@ public final class ServerSentEvents {
         }
         byte[] buffer = new byte[READ_BUFFER_BYTES];
         ByteArrayOutputStream line = new ByteArrayOutputStream(READ_BUFFER_BYTES);
-        long budgetNanos = deadlineNanos - System.nanoTime();
+        long budgetNanos = Math.max(deadlineNanos - System.nanoTime(), MINIMUM_STALL_WINDOW_NANOS);
         long stallDeadlineNanos = deadlineNanos;
         // Whether the line being assembled can carry a payload: a ":" line is a keep-alive, and
         // counting it as progress would let a stream that only pings never run out of budget.

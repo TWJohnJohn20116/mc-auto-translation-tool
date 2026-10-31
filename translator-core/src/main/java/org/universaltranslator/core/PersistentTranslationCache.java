@@ -46,7 +46,14 @@ import java.util.concurrent.ConcurrentHashMap;
  * lookup normally happens on a worker thread, so the constructor performs no disk I/O at all.
  */
 public final class PersistentTranslationCache implements TranslationStore {
-    /** Sits next to {@code universal-translator.properties} in the game instance's config folder. */
+    /**
+     * Sits next to {@code universal-translator.properties} in the game instance's config folder.
+     *
+     * <p>Not the source of that path: every platform builds the file itself and hands it to
+     * {@link #shared(Path, int)}, so changing this constant moves nothing -- the four call sites
+     * still pass their own literal. It names the file for a reader of this class, it does not
+     * decide it; a rename has to touch those call sites as well.
+     */
     public static final String FILE_NAME = "universal-translator-cache.properties";
     /** Changed entries tolerated before a rewrite is forced. */
     private static final int UNSAVED_ENTRIES_BEFORE_FLUSH = 64;
@@ -81,6 +88,12 @@ public final class PersistentTranslationCache implements TranslationStore {
      * A live write never takes this long, so an in-flight temporary of another instance is safe.
      */
     private static final long ORPHAN_TEMPORARY_MILLIS = 3_600_000L;
+    /**
+     * Age after which a {@code .unreadable} copy {@link #preserveUnreadableFile()} kept aside is
+     * deleted by the next write. Such a copy is the only recoverable material of a failed read, so it
+     * is kept for a week before the folder launchers and cloud clients sync gets the space back.
+     */
+    private static final long PRESERVED_COPY_MAX_AGE_MILLIS = 7L * 24L * 60L * 60L * 1000L;
 
     /**
      * One state object per cache file path rather than one lock per instance. {@code initialize()} on
@@ -982,20 +995,24 @@ public final class PersistentTranslationCache implements TranslationStore {
                     // configuration directory is the folder launchers and cloud clients sync.
                     orphansSwept = true;
                     deleteOrphanTemporaries();
+                    // The copies a failed read was protected with are that same plaintext under a
+                    // name nothing else touches; this is the only periodic housekeeping there is.
+                    deleteStalePreservedCopies();
                 }
                 // Unique per attempt. Writers on the same path used to share one "<file>.tmp" name,
                 // and the default TRUNCATE_EXISTING of newBufferedWriter let the later writer cut off
                 // the file the earlier one was still filling before both moved it into place.
                 temporary = file.resolveSibling(
                         file.getFileName().toString() + "." + UUID.randomUUID() + ".tmp");
+                // Created owner-only instead of being restricted after the write: the temporary holds
+                // the same plaintext the target does, from its first byte to its last.
+                Files.createFile(temporary);
+                restrictToOwnerBestEffort(temporary);
                 Properties properties = new Properties();
                 properties.putAll(contents);
                 try (Writer writer = Files.newBufferedWriter(temporary, StandardCharsets.UTF_8)) {
                     properties.store(writer, "MC Auto Translation Tool cache; source keys are SHA-256 hashes");
                 }
-                // Restricted before the move as well: the temporary exists for the lifetime of the
-                // write and holds the same plaintext the target does.
-                restrictToOwnerBestEffort(temporary);
                 if (moveIntoPlace(temporary)) {
                     persistedRevision = snapshotRevision;
                     observedGeneration = ++state.generation;
@@ -1167,6 +1184,38 @@ public final class PersistentTranslationCache implements TranslationStore {
                 }
                 try {
                     Files.deleteIfExists(orphan);
+                } catch (IOException ignored) {
+                    // Housekeeping must never be the reason a write fails; the next one retries.
+                }
+            }
+        } catch (IOException | RuntimeException unreadable) {
+            // A directory that cannot be listed is not a reason to skip the write itself.
+        }
+    }
+
+    /**
+     * Deletes the copies {@link #preserveUnreadableFile()} kept aside once they are old enough.
+     *
+     * <p>They carry the plaintext of everything the cache held and no code path reads them again, so
+     * a user who hit two corruptions kept megabytes of translations in the folder launchers and cloud
+     * clients sync for the life of the installation. Only names this class produces are touched, and
+     * only when their age is known and older than {@link #PRESERVED_COPY_MAX_AGE_MILLIS}.
+     */
+    private void deleteStalePreservedCopies() {
+        Path name = file.getFileName();
+        Path parent = file.toAbsolutePath().getParent();
+        if (name == null || parent == null) {
+            return;
+        }
+        long deadline = System.currentTimeMillis() - PRESERVED_COPY_MAX_AGE_MILLIS;
+        try (DirectoryStream<Path> stream =
+                     Files.newDirectoryStream(parent, name.toString() + ".unreadable*")) {
+            for (Path preserved : stream) {
+                if (lastModifiedMillis(preserved) > deadline) {
+                    continue;
+                }
+                try {
+                    Files.deleteIfExists(preserved);
                 } catch (IOException ignored) {
                     // Housekeeping must never be the reason a write fails; the next one retries.
                 }

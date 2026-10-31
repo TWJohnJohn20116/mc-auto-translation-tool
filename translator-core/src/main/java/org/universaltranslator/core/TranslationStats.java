@@ -9,10 +9,12 @@ import java.net.SocketTimeoutException;
 import java.nio.charset.MalformedInputException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFileAttributeView;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -40,6 +42,13 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class TranslationStats {
     /** Sits next to {@code universal-translator.properties} in the game instance's config folder. */
     public static final String FILE_NAME = "universal-translator-stats.properties";
+    /** Suffix of the copy a file this class cannot parse is moved to by {@link #preserveUnreadable}. */
+    private static final String CORRUPT_SUFFIX = ".corrupt";
+    /**
+     * Age after which a temporary file left behind by a killed process is deleted by the next flush.
+     * A write never takes this long, so a flush in flight is never a candidate.
+     */
+    private static final long ORPHAN_TEMPORARY_MILLIS = 3_600_000L;
     /** Latency samples kept for the percentiles; the oldest sample is overwritten first. */
     private static final int LATENCY_SAMPLE_CAPACITY = 512;
     /** How often the counters reach the disk while the game runs. */
@@ -130,6 +139,11 @@ public final class TranslationStats {
      * with a zero nobody asked for.
      */
     private volatile boolean loadFailed;
+    /**
+     * Set by the first flush of a path, so the orphan sweep of {@link #deleteOrphanTemporaries} lists
+     * the directory once per process instead of once per minute.
+     */
+    private volatile boolean orphansSwept;
 
     private TranslationStats() {
     }
@@ -182,6 +196,9 @@ public final class TranslationStats {
             // The counters that reached the previous path say nothing about this one, so the first
             // flush after the switch has to write even when nothing was counted since the last one.
             writtenRevision = -1L;
+            // The temporary names this class leaves behind belong to the file's own directory, so a
+            // different file is a different sweep.
+            orphansSwept = false;
         }
         if (replaced) {
             DebugLog.global().log("stats-attach", "result", "replaced");
@@ -467,11 +484,27 @@ public final class TranslationStats {
             }
             Path temporary = null;
             try {
+                if (!orphansSwept) {
+                    // A process killed between the write and the move leaves a complete copy of the
+                    // counters under a unique ".tmp" name, and nothing in this class ever looked at
+                    // that name again: it only accumulates in the folder launchers and cloud clients
+                    // sync.
+                    orphansSwept = true;
+                    deleteOrphanTemporaries(target);
+                }
                 // A unique name per attempt: a shared ".tmp" is what allowed one writer to truncate
                 // the file another writer was still filling.
                 temporary = target.resolveSibling(target.getFileName().toString() + "."
                         + UUID.randomUUID() + ".tmp");
-                try (Writer writer = Files.newBufferedWriter(temporary, StandardCharsets.UTF_8)) {
+                // Created owner-only before the content exists: the temporary carries the same
+                // provider ids the target does for the whole duration of the write, and the default
+                // mode of a POSIX profile is one every account on the machine can open.
+                Files.createFile(temporary);
+                if (supportsOwnerPermissions(temporary)) {
+                    LocalConfigSecurity.restrictToOwner(temporary);
+                }
+                try (Writer writer = Files.newBufferedWriter(temporary, StandardCharsets.UTF_8,
+                        StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
                     properties.store(writer, "MC Auto Translation Tool - translation statistics");
                 }
                 try {
@@ -482,6 +515,9 @@ public final class TranslationStats {
                 }
                 temporary = null;
                 writtenRevision = snapshotRevision;
+                // The copy preserveUnreadable kept aside has no reader left once a file this class can
+                // parse is back in place, and no other code path deletes it.
+                deleteCorruptCopy(target);
                 if (supportsOwnerPermissions(target)) {
                     // Every flush writes a fresh temporary file and moves it over the target, so the
                     // mode has to be applied again: the file carries a provider id per line, endpoint
@@ -540,6 +576,78 @@ public final class TranslationStats {
                     .supportsFileAttributeView(PosixFileAttributeView.class);
         } catch (IOException | RuntimeException unsupported) {
             return false;
+        }
+    }
+
+    /**
+     * Deletes the temporary files of this statistics file that an earlier process left behind.
+     *
+     * <p>The name of every attempt is unique, so a temporary that outlived its process is never read
+     * and never reused: it only accumulates a copy of the provider ids, endpoint hosts included, in
+     * the folder launchers and cloud clients sync. Only names this class produces are touched, and
+     * only once they are older than {@link #ORPHAN_TEMPORARY_MILLIS}, so a flush in flight is never a
+     * candidate.
+     *
+     * @param target the statistics file, whose own directory is listed
+     */
+    private void deleteOrphanTemporaries(Path target) {
+        Path name = target.getFileName();
+        Path parent = target.toAbsolutePath().getParent();
+        if (name == null || parent == null) {
+            return;
+        }
+        long deadline = System.currentTimeMillis() - ORPHAN_TEMPORARY_MILLIS;
+        try (DirectoryStream<Path> stream =
+                     Files.newDirectoryStream(parent, name.toString() + ".*.tmp*")) {
+            for (Path orphan : stream) {
+                if (lastModifiedMillis(orphan) > deadline) {
+                    continue;
+                }
+                try {
+                    Files.deleteIfExists(orphan);
+                } catch (IOException ignored) {
+                    // Housekeeping must never be the reason a flush fails; the next one retries.
+                }
+            }
+        } catch (IOException | RuntimeException unreadable) {
+            // A directory that cannot be listed is not a reason to skip the write itself.
+        }
+    }
+
+    /** Last modification time in milliseconds, or {@code Long.MAX_VALUE} when it cannot be read. */
+    private static long lastModifiedMillis(Path candidate) {
+        try {
+            return Files.getLastModifiedTime(candidate).toMillis();
+        } catch (IOException unreadable) {
+            // An unknown age counts as recent, so a file this class cannot date is never deleted.
+            return Long.MAX_VALUE;
+        }
+    }
+
+    /**
+     * Deletes the copy {@link #preserveUnreadable(Path)} put aside, once it is old enough.
+     *
+     * <p>That copy is unparseable by construction, so no code path of this class reads it again:
+     * without this it stays in the configuration directory for good and the user is left with a file
+     * that never disappears and is not part of any diagnostics export. The age test is what keeps a
+     * copy of a file that was only oversized recoverable for a while after the first good write.
+     *
+     * @param target the statistics file, whose sibling copy is removed
+     */
+    private static void deleteCorruptCopy(Path target) {
+        Path name = target.getFileName();
+        if (name == null) {
+            return;
+        }
+        Path preserved = target.resolveSibling(name.toString() + CORRUPT_SUFFIX);
+        if (lastModifiedMillis(preserved)
+                > System.currentTimeMillis() - ORPHAN_TEMPORARY_MILLIS) {
+            return;
+        }
+        try {
+            Files.deleteIfExists(preserved);
+        } catch (IOException | RuntimeException ignored) {
+            // A directory that refuses the delete keeps the copy; the name is bounded to one file.
         }
     }
 
@@ -1031,7 +1139,7 @@ public final class TranslationStats {
         if (name == null) {
             return false;
         }
-        Path preserved = source.resolveSibling(name.toString() + ".corrupt");
+        Path preserved = source.resolveSibling(name.toString() + CORRUPT_SUFFIX);
         try {
             Files.move(source, preserved, StandardCopyOption.REPLACE_EXISTING);
             DebugLog.global().log("stats-load", "result", "kept",

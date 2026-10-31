@@ -35,11 +35,19 @@ public final class ShutdownBudget {
      */
     public static final long CACHE_WRITE_MILLIS = 3_000L;
     /**
-     * Longest a session's provider teardown may take after its workers have drained. A close that
-     * skipped the wait for them hands the same teardown to a background thread, which gives the
-     * workers this bound first, so the number covers that path too.
+     * Longest a session's provider teardown may take after its workers have drained. It is the only
+     * placeholder the budget has for that stage: a close that got its workers back tears the provider
+     * down on the thread that called it, and one that did not leaves it to the worker that leaves last
+     * -- neither hands it to a thread of its own, so nothing waits on the call any more, and the number
+     * stays so that the two sums below still describe the same teardown.
      */
     public static final long PROVIDER_CLOSE_MILLIS = 1_000L;
+    /**
+     * How far {@link #HOOK_JOIN_MILLIS} may overshoot the three stages it adds up. Those three are
+     * estimates rather than measured bounds, and this is the only slack they get, so it is a decision
+     * here instead of a bare literal buried in the sum below.
+     */
+    public static final long HOOK_SLACK_MILLIS = 500L;
     /**
      * Longest a client's stop hook waits for the teardown thread it started.
      *
@@ -52,15 +60,26 @@ public final class ShutdownBudget {
      * report failures nobody reads. The provider teardown it also drops is covered on the way out by
      * the offline provider's own JVM shutdown hook.
      *
-     * <p>Shorter than {@link #TEARDOWN_JOIN_MILLIS} on purpose: that one is the full synchronous
-     * bound, and it is what "close the game" used to wait -- a window with the window already gone and
-     * the process still alive behind it.
+     * <p>Shorter than {@link #TEARDOWN_JOIN_MILLIS} on purpose, by
+     * {@code SESSION_CLOSE_MILLIS + PROVIDER_CLOSE_MILLIS + 1_000L - HOOK_SLACK_MILLIS}: the worker
+     * wait and the provider teardown are the two stages a stop hook gives up on, so this constant is
+     * what every seam in the trees joins on and the only budget a reader can check against the work
+     * those seams cover. Nothing joins on {@link #TEARDOWN_JOIN_MILLIS}, and the offline provider's
+     * own JVM shutdown hook is what closes its child once this budget runs out.
      */
     public static final long HOOK_JOIN_MILLIS = CONFIG_WRITE_MILLIS
-            + CACHE_FLUSH_WAIT_MILLIS + CACHE_WRITE_MILLIS + 500L;
+            + CACHE_FLUSH_WAIT_MILLIS + CACHE_WRITE_MILLIS + HOOK_SLACK_MILLIS;
     /**
      * Longest a teardown that cannot be cut off may take: the configuration write, the session close
      * with its worker wait and store flush, and the provider teardown.
+     *
+     * <p>No seam joins on it -- every stop hook waits {@link #HOOK_JOIN_MILLIS}, which leaves the
+     * worker wait and the provider teardown outside the time those hooks spend. It stays as the full
+     * bound the split is measured against, so the relation between the two constants can be checked
+     * right here: this sum adds {@code SESSION_CLOSE_MILLIS}, {@code PROVIDER_CLOSE_MILLIS} and one
+     * second of slack where the other adds {@link #HOOK_SLACK_MILLIS}, so
+     * {@code HOOK_JOIN_MILLIS < TEARDOWN_JOIN_MILLIS} holds by
+     * {@code SESSION_CLOSE_MILLIS + PROVIDER_CLOSE_MILLIS + 1_000L - HOOK_SLACK_MILLIS}.
      */
     public static final long TEARDOWN_JOIN_MILLIS = CONFIG_WRITE_MILLIS + SESSION_CLOSE_MILLIS
             + CACHE_FLUSH_WAIT_MILLIS + CACHE_WRITE_MILLIS + PROVIDER_CLOSE_MILLIS + 1_000L;

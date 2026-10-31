@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.PosixFileAttributeView;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -130,6 +131,10 @@ public final class DiagnosticsLogExporter {
                 output.getFileName().toString() + "." + UUID.randomUUID() + ".tmp");
         boolean placed = false;
         try {
+            // Owner-only before the content exists. The temporary carries the same redacted status
+            // text and provider lines for the whole duration of the write, while the default mode
+            // of a POSIX profile is one every account on the machine can open.
+            createOwnerOnlyTemporary(temporary);
             Files.write(temporary, report.toString().getBytes(StandardCharsets.UTF_8),
                     StandardOpenOption.WRITE, StandardOpenOption.CREATE,
                     StandardOpenOption.TRUNCATE_EXISTING);
@@ -238,6 +243,36 @@ public final class DiagnosticsLogExporter {
         }
     }
 
+    /**
+     * Creates a temporary file that is owner-only from the moment its content exists.
+     *
+     * <p>Writing straight into a fresh name applies the default mode of the directory, which on a
+     * shared POSIX profile is {@code 0644}: the artefact is then readable by every account for the
+     * whole write, exactly while it holds the material the finished file is restricted against. The
+     * capability is asked first, because a Windows profile already has a per-user ACL and an
+     * unconditional attempt would log one "unsupported" line per export.
+     *
+     * @param temporary name this class created for one attempt
+     * @throws IOException when the file cannot be created
+     */
+    static void createOwnerOnlyTemporary(Path temporary) throws IOException {
+        Files.createFile(temporary);
+        if (!supportsOwnerPermissions(temporary)) {
+            return;
+        }
+        LocalConfigSecurity.restrictToOwner(temporary);
+    }
+
+    /** Whether owner-only permissions can be applied on {@code target} at all. */
+    private static boolean supportsOwnerPermissions(Path target) {
+        try {
+            return Files.getFileStore(target)
+                    .supportsFileAttributeView(PosixFileAttributeView.class);
+        } catch (IOException | RuntimeException unsupported) {
+            return false;
+        }
+    }
+
     /** Whether the artefact holds anything; an unreadable size is not proof that it is empty. */
     private static boolean isNonEmpty(Path candidate) {
         try {
@@ -288,7 +323,12 @@ public final class DiagnosticsLogExporter {
                 }
                 // A zero byte artefact is a name that was reserved and never written into -- an export
                 // killed in between. Counting it as one of the kept exports would let it push out an
-                // artefact that did work.
+                // artefact that did work, but leaving it out of that list also left it out of the only
+                // loop that ever deletes a name, so the stale sweep below removes it instead.
+                if (Files.isRegularFile(candidate) && !isNonEmpty(candidate)) {
+                    deleteStaleTemporary(candidate);
+                    continue;
+                }
                 if (Files.isRegularFile(candidate) && isNonEmpty(candidate)) {
                     existing.add(candidate);
                 }

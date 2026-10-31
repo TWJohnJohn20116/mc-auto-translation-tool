@@ -22,7 +22,9 @@
 - `_assemble_1_3_11_beta.py`：手動版發布組裝流程的參考實作。目標清單從
   `prepare-release.yml` 的 `TARGETS_JSON` 讀出（48 個，並用 `settings.gradle` 交叉驗證），
   先寫進 `downloads/<version>.staging` 驗證無誤後才替換；`downloads/<version>` 已存在且不是這次
-  產生的會**拒絕執行**，要覆蓋得明確加 `--force`。
+  產生的會**拒絕執行**，要覆蓋得明確加 `--force`。它也寫 `release-assets.txt`（名稱由
+  `prepare_release_assets` 的同一份實作推導，與 `prepare-release.yml` 這個生產者一致），
+  否則整包換掉目錄時會把已提交的清單一起刪掉。
 - `_build_1_3_11_beta.ps1`：已收斂為 `build_all.ps1` 的包裝，不再維護自己的（過期的 33 目標）清單。
 - `_seed_forge_1182_cache.py`、`_seed_loom_jars.py`、`_seed_loom_versions.py`、`_gen_mojang_poms.py`：
   離線快取種子。快取位置集中在 `_cache_paths.py`（`GRADLE_USER_HOME` → `~/.gradle`），不再硬編 `D:\`；

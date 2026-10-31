@@ -436,6 +436,15 @@ tasks.register("validateDualLayerApiParity") {
                     .replaceAll('gui\\.setScreen', 'setScreen')
                     .replaceAll('\\.gui\\.screen\\(\\)', '.screen')
                     .replaceAll('\\bHud\\b', 'Gui')
+            // 26.2 removed Options.hideGui and moved the HUD-hidden flag to Hud.isHidden, which its
+            // copies reach with @Shadow. Where the flag is read from is the only legitimate difference
+            // in this family, so the two spellings become one token and the @Shadow field that exists
+            // only to feed it is dropped; that leaves a fix to the painting itself visible in every
+            // copy. The whitespace has already been stripped, hence \\s* rather than \\s+.
+            normalised = normalised
+                    .replaceAll('Minecraft\\.getInstance\\(\\)\\.options\\.hideGui', 'HUD_HIDDEN')
+                    .replaceAll('this\\.isHidden', 'HUD_HIDDEN')
+                    .replaceAll('@Shadow\\s*private\\s*boolean\\s*isHidden;', '')
             // 26.3 spells the key bindings with the GLFW constants where 26.2 used
             // InputConstants.Type.KEYSYM/InputConstants.KEY_*. The key itself has to stay part of the
             // comparison, so only the two API spellings are collapsed; a copy that binds a different
@@ -560,7 +569,8 @@ tasks.register("validateDualLayerApiParity") {
         def mirrorFilePairs = [
                 ["${fabricApi}/26.1-26.1.2/${fabricClient}", "${fabricApi}/26.2/${fabricClient}"],
                 ["${fabricApi}/26.2/${fabricClient}", "${fabricApi}/26.3/${fabricClient}"],
-                ["${fabricApi}/26.2/${fabricHudMixin}", "${fabricApi}/26.3/${fabricHudMixin}"]
+                ["${fabricApi}/26.2/${fabricHudMixin}", "${fabricApi}/26.3/${fabricHudMixin}"],
+                ["${fabricApi}/26.1-26.1.2/${fabricHudMixin}", "${fabricApi}/26.2/${fabricHudMixin}"]
         ]
         // No member of a mirror pair differs today, and that is the state this task protects. A
         // generation change that makes one legitimately different has to be named here, member by
