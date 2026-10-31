@@ -35,7 +35,7 @@ flowchart TD
 
     subgraph Layer4 [第 4 層：打包聚合層 Bundle Layer]
         SubBundle["次級 Bundle (例: fabric-1.21.x, fabric-1.20.x)<br/>內部巢狀打包各版本 JAR (META-INF/jars)"]
-        AllBundle["超級聚合 Bundle<br/>MCAutoTranslationTool-fabric-all.jar (51 版本合一)"]
+        AllBundle["超級聚合 Bundle<br/>MCAutoTranslationTool-&lt;mod_version&gt;-fabric-all.jar (51 版本合一)"]
     end
 
     subgraph Layer5 [第 5 層：建置與自動化工具 Scripts]
@@ -121,7 +121,7 @@ Fabric Loader 原生支援 `META-INF/jars/` 巢狀 JAR 解壓機制：
        ...
    ]
    ```
-3. 最終透過 `scripts/prepare_release_assets.py`，將所有 Fabric 家族（1.13 至 26.3 共 51 個版本的子模組）聚合為單一 `MCAutoTranslationTool-fabric-all.jar`。玩家只要下載這一個 JAR，不論玩 1.14、1.16、1.20 或 1.21，Fabric Loader 就會自動精確加載對應的位元碼。前提是該實例的 **Fabric Loader ≥ 0.19.3**——bundle 的 `fabric.mod.json` 就是這樣宣告 `fabricloader` 下限，低於此版本的 Loader 會在載入階段擋下整個模組。
+3. 最終透過 `scripts/prepare_release_assets.py`，將所有 Fabric 家族（1.13 至 26.3 共 51 個版本的子模組）聚合為單一 `MCAutoTranslationTool-<mod_version>-fabric-all.jar`。玩家只要下載這一個 JAR，不論玩 1.14、1.16、1.20 或 1.21，Fabric Loader 就會自動精確加載對應的位元碼。前提是該實例的 **Fabric Loader ≥ 0.19.3**——bundle 的 `fabric.mod.json` 就是這樣宣告 `fabricloader` 下限，低於此版本的 Loader 會在載入階段擋下整個模組。
 
 ---
 

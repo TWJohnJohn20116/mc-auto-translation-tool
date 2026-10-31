@@ -1558,6 +1558,16 @@ public final class CoreSelfTest {
                 "Translation engine", "翻译引擎"));
         assertEquals("翻译引擎", TranslationOutputValidator.requireDisplaySafe(
                 "Translation engine", "翻译引擎"));
+        // The three prompt sentences that are also plain English imperatives are the very answer an
+        // English target needs for "只返回译文", so a whole answer that is one of them is a translation;
+        // a longer answer carrying one is still an echo (asserted above).
+        assertEquals("Return only the translation", TranslationOutputValidator.requireValid(
+                "只返回译文", "Return only the translation"));
+        assertEquals("Output translated text only", TranslationOutputValidator.requireDisplaySafe(
+                "只輸出譯文", "Output translated text only"));
+        assertTrue(LanguageHeuristics.shouldTranslate("Return only the translation", "zh-CN"));
+        assertFalse(LanguageHeuristics.shouldTranslate(
+                "Translate the user text to Simplified Chinese", "zh-CN"));
         // An answer identical to its source is a provider that did nothing. Accepting it cached the
         // source as that line's own translation and repainted it in the translated colour.
         assertThrows(TranslationOutputValidator.UnchangedOutputException.class,
@@ -2033,6 +2043,7 @@ public final class CoreSelfTest {
         Path file = Files.createTempFile("universal-translator-stats", ".properties");
         Files.deleteIfExists(file);
         Path temporary = file.resolveSibling(file.getFileName().toString() + ".tmp");
+        Path corrupt = file.resolveSibling(file.getFileName().toString() + ".corrupt");
         try {
             TranslationStats first = TranslationStats.isolated();
             first.attach(file);
@@ -2069,12 +2080,16 @@ public final class CoreSelfTest {
             third.attach(file);
             assertCount(0L, third.snapshot().requests());
 
-            // A read that failed must not turn into a write. The file still holds whatever it holds,
-            // and overwriting it with this session's zeroes is what erased a whole history behind a
-            // temporarily locked file; the counters here are only what this session counted.
+            // A read that failed must not turn into a write of zeroes over material that is still
+            // there. The unparseable copy is kept aside under ".corrupt" instead, and only then does
+            // the next flush write a fresh file: that file cannot be parsed on the next launch
+            // either, so latching the write path off would leave the counters in memory for good.
+            assertEquals(malformed, new String(Files.readAllBytes(corrupt), StandardCharsets.UTF_8));
+            assertTrue(!Files.exists(file));
             third.recordSuccess("offline-llama:1", 5L);
             third.flush();
-            assertEquals(malformed, new String(Files.readAllBytes(file), StandardCharsets.UTF_8));
+            assertTrue(Files.exists(file));
+            assertCount(1L, third.snapshot().requests());
 
             // An unwritable target and an unattached accumulator are both no-ops, not failures.
             TranslationStats unattached = TranslationStats.isolated();
@@ -2085,6 +2100,7 @@ public final class CoreSelfTest {
         } finally {
             Files.deleteIfExists(file);
             Files.deleteIfExists(temporary);
+            Files.deleteIfExists(corrupt);
         }
     }
 

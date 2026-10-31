@@ -62,11 +62,26 @@ public final class RenderedTextBridge {
     }
 
     public static String translate(String text) {
-        String translated = translateRaw(text);
-        if (text == null || text.equals(translated)) {
+        if (text == null) {
+            return null;
+        }
+        // The drawing and the measuring hook both arrive here for every string of every frame, so
+        // the line this bridge answered a moment ago is answered again: one set lookup instead of
+        // the whole guard chain.
+        if (TranslationRenderContext.isTranslatedResult(text)
+                || TranslationRenderContext.isUnchangedResult(text)) {
             return text;
         }
-        return styledText(text, translated);
+        String translated = translateRaw(text);
+        if (text.equals(translated)) {
+            TranslationRenderContext.rememberUnchanged(text);
+            return text;
+        }
+        String styled = styledText(text, translated);
+        // Both forms, because the two hooks only see the same string when no colour is applied.
+        TranslationRenderContext.rememberTranslation(translated);
+        TranslationRenderContext.rememberTranslation(styled);
+        return styled;
     }
 
     /** Styles one already translated line, reusing the answer when the same line is redrawn. */
@@ -96,6 +111,12 @@ public final class RenderedTextBridge {
                 || !FabricTranslationRuntimeBase.renderTranslationEnabled()) {
             return text;
         }
+        String original = text.getString();
+        // The measuring hook is handed the component the drawing hook already answered.
+        if (TranslationRenderContext.isTranslatedResult(original)
+                || TranslationRenderContext.isUnchangedResult(original)) {
+            return text;
+        }
         // A component with no children renders exactly its own literal under its own style, so the
         // run walk below would collect a single run and decline to rebuild it every time. Skipping
         // it keeps an ordinary label at one string copy and one cache lookup per frame.
@@ -103,11 +124,12 @@ public final class RenderedTextBridge {
         if (styled != null) {
             return styled;
         }
-        String original = text.getString();
         String translated = translateRaw(original);
         if (original.equals(translated)) {
+            TranslationRenderContext.rememberUnchanged(original);
             return text;
         }
+        TranslationRenderContext.rememberTranslation(translated);
         return new LiteralText(translated).setStyle(translatedStyle(text.getStyle()));
     }
 
@@ -136,12 +158,20 @@ public final class RenderedTextBridge {
             }
         }
         String original = runs.text();
+        // Chat, the tab list and the nameplates reach both hooks with the same line, so the second
+        // call is handed the answer the first one already produced.
+        if (TranslationRenderContext.isTranslatedResult(original)
+                || TranslationRenderContext.isUnchangedResult(original)) {
+            return text;
+        }
         String translated = translateRaw(original);
         if (original.equals(translated)) {
+            TranslationRenderContext.rememberUnchanged(original);
             return text;
         }
         MutableText replacement = new LiteralText(translated)
                 .setStyle(translatedStyle(runs.firstStyle()));
+        TranslationRenderContext.rememberTranslation(translated);
         return replacement.asOrderedText();
     }
 

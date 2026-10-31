@@ -36,14 +36,27 @@ pnpm test
 （`26.x` 的版本目录直接挂在 bundle 根）。改发布目标、家族档名或新增 Fabric 版本时，
 这五份文件与 `page.tsx` 必须一起改，否则网站检查会红。
 
-同一支测试还有四条关卡，都用来接住「照著文件做会失败」的漂移：把「31 个可直接安装的 JAR」
+同一支测试还有七条关卡，都用来接住「照著文件做会失败」的漂移：把「31 个可直接安装的 JAR」
 绑回页面渲染出的 `.jar` 连结数（13 份文件用四种措辞手抄，先前只守 `page.tsx` 的一种）；把文件里
 反引号内的仓库路径逐一比对实际目录（`legacy/` → `platforms/forge/legacy/`、版本专案 → `versions/`
 这类目录重构之后最容易漏）；把产物档名、`downloads/<版本>` 与 `--version` 的版本号绑回
 `gradle.properties` 的 `mod_version`；把四份 README、`page.tsx` 与三份 `USER_GUIDE.md` 的 Fabric
 版本区间清单展开后比对 `platforms/fabric/*/versions` 的目录集合（数字有守、清单没守，新增版本时
-就会变成「内含 52 个实作」但只列出 51 个版本名）。这些关卡随 `website/`、`README.md`、`docs/`
-的变动在 website job 执行（`build.yml` 用 `git diff` 决定是否启动该 job），push `main` 时一律执行。
+就会变成「内含 52 个实作」但只列出 51 个版本名）。另外三条守的是「贴上去就会被照抄」的形式：
+资产档名 `MCAutoTranslationTool-<版本>-<目标>.jar` 的版本段必须是 `mod_version`，或用
+`<mod_version>` 占位符（写少了版本段，读者会去找一个不存在的档案）；三份 `USER_GUIDE.md` 的
+Forge 家族列要逐版本对上 `platforms/forge/{1.21,26.x}/versions/<版本>/build.gradle` 的
+`ext.forgeVersion`；`page.tsx` 的「NeoForge N 个版本各一颗」绑回 `prepare-release.yml` 的
+neoforge 目标数，`CHANGELOG.md` 的第一段标题必须是 `## <mod_version> - `（发布派送拿它当 release
+notes，漏写会在合并之后才失败）。
+
+这些关卡只在 website job 里跑，而它由 `git diff` 决定是否启动：只有 `website/`、`README.md`、
+`docs/` 有变动才跑（`build.yml`），push `main` 时一律跑。所以**反方向没有守**——
+`platforms/**`、`prepare-release.yml` 的 `TARGETS_JSON`、`gradle.properties`、`downloads/**`
+这些「产生端」自己变动、文件没动的 PR 不会启动这个 job，数字会在 13 份文件上静默漂移，直到下一个
+动到 `website/`／`README.md`／`docs/` 的 PR（可能只是无关的 npm 更新）或发布派送才红。要补这一半，
+得在 `scripts/ci/` 加一条 `check` job 的权威比对（`test_ci_docs.py` 已有同型先例），或把 `build.yml`
+的 `git diff` 正则扩到那些路径——两条都属 CI／脚本分区的改动。
 
 ## 部署
 

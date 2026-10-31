@@ -183,7 +183,10 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: legacy-fabric-${{ matrix.target }}
-          path: platforms/**/build/libs/*.jar
+          # 這四個目標都是 bundle，而 bundle 的 build 會連帶建置旗下的單版本子專案，它們的
+          # platforms/fabric/<線>/versions/<版本>/build/libs/*.jar 也符合 platforms/** → 產物會從
+          # 1 顆變成整包（26／3／8 顆成員 JAR，build.yml 對同一個問題用的是同一個收窄寫法）。
+          path: platforms/*/*/bundle/build/libs/*.jar
           if-no-files-found: warn
           retention-days: 3
 

@@ -149,7 +149,7 @@ public final class HttpJsonClient {
             // retry and fallback policies both treat as worth another paid attempt.
             if (status < 200 || status >= 300) {
                 HttpStatusException failure = statusFailure(connection, status, deadlineNanos,
-                        bodyDeadlineNanos);
+                        bodyDeadlineNanos, timeBudgetNanos());
                 // An error body that was read to its end leaves the socket reusable: the transport
                 // already paid for the whole response, so tearing the connection down only bought a
                 // TCP and TLS handshake on every retry of a 429 or a 503.
@@ -160,7 +160,7 @@ public final class HttpJsonClient {
             }
             InputStream stream = connection.getInputStream();
             String response = stream == null ? "" : readBounded(decoded(stream), deadlineNanos,
-                    bodyDeadlineNanos);
+                    bodyDeadlineNanos, timeBudgetNanos());
             // The body was read to the end and closed, so the connection may be pooled. Any other
             // exit (non-2xx status, exception, unread body) still disconnects below.
             if (stream != null) {
@@ -187,12 +187,14 @@ public final class HttpJsonClient {
      *
      * @param deadlineNanos absolute {@link System#nanoTime()} value to stop reading the body at
      * @param absoluteDeadlineNanos absolute {@link System#nanoTime()} value no body may outlive
+     * @param windowNanos length of one no-progress window of that body
      */
     private static HttpStatusException statusFailure(
             HttpURLConnection connection,
             int status,
             long deadlineNanos,
-            long absoluteDeadlineNanos
+            long absoluteDeadlineNanos,
+            long windowNanos
     ) {
         Long retryAfterSeconds = parseRetryAfterSeconds(connection.getHeaderField("Retry-After"));
         if (status >= 300 && status < 400) {
@@ -215,7 +217,7 @@ public final class HttpJsonClient {
             BoundedBody body = error == null
                     ? new BoundedBody("", true)
                     : readBounded(decoded(error), deadlineNanos, absoluteDeadlineNanos,
-                            MAXIMUM_ERROR_BYTES, true);
+                            windowNanos, MAXIMUM_ERROR_BYTES, true);
             response = body.text;
             drained = body.drained;
         } catch (IOException unreadable) {
@@ -348,6 +350,9 @@ public final class HttpJsonClient {
             throws IOException {
         HttpURLConnection connection = (HttpURLConnection) endpoint.toURL().openConnection();
         boolean handedOver = false;
+        // Set only when a non-2xx body was read to its end, so the socket can go back to the pool
+        // instead of being torn down on every retried 429 or 503.
+        boolean connectionReusable = false;
         long deadlineNanos = System.nanoTime() + timeBudgetNanos();
         try {
             connection.setRequestMethod("POST");
@@ -369,14 +374,19 @@ public final class HttpJsonClient {
 
             int status = connection.getResponseCode();
             if (status < 200 || status >= 300) {
-                throw statusFailure(connection, status, deadlineNanos,
-                        System.nanoTime() + absoluteBodyBudgetNanos());
+                HttpStatusException failure = statusFailure(connection, status, deadlineNanos,
+                        System.nanoTime() + absoluteBodyBudgetNanos(), timeBudgetNanos());
+                if (failure.isBodyDrained()) {
+                    connectionReusable = true;
+                }
+                throw failure;
             }
             InputStream stream = connection.getInputStream();
             StreamedResponse response = new StreamedResponse(
                     connection, status, connection.getContentType(),
                     stream == null ? new ByteArrayInputStream(new byte[0])
-                            : new DeadlineInputStream(stream, connection, deadlineNanos),
+                            : new DeadlineInputStream(stream, connection, deadlineNanos,
+                                    timeBudgetNanos(), absoluteBodyBudgetNanos()),
                     deadlineNanos);
             handedOver = true;
             return response;
@@ -389,8 +399,10 @@ public final class HttpJsonClient {
         } catch (SSLException tls) {
             throw TranslationEndpointUnavailableException.tlsFailure(endpoint, tls);
         } finally {
-            // The connection stays open only while the caller still holds the response stream.
-            if (!handedOver) {
+            // The connection stays open only while the caller still holds the response stream, and a
+            // non-2xx body that was read to its end is no exception to that: nobody holds it and
+            // nothing is left to read, so tearing it down only paid for another handshake.
+            if (!handedOver && !connectionReusable) {
                 connection.disconnect();
             }
         }
@@ -599,23 +611,33 @@ public final class HttpJsonClient {
      * ceiling still exists so a peer that trickles one byte per budget cannot keep a worker forever.
      */
     private static final class DeadlineInputStream extends java.io.FilterInputStream {
-        /** Absolute ceiling for one streamed body, independent of how often it makes progress. */
-        private static final long MAXIMUM_STREAM_DURATION_NANOS =
-                MAXIMUM_TIME_BUDGET_MILLIS * 1000L * 1000L;
-
         private final HttpURLConnection connection;
         private final long progressBudgetNanos;
         private final long absoluteDeadlineNanos;
         /** Re-armed by the reading thread and read by a watchdog thread, so it is published. */
         private volatile long progressDeadlineNanos;
 
-        private DeadlineInputStream(InputStream body, HttpURLConnection connection, long deadlineNanos) {
+        private DeadlineInputStream(
+                InputStream body,
+                HttpURLConnection connection,
+                long deadlineNanos,
+                long progressWindowNanos,
+                long absoluteBudgetNanos
+        ) {
             super(body);
             this.connection = connection;
             long now = System.nanoTime();
-            this.progressBudgetNanos = Math.max(1L, deadlineNanos - now);
-            this.progressDeadlineNanos = deadlineNanos;
-            this.absoluteDeadlineNanos = now + MAXIMUM_STREAM_DURATION_NANOS;
+            // The window is a length, not what is left of the request budget: a stream whose headers
+            // arrived after the request deadline used to get a one-nanosecond window and lose its
+            // first event. A deadline still in the future keeps capping the first window.
+            this.progressBudgetNanos = Math.max(1L, progressWindowNanos);
+            this.progressDeadlineNanos = deadlineNanos - now > 0L
+                    ? Math.min(deadlineNanos, now + this.progressBudgetNanos)
+                    : now + this.progressBudgetNanos;
+            // Both halves follow this client's own budget now: the ceiling used to be the class-wide
+            // thirty minutes, which left a fail-fast client holding a worker thirty times longer on
+            // the streaming path than on the ordinary one.
+            this.absoluteDeadlineNanos = now + Math.max(this.progressBudgetNanos, absoluteBudgetNanos);
         }
 
         @Override
@@ -646,12 +668,12 @@ public final class HttpJsonClient {
             long now = System.nanoTime();
             if (now - absoluteDeadlineNanos > 0L) {
                 connection.disconnect();
-                throw new java.net.SocketTimeoutException(
+                throw new TranslationBudgetExceededException(
                         "Response exceeded its total time budget");
             }
             if (now - progressDeadlineNanos > 0L) {
                 connection.disconnect();
-                throw new java.net.SocketTimeoutException("Response received no data for "
+                throw new TranslationBudgetExceededException("Response received no data for "
                         + (progressBudgetNanos / 1000000L) + " ms");
             }
         }
@@ -681,8 +703,8 @@ public final class HttpJsonClient {
     }
 
     /**
-     * Reads a body up to {@link #MAX_RESPONSE_BYTES} and no further than {@code deadlineNanos}
-     * without progress.
+     * Reads a body up to {@link #MAX_RESPONSE_BYTES} and fails it once a whole {@code windowNanos}
+     * passes without progress.
      *
      * <p>The byte bound alone never terminates a body that arrives slowly: a peer sending one byte
      * just before every read timeout keeps the request alive forever while staying under the size
@@ -694,22 +716,26 @@ public final class HttpJsonClient {
      * {@link DeadlineInputStream} uses for a streamed body, so one setting means one thing on both
      * paths.
      *
-     * @param deadlineNanos absolute {@link System#nanoTime()} value the first no-progress window
-     *                      ends at
+     * @param deadlineNanos absolute {@link System#nanoTime()} value the request budget ends at; one
+     *                      still in the future caps the first window
      * @param absoluteDeadlineNanos absolute {@link System#nanoTime()} value the whole body has to
      *                      arrive by, derived from the caller's own budget
+     * @param windowNanos length of one no-progress window, so it is a length and never what is left
+     *                      of the request budget
      */
     private static String readBounded(
             InputStream input,
             long deadlineNanos,
-            long absoluteDeadlineNanos
+            long absoluteDeadlineNanos,
+            long windowNanos
     ) throws IOException {
-        return readBounded(input, deadlineNanos, absoluteDeadlineNanos, MAX_RESPONSE_BYTES, false).text;
+        return readBounded(input, deadlineNanos, absoluteDeadlineNanos, windowNanos,
+                MAX_RESPONSE_BYTES, false).text;
     }
 
     /**
-     * Reads a body up to {@code limit} bytes and no further than {@code deadlineNanos} without
-     * progress.
+     * Reads a body up to {@code limit} bytes and fails it once a whole {@code windowNanos} passes
+     * without progress.
      *
      * @param truncate {@code true} to keep what arrived at {@code limit} instead of failing on size,
      *         which is what an error body needs: the status matters more than its tail
@@ -718,6 +744,7 @@ public final class HttpJsonClient {
             InputStream input,
             long deadlineNanos,
             long absoluteDeadlineNanos,
+            long windowNanos,
             int limit,
             boolean truncate
     ) throws IOException {
@@ -730,8 +757,14 @@ public final class HttpJsonClient {
             // body. The absolute ceiling is passed in by the caller so it follows that client's own
             // budget, and the window counts bytes because a silence check on its own could never
             // fire: the read timeout ends every read before one window is over.
-            long progressBudgetNanos = Math.max(1L, deadlineNanos - System.nanoTime());
-            long progressDeadlineNanos = deadlineNanos;
+            // The window is a length, so the first one starts with the body. Recomputing it from what
+            // was left of the request budget collapsed it to one nanosecond on a body that began
+            // after that budget, which then failed a short answer that had already arrived in full.
+            long startedNanos = System.nanoTime();
+            long progressBudgetNanos = Math.max(1L, windowNanos);
+            long progressDeadlineNanos = deadlineNanos - startedNanos > 0L
+                    ? Math.min(deadlineNanos, startedNanos + progressBudgetNanos)
+                    : startedNanos + progressBudgetNanos;
             long windowBytes = 0L;
             while ((count = source.read(buffer)) >= 0) {
                 total += count;
@@ -746,13 +779,13 @@ public final class HttpJsonClient {
                 }
                 long now = System.nanoTime();
                 if (now - absoluteDeadlineNanos > 0L) {
-                    throw new java.net.SocketTimeoutException(
+                    throw new TranslationBudgetExceededException(
                             "Translation response exceeded its total time budget");
                 }
                 windowBytes += count;
                 if (now - progressDeadlineNanos > 0L) {
                     if (windowBytes < MINIMUM_BYTES_PER_WINDOW) {
-                        throw new java.net.SocketTimeoutException(
+                        throw new TranslationBudgetExceededException(
                                 "Translation response delivered only " + windowBytes
                                         + " bytes within " + (progressBudgetNanos / 1000000L) + " ms");
                     }

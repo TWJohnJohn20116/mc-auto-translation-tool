@@ -18,6 +18,29 @@ public final class TranslationOutputValidator {
      */
     private static final Pattern TOKEN = Pattern.compile(
             ProtectedText.TOKEN_SOURCE, Pattern.CASE_INSENSITIVE);
+    /** "只返回译文" rendered into an English target; also a plain imperative sentence. */
+    private static final String RETURN_ONLY_TRANSLATION = "return only the translation";
+    /** The live prompt's own sentence, lower-cased; also a plain imperative sentence. */
+    private static final String REPLY_ONLY_TRANSLATION = "reply with only the translation";
+    /** "只输出译文" rendered into an English target; also a plain imperative sentence. */
+    private static final String OUTPUT_TRANSLATED_ONLY = "output translated text only";
+    /**
+     * Prompt sentences that are also ordinary English imperatives, so one sentence alone can be either
+     * a restated instruction or the translation of the source line.
+     *
+     * <p>"只返回译文", "仅回复译文" and "只输出译文" are ordinary mod-UI strings, and these three are
+     * exactly how a model renders them into an English target. Presence inside a longer answer is still
+     * the echo {@link #containsInstructionArtifact(String)} exists for -- a restated prompt carries its
+     * other phrasing too -- but an answer that is one of these sentences and nothing else is judged as
+     * a translation, on the output side and on the source side alike. Judging presence alone rejected
+     * that translation forever: a rejection is not the "cannot succeed" verdict, so the line bought the
+     * same refusal every thirty seconds and never showed anything.
+     */
+    private static final String[] AMBIGUOUS_ECHO_PHRASES = {
+            RETURN_ONLY_TRANSLATION,
+            REPLY_ONLY_TRANSLATION,
+            OUTPUT_TRANSLATED_ONLY
+    };
     /**
      * Phrasing earlier prompt versions used.
      *
@@ -29,6 +52,10 @@ public final class TranslationOutputValidator {
      * those sentences into an English target, and a rejection is the retry-every-thirty-seconds
      * failure, while a source carrying one of them was never sent to a provider at all because
      * {@link LanguageHeuristics} reads it as an internal artifact.
+     *
+     * <p>The three entries that are also plain English imperatives stay here for their presence test;
+     * {@link #AMBIGUOUS_ECHO_PHRASES} carries the same constants so a whole-answer match can be judged
+     * differently without spelling the sentences twice.
      */
     private static final String[] HISTORICAL_INSTRUCTION_FRAGMENTS = {
             "translate minecraft server interface text",
@@ -36,9 +63,9 @@ public final class TranslationOutputValidator {
             "translate the minecraft ui text",
             "translate the user text to",
             "minecraft ui text in zh-cn",
-            "return only the translation",
-            "reply with only the translation",
-            "output translated text only",
+            RETURN_ONLY_TRANSLATION,
+            REPLY_ONLY_TRANSLATION,
+            OUTPUT_TRANSLATED_ONLY,
             "you are a translation engine",
             "preserve tokens like",
             "keep every __ut_",
@@ -162,7 +189,9 @@ public final class TranslationOutputValidator {
         if (sourceLines > 1 && lineCount(output) < sourceLines) {
             throw new IllegalArgumentException("Translation output dropped a line");
         }
-        if (containsInstructionArtifact(output)) {
+        // A whole answer that is one of the ambiguous sentences is a translation, not an echo; a longer
+        // answer that carries one is still rejected here.
+        if (containsInstructionArtifact(output) && !isAmbiguousEcho(output)) {
             throw new IllegalArgumentException("Translation output echoed its instructions");
         }
         if (!tokenSequence(source).equals(tokenSequence(output))) {
@@ -244,7 +273,9 @@ public final class TranslationOutputValidator {
                 }
             }
         }
-        if (containsInstructionArtifact(trimmed)) {
+        // Same whole-answer rule as requireValid: the restored text is judged by the lines it holds,
+        // and an answer that is one of these sentences is the translation of such a line.
+        if (containsInstructionArtifact(trimmed) && !isAmbiguousEcho(trimmed)) {
             throw new IllegalArgumentException("Restored translation echoed its instructions");
         }
         return restored;
@@ -255,7 +286,29 @@ public final class TranslationOutputValidator {
         if (text == null || text.isEmpty()) {
             return false;
         }
-        return TOKEN.matcher(text).find() || containsInstructionArtifact(text);
+        if (TOKEN.matcher(text).find()) {
+            return true;
+        }
+        // A server sign or plugin help line that reads exactly like one of these sentences is ordinary
+        // text, and refusing to send it means the line is never translated at all -- silently, because
+        // this check runs before a request exists.
+        return containsInstructionArtifact(text) && !isAmbiguousEcho(text);
+    }
+
+    /**
+     * Whether {@code text} is exactly one of {@link #AMBIGUOUS_ECHO_PHRASES} and nothing else.
+     *
+     * <p>Only the whole value is compared, so the sentences keep their presence test: a restated
+     * prompt, or a sentence carrying a translation next to it, is still an echo.
+     */
+    private static boolean isAmbiguousEcho(String text) {
+        String trimmed = text.trim();
+        for (int index = 0; index < AMBIGUOUS_ECHO_PHRASES.length; index++) {
+            if (AMBIGUOUS_ECHO_PHRASES[index].equalsIgnoreCase(trimmed)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

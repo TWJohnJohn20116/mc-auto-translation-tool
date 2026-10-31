@@ -1,6 +1,7 @@
 package org.universaltranslator.forge;
 
 import org.universaltranslator.core.DebugLog;
+import org.universaltranslator.core.ShutdownBudget;
 
 import java.io.IOException;
 import java.util.concurrent.ExecutionException;
@@ -23,11 +24,20 @@ import java.util.function.Consumer;
  * caller.
  */
 final class ForgeConfigWriter {
-    /** How long {@link #shutdown()} and the Save barrier wait for the queued writes to land. */
-    private static final long SHUTDOWN_WAIT_MILLIS = 2000L;
+    /**
+     * How long {@link #shutdown()} and the Save barrier wait for the queued writes to land.
+     *
+     * <p>Read from {@link ShutdownBudget} so the client's stop hook, which adds this wait to the other
+     * teardown steps, cannot end up shorter than the wait it is supposed to cover.
+     */
+    private static final long SHUTDOWN_WAIT_MILLIS = ShutdownBudget.CONFIG_WRITE_MILLIS;
 
     private static final Object LOCK = new Object();
     private static ExecutorService writer;
+    /** Guards the one-time registration of the shutdown hook below. */
+    private static final Object HOOK_LOCK = new Object();
+    /** Whether {@link #installShutdownHook(Runnable)} already registered its hook. */
+    private static boolean shutdownHookInstalled;
 
     private ForgeConfigWriter() {
     }
@@ -149,6 +159,52 @@ final class ForgeConfigWriter {
         } catch (InterruptedException interrupted) {
             current.shutdownNow();
             Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * Registers the one shutdown hook that lets the queued writes land before the JVM halts.
+     *
+     * <p>Only a failed startup used to call the runtime's stop action, so this writer's own flush
+     * never ran: "press F8 and quit" dropped the toggle, and the session and the screen worker
+     * threads outlived the configuration they belonged to. A shutdown hook is the one seam every
+     * supported loader and game version has without naming a version-specific stopping event.
+     *
+     * <p>The hook only starts the teardown on its own thread and waits for it with a bound, because
+     * the teardown drains this writer and then closes the session, which waits for workers parked in
+     * a provider read. Running it inline made "close the game" wait for all of it with no upper
+     * limit. Each Forge client used to carry its own copy of this protocol, so a change to the order
+     * or the budget only reached the copies someone remembered; a client now hands over the action.
+     *
+     * @param teardown the runtime's stop action, run on {@code "universal-translator-stop"}
+     */
+    static void installShutdownHook(final Runnable teardown) {
+        if (teardown == null) {
+            return;
+        }
+        synchronized (HOOK_LOCK) {
+            if (shutdownHookInstalled) {
+                return;
+            }
+            shutdownHookInstalled = true;
+            try {
+                Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        Thread stopping = new Thread(teardown, "universal-translator-stop");
+                        stopping.setDaemon(false);
+                        stopping.start();
+                        try {
+                            stopping.join(ShutdownBudget.HOOK_JOIN_MILLIS);
+                        } catch (InterruptedException interrupted) {
+                            Thread.currentThread().interrupt();
+                        }
+                    }
+                }, "universal-translator-config-flush"));
+            } catch (IllegalStateException alreadyStopping) {
+                // The JVM is already shutting down; no thread is left for a queued write to land on.
+                shutdownHookInstalled = false;
+            }
         }
     }
 

@@ -4,12 +4,10 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.client.render.TextRenderer;
+import net.minecraft.locale.I18n;
 
-import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
@@ -26,7 +24,6 @@ public final class OrnitheClientAccess {
      * One-shot switches for the reflective fallbacks below: a mapping drift must be reported once,
      * not once per rendered frame, and the lookup itself must not be retried per call.
      */
-    private static final AtomicBoolean TRANSLATE_FALLBACK_REPORTED = new AtomicBoolean();
     private static final AtomicBoolean OVERLAY_FALLBACK_REPORTED = new AtomicBoolean();
     private static final AtomicBoolean CHAT_FALLBACK_REPORTED = new AtomicBoolean();
     private static final AtomicBoolean SERVER_ADDRESS_REPORTED = new AtomicBoolean();
@@ -58,12 +55,16 @@ public final class OrnitheClientAccess {
      * longer exposes it on the options object at all), and this tree is compiled by the scheduled
      * legacy-targets run rather than by every pull request, so a name that no longer matches should
      * cost one line here instead of one call site per HUD hook.
+     *
+     * <p>{@code hideGui} is the name this bundle's ploceus (feather) mappings give the flag on every
+     * version it compiles, 1.3.1 through 1.7.10; {@code hudHidden} is the yarn name that arrives with
+     * 1.14.
      */
     public static boolean hudHidden(Minecraft client) {
         if (client == null || client.options == null) {
             return false;
         }
-        return client.options.hudHidden;
+        return client.options.hideGui;
     }
 
     /**
@@ -77,40 +78,34 @@ public final class OrnitheClientAccess {
         if (field == null) {
             return;
         }
-        field.setEditable(editable);
+        OrnitheFamilyAccess.setEditable(field, editable);
     }
 
     /**
-     * Translates a key, answering the key itself when this Minecraft version's {@code I18n} cannot
-     * be reached.
+     * Translates a key through this generation's language table.
      *
-     * <p>The entry point is resolved once ({@link TranslateAccess}) instead of through
-     * {@code Class.forName} plus {@code getMethod} on every call: the settings, LLM and diagnostics
-     * screens call this for every visible label on every frame, so the lookup used to run hundreds
-     * of times a second for strings that never change. A resolution or invocation failure is
-     * answered with the key and reported once, never thrown: this is called from
-     * {@code Screen.render}.
+     * <p>A direct call, not a lookup by name: {@code remapJar} rewrites references but not string
+     * literals, so {@code Class.forName("net.minecraft...")} answered "not found" in the shipped JAR
+     * and every label fell back to its own key. {@code net.minecraft.locale.I18n} carries both the
+     * plain and the {@code Object[]} overload on all seventeen versions of this bundle, so no
+     * generation split is needed for this one.
      */
     public static String tr(String key, Object... arguments) {
-        return TranslateAccess.RESOLVED.apply(key, arguments);
+        return I18n.translate(key, arguments);
     }
 
     public static void overlay(String key, Object... arguments) {
         String message = tr(key, arguments);
-        Object gui = client().gui;
-        Method setOverlay = OverlayAccess.current().setOverlay(gui);
-        if (setOverlay == null) {
-            // This Minecraft version exposes no overlay method under this name/signature; the
-            // status message is dropped, and the single report below says so once.
-            reportOnce(OVERLAY_FALLBACK_REPORTED, "setOverlayMessage", null);
+        Minecraft client = client();
+        if (client == null || client.gui == null) {
+            // Start-up and shutdown leave the HUD unset; the message has nowhere to go and this is
+            // not a mapping drift, so it is dropped without a report.
             return;
         }
-        try {
-            setOverlay.invoke(gui, message, false);
-        } catch (ReflectiveOperationException exception) {
-            reportOnce(OVERLAY_FALLBACK_REPORTED, "setOverlayMessage", exception);
-        } catch (LinkageError error) {
-            reportOnce(OVERLAY_FALLBACK_REPORTED, "setOverlayMessage", error);
+        if (!OrnitheFamilyAccess.overlayMessage(client, message)) {
+            // This generation keeps the line in a private field and exposes no setter; the single
+            // report below says so once.
+            reportOnce(OVERLAY_FALLBACK_REPORTED, "setOverlayMessage", null);
         }
     }
 
@@ -144,23 +139,33 @@ public final class OrnitheClientAccess {
         }
     }
 
+    /**
+     * The name this session signed in with.
+     *
+     * <p>Part of the generation split (see {@code OrnitheFamilyAccess}): 1.3.1-1.5.2 keep the name in
+     * a public {@code Session} field and expose no accessor, 1.6.1 and later answer
+     * {@code getSession().getUsername()}. Read directly because a lookup by name cannot survive
+     * {@code remapJar}, which rewrites references but not string literals.
+     */
     static String sessionUsername() {
         Minecraft client = client();
-        try {
-            Object session = Minecraft.class.getMethod("getSession").invoke(client);
-            if (session == null) {
-                return null;
-            }
-            try {
-                return (String) session.getClass().getMethod("getUsername").invoke(session);
-            } catch (NoSuchMethodException ignored) {
-                return (String) session.getClass().getMethod("getPlayerName").invoke(session);
-            }
-        } catch (ReflectiveOperationException ignored) {
+        if (client == null) {
             return null;
         }
+        return OrnitheFamilyAccess.username(client);
     }
 
+    /**
+     * The address of the server this session plays on, or {@code null}.
+     *
+     * <p>The last lookup by name in this class, and the one that still cannot succeed in the shipped
+     * JAR: {@code remapJar} rewrites references but not string literals, so the runtime classes carry
+     * the unmapped names instead of the ones below. The fix is a per-generation call, but it needs
+     * three shapes rather than the two layers this tree has: 1.3.1-1.5.2 and 1.7.x expose
+     * {@code getCurrentServerEntry()}, while 1.6.1/1.6.4 keep the entry in a private
+     * {@code currentServerEntry} field with no getter and share the 1.6-1.8 layer with 1.7.x. Left in
+     * place, still told apart from "not on a server" by the one-shot report below.
+     */
     static String currentServerAddress() {
         Minecraft client = client();
         try {
@@ -214,14 +219,27 @@ public final class OrnitheClientAccess {
     /**
      * Posts one chat line through this version's chat HUD.
      *
-     * <p>The chat accessor, the {@code addMessage} overload and {@code LiteralText}'s constructor
-     * are resolved once ({@link ChatAccess}); a failure drops the line and is reported once. This
-     * runs from tick and render paths whose callers never expect an exception, and
-     * {@code client().gui.getChat()} throws {@link NoSuchMethodError} rather than an
-     * {@link Exception} when a mapping drifts.
+     * <p>The component type is the only thing that moved inside this bundle: 1.3.1-1.6.4 append a
+     * plain {@code String}, 1.7.x want a {@code Text} ({@code OrnitheChatSink} carries the half each
+     * one compiles). A failure drops the line and is reported once, because this runs from tick and
+     * render paths whose callers never expect an exception and a drifted mapping surfaces as an
+     * {@link Error}.
      */
     private static void addChatMessage(String message) {
-        ChatAccess.current().send(message);
+        Minecraft client = client();
+        if (client == null || client.gui == null) {
+            // Start-up and shutdown leave the HUD unset: nothing to append the line to, and this is
+            // not a mapping drift.
+            return;
+        }
+        try {
+            OrnitheChatSink.addMessage(client, message);
+        } catch (LinkageError error) {
+            reportOnce(CHAT_FALLBACK_REPORTED, "ChatHud.addMessage", error);
+        } catch (NullPointerException error) {
+            // The chat HUD itself is not built yet: nothing to append the line to.
+            reportOnce(CHAT_FALLBACK_REPORTED, "ChatHud.addMessage", error);
+        }
     }
 
     static int maximumChatLength() {
@@ -285,298 +303,5 @@ public final class OrnitheClientAccess {
         DebugLog.global().log("hotkey",
                 "result", "failed",
                 "failure", failure.getClass().getName());
-    }
-
-    /** The {@code I18n} entry point this Minecraft version exposes, resolved at most once. */
-    private static final class TranslateAccess {
-        /** Upper bound on memoised keys; the screens together use a few dozen labels. */
-        private static final int MEMO_LIMIT = 512;
-        /** The language resource can be swapped with a screen open, so the memo is discarded. */
-        private static final long MEMO_MILLIS = 1000L;
-
-        private static final TranslateAccess RESOLVED = resolve();
-
-        private final Method method;
-        private final boolean formatsArguments;
-        private final Map<String, String> memo = new HashMap<String, String>();
-        private long memoCreatedAt;
-
-        private TranslateAccess(Method method, boolean formatsArguments) {
-            this.method = method;
-            this.formatsArguments = formatsArguments;
-        }
-
-        private static TranslateAccess resolve() {
-            Method found = find("net.minecraft.client.resource.language.I18n", true);
-            boolean formats = false;
-            if (found == null) {
-                found = find("net.minecraft.locale.I18n", true);
-            }
-            if (found == null) {
-                // Older builds only carry translate(String) and expect String.format to fill it in.
-                found = find("net.minecraft.locale.I18n", false);
-                formats = true;
-            }
-            return new TranslateAccess(found, formats);
-        }
-
-        private static Method find(String className, boolean varargs) {
-            try {
-                Class<?> i18n = Class.forName(className);
-                return varargs
-                        ? i18n.getMethod("translate", String.class, Object[].class)
-                        : i18n.getMethod("translate", String.class);
-            } catch (ClassNotFoundException ignored) {
-                return null;
-            } catch (NoSuchMethodException ignored) {
-                return null;
-            } catch (LinkageError error) {
-                // Class present but unusable (static init failed): treat it as absent, not as fatal.
-                return null;
-            }
-        }
-
-        String apply(String key, Object[] arguments) {
-            if (method == null) {
-                reportOnce(TRANSLATE_FALLBACK_REPORTED, "I18n.translate", null);
-                return key;
-            }
-            if (arguments == null || arguments.length == 0) {
-                return applyPlain(key);
-            }
-            try {
-                if (!formatsArguments) {
-                    return (String) method.invoke(null, key, arguments);
-                }
-                Object translated = method.invoke(null, key);
-                return String.format(String.valueOf(translated), arguments);
-            } catch (ReflectiveOperationException exception) {
-                reportOnce(TRANSLATE_FALLBACK_REPORTED, "I18n.translate", exception);
-                return key;
-            } catch (LinkageError error) {
-                reportOnce(TRANSLATE_FALLBACK_REPORTED, "I18n.translate", error);
-                return key;
-            }
-        }
-
-        /**
-         * Answers a label that has no arguments, which is what every button caption and status line
-         * asks for. Those ask again on every drawn frame, and a {@link Method#invoke} each time was
-         * the last reflective call left on the render path.
-         */
-        private String applyPlain(String key) {
-            long now = System.currentTimeMillis();
-            synchronized (memo) {
-                if (memo.size() > MEMO_LIMIT || now - memoCreatedAt > MEMO_MILLIS) {
-                    memo.clear();
-                    memoCreatedAt = now;
-                }
-                String cached = memo.get(key);
-                if (cached != null) {
-                    return cached;
-                }
-                try {
-                    String translated = formatsArguments
-                            ? String.valueOf(method.invoke(null, key))
-                            : (String) method.invoke(null, key);
-                    memo.put(key, translated);
-                    return translated;
-                } catch (ReflectiveOperationException exception) {
-                    reportOnce(TRANSLATE_FALLBACK_REPORTED, "I18n.translate", exception);
-                    return key;
-                } catch (LinkageError error) {
-                    reportOnce(TRANSLATE_FALLBACK_REPORTED, "I18n.translate", error);
-                    return key;
-                }
-            }
-        }
-    }
-
-    /** The overlay-message method of this version's HUD, resolved at most once. */
-    private static final class OverlayAccess {
-        /** How long a "the HUD does not exist yet" answer is trusted before asking again. */
-        private static final long RETRY_MILLIS = 2000L;
-
-        private static volatile OverlayAccess resolved;
-        private static volatile long lastAttemptMillis;
-
-        private final Method setOverlay;
-        /** True when the answer was "nothing to talk to yet", which is worth asking about again. */
-        private final boolean retryable;
-
-        private OverlayAccess(Method setOverlay, boolean retryable) {
-            this.setOverlay = setOverlay;
-            this.retryable = retryable;
-        }
-
-        /**
-         * Answers the cached accessor, re-resolving after {@link #RETRY_MILLIS} when the earlier
-         * answer was "the HUD is not built yet".
-         *
-         * <p>Resolution runs once statically otherwise, so a first call made during client start-up
-         * used to latch the null answer for the whole session and swallow every later message.
-         */
-        private static OverlayAccess current() {
-            OverlayAccess access = resolved;
-            if (isUsable(access)) {
-                return access;
-            }
-            synchronized (OverlayAccess.class) {
-                access = resolved;
-                if (isUsable(access)) {
-                    return access;
-                }
-                lastAttemptMillis = System.currentTimeMillis();
-                access = resolve();
-                resolved = access;
-                return access;
-            }
-        }
-
-        private static boolean isUsable(OverlayAccess access) {
-            if (access == null) {
-                return false;
-            }
-            return !access.retryable || System.currentTimeMillis() - lastAttemptMillis >= RETRY_MILLIS;
-        }
-
-        private static OverlayAccess resolve() {
-            Minecraft client = Minecraft.getInstance();
-            Object gui = client == null ? null : client.gui;
-            if (gui == null) {
-                return new OverlayAccess(null, true);
-            }
-            try {
-                return new OverlayAccess(
-                        gui.getClass().getMethod("setOverlayMessage", String.class, boolean.class), false);
-            } catch (NoSuchMethodException ignored) {
-                return new OverlayAccess(null, false);
-            } catch (LinkageError error) {
-                return new OverlayAccess(null, false);
-            }
-        }
-
-        Method setOverlay(Object gui) {
-            return gui == null ? null : setOverlay;
-        }
-    }
-
-    /** This version's chat HUD sink, resolved at most once. */
-    private static final class ChatAccess {
-        /** How long a "the chat HUD does not exist yet" answer is trusted before asking again. */
-        private static final long RETRY_MILLIS = 2000L;
-
-        private static volatile ChatAccess resolved;
-        private static volatile long lastAttemptMillis;
-
-        private final Method getChat;
-        private final Constructor<?> literal;
-        private final Method addMessage;
-        /** True when the answer was "nothing to talk to yet", which is worth asking about again. */
-        private final boolean retryable;
-
-        private ChatAccess(Method getChat, Constructor<?> literal, Method addMessage, boolean retryable) {
-            this.getChat = getChat;
-            this.literal = literal;
-            this.addMessage = addMessage;
-            this.retryable = retryable;
-        }
-
-        /**
-         * Answers the cached sink, re-resolving after {@link #RETRY_MILLIS} when the earlier answer
-         * was "the chat HUD is not built yet".
-         *
-         * <p>Otherwise the first call, made during client start-up, latched a null sink for the whole
-         * session: every join notice, hotkey reply and failure report was dropped in silence.
-         */
-        private static ChatAccess current() {
-            ChatAccess access = resolved;
-            if (isUsable(access)) {
-                return access;
-            }
-            synchronized (ChatAccess.class) {
-                access = resolved;
-                if (isUsable(access)) {
-                    return access;
-                }
-                lastAttemptMillis = System.currentTimeMillis();
-                access = resolve();
-                resolved = access;
-                return access;
-            }
-        }
-
-        private static boolean isUsable(ChatAccess access) {
-            if (access == null) {
-                return false;
-            }
-            return !access.retryable || System.currentTimeMillis() - lastAttemptMillis >= RETRY_MILLIS;
-        }
-
-        private static ChatAccess resolve() {
-            Minecraft client = Minecraft.getInstance();
-            Object gui = client == null ? null : client.gui;
-            if (gui == null) {
-                return new ChatAccess(null, null, null, true);
-            }
-            try {
-                Method getChat = gui.getClass().getMethod("getChat");
-                Object chat = getChat.invoke(gui);
-                if (chat == null) {
-                    return new ChatAccess(getChat, null, null, true);
-                }
-                Class<?> chatType = chat.getClass();
-                try {
-                    Class<?> literalType = Class.forName("net.minecraft.text.LiteralText");
-                    Constructor<?> literal = literalType.getConstructor(String.class);
-                    try {
-                        return new ChatAccess(getChat, literal,
-                                chatType.getMethod("addMessage", literalType), false);
-                    } catch (NoSuchMethodException ignored) {
-                        return new ChatAccess(getChat, literal, chatType.getMethod(
-                                "addMessage", Class.forName("net.minecraft.text.Text")), false);
-                    }
-                } catch (ClassNotFoundException ignored) {
-                    // No component type at all: fall through to the plain-string overload.
-                } catch (NoSuchMethodException ignored) {
-                }
-                return new ChatAccess(getChat, null, chatType.getMethod("addMessage", String.class), false);
-            } catch (ReflectiveOperationException exception) {
-                return new ChatAccess(null, null, null, false);
-            } catch (LinkageError error) {
-                return new ChatAccess(null, null, null, false);
-            }
-        }
-
-        void send(String message) {
-            if (addMessage == null || getChat == null) {
-                // A "not built yet" sink is retried by current(); only a drifted mapping is reported.
-                if (!retryable) {
-                    reportOnce(CHAT_FALLBACK_REPORTED, "ChatHud.addMessage", null);
-                }
-                return;
-            }
-            try {
-                Minecraft client = Minecraft.getInstance();
-                Object gui = client == null ? null : client.gui;
-                if (gui == null) {
-                    // Start-up or shutdown: the sink will be re-resolved, so this is not a drift.
-                    return;
-                }
-                Object chat = getChat.invoke(gui);
-                if (chat == null) {
-                    if (!retryable) {
-                        reportOnce(CHAT_FALLBACK_REPORTED, "ChatHud", null);
-                    }
-                    return;
-                }
-                Object argument = literal == null ? message : literal.newInstance(message);
-                addMessage.invoke(chat, argument);
-            } catch (ReflectiveOperationException exception) {
-                reportOnce(CHAT_FALLBACK_REPORTED, "ChatHud.addMessage", exception);
-            } catch (LinkageError error) {
-                reportOnce(CHAT_FALLBACK_REPORTED, "ChatHud.addMessage", error);
-            }
-        }
     }
 }

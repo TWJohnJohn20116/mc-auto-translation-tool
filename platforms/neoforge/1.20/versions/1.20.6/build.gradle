@@ -17,12 +17,10 @@ ext.neoforgePackFormat = 32
 
 apply from: rootProject.file("platforms/neoforge/shared.gradle")
 
-// 1.20.6 runs the 1.21-era client: the HUD is drawn from extractRenderState and Gui.render no longer
-// takes a float, so the only copy of InGameHudStatusIndicatorMixin this module can reach - the 1.20.1
-// one under neoforgeForgeExtraRoots, whose @Inject names that old signature with require = 0 - could
-// never apply. Compiling it in shipped a hook that cannot fire and left its absence from
-// metadata/1.20.6's client list looking like an oversight: the HUD indicator is not offered on 1.20.6.
-sourceSets.main.java.exclude "**/mixin/InGameHudStatusIndicatorMixin.java"
+// 1.20.6 still runs the 1.20-era HUD: Gui.render takes (GuiGraphics, float), so the 1.20.1 copy of
+// InGameHudStatusIndicatorMixin under neoforgeForgeExtraRoots applies here unchanged and
+// metadata/1.20.6 lists it. DeltaTracker, which replaced that float, only starts at 1.21 - the point
+// where the trees need their own HUD mixin, not here.
 
 neoForge {
     version = project.ext.neoforgeVersion

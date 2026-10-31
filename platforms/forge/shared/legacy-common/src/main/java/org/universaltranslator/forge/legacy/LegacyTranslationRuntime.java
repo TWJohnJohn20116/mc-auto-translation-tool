@@ -3,6 +3,8 @@ package org.universaltranslator.forge.legacy;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.network.NetHandlerPlayClient;
 import net.minecraft.client.network.NetworkPlayerInfo;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.universaltranslator.core.RenderTranslationSession;
 import org.universaltranslator.core.MinecraftContentScope;
 import org.universaltranslator.core.HomeQuickSettingsState;
@@ -34,6 +36,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 public final class LegacyTranslationRuntime {
     private static final long PLAYER_NAME_SNAPSHOT_MILLIS = 5_000L;
@@ -44,6 +47,20 @@ public final class LegacyTranslationRuntime {
     // Match ProtectedText's bounded literal limit so large network lobbies do not silently
     // drop names after the first few tab-list pages.
     private static final int MAX_PROTECTED_PLAYER_NAMES = 1_000;
+    private static final Logger LOGGER = LogManager.getLogger("MCAutoTranslationTool");
+    /**
+     * Reports a queued write that failed, so a quick setting cannot vanish without a trace.
+     *
+     * <p>The writer's own record goes to the opt-in debug log, which is off by default, so a Home key
+     * or the F8 toggle whose write failed left nothing behind anywhere while the HUD already showed
+     * the new value. Shared with {@code LegacyClientEvents}, so both paths report the same way.
+     */
+    static final Consumer<Throwable> SAVE_FAILURE_REPORTER = new Consumer<Throwable>() {
+        @Override
+        public void accept(Throwable failure) {
+            LOGGER.warn("Could not persist the quick setting", failure);
+        }
+    };
 
     private static volatile RenderTranslationSession session;
     private static volatile LegacyConfig activeConfig;
@@ -543,7 +560,7 @@ public final class LegacyTranslationRuntime {
             }
             runtimeChanged = true;
             initialize(updated);
-            LegacyConfigWriter.saveOffTick(updated, null);
+            LegacyConfigWriter.saveOffTick(updated, SAVE_FAILURE_REPORTER);
             return homeSettingsState(updated);
         } catch (Exception failure) {
             if (runtimeChanged) {

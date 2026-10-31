@@ -387,18 +387,35 @@ def _logical_jar_names(release_dir: Path) -> list[str]:
     return sorted(names)
 
 
-def list_installable(release_dir: Path, version: str) -> list[str]:
-    """`release-assets.txt` 需要的可安裝檔名，不建置也不解壓任何 JAR。
+def _forge_names_by_version(names, version: str) -> dict[str, str]:
+    """Forge 版本 → 檔名。兩個檔名指向同一個 Minecraft 版本是顯性錯誤。
+
+    `prepare_release` 與 `--manifest-only` 都經過這裡：先前只有前者驗，於是清單會被一份比生產端
+    寬的判定寫出來（`setdefault` 靜默取第一個檔名），而生產端對同一份佈局 raise 整個版本。
+    """
+    forge_names: dict[str, str] = {}
+    for name in names:
+        forge_version = _forge_version_from_name(name, version)
+        if not forge_version:
+            continue
+        if forge_version in forge_names:
+            raise PreparationError(
+                f"duplicate Forge JAR for {forge_version}: "
+                f"{forge_names[forge_version]} and {name}"
+            )
+        forge_names[forge_version] = name
+    return forge_names
+
+
+def installable_names(names, version: str) -> list[str]:
+    """`downloads/<version>` 的邏輯檔名 → 可安裝檔名，不建置也不解壓任何 JAR。
 
     `prepare-release.yml` 只需要那 31 個檔名，先前卻為它把整支腳本跑了一遍：48 顆 JAR 被完整
     解壓、`fabric-all.jar` 被重建，那份產物立刻被丟掉，同一個版本隨後又在 `build.yml` 與
     `publish-release.yml` 各重建一次。檔名只取決於 ``downloads/<version>`` 的檔名與
-    `FORGE_FAMILIES`，所以用檔名推導出與 `prepare_release` 相同的一組「可安裝」名稱。
+    `FORGE_FAMILIES`，所以用檔名推導出與 `prepare_release` 相同的一組「可安裝」名稱——
+    `prepare_release` 的輸出名稱也由這個函式決定，兩條入口只剩一份實作。
     """
-    release_dir = release_dir.resolve()
-    if not release_dir.is_dir():
-        raise PreparationError(f"release directory is missing: {release_dir}")
-    names = _logical_jar_names(release_dir)
     expected_prefix = f"MCAutoTranslationTool-{version}-"
     mismatched = sorted(name for name in names if not name.startswith(expected_prefix))
     if mismatched:
@@ -411,22 +428,26 @@ def list_installable(release_dir: Path, version: str) -> list[str]:
         raise PreparationError("release contains no Fabric implementations")
     consumed = set(fabric)
     generated = [f"MCAutoTranslationTool-{version}-fabric-all.jar"]
+    forge_names = _forge_names_by_version(names, version)
     for family in FORGE_FAMILIES:
-        present: dict[str, str] = {}
-        for name in names:
-            forge_version = _forge_version_from_name(name, version)
-            if forge_version in family.members:
-                present.setdefault(forge_version, name)
-        missing = [item for item in family.members if item not in present]
+        missing = [item for item in family.members if item not in forge_names]
         if missing:
             raise PreparationError(
                 f"Forge family {family.output_range} is missing: {', '.join(missing)}"
             )
-        consumed.update(present.values())
+        consumed.update(forge_names[item] for item in family.members)
         generated.append(
             f"MCAutoTranslationTool-{version}-mc{family.output_range}-forge.jar"
         )
     return generated + [name for name in names if name not in consumed]
+
+
+def list_installable(release_dir: Path, version: str) -> list[str]:
+    """`installable_names` 的 I/O 版本：只列檔名、驗分片佈局，不讀任何位元組。"""
+    release_dir = release_dir.resolve()
+    if not release_dir.is_dir():
+        raise PreparationError(f"release directory is missing: {release_dir}")
+    return installable_names(_logical_jar_names(release_dir), version)
 
 
 def _is_within(path: Path, parent: Path) -> bool:
@@ -489,7 +510,7 @@ def prepare_release(
             "release JAR filename does not match version "
             f"{version}: {', '.join(mismatched)}"
         )
-    fabric, consumed = _fabric_implementations(jars)
+    fabric, _ = _fabric_implementations(jars)
 
     for group in unmerged_forge_groups(jars, version):
         print(
@@ -499,18 +520,12 @@ def prepare_release(
             file=sys.stderr,
         )
 
-    forge_by_version: dict[str, tuple[str, bytes]] = {}
-    for name, (_, data) in jars.items():
-        forge_version = _forge_version_from_name(name, version)
-        if forge_version:
-            if forge_version in forge_by_version:
-                # 同名覆蓋會讓「這一版的 Forge JAR 是哪一顆」取決於迭代序；兩個檔名指向同一個
-                # Minecraft 版本必須是顯性錯誤（例如同時存在單版本與 bundle 產物）。
-                raise PreparationError(
-                    f"duplicate Forge JAR for {forge_version}: "
-                    f"{forge_by_version[forge_version][0]} and {name}"
-                )
-            forge_by_version[forge_version] = (name, data)
+    # 同名覆蓋會讓「這一版的 Forge JAR 是哪一顆」取決於迭代序；規則在 `_forge_names_by_version`
+    # 一處（`--manifest-only` 走同一條），兩個檔名指向同一個 Minecraft 版本一律 raise。
+    forge_by_version: dict[str, tuple[str, bytes]] = {
+        forge_version: (name, jars[name][1])
+        for forge_version, name in _forge_names_by_version(list(jars), version).items()
+    }
 
     generated: dict[str, bytes] = {
         f"MCAutoTranslationTool-{version}-fabric-all.jar": _build_fabric_all(version, fabric)
@@ -525,11 +540,12 @@ def prepare_release(
         members = [forge_by_version[item] for item in family.members]
         family_name, family_data = _build_forge_family(version, family, members)
         generated[family_name] = family_data
-        consumed.update(name for name, _ in members)
 
-    for name, (_, data) in jars.items():
-        if name not in consumed:
-            generated[name] = data
+    # 哪些檔名會變成資產只由 `installable_names` 決定（與 `--manifest-only` 同一份實作）；
+    # 這裡只負責把「不是生成物」的那些換成原始位元組。
+    for name in installable_names(list(jars), version):
+        if name not in generated:
+            generated[name] = jars[name][1]
 
     if output_dir.exists():
         shutil.rmtree(output_dir)

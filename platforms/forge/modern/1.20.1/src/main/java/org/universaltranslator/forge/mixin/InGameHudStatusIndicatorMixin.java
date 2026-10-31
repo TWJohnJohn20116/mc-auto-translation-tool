@@ -107,19 +107,24 @@ abstract class InGameHudStatusIndicatorMixin {
             int previewCenterX = graphics.guiWidth() / 2;
             int previewY = Math.max(0, graphics.guiHeight() - 60);
             TranslationRenderContext.pushTextInput();
-            // The preview only changes while a translation is landing, so the component is built once
-            // per distinct value instead of once per frame.
-            long previewNow = System.currentTimeMillis();
-            Object cachedPreview = HudLabels.preview(outgoingPreview, previewNow);
-            Component preview;
-            if (cachedPreview instanceof Component) {
-                preview = (Component) cachedPreview;
-            } else {
-                preview = Component.literal(outgoingPreview);
-                HudLabels.rememberPreview(outgoingPreview, preview, previewNow);
+            try {
+                // The preview only changes while a translation is landing, so the component is built once
+                // per distinct value instead of once per frame.
+                long previewNow = System.currentTimeMillis();
+                Object cachedPreview = HudLabels.preview(outgoingPreview, previewNow);
+                Component preview;
+                if (cachedPreview instanceof Component) {
+                    preview = (Component) cachedPreview;
+                } else {
+                    preview = Component.literal(outgoingPreview);
+                    HudLabels.rememberPreview(outgoingPreview, preview, previewNow);
+                }
+                graphics.drawCenteredString(Minecraft.getInstance().font, preview, previewCenterX, previewY, 0xFFFFFFFF);
+            } finally {
+                // A throw inside the draw must not leave the depth latched: until the next tick's
+                // reset, every other line on screen would then be treated as local input.
+                TranslationRenderContext.popTextInput();
             }
-            graphics.drawCenteredString(Minecraft.getInstance().font, preview, previewCenterX, previewY, 0xFFFFFFFF);
-            TranslationRenderContext.popTextInput();
         }
 
         // The label is drawn in both states: the target language and the provider are settings, so
@@ -154,22 +159,27 @@ abstract class InGameHudStatusIndicatorMixin {
                     HudLabels.rememberLabel(label, text, now);
                 }
                 TranslationRenderContext.pushTextInput();
-                // A glyph walk per frame, for a string that only changes when the language or the font
-                // does: both are covered by the one-second slot.
-                int labelWidth = HudLabels.width(label, now);
-                if (labelWidth < 0) {
-                    labelWidth = font.width(text);
-                    HudLabels.rememberWidth(label, labelWidth, now);
+                try {
+                    // A glyph walk per frame, for a string that only changes when the language or the font
+                    // does: both are covered by the one-second slot.
+                    int labelWidth = HudLabels.width(label, now);
+                    if (labelWidth < 0) {
+                        labelWidth = font.width(text);
+                        HudLabels.rememberWidth(label, labelWidth, now);
+                    }
+                    // Beside the square, never over it: a 6px square cannot hold "zh-TW", and a label
+                    // centred on a right-corner square would run off the screen edge.
+                    int labelCenterX = corner.isRight()
+                            ? left - 2 - labelWidth / 2
+                            : right + 2 + labelWidth / 2;
+                    // y is the top of the text line, so centre it against the square by hand.
+                    int labelY = top + (size - 8) / 2;
+                    graphics.drawCenteredString(font, text, labelCenterX, labelY, 0xFFFFFFFF);
+                } finally {
+                    // Same reason as the preview above: a throw inside the draw must not leave the depth
+                    // latched until the next tick's reset.
+                    TranslationRenderContext.popTextInput();
                 }
-                // Beside the square, never over it: a 6px square cannot hold "zh-TW", and a label
-                // centred on a right-corner square would run off the screen edge.
-                int labelCenterX = corner.isRight()
-                        ? left - 2 - labelWidth / 2
-                        : right + 2 + labelWidth / 2;
-                // y is the top of the text line, so centre it against the square by hand.
-                int labelY = top + (size - 8) / 2;
-                graphics.drawCenteredString(font, text, labelCenterX, labelY, 0xFFFFFFFF);
-                TranslationRenderContext.popTextInput();
             }
         }
     }

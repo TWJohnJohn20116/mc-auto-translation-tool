@@ -55,16 +55,16 @@ final class LegacyConfig {
      */
     private static volatile DiskCopy diskCopy;
     /**
-     * When this process last landed a file of its own, in {@link System#nanoTime()} terms.
+     * How many saves this process has started, on any configuration file.
      *
-     * <p>The stamp above cannot prove that the cached copy is the file that is on disk now: a
-     * filesystem whose timestamp granularity is coarser than the gap between two saves (FAT 2 s, some
-     * SMB and cloud-sync directories 1 s) reports the same (mtime, size) for a same-length rewrite,
-     * and the cache then restores the advanced keys that were on disk <em>before</em> that save.
+     * <p>A cached copy is only trusted while this has not moved since it was read. {@link #save()}
+     * drops the copy inside the same monitor as the write, but a reader can read the entry just
+     * before that drop and stat the file just after the replace — and a filesystem whose timestamp
+     * granularity is coarser than that gap (FAT 2 s, some SMB and cloud-sync directories 1 s) reports
+     * the same (mtime, size) for a same-length rewrite. Counting the saves invalidates exactly that
+     * entry, without distrusting a correct one for a fixed window after every save.
      */
-    private static volatile long lastOwnWriteNanos;
-    /** How long after a write of our own the stamp is distrusted; covers the coarsest granularity. */
-    private static final long OWN_WRITE_GUARD_NANOS = 2000000000L;
+    private static volatile long saveCounter;
 
     /**
      * The last configuration this process loaded, or {@code null} before the first success.
@@ -82,11 +82,14 @@ final class LegacyConfig {
         final long lastModified;
         final long size;
         final Properties properties;
+        /** {@link LegacyConfig#saveCounter} as it stood when this copy was read. */
+        final long saveCount;
 
-        DiskCopy(Path file, long lastModified, long size, Properties properties) {
+        DiskCopy(Path file, long lastModified, long size, long saveCount, Properties properties) {
             this.file = file;
             this.lastModified = lastModified;
             this.size = size;
+            this.saveCount = saveCount;
             this.properties = properties;
         }
     }
@@ -521,10 +524,10 @@ final class LegacyConfig {
             }
         }
         synchronized (monitor) {
+            saveCounter++;
             writeAtomically(file);
             // What is on disk is now this snapshot, so no cached copy can be newer than it.
             diskCopy = null;
-            lastOwnWriteNanos = System.nanoTime();
         }
     }
 
@@ -685,12 +688,13 @@ final class LegacyConfig {
             return null;
         }
         DiskCopy cached = diskCopy;
-        // A save of our own is only seconds old here when the stamp cannot be trusted yet; re-read
-        // instead of handing back the copy that predates it. Zero means this process has not written
-        // the file, and nanoTime has no fixed origin, so it is the only safe "never wrote" marker.
-        boolean justWrote = lastOwnWriteNanos != 0L
-                && System.nanoTime() - lastOwnWriteNanos < OWN_WRITE_GUARD_NANOS;
-        if (!justWrote && cached != null && cached.file.equals(file)
+        long saves = saveCounter;
+        // save() already drops the copy under the monitor that performs the write, so this is the
+        // second line of defence rather than the first: the counter catches the reader that read the
+        // entry before the drop and reached the file after the replace. What no reader can catch is
+        // another process's same-length rewrite inside one timestamp tick, and a clock cannot tell
+        // those apart either.
+        if (cached != null && cached.saveCount == saves && cached.file.equals(file)
                 && cached.lastModified == lastModified && cached.size == size) {
             return cached.properties;
         }
@@ -701,14 +705,14 @@ final class LegacyConfig {
         } catch (IOException | RuntimeException malformed) {
             return null;
         }
-        diskCopy = new DiskCopy(file, lastModified, size, stored);
+        diskCopy = new DiskCopy(file, lastModified, size, saves, stored);
         return stored;
     }
 
     /** Drops the shared copy of the file; called when the client releases its configuration. */
     static void clearCaches() {
         diskCopy = null;
-        lastOwnWriteNanos = 0L;
+        saveCounter = 0L;
     }
 
     private Properties toProperties() {

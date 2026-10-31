@@ -136,3 +136,9 @@ tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
     options.release = 17
 }
+
+// The reverse mixin check the Fabric trees already run, and the one this module most needed: its own
+// mixins.json is the only list of the eleven @Mixin classes it compiles, and the shipped 1.4 JAR carried
+// InGameHudStatusIndicatorMixin while the config did not name it. A class in no config is applied by
+// nothing and `required: true` never complains about it, so the list is checked against the JAR here.
+apply from: rootProject.file("gradle/fabric-mixin-config-verify.gradle")

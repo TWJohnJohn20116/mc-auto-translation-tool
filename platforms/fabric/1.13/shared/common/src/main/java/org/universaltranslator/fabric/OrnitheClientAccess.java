@@ -44,12 +44,16 @@ public final class OrnitheClientAccess {
      * longer exposes it on the options object at all), and this tree is compiled by the scheduled
      * legacy-targets run rather than by every pull request, so a name that no longer matches should
      * cost one line here instead of one call site per HUD hook.
+     *
+     * <p>{@code hideGui} is the name the ploceus (feather) mappings give the flag on 1.13.0 and
+     * 1.13.1; {@code hudHidden} is the yarn name that arrives with 1.14. Fabric 1.13.2 is a different
+     * build path ({@code shared/legacy-1.13.2}) with its own copy of this class.
      */
     public static boolean hudHidden(Minecraft client) {
         if (client == null || client.options == null) {
             return false;
         }
-        return client.options.hudHidden;
+        return client.options.hideGui;
     }
 
     public static void setScreen(Screen screen) {

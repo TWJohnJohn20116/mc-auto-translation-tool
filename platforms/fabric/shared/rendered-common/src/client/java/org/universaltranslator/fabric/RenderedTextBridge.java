@@ -159,6 +159,56 @@ public final class RenderedTextBridge {
         }
     };
 
+    /**
+     * The answer given to one input a moment ago, so the measuring hook of the same line does not
+     * walk it again.
+     *
+     * <p>Both hooks are {@code @ModifyVariable} on the argument of the drawing call and of
+     * {@code getWidth}, and the caller hands the same instance to both, so one slot keyed on that
+     * instance answers the second call. The frame's own sets cannot: they hold what the bridge
+     * returned, while the measuring hook arrives with the input, so on a line that really was
+     * translated the second pass re-ran the guard chain, the provider lookup and the component the
+     * line was measured for.
+     *
+     * <p>Keyed on everything the answer depends on — the instance, the surface kind and the
+     * configured colour, the same idea as the styling slot above — so a hit is by construction the
+     * value a fresh call would return, and two components with equal text but different styles never
+     * collide.
+     */
+    private static final class LastResult {
+        private Object source;
+        private TextKind kind;
+        private TranslationTextColor color;
+        private Object value;
+
+        private Object find(Object candidate, TextKind candidateKind,
+                TranslationTextColor candidateColor) {
+            if (source != candidate || kind != candidateKind || color != candidateColor) {
+                return null;
+            }
+            return value;
+        }
+
+        private void remember(Object candidate, TextKind candidateKind,
+                TranslationTextColor candidateColor, Object answer) {
+            source = candidate;
+            kind = candidateKind;
+            color = candidateColor;
+            value = answer;
+        }
+
+        /** Drops the slot; called where translation cannot answer, so no answer outlives it. */
+        private void forget() {
+            source = null;
+            kind = null;
+            color = null;
+            value = null;
+        }
+    }
+
+    private static final LastResult LAST_TEXT = new LastResult();
+    private static final LastResult LAST_ORDERED = new LastResult();
+
     private RenderedTextBridge() {
     }
 
@@ -235,6 +285,7 @@ public final class RenderedTextBridge {
         // Same fast path as the OrderedText overload: building a component is real work, and the
         // hook runs whether or not translation can answer.
         if (bypassRenderTranslation()) {
+            LAST_TEXT.forget();
             return text;
         }
         // A component with no children renders exactly its own literal under its own style, so the
@@ -246,6 +297,13 @@ public final class RenderedTextBridge {
             // can take the component as it stands instead of walking it again.
             return text;
         }
+        TextKind kind = TranslationRenderContext.current();
+        TranslationTextColor color = FabricTranslationRuntime.translatedTextColor();
+        Text answered = (Text) LAST_TEXT.find(text, kind, color);
+        if (answered != null) {
+            // The measuring hook of the line the drawing hook answered a moment ago.
+            return answered;
+        }
         // Translated before the run walk, and handed to it: both paths used to call the same lookup
         // for the same visible text, and the sibling path rebuilt the string a second time for the
         // fallthrough that follows it.
@@ -253,13 +311,17 @@ public final class RenderedTextBridge {
         Text styled = text.getSiblings().isEmpty()
                 ? null : translateStyledSiblings(text, original, translated);
         if (styled != null) {
+            LAST_TEXT.remember(text, kind, color, styled);
             return styled;
         }
         if (original.equals(translated)) {
             TranslationRenderContext.rememberUnchanged(original);
+            LAST_TEXT.remember(text, kind, color, text);
             return text;
         }
-        return Text.literal(translated).setStyle(translatedStyle(text.getStyle()));
+        Text replacement = Text.literal(translated).setStyle(translatedStyle(text.getStyle()));
+        LAST_TEXT.remember(text, kind, color, replacement);
+        return replacement;
     }
 
     public static OrderedText translate(OrderedText text) {
@@ -271,6 +333,7 @@ public final class RenderedTextBridge {
         // per call, before anything was known about the result. With translation switched off, or
         // while the local player is typing, the only correct answer is the line itself.
         if (bypassRenderTranslation()) {
+            LAST_ORDERED.forget();
             return text;
         }
         Flattened flattened = FLATTENED.get();
@@ -281,6 +344,13 @@ public final class RenderedTextBridge {
             // The measuring hook of a line the drawing hook already answered with the input.
             return text;
         }
+        TextKind kind = TranslationRenderContext.current();
+        TranslationTextColor color = FabricTranslationRuntime.translatedTextColor();
+        OrderedText answered = (OrderedText) LAST_ORDERED.find(text, kind, color);
+        if (answered != null) {
+            // The measuring hook of the line the drawing hook answered a moment ago.
+            return answered;
+        }
         // One lookup for the whole line, shared by the run rebuild and the fallthrough below: both
         // used to translate the same flattened text, which is twice the work on every line that
         // needed no translation at all.
@@ -290,15 +360,19 @@ public final class RenderedTextBridge {
             // click events from later segments, so rebuild the line run by run instead.
             OrderedText rebuilt = rebuildStyledRuns(text, visible, translated);
             if (rebuilt != null) {
+                LAST_ORDERED.remember(text, kind, color, rebuilt);
                 return rebuilt;
             }
         }
         if (visible.equals(translated)) {
             TranslationRenderContext.rememberUnchanged(visible);
+            LAST_ORDERED.remember(text, kind, color, text);
             return text;
         }
         MutableText replacement = Text.literal(translated).setStyle(translatedStyle(flattened.first));
-        return replacement.asOrderedText();
+        OrderedText ordered = replacement.asOrderedText();
+        LAST_ORDERED.remember(text, kind, color, ordered);
+        return ordered;
     }
 
     /**

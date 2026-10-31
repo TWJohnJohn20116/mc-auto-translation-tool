@@ -143,6 +143,13 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorScreenBas
     private boolean hudDragging;
     private double hudDragLastX;
     private double hudDragLastY;
+    /**
+     * True when the last Save could not confirm that the file is on disk.
+     *
+     * <p>Set and cleared on every attempt, so it never outlives one press: it only lets a second
+     * press leave the screen instead of queueing the same snapshot again forever.
+     */
+    private boolean saveUnconfirmed;
 
     private Tab activeTab = Tab.GENERAL;
     private ActionButton tabGeneralButton;
@@ -1058,6 +1065,10 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
 
     private void saveAndApply() {
         boolean runtimeChanged = false;
+        // Read and cleared on entry: the flag describes the previous press only, so a build failure
+        // below cannot make the next press believe it has already warned the player.
+        boolean warnedAboutUnconfirmedSave = saveUnconfirmed;
+        saveUnconfirmed = false;
         // The rollback target is what the runtime held before this save, not the snapshot taken when
         // the screen opened: restoring the snapshot would undo changes made from elsewhere meanwhile.
         FabricConfig base = writeBackBase();
@@ -1105,7 +1116,14 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
             // Same writer as the F8 toggles, so an older queued snapshot cannot overwrite this one.
             // Only leave the screen once the file is known to be on disk: a save still queued past
             // the bounded wait used to close the screen and hide that it had not landed.
-            if (FabricTranslationRuntimeBase.saveInBackgroundAndWait(updated)) {
+            //
+            // A still-queued write and a failed one answer the same false, so a slow synced folder
+            // used to pin the player here while every press queued the whole form again. The first
+            // unconfirmed answer is reported; a second one leaves, because the snapshot already sits
+            // on the writer in press order and a screen that cannot be left is the worse outcome.
+            boolean written = FabricTranslationRuntimeBase.saveInBackgroundAndWait(updated);
+            saveUnconfirmed = !written;
+            if (written || warnedAboutUnconfirmedSave) {
                 OrnitheClientAccess.openScreen(parent);
             } else {
                 status = tr("status.universal_translator.save_failed",

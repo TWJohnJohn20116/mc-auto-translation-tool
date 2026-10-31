@@ -146,6 +146,31 @@ class BuildTargetsTest(unittest.TestCase):
         self.assertEqual(1, len(expected_java), "legacy 目標共用一個 JDK，JSON 裡的值必須一致")
         self.assertIn('java-version: "%s"' % expected_java.pop(), "\n".join(block))
 
+    def test_json_groups_are_exactly_the_ones_with_a_matrix(self):
+        # `plan` 的「合法名稱」是所有群組的聯集，而「會不會真的建置」由 build.yml 那兩份靜態 matrix
+        # 決定。兩者之間先前沒有任何斷言：新增第三個群組（或把 legacy 改名）時，plan 會接受那個目標、
+        # 23 個 job 的建置步驟全部被 if 略過、每個 job 仍回報 success，於是 dispatch 得到一次
+        # 「零建置的全綠執行」（AGENTS.md 記載的 2026-10-21 事件）。
+        groups = targets()
+        self.assertEqual(
+            {"platform", "legacy"},
+            set(groups),
+            "build-targets.json 多了一個沒有 matrix 的群組：dispatch 會以假綠燈通過",
+        )
+        listed = sorted(
+            entry["target"] for entries in groups.values() for entry in entries
+        )
+        declared = sorted(
+            entry["target"]
+            for job in ("platform-build", "legacy-build")
+            for entry in matrix_entries(job_block(workflow_text(), job))
+        )
+        self.assertEqual(
+            listed,
+            declared,
+            "build-targets.json 有 build.yml 的靜態 matrix 沒有建置的目標（dispatch 會靜默通過）",
+        )
+
     def test_plan_resolves_names_from_the_json(self):
         block = "\n".join(job_block(workflow_text(), "plan"))
         self.assertIn(

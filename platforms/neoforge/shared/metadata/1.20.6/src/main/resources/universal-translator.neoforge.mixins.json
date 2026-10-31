@@ -12,7 +12,8 @@
     "ScreenMixin",
     "SignEditScreenMixin",
     "TextFieldWidgetMixin",
-    "TextRendererMixin"
+    "TextRendererMixin",
+    "InGameHudStatusIndicatorMixin"
   ],
   "injectors": {
     "defaultRequire": 1

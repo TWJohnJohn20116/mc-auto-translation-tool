@@ -12,7 +12,8 @@ ext.neoforgeEntryLayer = "26.1-26.1.2"
 ext.neoforgeMetadataLayer = "26.x"
 ext.neoforgeForgeSharedRoot = "platforms/forge/26.x/shared"
 ext.neoforgeForgeLayers = ["common", "api/26.1-26.1.2"]
-ext.neoforgeResourcePackFormat = 101
+// Resource pack format from the client's version.json (26.1.2 = 84.0), not the data pack format (101).
+ext.neoforgeResourcePackFormat = 84
 
 apply from: rootProject.file("platforms/neoforge/shared.gradle")
 

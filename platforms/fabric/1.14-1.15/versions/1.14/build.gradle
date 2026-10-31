@@ -27,15 +27,31 @@ sourceSets {
 }
 
 processResources {
-    inputs.property "version", project.version
-    filesMatching("fabric.mod.json") { expand "version": project.version }
+    // The five 1.14.3+ members expand these two keys through platforms/fabric/legacy/shared.gradle;
+    // this stub expanded only "version", so a template naming the loader would have shipped the
+    // placeholder verbatim and nothing would have said so. filteringCharset matches the shared script:
+    // "authors" is non-ASCII and Copy.expand would otherwise read the template in the platform charset.
+    filteringCharset = "UTF-8"
+    inputs.properties("version": project.version, "loaderVersion": project.ext.legacyLoaderVersion)
+    filesMatching("fabric.mod.json") {
+        expand("version": project.version, "loaderVersion": project.ext.legacyLoaderVersion)
+    }
 }
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
-    options.release = 8
+    // The ext above is the number settings.gradle's treeJavaRelease is checked against; a second literal
+    // here was a copy that the table could not follow.
+    options.release = project.ext.legacyJavaRelease as int
 }
 
 java { withSourcesJar() }
 apply from: rootProject.file("gradle/jar-contents.gradle")
+
+// This module is one of the eight implementations nested inside mc1.14-1.15.x-fabric, and unlike the
+// five 1.14.3+ ones it applied neither the metadata contract nor this gate: nothing read the jar back,
+// so its Java 8 claim rested on the options.release line alone. No third-party plugin writes the compile
+// options of a plain java module, so both halves of the gate apply.
+ext.fabricReleaseJava = project.ext.legacyJavaRelease
+apply from: rootProject.file("gradle/fabric-release-jar-verify.gradle")
 

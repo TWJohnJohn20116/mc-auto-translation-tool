@@ -113,7 +113,7 @@ public final class LegacyClientEvents {
                     teardown.start();
                     try {
                         teardown.join(
-                                org.universaltranslator.core.ShutdownBudget.TEARDOWN_JOIN_MILLIS);
+                                org.universaltranslator.core.ShutdownBudget.HOOK_JOIN_MILLIS);
                     } catch (InterruptedException interrupted) {
                         Thread.currentThread().interrupt();
                     }
@@ -253,7 +253,8 @@ public final class LegacyClientEvents {
                 lastRuntimeStatus = "";
                 nextFailureNotificationAt = 0L;
                 nextStatusNotificationAt = 0L;
-                LegacyConfigWriter.saveOffTick(updated, null);
+                LegacyConfigWriter.saveOffTick(updated,
+                        LegacyTranslationRuntime.SAVE_FAILURE_REPORTER);
                 minecraft.ingameGUI.setRecordPlayingMessage(
                         tr("message.universal_translator.toggle", tr(updated.enabled
                                 ? "value.universal_translator.enabled"

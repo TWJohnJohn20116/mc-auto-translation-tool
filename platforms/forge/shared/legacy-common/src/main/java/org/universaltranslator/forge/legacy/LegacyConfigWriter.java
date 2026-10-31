@@ -1,6 +1,7 @@
 package org.universaltranslator.forge.legacy;
 
 import org.universaltranslator.core.DebugLog;
+import org.universaltranslator.core.ShutdownBudget;
 
 import java.io.IOException;
 import java.util.concurrent.ExecutionException;
@@ -22,8 +23,13 @@ import java.util.function.Consumer;
  * because it saves a different configuration class.
  */
 final class LegacyConfigWriter {
-    /** How long {@link #shutdown()} and the Save barrier wait for the queued writes to land. */
-    private static final long SHUTDOWN_WAIT_MILLIS = 2000L;
+    /**
+     * How long {@link #shutdown()} and the Save barrier wait for the queued writes to land.
+     *
+     * <p>Read from {@link ShutdownBudget} so the client's stop hook, which adds this wait to the other
+     * teardown steps, cannot end up shorter than the wait it is supposed to cover.
+     */
+    private static final long SHUTDOWN_WAIT_MILLIS = ShutdownBudget.CONFIG_WRITE_MILLIS;
 
     private static final Object LOCK = new Object();
     private static ExecutorService writer;

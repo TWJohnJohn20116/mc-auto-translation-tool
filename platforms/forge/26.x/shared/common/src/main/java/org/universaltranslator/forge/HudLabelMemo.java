@@ -1,5 +1,6 @@
 package org.universaltranslator.forge;
 
+import net.minecraft.client.gui.Font;
 import net.minecraft.network.chat.Component;
 import org.universaltranslator.core.HudLabelCache;
 
@@ -34,6 +35,15 @@ public final class HudLabelMemo {
     private static String cachedPreviewText;
     private static Component cachedPreview;
     private static long cachedPreviewAt;
+    /**
+     * The label's measured width, keyed on the same string as {@link #label(String)}.
+     *
+     * <p>{@code Font.width} splits the text into glyph runs on the way to an advance sum, and the
+     * indicator asked for it every frame; the sibling modern tree caches it in {@code HudLabels}.
+     */
+    private static String cachedWidthText;
+    private static int cachedWidth;
+    private static long cachedWidthAt;
 
     private HudLabelMemo() {
     }
@@ -95,5 +105,24 @@ public final class HudLabelMemo {
         cachedPreview = built;
         cachedPreviewAt = now;
         return built;
+    }
+
+    /**
+     * Width of {@code text} in pixels, measured at most once per second per distinct string.
+     *
+     * <p>The label is built by {@link #label(String)}, which never adds a style, so measuring the
+     * string gives the same answer as measuring the component and skips the split into glyph runs.
+     */
+    public static int width(Font font, String text) {
+        long now = System.currentTimeMillis();
+        if (text != null && text.equals(cachedWidthText)
+                && now - cachedWidthAt < HudLabelCache.REFRESH_MILLIS) {
+            return cachedWidth;
+        }
+        int measured = font.width(text == null ? "" : text);
+        cachedWidthText = text;
+        cachedWidth = measured;
+        cachedWidthAt = now;
+        return measured;
     }
 }

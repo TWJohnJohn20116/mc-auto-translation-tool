@@ -31,11 +31,13 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
     /**
      * Upper bound on how long the JVM shutdown hook waits for the teardown before letting it exit.
      *
-     * <p>{@link ShutdownBudget#TEARDOWN_JOIN_MILLIS} is longer than the session close it joins: a join
-     * shorter than that returned while the store flush inside the close was still running, and no
-     * later path writes the burst it carries.
+     * <p>{@link ShutdownBudget#HOOK_JOIN_MILLIS} covers the configuration write and the store flush,
+     * which the close now does before it waits for its workers: a join shorter than the flush returned
+     * while the store was still being written, and no later path writes the burst it carries. What the
+     * bound does not cover is the wait for workers parked in a provider read, which at exit costs time
+     * and saves nothing.
      */
-    private static final long SHUTDOWN_JOIN_MILLIS = ShutdownBudget.TEARDOWN_JOIN_MILLIS;
+    private static final long SHUTDOWN_JOIN_MILLIS = ShutdownBudget.HOOK_JOIN_MILLIS;
 
     private UniversalTranslatorFabricClient() {
     }

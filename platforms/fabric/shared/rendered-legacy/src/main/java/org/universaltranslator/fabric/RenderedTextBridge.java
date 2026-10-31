@@ -6,7 +6,11 @@ import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TranslationTextStyling;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Public Mixin injection target. Keep this signature stable across 1.8.9-1.12.2. */
@@ -45,14 +49,20 @@ public final class RenderedTextBridge {
         if (TranslationRenderContext.isTextInput()) {
             return text;
         }
-        // The legacy draw and width hooks both arrive here for the same line of the same frame, so
-        // the second call already has its answer: the paired TranslationRenderContext kept these two
-        // sets from the start and this bridge never wrote to either of them, which is why the tree
-        // ran the whole guard chain and one lookup twice per line.
-        if (answeredThisFrame(text)) {
-            return text;
+        if (text == null) {
+            return null;
         }
-        return translate(text, TranslationRenderContext.current());
+        // The legacy draw and width hooks both arrive here for the same line of the same frame, so
+        // the second call already has its answer: the lookup below is one set access, and the whole
+        // guard chain plus the provider query stay off the render thread for every repeat.
+        FrameMemo memo = FRAME_MEMO.get();
+        String answered = memo.answer(text);
+        if (answered != null) {
+            return answered;
+        }
+        String result = translate(text, TranslationRenderContext.current());
+        memo.remember(text, result);
+        return result;
     }
 
     private static String translate(String text, TextKind kind) {
@@ -61,79 +71,81 @@ public final class RenderedTextBridge {
         }
         String translated = FabricTranslationRuntime.translateForRender(text, kind);
         if (text.equals(translated)) {
-            rememberUnchanged(text);
             return text;
         }
-        String styled = styledText(text, translated);
-        // Both forms, because the two hooks only see the same string when no colour is applied.
-        rememberTranslated(translated);
-        rememberTranslated(styled);
-        return styled;
+        return styledText(text, translated);
     }
 
     /**
-     * The frame memo of the {@code TranslationRenderContext} this tree compiles against.
+     * How long one frame of answers stays usable.
      *
-     * <p>Reached reflectively on purpose: the 1.13 trees pair this bridge with their own copy of the
-     * context, which has neither set, so a direct call would stop those two targets from compiling.
-     * A tree without the memo keeps the previous behaviour — the whole pipeline twice per line —
-     * and every other tree turns the second pass into one set lookup. Slots are
-     * {@code isTranslatedResult}, {@code isUnchangedResult}, {@code rememberTranslation} and
-     * {@code rememberUnchanged}, all taking and answering a {@code String}.
+     * <p>A duration rather than a tick boundary: the per-tick hook lives in
+     * {@code FabricClientBootstrapBase}, which does not know this bridge exists and is compiled with
+     * three different bridges. Fifty milliseconds is longer than the gap between the draw of a line
+     * and its measure and shorter than the interval at which a line still waiting for an answer has
+     * to be asked again to look alive, so a stale entry can be at most about two frames old — the
+     * same bound the modern {@code TranslationRenderContext} accepts for its own per-frame sets.
      */
-    private static final java.lang.reflect.Method[] FRAME_MEMO = frameMemo();
+    private static final long FRAME_MEMO_NANOS = 50L * 1_000_000L;
+    /** Cap on {@link FrameMemo#answers}; one frame cannot legitimately need more. */
+    private static final int MAX_FRAME_MEMO = 512;
 
-    private static java.lang.reflect.Method[] frameMemo() {
-        String[] names = {
-                "isTranslatedResult", "isUnchangedResult", "rememberTranslation", "rememberUnchanged"};
-        java.lang.reflect.Method[] methods = new java.lang.reflect.Method[names.length];
-        try {
-            for (int index = 0; index < names.length; index++) {
-                java.lang.reflect.Method method = TranslationRenderContext.class
-                        .getDeclaredMethod(names[index], String.class);
-                method.setAccessible(true);
-                methods[index] = method;
+    private static final ThreadLocal<FrameMemo> FRAME_MEMO = new ThreadLocal<FrameMemo>() {
+        @Override
+        protected FrameMemo initialValue() {
+            return new FrameMemo();
+        }
+    };
+
+    /**
+     * Answers this thread already produced, by the string they were asked about.
+     *
+     * <p>The draw and width hooks both arrive here for the same line of the same frame, so one line
+     * used to run the whole guard chain and one lookup two to four times. The sets that could have
+     * answered this live in the {@code TranslationRenderContext} of two of the three legacy trees —
+     * 1.13 pairs this bridge with a copy that has neither — and reaching them took four reflective
+     * invocations per string, each allocating a varargs array, on the thread that renders. Owning
+     * the memo here costs one set lookup and gives 1.13 the same reduction.
+     *
+     * <p>Keyed by the input, not by the output: the second hook is handed the line the first one
+     * received, so remembering only what the bridge returned missed on every line that really was
+     * translated — the lines that cost the most.
+     */
+    private static final class FrameMemo {
+        private final Map<String, String> answers = new HashMap<String, String>();
+        /**
+         * What the bridge returned, so a hook handed a translation is answered with it instead of
+         * translating the translation; that is the case the old output set covered.
+         */
+        private final Set<String> outputs = new HashSet<String>();
+        private long startedAt;
+
+        private String answer(String input) {
+            long now = System.nanoTime();
+            if (startedAt == 0L || now - startedAt > FRAME_MEMO_NANOS) {
+                answers.clear();
+                outputs.clear();
+                startedAt = now;
+                return null;
             }
-        } catch (NoSuchMethodException | RuntimeException absent) {
-            // No memo in this tree's context: every slot stays null and the three callers below
-            // become no-ops instead of a build failure.
+            if (input != null && outputs.contains(input)) {
+                return input;
+            }
+            return input == null ? null : answers.get(input);
         }
-        return methods;
-    }
 
-    /** True when this frame already answered {@code text}, either way. */
-    private static boolean answeredThisFrame(String text) {
-        return memoResult(FRAME_MEMO[0], text) || memoResult(FRAME_MEMO[1], text);
-    }
-
-    private static void rememberTranslated(String translated) {
-        memoStore(FRAME_MEMO[2], translated);
-    }
-
-    private static void rememberUnchanged(String original) {
-        memoStore(FRAME_MEMO[3], original);
-    }
-
-    private static boolean memoResult(java.lang.reflect.Method method, String value) {
-        if (method == null || value == null) {
-            return false;
-        }
-        try {
-            return Boolean.TRUE.equals(method.invoke(null, value));
-        } catch (ReflectiveOperationException | RuntimeException ignored) {
-            return false;
-        }
-    }
-
-    private static void memoStore(java.lang.reflect.Method method, String value) {
-        if (method == null || value == null) {
-            return;
-        }
-        try {
-            method.invoke(null, value);
-        } catch (ReflectiveOperationException | RuntimeException ignored) {
-            // A context that changed shape degrades to the previous behaviour, never to a broken
-            // frame: the memo only ever removes a repeat, so losing it costs what it costs today.
+        private void remember(String input, String answer) {
+            if (input == null) {
+                return;
+            }
+            if (answers.size() >= MAX_FRAME_MEMO) {
+                answers.clear();
+                outputs.clear();
+            }
+            answers.put(input, answer);
+            if (answer != null) {
+                outputs.add(answer);
+            }
         }
     }
 
@@ -163,6 +175,9 @@ public final class RenderedTextBridge {
         List<String> translatedLines = FabricTranslationRuntime.translateLinesForRender(
                 lines, TextKind.TOOLTIP);
         List<String> replacement = null;
+        // One colour lookup for the whole list, and one comparison per line: the previous body
+        // asked for the colour inside the loop and compared the pair twice.
+        TranslationTextColor color = FabricTranslationRuntime.translatedTextColor();
         for (int index = 0; index < lines.size(); index++) {
             String original = lines.get(index);
             String translated = translatedLines.get(index);
@@ -178,9 +193,11 @@ public final class RenderedTextBridge {
             if (original.equals(translated)) {
                 continue;
             }
-            // One colour lookup for the whole list, and one comparison per line: the previous body
-            // asked for the colour inside the loop and compared the pair twice.
-            String styled = styledText(original, translated);
+            // Styled through the helper rather than through the one-slot memo above: a tooltip is a
+            // list of lines redrawn every frame while the cursor rests, so each of its lines would
+            // evict the slot the chat and scoreboard lines need a moment later, and every tooltip
+            // line is styled once anyway.
+            String styled = TranslationTextStyling.applyTranslatedStyle(original, translated, color);
             if (!styled.equals(original)) {
                 if (replacement == null) {
                     replacement = new ArrayList<String>(lines);

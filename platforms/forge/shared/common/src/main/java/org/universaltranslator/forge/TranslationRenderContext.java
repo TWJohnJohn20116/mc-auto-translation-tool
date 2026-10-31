@@ -13,14 +13,20 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * Thread-local surface classification used while nested HUD render methods run.
  *
- * <p>Each latch records when it was taken. A latch still held {@link #LEAK_MILLIS} later cannot be a
+ * <p>Each latch records when it was taken. A latch still held {@link #LEAK_NANOS} later cannot be a
  * render call in progress, so the next push drops it instead of nesting on top of it, which recovers
  * within the same frame instead of at the next tick. Mixin 0.8.x has no exception-exit injection
  * point, so a third-party mixin throwing inside a render method never runs the matching pop.
  */
 public final class TranslationRenderContext {
-    /** How long a latch may be held before it is treated as leaked. */
-    private static final long LEAK_MILLIS = 500L;
+    /**
+     * How long a latch may be held before it is treated as leaked.
+     *
+     * <p>Measured on {@link System#nanoTime()}: the wall clock jumps backwards when NTP corrects it
+     * or the player changes the time zone, and a latch held across such a jump looked fresh forever,
+     * while a forward jump made a healthy latch look leaked.
+     */
+    private static final long LEAK_NANOS = 500L * 1_000_000L;
 
     private static final ThreadLocal<Deque<TextKind>> KINDS =
             new ThreadLocal<Deque<TextKind>>() {
@@ -32,7 +38,7 @@ public final class TranslationRenderContext {
     /** Nesting depth of {@link #pushTextInput()}; an array so the depth never boxes per push. */
     private static final ThreadLocal<int[]> TEXT_INPUT_DEPTH =
             new ThreadLocal<int[]>();
-    /** When each latch became active, in {@link System#currentTimeMillis()}; 0 means "not held". */
+    /** When each latch became active, in {@link System#nanoTime()}; 0 means "not held". */
     private static final ThreadLocal<long[]> LATCHED_AT =
             new ThreadLocal<long[]>() {
                 @Override
@@ -72,10 +78,10 @@ public final class TranslationRenderContext {
         Deque<TextKind> kinds = KINDS.get();
         long[] latchedAt = LATCHED_AT.get();
         if (kinds.isEmpty()) {
-            latchedAt[KIND_LATCH] = System.currentTimeMillis();
+            latchedAt[KIND_LATCH] = System.nanoTime();
         } else if (isLeaked(latchedAt[KIND_LATCH])) {
             kinds.clear();
-            latchedAt[KIND_LATCH] = System.currentTimeMillis();
+            latchedAt[KIND_LATCH] = System.nanoTime();
         }
         kinds.push(kind);
     }
@@ -105,12 +111,12 @@ public final class TranslationRenderContext {
             TEXT_INPUT_DEPTH.set(depth);
         }
         if (depth[0] == 0) {
-            latchedAt[TEXT_INPUT_LATCH] = System.currentTimeMillis();
+            latchedAt[TEXT_INPUT_LATCH] = System.nanoTime();
         } else if (isLeaked(latchedAt[TEXT_INPUT_LATCH])) {
             // A leaked depth means nothing renders as typed text for the rest of the session, so
             // the count restarts from this push rather than staying latched.
             depth[0] = 0;
-            latchedAt[TEXT_INPUT_LATCH] = System.currentTimeMillis();
+            latchedAt[TEXT_INPUT_LATCH] = System.nanoTime();
         }
         depth[0]++;
     }
@@ -191,14 +197,15 @@ public final class TranslationRenderContext {
         if (latchedSince == 0L) {
             return false;
         }
-        if (System.currentTimeMillis() - latchedSince <= LEAK_MILLIS) {
+        long heldNanos = System.nanoTime() - latchedSince;
+        if (heldNanos <= LEAK_NANOS) {
             return false;
         }
         if (LEAK_REPORTED.compareAndSet(false, true)) {
             // Once per session and only with the debug log enabled; the usual cause is a
             // third-party mixin throwing between a render method's push and its pop.
             DebugLog.global().log("render-context", "recovered", "leaked-latch",
-                    "held-millis", Long.toString(System.currentTimeMillis() - latchedSince));
+                    "held-millis", Long.toString(heldNanos / 1_000_000L));
         }
         return true;
     }

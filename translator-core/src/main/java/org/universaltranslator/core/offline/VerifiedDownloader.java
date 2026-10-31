@@ -166,9 +166,35 @@ public final class VerifiedDownloader {
             OfflineProcessSupport.CancellationCheck cancellation
     ) throws IOException, InterruptedException {
         Path partial = destination.resolveSibling(destination.getFileName().toString() + ".part");
+        // Two instances of the game share one models directory. Without a claim the second one
+        // opened the same partial file, cut the first one's transfer short and then deleted it over
+        // the digest mismatch, so both restarted from the first byte for as long as both were open.
+        // The claim covers this whole method: the resume length, the discard and the final move are
+        // all decisions about the bytes of this one file.
+        java.nio.channels.FileChannel claim = claimPartial(partial, destination);
+        try {
+            return transferFromSource(source, destination, partial, claim, expectedSize,
+                    expectedSha256, progress, cancellation);
+        } finally {
+            releaseClaim(claim);
+        }
+    }
+
+    private static Path transferFromSource(
+            URI source,
+            Path destination,
+            Path partial,
+            java.nio.channels.FileChannel claim,
+            long expectedSize,
+            String expectedSha256,
+            ProgressListener progress,
+            OfflineProcessSupport.CancellationCheck cancellation
+    ) throws IOException, InterruptedException {
+        // Read only once the claim is held: a length read before it belonged to a file another
+        // instance was still writing.
         long offset = Files.isRegularFile(partial) ? Files.size(partial) : 0L;
         if (offset > expectedSize) {
-            Files.delete(partial);
+            resetPartial(claim, partial);
             offset = 0L;
         } else if (offset == expectedSize) {
             if (isVerifiedContent(partial, expectedSha256)) {
@@ -178,14 +204,9 @@ public final class VerifiedDownloader {
                 ModelVerificationCache.remember(destination, expectedSha256);
                 return destination;
             }
-            Files.delete(partial);
+            resetPartial(claim, partial);
             offset = 0L;
         }
-        // Refuse before the first byte instead of filling the volume and failing at 100%. Peak
-        // usage is the partial file plus whatever has to be replaced at the end of the move, so
-        // only the missing remainder plus a margin has to fit.
-        requireSpaceForDownload(destination, expectedSize - offset);
-
         HttpURLConnection connection = open(source, offset, 0);
         int status;
         boolean append;
@@ -199,6 +220,13 @@ public final class VerifiedDownloader {
                 offset = 0L;
             }
             validateResponse(connection, status, offset, expectedSize, append);
+            // Refuse before the first byte instead of filling the volume and failing at 100%. Peak
+            // usage is the partial file plus whatever has to be replaced at the end of the move, so
+            // only the missing remainder plus a margin has to fit. How much is actually missing is
+            // only known here: a mirror that ignores the Range header answers 200 and the file is
+            // rewritten from its first byte, so asking with the resume offset understated the need
+            // by that whole prefix and the transfer then ran out of disk halfway.
+            requireSpaceForDownload(destination, expectedSize - offset);
         } catch (IOException failure) {
             // The one release point for every failure above. validateResponse throws with the body
             // unread, and an unread body never goes back to the keep-alive pool, so without this the
@@ -299,6 +327,94 @@ public final class VerifiedDownloader {
         ModelVerificationCache.forget(partial);
         ModelVerificationCache.remember(destination, expectedSha256);
         return destination;
+    }
+
+    /**
+     * Takes exclusive ownership of the shared partial file before anything reads or writes it.
+     *
+     * <p>A leftover {@code .part} resumes from {@code Files.size(partial)}, so two downloads into
+     * the same path are two writers of one file, not two independent transfers: whichever of them
+     * opened it second truncated what the other had already written. The lock hides inside the
+     * partial file itself, so no new file has to be swept, and it disappears with the file on both
+     * of the exits that remove it.
+     *
+     * @return the channel that holds the lock, or {@code null} when this volume cannot lock at all
+     * @throws IOException when another instance already owns the partial file
+     */
+    private static java.nio.channels.FileChannel claimPartial(Path partial, Path destination)
+            throws IOException {
+        java.nio.channels.FileChannel channel;
+        try {
+            Files.createDirectories(partial.toAbsolutePath().getParent());
+            channel = java.nio.channels.FileChannel.open(
+                    partial, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+        } catch (IOException | RuntimeException cannotOpen) {
+            return null;
+        }
+        java.nio.channels.FileLock lock;
+        try {
+            lock = channel.tryLock();
+        } catch (java.nio.channels.OverlappingFileLockException claimedHere) {
+            // Same process, other download: the file is being written by us already.
+            closeQuietly(channel);
+            throw conflictPartial(destination);
+        } catch (IOException | RuntimeException noLocks) {
+            // Some SMB and exFAT volumes have no file locks. Keeping the previous behaviour is
+            // better than refusing to download a model there.
+            closeQuietly(channel);
+            return null;
+        }
+        if (lock == null) {
+            // Another process holds it. This failure is about this file, not about the mirror, so
+            // the message must not read like a broken download source.
+            closeQuietly(channel);
+            throw conflictPartial(destination);
+        }
+        return channel;
+    }
+
+    /**
+     * Empties a partial file whose bytes cannot be resumed from, without unlinking it.
+     *
+     * <p>Deleting it while the claim is held makes the name unusable on Windows: an open handle
+     * leaves the file delete-pending and the next open of that path fails, so the transfer that
+     * follows would never start. For a resume the outcome is the same either way — the next attempt
+     * begins at the first byte.
+     */
+    private static void resetPartial(java.nio.channels.FileChannel claim, Path partial)
+            throws IOException {
+        // Whatever the sidecar described is no longer the content of this file.
+        ModelVerificationCache.forget(partial);
+        if (claim == null) {
+            Files.delete(partial);
+            return;
+        }
+        claim.truncate(0L);
+    }
+
+    private static IOException conflictPartial(Path destination) {
+        return new IOException("Another instance is already downloading "
+                + destination.getFileName() + "; wait for it to finish and try again");
+    }
+
+    private static void releaseClaim(java.nio.channels.FileChannel claim) {
+        if (claim == null) {
+            return;
+        }
+        try {
+            // Closing the channel is what releases the lock, and it is the only release point.
+            claim.close();
+        } catch (IOException ignored) {
+            // The transfer is over either way, and a lock left behind dies with this process.
+        }
+    }
+
+    private static void closeQuietly(java.nio.channels.FileChannel channel) {
+        try {
+            channel.close();
+        } catch (IOException ignored) {
+            // Nothing was claimed on it.
+        }
     }
 
     /**

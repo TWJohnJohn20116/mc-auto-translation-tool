@@ -32,13 +32,14 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
     /**
      * How long the JVM shutdown hook waits for the teardown before letting the process exit.
      *
-     * <p>The runtime's own close settles open requests and waits up to five seconds for a worker
-     * parked in a provider read, then flushes the whole cache store; running that inline on the hook
-     * made "close the game" wait for all of it with no upper bound. The bound is therefore the one from
-     * {@link ShutdownBudget}, which is longer than that close: a join shorter than the wait inside it
-     * returned while the store flush was still running, and nothing else writes that burst.
+     * <p>The runtime's own close settles open requests, flushes the whole cache store and then waits
+     * up to five seconds for a worker parked in a provider read; running that inline on the hook made
+     * "close the game" wait for all of it with no upper bound. The bound is therefore the one from
+     * {@link ShutdownBudget} that covers what has to land: the flush runs before that wait, so a
+     * shorter join used to return while the store was still being written, and nothing else writes
+     * that burst.
      */
-    private static final long SHUTDOWN_JOIN_MILLIS = ShutdownBudget.TEARDOWN_JOIN_MILLIS;
+    private static final long SHUTDOWN_JOIN_MILLIS = ShutdownBudget.HOOK_JOIN_MILLIS;
 
     private UniversalTranslatorFabricClient() {
     }

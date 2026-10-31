@@ -134,3 +134,10 @@ tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
     options.release = project.ext.forgeJavaRelease as int
 }
+
+// The reverse mixin check the Fabric trees already run: a @Mixin class that no shipped mixins.json names
+// compiles into the JAR, ships, and is never applied, and `required: true` only requires that every name
+// it lists exists. This family found out the hard way — the committed 1.20.1/1.20.4/1.20.6 NeoForge JARs
+// carried InGameHudStatusIndicatorMixin unlisted — and the source fixes for it had no gate of their own.
+// No remapJar exists here, so the check reads jar, whose entries are this project's own classes.
+apply from: rootProject.file("gradle/fabric-mixin-config-verify.gradle")

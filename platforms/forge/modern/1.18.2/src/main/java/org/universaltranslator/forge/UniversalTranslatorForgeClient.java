@@ -69,7 +69,7 @@ public final class UniversalTranslatorForgeClient {
                     teardown.start();
                     try {
                         teardown.join(
-                                org.universaltranslator.core.ShutdownBudget.TEARDOWN_JOIN_MILLIS);
+                                org.universaltranslator.core.ShutdownBudget.HOOK_JOIN_MILLIS);
                     } catch (InterruptedException interrupted) {
                         Thread.currentThread().interrupt();
                     }

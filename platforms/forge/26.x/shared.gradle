@@ -25,6 +25,25 @@ if (sourceLayer == null) {
     throw new GradleException("No Forge 26.x source layer is registered for ${gameVersion}")
 }
 
+// The number pack.mcmeta has to carry is the client's resource pack format, which only exists inside the
+// client jar (version.json), so it cannot be derived here. Every 26.x module declared the data pack
+// format instead, which made the pack incompatible with its own client and every language file
+// unreadable while the build stayed green; this table is what makes that mistake fail.
+def resourcePackFormats = [
+        "26.1"  : 84,
+        "26.1.1": 84,
+        "26.1.2": 84,
+        "26.2"  : 88
+]
+def expectedResourcePackFormat = resourcePackFormats[gameVersion]
+if (expectedResourcePackFormat == null || project.ext.forgeResourcePackFormat != expectedResourcePackFormat) {
+    throw new GradleException(
+            "Forge 26.x '${gameVersion}' declares forgeResourcePackFormat " +
+                    "${project.ext.forgeResourcePackFormat}, but its client's version.json resource " +
+                    "format is ${expectedResourcePackFormat}; add the version and its resource_major to " +
+                    "resourcePackFormats in platforms/forge/26.x/shared.gradle")
+}
+
 def sharedRoot = rootProject.file("platforms/forge/26.x/shared")
 sourceSets {
     main {
@@ -34,12 +53,9 @@ sourceSets {
         // platforms/forge/shared/rendered-1.19.2-plus.
         java.srcDir new File(rootProject.file("platforms/forge/shared"),
                 "rendered-1.19.2-plus/src/main/java")
-        // ForgeLocalTextGuard is shared with Forge 1.18.2+ and 1.21; 26.2 reads the chat field
-        // through client.gui.screen() and keeps its own copy.
-        if (sourceLayer == "api/26.1-26.1.2") {
-            java.srcDir new File(rootProject.file("platforms/forge/shared"),
-                    "local-guard-1.18.2-plus/src/main/java")
-        }
+        // ForgeLocalTextGuard is shared with Forge 1.18.2+ and 1.21, but each 26.x generation reaches the
+        // chat field differently - client.gui.screen() here, client.screen under 26.1-26.1.2 - so both
+        // api layers keep their own copy instead of mounting local-guard-1.18.2-plus.
         // ForgeTranslationRuntime is shared with Forge 1.21.9–1.21.11.
         java.srcDir new File(rootProject.file("platforms/forge/shared"),
                 "runtime-1.21.9-plus/src/main/java")
@@ -60,3 +76,7 @@ tasks.named("processResources", ProcessResources).configure {
         expand "resourcePackFormat": project.ext.forgeResourcePackFormat
     }
 }
+
+// The reverse mixin check is applied by platforms/forge/shared.gradle, which this tree applies above, so
+// these four assets run it without a second apply here: registering verifyMixinConfigCoverage twice in
+// one project is a configuration-time failure, not a stricter check.

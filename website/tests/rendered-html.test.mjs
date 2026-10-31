@@ -413,6 +413,13 @@ const IMPLEMENTATION_CLAIMS = [
   /(\d+)\s+個精確實作/,
 ];
 
+// 「NeoForge N 个版本各一颗」是同一頁的第三個頭條數字，也是 31 = 1(fabric-all) + 11(forge) + 19(neoforge)
+// 的那個分解項：48／51／31 都有守，這個沒有——補上一個 NeoForge 版本時同一頁會自相矛盾。
+const NEOFORGE_COUNT_CLAIMS = [
+  /(\d+)\s+个版本各一颗/,
+  /(\d+)\s+個版本各一顆/,
+];
+
 const COVERAGE_DOCS = [
   "../../README.md",
   "../../docs/Zh-cn/README.md",
@@ -462,6 +469,45 @@ test("keeps the headline coverage numbers in sync with their producers", async (
     implementations,
     `app/page.tsx 的 fabricImplementations 是 ${pageImplementations}，但 versions/ 目錄合計 ${implementations}`,
   );
+
+  // 19：權威是 `prepare-release.yml` 的 neoforge 目標數，它同時應該等於 `platforms/neoforge/**/versions`
+  // 的目錄數。數字對齊了但卡片少一張（或反之）一樣算漂移，所以三邊都比。
+  const neoforgeTargets = releaseTargets.filter((target) =>
+    target.target.endsWith("-neoforge"),
+  ).length;
+  let neoforgeDirectories = 0;
+  for (const layer of await readdir(new URL("../../platforms/neoforge", import.meta.url))) {
+    let versions = [];
+    try {
+      versions = await readdir(
+        new URL(`../../platforms/neoforge/${layer}/versions`, import.meta.url),
+      );
+    } catch {
+      // 沒有 `versions/` 的目錄不是版本層（`1.20.1` 是獨立專案、`shared` 是共用層）。
+      continue;
+    }
+    neoforgeDirectories += versions.length;
+  }
+  assert.equal(
+    neoforgeTargets,
+    neoforgeDirectories,
+    `prepare-release.yml 有 ${neoforgeTargets} 個 neoforge 目標，但 platforms/neoforge 的版本目錄是 ${neoforgeDirectories} 個`,
+  );
+  const neoforgeCards = (pageSource.match(/releaseFile\("[^"]*-neoforge"\)/g) ?? []).length;
+  assert.equal(
+    neoforgeCards,
+    neoforgeTargets,
+    `app/page.tsx 渲染 ${neoforgeCards} 張 NeoForge 下載卡，但 prepare-release.yml 有 ${neoforgeTargets} 個 neoforge 目標`,
+  );
+  for (const pattern of NEOFORGE_COUNT_CLAIMS) {
+    for (const [matched, digits] of pageSource.matchAll(new RegExp(pattern.source, "g"))) {
+      assert.equal(
+        Number(digits),
+        neoforgeTargets,
+        `app/page.tsx：「${matched}」寫 ${digits}，但 prepare-release.yml 有 ${neoforgeTargets} 個 neoforge 目標`,
+      );
+    }
+  }
 
   const problems = [];
   for (const relative of COVERAGE_DOCS) {
@@ -598,14 +644,30 @@ test("keeps every repository path quoted in the docs pointing at a real file or 
 const DOC_STALE_ARTIFACT = /mc-auto-translation-tool-[a-z0-9.-]+?-\d+\.\d+(?:\.\d+)?(?:-[a-z0-9]+)?\.jar/g;
 const DOC_STALE_RELEASE_DIR = /downloads\/\d+\.\d+(?:\.\d+)?/g;
 const DOC_STALE_VERSION_OPTION = /--version\s+\d+\.\d+(?:\.\d+)?/g;
+// 對外發布的資產檔名是 `MCAutoTranslationTool-<版本>-<目標>.jar`（`downloads/<版本>/release-assets.txt`
+// 逐字如此），而上面那條只認小寫的 `mc-auto-translation-tool-*` bundle 範例：31 個真實檔名一個都不會
+// 命中，於是「文件裡的產物檔名必須是現行版本」實際只守了一種從未上過 Release 的寫法。
+const DOC_ASSET_REFERENCE = /MCAutoTranslationTool-[A-Za-z0-9.<>*_-]+\.jar/g;
 
 test("keeps the version numbers hard-coded in the docs equal to gradle.properties", async () => {
   const properties = await readFile(new URL("../../gradle.properties", import.meta.url), "utf8");
   const modVersion = properties.match(/^mod_version=(.+)$/m)?.[1]?.trim();
   assert.ok(modVersion, "gradle.properties 找不到 mod_version");
   const problems = [];
+  let assetsSeen = 0;
   for (const relative of DOC_FILES) {
     const text = await readFile(new URL(relative, import.meta.url), "utf8");
+    for (const reference of text.match(DOC_ASSET_REFERENCE) ?? []) {
+      const rest = reference.slice("MCAutoTranslationTool-".length);
+      // `<mod_version>` 這類佔位符不在文件裡寫死版本；連版本段都沒有的寫法會落到下面的比對而紅。
+      if (rest.startsWith("<") || rest.startsWith("*")) continue;
+      assetsSeen += 1;
+      if (!rest.startsWith(`${modVersion}-`)) {
+        problems.push(
+          `${relative}：資產檔名 \`${reference}\` 的版本段不是現行 ${modVersion}（或改用 \`<mod_version>\` 佔位符）`,
+        );
+      }
+    }
     for (const stale of text.match(DOC_STALE_ARTIFACT) ?? []) {
       if (!stale.endsWith(`-${modVersion}.jar`)) {
         problems.push(`${relative}：產物檔名 \`${stale}\` 寫死了非現行版本（現行 ${modVersion}）`);
@@ -623,6 +685,19 @@ test("keeps the version numbers hard-coded in the docs equal to gradle.propertie
     }
   }
   assert.deepEqual(problems, [], "文件裡的版本號要跟 gradle.properties 的 mod_version 一致，或改用佔位符");
+  // 反向驗證：抽取規則失效時上面會「一個都沒比到」而空過（四份 README 各抄一份 31 個檔名的清單）。
+  assert.ok(
+    assetsSeen >= 31,
+    `只比對了 ${assetsSeen} 個資產檔名，抽取規則可能已經失效`,
+  );
+  // 發布派送用 `CHANGELOG.md` 的 `## <版本> - ` 區段當 release notes，而那個檢查在
+  // `publish-release.yml`、只有 push `main` 之後才跑；同一個前提搬到 PR 階段，半套 bump 才會提早紅。
+  const changelog = await readFile(new URL("../../CHANGELOG.md", import.meta.url), "utf8");
+  const newestSection = changelog.match(/^## .+$/m)?.[0] ?? "";
+  assert.ok(
+    newestSection.startsWith(`## ${modVersion} - `),
+    `CHANGELOG.md 最新的區段標題是「${newestSection}」，不是「## ${modVersion} - <日期>」`,
+  );
 });
 
 // 「可安裝 JAR 數量」（今天是 31）與 48／51 一樣是手抄的頭條數字，但它被抄在 13 個檔案、四種措辭，
@@ -781,4 +856,56 @@ test("keeps the hand-copied Fabric version lists covering every implementation d
     }
   }
   assert.deepEqual(problems, [], "Fabric 版本清單必須涵蓋所有實作目錄：新增版本時 9 處清單都要一起改");
+});
+
+// 三份 `USER_GUIDE.md` 的 Forge 家族列先前把整條 1.21 線的頭尾（51.0.33–61.2.0）掛在單一家族上，
+// 讀者裝 1.21.5 會照著去挑 61.2.0（那是 1.21.11 的建置，JAR 的 minecraft restriction 聯集不含它）。
+// 權威是每個版本目錄的 `ext.forgeVersion`，所以逐版本比對，不再接受「整條線的區間」寫法。
+const FORGE_FAMILY_GUIDES = [
+  "../../docs/Zh-cn/USER_GUIDE.md",
+  "../../docs/Zh-tw/USER_GUIDE.md",
+  "../../docs/en/USER_GUIDE.md",
+];
+// 26.2 有自己的單列（`Forge 65.1.1`），不採 `版本＝Forge 版本` 的對照格式。
+const FORGE_FAMILY_STANDALONE = new Set(["26.2"]);
+
+test("keeps the documented Forge loader versions equal to each version's build.gradle", async () => {
+  const expected = new Map();
+  for (const tree of ["1.21", "26.x"]) {
+    const versions = await readdir(
+      new URL(`../../platforms/forge/${tree}/versions`, import.meta.url),
+    );
+    for (const version of versions) {
+      const script = await readFile(
+        new URL(`../../platforms/forge/${tree}/versions/${version}/build.gradle`, import.meta.url),
+        "utf8",
+      );
+      const forgeVersion = script.match(/ext\.forgeVersion = "([^"]+)"/)?.[1];
+      assert.ok(
+        forgeVersion,
+        `platforms/forge/${tree}/versions/${version}/build.gradle 找不到 ext.forgeVersion`,
+      );
+      expected.set(version, forgeVersion);
+    }
+  }
+  assert.ok(expected.size > 0, "platforms/forge 的版本目錄數算成 0");
+
+  const problems = [];
+  for (const relative of FORGE_FAMILY_GUIDES) {
+    const text = await readFile(new URL(relative, import.meta.url), "utf8");
+    for (const [version, forgeVersion] of expected) {
+      if (FORGE_FAMILY_STANDALONE.has(version)) continue;
+      // 錨點抓不到也算失敗：整段被刪掉或改寫成區間時，這條才會紅。
+      if (!text.includes(`${version}＝${forgeVersion}`)) {
+        problems.push(
+          `${relative}：找不到「${version}＝${forgeVersion}」（platforms/forge 該版本目錄的 ext.forgeVersion）`,
+        );
+      }
+    }
+  }
+  assert.deepEqual(
+    problems,
+    [],
+    "USER_GUIDE 的 Forge 版本必須逐版本對上 build.gradle 的 ext.forgeVersion：改 Forge 建置版本時三語表格要一起改",
+  );
 });

@@ -137,8 +137,64 @@ jobs:
             echo "target_count=${#expected[@]}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: 驗證發布 JAR 與 checksum
+      # 下面四個資產步驟原本只看 `skip`（= downloads/<version> 在不在），從來沒看「這次 push 動了
+      # 什麼」：只補寫或修訂 CHANGELOG 區段的 push（發布流程第 3 步）位元組一個都沒變，卻會重解
+      # 48 顆 JAR、重建 fabric-all.jar，再用 `--clobber` 把 31 個資產逐一「先刪後傳」——那段窗口裡
+      # 該檔案的 Release 下載連結是 404，中途 API 失敗還會留下「少數已刪、新的還沒上」的 Release。
+      # 判斷失敗（payload 解析錯、commits 被截斷成 20 筆）一律退回全量行為；workflow_dispatch 一律
+      # 視為有變更，所以手動重建永遠走完整路徑。
+      - name: 判斷這次 push 有沒有改到發布資產
+        id: diff
         if: steps.version.outputs.skip != 'true'
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          COMMITS_JSON: ${{ toJSON(github.event.commits) }}
+        run: |
+          set -euo pipefail
+          assets_changed=true
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            # push 事件的 payload 只保留前 20 筆 commit，截斷時看不到較早的變更，只能保守回 true。
+            assets_changed="$(printf '%s' "${COMMITS_JSON:-null}" | python3 -c '
+          import json, sys
+
+          commits = json.load(sys.stdin)
+          if not commits or len(commits) >= 20:
+              print("true")
+              sys.exit(0)
+          paths = set()
+          for commit in commits:
+              for key in ("added", "modified", "removed"):
+                  paths.update(commit.get(key) or [])
+          print("true" if paths - {"CHANGELOG.md"} else "false")
+          ')" || assets_changed=true
+          fi
+          echo "assets_changed=$assets_changed" >> "$GITHUB_OUTPUT"
+          if [[ "$assets_changed" != "true" ]]; then
+            echo "::notice::這次 push 只改到 CHANGELOG.md，跳過資產驗證與重傳，只更新 Release 說明"
+          fi
+
+      # 釋出說明只有一份實作：資產路徑（gh release create/edit）與「只改 notes」路徑都讀這個檔案。
+      - name: 讀取釋出說明
+        if: steps.version.outputs.skip != 'true'
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          notes="$RUNNER_TEMP/release-notes.md"
+          awk -v version="$VERSION" '
+            index($0, "## " version " - ") == 1 { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > "$notes"
+          if [[ ! -s "$notes" ]]; then
+            echo "Missing CHANGELOG section for $VERSION" >&2
+            exit 1
+          fi
+
+      - name: 驗證發布 JAR 與 checksum
+        if: steps.version.outputs.skip != 'true' && steps.diff.outputs.assets_changed == 'true'
         shell: bash
         env:
           RELEASE_DIR: ${{ steps.version.outputs.release_dir }}
@@ -151,7 +207,7 @@ jobs:
             "${jars[@]}"
 
       - name: 產生並驗證可直接安裝的 JAR
-        if: steps.version.outputs.skip != 'true'
+        if: steps.version.outputs.skip != 'true' && steps.diff.outputs.assets_changed == 'true'
         shell: bash
         env:
           RELEASE_DIR: ${{ steps.version.outputs.release_dir }}
@@ -170,7 +226,7 @@ jobs:
             "${jars[@]}"
 
       - name: 比對四份 README 的檔名與真實可安裝資產
-        if: steps.version.outputs.skip != 'true'
+        if: steps.version.outputs.skip != 'true' && steps.diff.outputs.assets_changed == 'true'
         shell: bash
         env:
           ASSET_DIR: ${{ runner.temp }}/release-assets
@@ -204,7 +260,7 @@ jobs:
           echo "四份 README 的 $(grep -c . "$RUNNER_TEMP/asset-names.txt") 個檔名與可安裝資產一致"
 
       - name: 建立或更新 GitHub Release
-        if: steps.version.outputs.skip != 'true'
+        if: steps.version.outputs.skip != 'true' && steps.diff.outputs.assets_changed == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -224,16 +280,9 @@ jobs:
             echo "資產數（${#assets[@]}）、可安裝 JAR 數（$installed_jars）與 SHA256SUMS.txt 行數（$checksum_lines）不一致" >&2
             exit 1
           fi
+          # 釋出說明由上面的「讀取釋出說明」產生，兩條發布路徑共用同一份檔案
+          # （缺 CHANGELOG 區段在那一步就已經失敗，這裡不再重算一次）。
           notes="$RUNNER_TEMP/release-notes.md"
-          awk -v version="$VERSION" '
-            index($0, "## " version " - ") == 1 { found=1; next }
-            found && /^## / { exit }
-            found { print }
-          ' CHANGELOG.md > "$notes"
-          if [[ ! -s "$notes" ]]; then
-            echo "Missing CHANGELOG section for $VERSION" >&2
-            exit 1
-          fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "${assets[@]}" --clobber
             # 不能用 mapfile < <(...)：`set -e` 不管 process substitution 裡的離開碼，`gh release
@@ -247,8 +296,8 @@ jobs:
                 gh release delete-asset "$TAG" "$asset" --yes
               fi
             done
-            # 既有 Release 也要更新標題與說明：CHANGELOG 修正是 docs 類變更，push 到 main 時
-            # `paths` 含 CHANGELOG.md，但先前只上傳資產，Release 頁面永遠停在第一次發布的說明。
+            # 一次 push 可以同時改資產與 notes（例如 release PR 本身），所以這條路徑也要更新標題
+            # 與說明；「只有 notes 變」的 push 不會走到這裡，由下面「只更新 Release 說明」接手。
             gh release edit "$TAG" --title "MC 自动翻译工具 $VERSION" --notes-file "$notes"
           else
             # tag 已存在時 gh release create 會忽略 --target，把新資產掛到舊 commit 的 tag 上，
@@ -277,6 +326,32 @@ jobs:
           fi
           # prerelease 狀態可能隨版本號改變，兩邊都要同步，否則一個 1.5_rc1 之後的正式版會被
           # 舊的 --prerelease 標記黏住（或反過來，rc 搶走 latest）。
+          if [[ "${{ steps.version.outputs.prerelease }}" == "true" ]]; then
+            gh release edit "$TAG" --prerelease --latest=false
+          else
+            gh release edit "$TAG" --latest
+          fi
+
+      # 只改 CHANGELOG.md 的 push 唯一需要做的事：把說明寫回既有 Release。上面四步全部略過，
+      # 因為那批資產的位元組一個都沒變（見「判斷這次 push 有沒有改到發布資產」）。
+      - name: 只更新 Release 說明
+        if: steps.version.outputs.skip != 'true' && steps.diff.outputs.assets_changed != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            # 資產沒變而 Release 不存在，只可能是上一次發布沒跑完。建立 Release 需要那批剛重建的
+            # 資產，這裡不猜：手動觸發本 workflow（一律視為有變更）走完整路徑。
+            echo "::warning::$TAG 還不存在；這次 push 沒有動到資產，未建立 Release。要完整重建請用 workflow_dispatch 觸發本 workflow"
+            exit 0
+          fi
+          notes="$RUNNER_TEMP/release-notes.md"
+          gh release edit "$TAG" --title "MC 自动翻译工具 $VERSION" --notes-file "$notes"
+          # 與資產路徑同一條規則：prerelease 狀態可能隨版本號改變，兩邊都要同步。
           if [[ "${{ steps.version.outputs.prerelease }}" == "true" ]]; then
             gh release edit "$TAG" --prerelease --latest=false
           else

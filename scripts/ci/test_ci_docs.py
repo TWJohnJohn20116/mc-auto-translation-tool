@@ -26,10 +26,31 @@ READMES = (
     ROOT / "docs" / "en" / "README.md",
 )
 
+GRADLE_PROPERTIES = ROOT / "gradle.properties"
+#: `build-targets.json` 的群組 → README 用的顯示名（`scripts/README.md` 那句「平台 16 筆、舊版 7 筆」）。
+TARGET_LABELS = {"platform": "平台", "legacy": "舊版"}
+
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from prepare_release_assets import MANIFEST_NAME  # noqa: E402  (需要先設好 sys.path)
+from prepare_release_assets import (  # noqa: E402  (需要先設好 sys.path)
+    MANIFEST_NAME,
+    installable_manifest,
+    list_installable,
+)
 from release_layout import PART_SIZE, VERSION_PATTERN  # noqa: E402  (同上)
+
+
+def mod_version() -> str:
+    """`gradle.properties` 的 `mod_version`，規則與 `read-mod-version.sh` 相同（取第一行＋白名單）。"""
+    for line in GRADLE_PROPERTIES.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("mod_version="):
+            continue
+        value = line[len("mod_version="):]
+        if not VERSION_PATTERN.match(value):
+            raise AssertionError("gradle.properties 的 mod_version 不合法：%r" % value)
+        return value
+    raise AssertionError("gradle.properties 沒有 mod_version")
+
 
 # `if written == 0:` 的等價寫法（`if not written:`）必須定位到同一個分支：先前是字面字串比對，
 # 把條件改寫成等價形式就會以「沒有 written == 0 的分支」紅燈，而行為完全沒變。
@@ -101,8 +122,11 @@ class ScriptsReadmeTest(unittest.TestCase):
             for key, value in json.loads(TARGETS.read_text(encoding="utf-8")).items()
         }
         text = README.read_text(encoding="utf-8")
-        self.assertIn("平台 %d 筆" % counts["platform"], text)
-        self.assertIn("舊版 %d 筆" % counts["legacy"], text)
+        # 逐群組斷言，不只兩個具名 key：新增第三個群組時它的筆數沒有任何文件在講，
+        # 而 README 那兩行也照樣通過（build.yml 沒有任何 matrix 會建置它）。
+        self.assertEqual({"platform", "legacy"}, set(counts), "build-targets.json 的群組集合變了")
+        for key, count in sorted(counts.items()):
+            self.assertIn("%s %d 筆" % (TARGET_LABELS[key], count), text)
 
     def test_committed_split_parts_match_the_part_size(self):
         # PART_SIZE 與 part_suffix 只有一份實作（scripts/release_layout.py），生產端與驗證端都 import
@@ -139,6 +163,22 @@ class ScriptsReadmeTest(unittest.TestCase):
             found = sorted(set(names.findall(readme.read_text(encoding="utf-8"))))
             self.assertTrue(found, "%s 沒有任何 MCAutoTranslationTool-*.jar 檔名" % readme)
             self.assertEqual(expected, found, "%s 的 JAR 檔名與 %s 不一致" % (readme, manifest))
+
+    def test_committed_manifest_is_derivable_from_downloads(self):
+        # 上面那條證明「文件照著清單寫」，不證明「清單照著 downloads/ 算」。清單只由
+        # prepare-release.yml 產生（workflow_dispatch，一次 10～20 分鐘），而它進入版控之後就沒有
+        # 任何東西會重算它：清單與 downloads/ 一旦漂移，四份 README 與網站會一起指著不存在的資產，
+        # 真正的比對卻要等合併後的發布 run 才跑。list_installable 只讀檔名（不建置、不解壓）。
+        version = mod_version()
+        release_dir = ROOT / "downloads" / version
+        manifest = release_dir / MANIFEST_NAME
+        if not manifest.is_file():
+            self.skipTest("downloads/%s 還沒有 %s（下一次 prepare-release 才會產生）" % (version, MANIFEST_NAME))
+        self.assertEqual(
+            installable_manifest(list_installable(release_dir, version)),
+            manifest.read_text(encoding="utf-8"),
+            "downloads/%s/%s 與 downloads/ 推導出的可安裝清單不一致" % (version, MANIFEST_NAME),
+        )
 
 
 if __name__ == "__main__":

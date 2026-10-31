@@ -2,10 +2,12 @@ package org.universaltranslator.core;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -14,6 +16,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -27,6 +30,11 @@ public final class DiagnosticsLogExporter {
     private static final int MAXIMUM_RETAINED_EXPORTS = 5;
     /** Suffixes tried by {@link #reserve} before giving up on a free name. */
     private static final int MAXIMUM_NAME_RETRIES = 1000;
+    /**
+     * Age after which a temporary file of an export that never finished is deleted. An export takes
+     * seconds, so a name this old belongs to a process that was killed rather than to one in flight.
+     */
+    private static final long TEMPORARY_ORPHAN_MILLIS = 60_000L;
 
     /**
      * Credential-ish names. The suffix of {@code secret} is optional so that provider specific
@@ -115,10 +123,26 @@ public final class DiagnosticsLogExporter {
         for (String line : TranslationStats.global().plainLines()) {
             report.append(sanitize(line)).append('\n');
         }
-        // reserve() already created the file to claim the name, so this fills it instead of claiming
-        // the same name a second time.
-        Files.write(output, report.toString().getBytes(StandardCharsets.UTF_8),
-                StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
+        // The report is written under a temporary name and moved onto the reserved one afterwards, so
+        // a process killed mid-write cannot leave a truncated report under the name the notice tells
+        // the user to attach. reserve() claimed that name already, so nothing else can take it.
+        Path temporary = output.resolveSibling(
+                output.getFileName().toString() + "." + UUID.randomUUID() + ".tmp");
+        boolean placed = false;
+        try {
+            Files.write(temporary, report.toString().getBytes(StandardCharsets.UTF_8),
+                    StandardOpenOption.WRITE, StandardOpenOption.CREATE,
+                    StandardOpenOption.TRUNCATE_EXISTING);
+            moveIntoPlace(temporary, output);
+            placed = true;
+        } finally {
+            deleteQuietly(temporary);
+            if (!placed) {
+                // The reserved name is released with it: an empty file there is not a report, and it
+                // would occupy one of the retained slots carrying nothing.
+                deleteQuietly(output);
+            }
+        }
         // The report carries the per-provider lines of the statistics file and the redacted status
         // text, so it is restricted the same way the bundle and the configuration file are.
         LocalConfigSecurity.restrictToOwner(output);
@@ -184,6 +208,60 @@ public final class DiagnosticsLogExporter {
     }
 
     /**
+     * Moves a finished temporary file onto the name that was reserved for it.
+     *
+     * <p>Shared with the bundle exporter, which writes its archive the same way and for the same
+     * reason: the reserved name is the one the user is told to attach, so it must only ever hold a
+     * complete artefact.
+     *
+     * @param temporary completed temporary file, unique to this export
+     * @param target name {@link #reserve} returned for this export
+     * @throws IOException when the move failed
+     */
+    static void moveIntoPlace(Path temporary, Path target) throws IOException {
+        try {
+            Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException unsupported) {
+            // A filesystem without atomic rename, such as some network shares. The temporary file is
+            // already complete, so a plain replace is close enough to atomic for an artefact.
+            Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    /** Deletes a name this class created for one attempt, and says nothing when it cannot. */
+    static void deleteQuietly(Path path) {
+        try {
+            Files.deleteIfExists(path);
+        } catch (IOException | RuntimeException ignored) {
+            // The name is unique per attempt, so a leftover is never read or reused.
+        }
+    }
+
+    /** Whether the artefact holds anything; an unreadable size is not proof that it is empty. */
+    private static boolean isNonEmpty(Path candidate) {
+        try {
+            return Files.size(candidate) > 0L;
+        } catch (IOException unreadable) {
+            return true;
+        }
+    }
+
+    /** Whether the name belongs to an export that had not reached its reserved name yet. */
+    private static boolean isTemporary(Path candidate) {
+        Path name = candidate.getFileName();
+        return name != null && name.toString().endsWith(".tmp");
+    }
+
+    /** Deletes a temporary file an export left behind, once it cannot still be in flight. */
+    private static void deleteStaleTemporary(Path candidate) {
+        if (System.currentTimeMillis() - lastModifiedMillis(candidate) < TEMPORARY_ORPHAN_MILLIS) {
+            return;
+        }
+        deleteQuietly(candidate);
+    }
+
+    /**
      * Deletes the oldest artefacts of one exporter so repeated exports cannot fill the folder.
      *
      * <p>Each artefact carries up to two megabytes of debug log, and nothing ever deleted them: a
@@ -201,7 +279,17 @@ public final class DiagnosticsLogExporter {
         try (DirectoryStream<Path> stream =
                      Files.newDirectoryStream(directory, prefix + "*")) {
             for (Path candidate : stream) {
-                if (Files.isRegularFile(candidate)) {
+                // A temporary file is an export that never reached its reserved name. It is not an
+                // export, so it must not take one of the retained slots, and an orphan is deleted here
+                // because nothing else ever looks at that name again.
+                if (isTemporary(candidate)) {
+                    deleteStaleTemporary(candidate);
+                    continue;
+                }
+                // A zero byte artefact is a name that was reserved and never written into -- an export
+                // killed in between. Counting it as one of the kept exports would let it push out an
+                // artefact that did work.
+                if (Files.isRegularFile(candidate) && isNonEmpty(candidate)) {
                     existing.add(candidate);
                 }
             }

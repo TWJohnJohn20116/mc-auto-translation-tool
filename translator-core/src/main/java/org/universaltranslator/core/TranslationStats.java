@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.io.Reader;
 import java.io.Writer;
 import java.net.SocketTimeoutException;
+import java.nio.charset.MalformedInputException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
@@ -43,6 +44,22 @@ public final class TranslationStats {
     private static final int LATENCY_SAMPLE_CAPACITY = 512;
     /** How often the counters reach the disk while the game runs. */
     private static final long FLUSH_INTERVAL_MILLIS = 60_000L;
+    /**
+     * How long a read that failed waits for its next attempt. {@link #attach(Path)} reads the file
+     * once and then returns early for a path it already points at, so without a retry of its own one
+     * locked read kept the counters in memory for the rest of the process.
+     */
+    private static final long LOAD_RETRY_INTERVAL_MILLIS = 600_000L;
+    /**
+     * Largest statistics file this class reads back.
+     *
+     * <p>A normal file is eight totals, the failure buckets and at most
+     * {@link #MAXIMUM_STORED_PROVIDERS} providers of seven fields each -- roughly twenty kilobytes.
+     * {@code Properties.load} has no size concept: it reads the whole file before a single key is
+     * filtered, and it does so on the thread that loads the configuration, so a file many times this
+     * size is not one this class wrote and is not materialized at all.
+     */
+    private static final long MAXIMUM_STATS_FILE_BYTES = 4L * 1024L * 1024L;
     /** Bound on the provider ids read back from the file, so a corrupt file cannot grow memory. */
     private static final int MAXIMUM_STORED_PROVIDERS = 64;
     /** Bucket that takes every provider id arriving after {@link #MAXIMUM_STORED_PROVIDERS}. */
@@ -98,6 +115,12 @@ public final class TranslationStats {
      * not write those pre-reset totals back over the zeros.
      */
     private long writtenRevision = -1L;
+    /**
+     * When the counters may try their file again after a failed read, in wall-clock milliseconds.
+     * Several threads reach {@link #flush()}, so this is volatile rather than guarded: a lost update
+     * costs one extra read and never skips one.
+     */
+    private volatile long nextLoadRetryMillis;
     private volatile Path file;
     private volatile boolean flusherStarted;
     /**
@@ -383,6 +406,10 @@ public final class TranslationStats {
             rejected = 0L;
             promptTokens = 0L;
             completionTokens = 0L;
+            // Clearing the totals is the one repair a user has against a file this session could not
+            // read, so the request replaces that file with these zeroes instead of being dropped by
+            // the latch that exists to protect it.
+            loadFailed = false;
             revision++;
         }
         invalidateLocalizedLines();
@@ -412,7 +439,7 @@ public final class TranslationStats {
         if (target == null) {
             return;
         }
-        if (loadFailed) {
+        if (loadFailed && !retryFailedRead(target)) {
             // The read failed, so these counters are a partial view of a file this session could not
             // see: writing them would replace the totals still on disk with a zero. The periodic
             // flusher and the shutdown hook both run this, which is how one locked read used to
@@ -476,6 +503,28 @@ public final class TranslationStats {
                 }
             }
         }
+    }
+
+    /**
+     * Retries a read that failed, at most once per {@link #LOAD_RETRY_INTERVAL_MILLIS}.
+     *
+     * <p>{@link #attach(Path)} reads the file once and then returns early for the path it already
+     * points at, so a file that was locked for that single read never got a second chance in the
+     * whole session and every total stayed in memory. What this session counted before the retry is
+     * lost either way -- the write path was off while the latch was set -- so recovering the file's
+     * totals is what makes the next flush carry them instead of nothing.
+     *
+     * @param target the statistics file to read again
+     * @return {@code true} when the counters may now be written
+     */
+    private boolean retryFailedRead(Path target) {
+        long now = System.currentTimeMillis();
+        if (now < nextLoadRetryMillis) {
+            return false;
+        }
+        nextLoadRetryMillis = now + LOAD_RETRY_INTERVAL_MILLIS;
+        load(target);
+        return !loadFailed;
     }
 
     /**
@@ -848,6 +897,9 @@ public final class TranslationStats {
     }
 
     private void load(Path source) {
+        if (tooLargeToRead(source)) {
+            return;
+        }
         Properties properties = new Properties();
         try (Reader reader = Files.newBufferedReader(source, StandardCharsets.UTF_8)) {
             properties.load(reader);
@@ -859,7 +911,12 @@ public final class TranslationStats {
             // Not the same as "there is no file yet": the totals are on disk and this session simply
             // could not see them. Starting from zero is unavoidable here -- flushing that zero back
             // over them is what turned one locked read into a permanently erased history.
-            loadFailed = true;
+            //
+            // A file whose content cannot be parsed is the one case where not writing is worse: it
+            // cannot be read on the next launch either, so the counters would never reach the disk
+            // again. That copy is kept aside and the next flush writes a fresh file, exactly as the
+            // oversized branch above does.
+            loadFailed = !(isPermanentlyCorrupt(unreadable) && preserveUnreadable(source));
             DebugLog.global().logFailure("stats-load", unreadable);
             return;
         }
@@ -916,6 +973,75 @@ public final class TranslationStats {
                 }
             }
             revision++;
+        }
+    }
+
+    /**
+     * Whether the file is too large to be one this class wrote, in which case it is put aside.
+     *
+     * <p>{@code Properties.load} has no size concept: it materializes the whole file before a single
+     * key is filtered, and it does that on the thread that loads the configuration. A file many
+     * times the size of the real one therefore costs that thread its heap at startup. The read is
+     * skipped and the copy is kept aside, so the counters recover instead of never being written
+     * again.
+     *
+     * @param source the statistics file
+     * @return {@code true} when the file was put aside and the counters start from zero
+     */
+    private boolean tooLargeToRead(Path source) {
+        long storedBytes;
+        try {
+            storedBytes = Files.size(source);
+        } catch (IOException | RuntimeException unknown) {
+            // A missing or unreadable file: the read below reports the same thing and classifies it
+            // the same way, so this check stays out of that decision.
+            return false;
+        }
+        if (storedBytes <= MAXIMUM_STATS_FILE_BYTES) {
+            return false;
+        }
+        DebugLog.global().log("stats-load", "result", "oversized",
+                "bytes", Long.toString(storedBytes));
+        loadFailed = !preserveUnreadable(source);
+        return true;
+    }
+
+    /**
+     * Whether the stored content can never be parsed, whatever the next launch does.
+     *
+     * <p>An {@code IllegalArgumentException} is a truncated escape sequence and a
+     * {@link MalformedInputException} is a byte sequence that is not UTF-8: both describe the bytes
+     * on disk rather than a lock or a permission, so retrying the same file cannot succeed.
+     */
+    private static boolean isPermanentlyCorrupt(Throwable failure) {
+        return failure instanceof IllegalArgumentException
+                || failure instanceof MalformedInputException;
+    }
+
+    /**
+     * Moves a file this class cannot read out of the way and records it.
+     *
+     * @param source the statistics file
+     * @return {@code true} when {@code source} no longer occupies the statistics path, so the next
+     *     flush may create a fresh one; {@code false} when the move failed and the file has to be
+     *     left untouched
+     */
+    private boolean preserveUnreadable(Path source) {
+        Path name = source.getFileName();
+        if (name == null) {
+            return false;
+        }
+        Path preserved = source.resolveSibling(name.toString() + ".corrupt");
+        try {
+            Files.move(source, preserved, StandardCopyOption.REPLACE_EXISTING);
+            DebugLog.global().log("stats-load", "result", "kept",
+                    "file", preserved.getFileName().toString());
+            return true;
+        } catch (IOException | RuntimeException failed) {
+            // A read-only directory keeps today's behaviour: the file stays as it is and the write
+            // path stays off, so nothing the file holds is replaced by a zero.
+            DebugLog.global().logFailure("stats-load-preserve", failed);
+            return false;
         }
     }
 

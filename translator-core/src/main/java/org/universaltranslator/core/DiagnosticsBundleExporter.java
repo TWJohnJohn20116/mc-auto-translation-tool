@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -65,8 +66,15 @@ public final class DiagnosticsBundleExporter {
         DiagnosticsLogExporter.prune(configDirectory, FILE_PREFIX, MAXIMUM_RETAINED_EXPORTS);
         Path output = DiagnosticsLogExporter.reserve(configDirectory,
                 FILE_PREFIX + LocalDateTime.now().format(FILE_TIME), ".zip");
+        // Written under a temporary name and moved onto the reserved one afterwards. Writing straight
+        // into the final name left a zero byte or a zip without a central directory wherever the
+        // process died mid-export; the retention pass below then counted it as one of the five
+        // exports and could push out an archive that did work, and the user was told to attach a file
+        // that cannot be opened.
+        Path temporary = output.resolveSibling(
+                output.getFileName().toString() + "." + UUID.randomUUID() + ".tmp");
         try {
-            try (OutputStream file = Files.newOutputStream(output);
+            try (OutputStream file = Files.newOutputStream(temporary);
                     ZipOutputStream zip = new ZipOutputStream(file)) {
                 put(zip, "environment.txt", environment(platform));
                 put(zip, "diagnostics.txt", report(diagnosticLines, configFile));
@@ -75,15 +83,14 @@ public final class DiagnosticsBundleExporter {
                 putRedactedFile(zip, "debug.log", debugLogFile,
                         "# Debug logging was off, so no log was written.");
             }
+            DiagnosticsLogExporter.moveIntoPlace(temporary, output);
         } catch (IOException | RuntimeException failed) {
             // A half-written archive is worse than none: it cannot be opened, it still counts against
             // the retention limit and it hides the bundle that did work. The failure is rethrown, so
-            // the caller still reports it.
-            try {
-                Files.deleteIfExists(output);
-            } catch (IOException ignored) {
-                // Best effort: the archive was closed by now, so a locked file is the only cause.
-            }
+            // the caller still reports it. The reserved name is released as well, because a leftover
+            // there would occupy one of the retained slots while holding nothing.
+            DiagnosticsLogExporter.deleteQuietly(temporary);
+            DiagnosticsLogExporter.deleteQuietly(output);
             throw failed;
         }
         // The archive carries the configuration plus a slice of what the player and the provider

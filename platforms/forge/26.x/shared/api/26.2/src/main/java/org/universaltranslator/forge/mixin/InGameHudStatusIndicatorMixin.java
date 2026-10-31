@@ -143,7 +143,7 @@ abstract class InGameHudStatusIndicatorMixin {
                 net.minecraft.network.chat.Component text = HudLabelMemo.label(label);
                 TranslationRenderContext.pushTextInput();
                 try {
-                    int labelWidth = font.width(text);
+                    int labelWidth = HudLabelMemo.width(font, label);
                     // Beside the square, never over it: a 6px square cannot hold "zh-TW", and a label
                     // centred on a right-corner square would run off the screen edge.
                     int labelCenterX = corner.isRight()

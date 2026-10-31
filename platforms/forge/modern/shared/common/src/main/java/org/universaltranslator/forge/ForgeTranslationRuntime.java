@@ -100,15 +100,31 @@ public final class ForgeTranslationRuntime {
     // thread exists no matter how often the configuration is switched, and two replaced sessions
     // can never tear down concurrently. Threads are created lazily, so a client that never switches
     // pays nothing, and the daemon flag keeps the reaper from holding the JVM open.
-    private static final ExecutorService SESSION_REAPER = Executors.newSingleThreadExecutor(
-            new ThreadFactory() {
-                @Override
-                public Thread newThread(Runnable runnable) {
-                    Thread thread = new Thread(runnable, "universal-translator-session-reaper");
-                    thread.setDaemon(true);
-                    return thread;
-                }
-            });
+    //
+    // Not static final: shutdown() ends this pool, and shutdown() is also the rollback a failed
+    // startup runs while the game keeps going. A pool with no rebuild path left every later switch
+    // with a replaced session that was never closed, for the rest of the process.
+    private static final Object REAPER_LOCK = new Object();
+    private static ExecutorService reaper;
+
+    /** The live reaper, rebuilt whenever a previous one has been shut down. */
+    private static ExecutorService reaper() {
+        synchronized (REAPER_LOCK) {
+            if (reaper == null || reaper.isShutdown()) {
+                reaper = Executors.newSingleThreadExecutor(
+                        new ThreadFactory() {
+                            @Override
+                            public Thread newThread(Runnable runnable) {
+                                Thread thread = new Thread(
+                                        runnable, "universal-translator-session-reaper");
+                                thread.setDaemon(true);
+                                return thread;
+                            }
+                        });
+            }
+            return reaper;
+        }
+    }
 
     private ForgeTranslationRuntime() {
     }
@@ -240,7 +256,7 @@ public final class ForgeTranslationRuntime {
             return;
         }
         try {
-            SESSION_REAPER.execute(new Runnable() {
+            reaper().execute(new Runnable() {
                 @Override
                 public void run() {
                     try {
@@ -255,8 +271,9 @@ public final class ForgeTranslationRuntime {
                 }
             });
         } catch (Throwable rejected) {
-            // The executor only rejects once shutdown() has run, which is the client-going-away path.
-            // Leaving the replaced session unclosed still beats blocking the caller.
+            // The executor only rejects while the pool handed out here is being shut down; the next
+            // switch gets a fresh one from reaper(). Leaving this replaced session unclosed still
+            // beats blocking the caller.
             PENDING_TEARDOWNS.decrementAndGet();
         }
     }
@@ -353,8 +370,15 @@ public final class ForgeTranslationRuntime {
             active.close();
         }
         // The reaper is the second pool this class owns. Like the writer it is daemon-only, so nothing
-        // else would ever close it, and shutdown() is the one place a client exit reaches.
-        SESSION_REAPER.shutdownNow();
+        // else would ever close it, and shutdown() is the one place a client exit reaches. Dropping it
+        // is safe to do here: when this call is only the rollback of a failed startup the game keeps
+        // running, and reaper() builds the next pool on demand.
+        synchronized (REAPER_LOCK) {
+            if (reaper != null) {
+                reaper.shutdownNow();
+                reaper = null;
+            }
+        }
     }
 
     private static List<String> playerNameSnapshot() {
@@ -374,7 +398,7 @@ public final class ForgeTranslationRuntime {
         // thread for every new chat line, and one refresh walks the whole tab list and allocates
         // three containers. Readers keep the published snapshot until the new one replaces it.
         try {
-            SESSION_REAPER.execute(new Runnable() {
+            reaper().execute(new Runnable() {
                 @Override
                 public void run() {
                     try {
@@ -387,7 +411,8 @@ public final class ForgeTranslationRuntime {
                 }
             });
         } catch (Throwable rejected) {
-            // Only reachable once the executor is shut down, which this class never does.
+            // Only reachable while the pool is being replaced by shutdown(); reaper() rebuilds it on
+            // the next window.
             playerNameRefresh.set(false);
         }
         return snapshot;

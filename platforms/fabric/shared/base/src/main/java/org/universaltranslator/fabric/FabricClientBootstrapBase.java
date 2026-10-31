@@ -234,7 +234,7 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
                 teardown.setDaemon(false);
                 teardown.start();
                 try {
-                    teardown.join(ShutdownBudget.TEARDOWN_JOIN_MILLIS);
+                    teardown.join(ShutdownBudget.HOOK_JOIN_MILLIS);
                 } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
                 }

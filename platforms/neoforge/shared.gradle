@@ -167,6 +167,24 @@ if (!missingPackCoordinates.isEmpty()) {
                     missingPackCoordinates.join(", "))
 }
 
+// The value the 26.x template expands is the client's resource pack format, which only exists inside the
+// client jar (version.json); the 26.x modules declared the data pack format instead, so the pack was
+// incompatible with its own client and every language file went unreadable while the build stayed green.
+def resourcePackFormats26 = [
+        "26.1"  : 84,
+        "26.1.1": 84,
+        "26.1.2": 84,
+        "26.2"  : 88
+]
+def expectedResourcePackFormat26 = resourcePackFormats26[project.ext.neoforgeMinecraftVersion]
+if (expectedResourcePackFormat26 != null && project.ext.has("neoforgeResourcePackFormat")
+        && project.ext.neoforgeResourcePackFormat != expectedResourcePackFormat26) {
+    throw new GradleException(
+            "NeoForge ${project.ext.neoforgeMinecraftVersion} declares neoforgeResourcePackFormat " +
+                    "${project.ext.neoforgeResourcePackFormat}, but its client's version.json resource " +
+                    "format is ${expectedResourcePackFormat26}")
+}
+
 version = project.mod_version
 group = project.maven_group
 
@@ -185,8 +203,10 @@ sourceSets {
         java.srcDir new File(rootProject.file("platforms/forge/shared"),
                 "rendered-1.19.2-plus/src/main/java")
         // ForgeLocalTextGuard moved to a shared Forge layer too; NeoForge reuses the Forge layers,
-        // so it needs it explicitly. NeoForge 26.2 keeps its own copy (client.gui.screen()).
-        if (project.ext.neoforgeEntryLayer != "26.2") {
+        // so it needs it explicitly. Both 26.x layers keep their own copy instead (26.2 reaches the
+        // chat field through client.gui.screen(), 26.1-26.1.2 through client.screen), and their Forge
+        // api layers already supply it.
+        if (!(project.ext.neoforgeEntryLayer in ["26.1-26.1.2", "26.2"])) {
             java.srcDir new File(rootProject.file("platforms/forge/shared"),
                     "local-guard-1.18.2-plus/src/main/java")
         }
@@ -281,3 +301,9 @@ tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
     options.release = project.ext.neoforgeJavaRelease
 }
+
+// The reverse mixin check the Fabric trees already run: a @Mixin class that no shipped mixins.json names
+// compiles into the JAR, ships, and is never applied, and `required: true` only requires that every name
+// it lists exists. It found this family after the fact — the committed 1.20.1/1.20.4/1.20.6 NeoForge JARs
+// carried InGameHudStatusIndicatorMixin unlisted — so the metadata layers are checked here from now on.
+apply from: rootProject.file("gradle/fabric-mixin-config-verify.gradle")

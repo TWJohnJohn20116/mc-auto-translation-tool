@@ -76,11 +76,26 @@ public final class RenderedTextBridge {
     }
 
     public static String translate(String text) {
-        String translated = translateRaw(text);
-        if (text == null || text.equals(translated)) {
+        if (text == null) {
+            return null;
+        }
+        // The drawing and the measuring hook both arrive here for every string of every frame, so
+        // the line this bridge answered a moment ago is answered again: one set lookup instead of
+        // the whole guard chain.
+        if (TranslationRenderContext.isTranslatedResult(text)
+                || TranslationRenderContext.isUnchangedResult(text)) {
             return text;
         }
-        return styledText(text, translated);
+        String translated = translateRaw(text);
+        if (text.equals(translated)) {
+            TranslationRenderContext.rememberUnchanged(text);
+            return text;
+        }
+        String styled = styledText(text, translated);
+        // Both forms, because the two hooks only see the same string when no colour is applied.
+        TranslationRenderContext.rememberTranslation(translated);
+        TranslationRenderContext.rememberTranslation(styled);
+        return styled;
     }
 
     /** Styles one already translated line, reusing the answer when the same line is redrawn. */
@@ -119,10 +134,17 @@ public final class RenderedTextBridge {
             return styled;
         }
         String original = text.getString();
-        String translated = translateRaw(original);
-        if (original.equals(translated)) {
+        // The measuring hook is handed the component the drawing hook already answered.
+        if (TranslationRenderContext.isTranslatedResult(original)
+                || TranslationRenderContext.isUnchangedResult(original)) {
             return text;
         }
+        String translated = translateRaw(original);
+        if (original.equals(translated)) {
+            TranslationRenderContext.rememberUnchanged(original);
+            return text;
+        }
+        TranslationRenderContext.rememberTranslation(translated);
         return Component.literal(translated).setStyle(translatedStyle(text.getStyle()));
     }
 
@@ -160,12 +182,20 @@ public final class RenderedTextBridge {
         // One toString() for both the lookup and the "did anything change" comparison: the builder
         // caches nothing across calls, so asking twice allocated the same line twice per draw.
         String visible = original.toString();
+        // The drawing and the measuring hook are handed the same line, so the second call already
+        // has the answer the first one produced.
+        if (TranslationRenderContext.isTranslatedResult(visible)
+                || TranslationRenderContext.isUnchangedResult(visible)) {
+            return text;
+        }
         String translated = translateRaw(visible);
         if (visible.equals(translated)) {
+            TranslationRenderContext.rememberUnchanged(visible);
             return text;
         }
         MutableComponent replacement = Component.literal(translated)
                 .setStyle(translatedStyle(firstStyle.get()));
+        TranslationRenderContext.rememberTranslation(translated);
         return replacement.getVisualOrderText();
     }
 
@@ -236,11 +266,20 @@ public final class RenderedTextBridge {
             return text;
         }
         String original = text.getString();
-        String translated = translateRaw(original);
-        if (original.equals(translated)) {
+        // Same paired hooks as the two overloads above: the second call is handed what the first one
+        // already translated.
+        if (TranslationRenderContext.isTranslatedResult(original)
+                || TranslationRenderContext.isUnchangedResult(original)) {
             return text;
         }
-        return FormattedText.of(translated, translatedStyle(Style.EMPTY));
+        String translated = translateRaw(original);
+        if (original.equals(translated)) {
+            TranslationRenderContext.rememberUnchanged(original);
+            return text;
+        }
+        FormattedText styled = FormattedText.of(translated, translatedStyle(Style.EMPTY));
+        TranslationRenderContext.rememberTranslation(translated);
+        return styled;
     }
 
     /** Translates item names and lore before GuiGraphicsExtractor creates tooltip components. */

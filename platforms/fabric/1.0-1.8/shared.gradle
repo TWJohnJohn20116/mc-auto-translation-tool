@@ -19,6 +19,12 @@ def playerFamily = (gameVersion.startsWith("1.0") || gameVersion.startsWith("1.1
         || gameVersion.startsWith("1.4") || gameVersion.startsWith("1.5"))
         ? "1.3-1.5" : "1.6-1.8"
 def playerFamilyRoot = rootProject.file("platforms/fabric/1.0-1.8/shared/family/${playerFamily}")
+// The chat sink is the one member whose generation boundary does not line up with the family layers:
+// 1.3.1-1.6.4 append a plain String and 1.7.x want a Text component, while both 1.6.x and 1.7.x live
+// in the 1.6-1.8 family. One class, two directories, one of them on the source path per project.
+def chatSinkRoot = rootProject.file(gameVersion.startsWith("1.7")
+        ? "platforms/fabric/1.0-1.8/shared/chat-sink-1.7"
+        : "platforms/fabric/1.0-1.8/shared/chat-sink-1.3-1.6")
 
 version = project.mod_version
 group = project.maven_group
@@ -60,6 +66,7 @@ sourceSets {
         java.srcDir rootProject.file("platforms/fabric/shared/render-context-legacy/src/main/java")
         java.srcDir new File(rootProject.file("platforms/fabric/1.0-1.12/shared/screens"), "src/main/java")
         java.srcDir new File(playerFamilyRoot, "src/main/java")
+        java.srcDir new File(chatSinkRoot, "src/main/java")
         resources.srcDir new File(sharedRoot, "src/main/resources")
         resources.srcDir rootProject.file("platforms/shared/lang/legacy")
     }

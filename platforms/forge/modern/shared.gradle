@@ -260,4 +260,10 @@ tasks.matching { it.name == "mergeMixinMappings" }.configureEach {
     dependsOn(tasks.named("compileJava"))
 }
 
+// The reverse mixin check the Fabric trees already run: a @Mixin class that no shipped mixins.json names
+// compiles into the JAR, ships, and is never applied, and `required: true` only requires that every name
+// it lists exists. These four targets ship one JAR each and had no such check; the Python verifyBuiltJar
+// below is a different question (the class-file level) and keeps its name.
+apply from: rootProject.file("gradle/fabric-mixin-config-verify.gradle")
+
 

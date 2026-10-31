@@ -5,12 +5,15 @@ import org.universaltranslator.core.net.CryptoSupport;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.Writer;
+import java.nio.charset.MalformedInputException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFileAttributeView;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -43,6 +46,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * lookup normally happens on a worker thread, so the constructor performs no disk I/O at all.
  */
 public final class PersistentTranslationCache implements TranslationStore {
+    /** Sits next to {@code universal-translator.properties} in the game instance's config folder. */
+    public static final String FILE_NAME = "universal-translator-cache.properties";
     /** Changed entries tolerated before a rewrite is forced. */
     private static final int UNSAVED_ENTRIES_BEFORE_FLUSH = 64;
     /** Longest a changed entry may wait for the next rewrite, in milliseconds. */
@@ -60,8 +65,22 @@ public final class PersistentTranslationCache implements TranslationStore {
     private static final long MAXIMUM_CACHE_FILE_BYTES = 64L * 1024L * 1024L;
     /** Length of a {@link #hash(String)} result, which is the only key shape this class writes. */
     private static final int HASH_HEX_LENGTH = 64;
-    /** Longest {@link #flush()} waits for a read that is still in flight before giving up. */
-    private static final long LOAD_WAIT_MILLIS = 2_000L;
+    /**
+     * Longest {@link #flush()} waits for a read that is still in flight before giving up. Owned by
+     * {@link ShutdownBudget}, whose teardown sum has to cover this wait as well.
+     */
+    private static final long LOAD_WAIT_MILLIS = ShutdownBudget.CACHE_FLUSH_WAIT_MILLIS;
+    /**
+     * Copies of one unreadable file kept aside. The first copy takes the plain {@code .unreadable}
+     * name and every later one a sequence number, so a second corruption cannot overwrite the only
+     * copy of what the first failed read was protecting.
+     */
+    private static final int MAXIMUM_PRESERVED_COPIES = 8;
+    /**
+     * Age after which a temporary file left behind by a killed process is deleted by the next write.
+     * A live write never takes this long, so an in-flight temporary of another instance is safe.
+     */
+    private static final long ORPHAN_TEMPORARY_MILLIS = 3_600_000L;
 
     /**
      * One state object per cache file path rather than one lock per instance. {@code initialize()} on
@@ -116,8 +135,10 @@ public final class PersistentTranslationCache implements TranslationStore {
      * Guarded by {@code this}. True when the file exists but could not be read. Such a session never
      * writes back what it holds: it knows only the entries it translated itself, so persisting them
      * would replace a full cache file with a near-empty one. It can still carry out {@link #clear()},
-     * which is the way out of that state. Never reset, so a single failed read keeps the file intact
-     * until the next session reads it again.
+     * which is the way out of that state. Stays set for the session whenever the file may still be
+     * intact -- a locked or half-synced one is worth keeping; a file whose content cannot be parsed
+     * is moved aside instead and this flag stays clear, because such a file cannot be read on the
+     * next launch either.
      */
     private boolean loadFailed;
     /** Guarded by {@code this}. Bumped by every in-memory mutation, including {@link #clear()}. */
@@ -151,8 +172,11 @@ public final class PersistentTranslationCache implements TranslationStore {
      * instance wrote. It only orders this instance's own writes; across instances the file's
      * {@link PathState#generation} is what decides whether a snapshot may replace the file or has to
      * be merged into it.
+     *
+     * <p>{@code volatile} because {@link #flush()} reads it to decide whether there is anything left
+     * to write, before it takes the path monitor every write holds.
      */
-    private long persistedRevision;
+    private volatile long persistedRevision;
     /**
      * Guarded by the path monitor. The file generation this instance last read or wrote. When the
      * shared generation has moved past it, another instance wrote the file in the meantime and this
@@ -167,6 +191,11 @@ public final class PersistentTranslationCache implements TranslationStore {
     private long observedClearEpoch;
     /** Guarded by the path monitor. Counts failed writes; only the first one reaches the log. */
     private int failedWrites;
+    /**
+     * Guarded by the path monitor. Set once the temporary files of an earlier session were swept, so
+     * the configuration directory is listed once per cache instead of on every write.
+     */
+    private boolean orphansSwept;
 
     /**
      * The signature keeps {@code IOException} for every existing platform caller, but this
@@ -468,24 +497,58 @@ public final class PersistentTranslationCache implements TranslationStore {
     }
 
     /**
-     * Keeps a file that could not be read out of the way of {@link #clear()}'s empty snapshot.
+     * Keeps a file that could not be read out of the way of the snapshot that replaces it.
      *
      * <p>Best effort by construction: the write that follows either way replaces the target, so a
      * failed move leaves exactly the behaviour this class had before -- losing the file is simply no
      * longer the only outcome.
+     *
+     * @return {@code true} when the unreadable file is now stored under a {@code .unreadable} name,
+     *     so nothing of it can be lost by writing a fresh one
      */
-    private void preserveUnreadableFile() {
+    private boolean preserveUnreadableFile() {
         try {
             if (!Files.exists(file)) {
-                return;
+                return false;
             }
-            Path preserved = file.resolveSibling(file.getFileName().toString() + ".unreadable");
+            Path preserved = freePreservedPath();
+            if (preserved == null) {
+                return false;
+            }
             Files.move(file, preserved, StandardCopyOption.REPLACE_EXISTING);
+            // The copy carries the same translated text the cache file itself does, and a copy that
+            // inherits the default mode of a shared profile is the leak the cache file is restricted
+            // against in the first place.
+            restrictToOwnerBestEffort(preserved);
             DebugLog.global().log("cache", "unreadable-kept",
                     "file", preserved.getFileName().toString());
+            return true;
         } catch (IOException | RuntimeException failed) {
             DebugLog.global().logFailure("cache-preserve", failed);
+            return false;
         }
+    }
+
+    /**
+     * A name no earlier copy occupies. The first copy keeps the plain {@code .unreadable} suffix so
+     * the existing name still means the same thing; every later one is numbered.
+     */
+    private Path freePreservedPath() {
+        Path name = file.getFileName();
+        if (name == null) {
+            return null;
+        }
+        Path first = file.resolveSibling(name.toString() + ".unreadable");
+        if (!Files.exists(first)) {
+            return first;
+        }
+        for (int index = 2; index <= MAXIMUM_PRESERVED_COPIES; index++) {
+            Path candidate = file.resolveSibling(name.toString() + ".unreadable-" + index);
+            if (!Files.exists(candidate)) {
+                return candidate;
+            }
+        }
+        return first;
     }
 
     /**
@@ -527,6 +590,15 @@ public final class PersistentTranslationCache implements TranslationStore {
             if (flushing) {
                 // The running writer re-reads the map once it finishes, so it will carry this state.
                 dirty = true;
+                return;
+            }
+            if (revision == persistedRevision && !mergeWithFile) {
+                // Nothing has changed since the last write reached the file. The path monitor below
+                // only rejects a *stale* snapshot, so an unchanged one still copied the whole map,
+                // stored every entry again and moved a new file into place: one session retirement,
+                // or one settings save, was one full rewrite of up to the entry cap even when that
+                // session had translated nothing. The merge path is the exception: there the write
+                // exists to fold the file's own entries back in.
                 return;
             }
             flushing = true;
@@ -710,12 +782,23 @@ public final class PersistentTranslationCache implements TranslationStore {
     }
 
     /**
-     * Records an unusable cache file and turns persistence off for this session. Translation keeps
-     * running from memory, which is the cheap side of the trade: overwriting the file with the empty
-     * or partial map a failed read produced would throw away everything the file still holds.
+     * Records an unusable cache file. Translation keeps running from memory, which is the cheap side
+     * of the trade: overwriting the file with the empty or partial map a failed read produced would
+     * throw away everything the file still holds. Persistence stays off for the session unless the
+     * file's content is what cannot be read -- that copy is kept aside and writing resumes, because
+     * no later launch could read it either.
      */
     private synchronized void markLoadFailed(Exception failure) {
-        loadFailed = true;
+        // A file whose content cannot be parsed will not become parseable on the next launch either,
+        // so latching persistence off left the cache dead for the rest of the process and for every
+        // launch after it: nothing else in this class calls clear(), which was the only repair path,
+        // and clear() is reached only by an owner that could read a generation out of that same
+        // file. Moving the unparseable copy aside keeps it and lets the write path stay alive,
+        // exactly as the oversized branch of load() already does. A locked file (any other
+        // IOException) keeps the old behaviour: the next launch retries it.
+        boolean corrupt = failure instanceof IllegalArgumentException
+                || failure instanceof MalformedInputException;
+        loadFailed = !(corrupt && preserveUnreadableFile());
         // Sharing one instance per path made this flag outlive its cause: a file that was locked,
         // half-synced or briefly unreadable for one read stayed unreadable and unwritable until the
         // process ended, and only deleting the file by hand brought the cache back. Dropping the
@@ -893,6 +976,13 @@ public final class PersistentTranslationCache implements TranslationStore {
                 if (parent != null) {
                     Files.createDirectories(parent);
                 }
+                if (!orphansSwept) {
+                    // A process killed between the write and the move leaves a complete copy of the
+                    // cache under a unique ".tmp" name that nothing else ever looks at, and the
+                    // configuration directory is the folder launchers and cloud clients sync.
+                    orphansSwept = true;
+                    deleteOrphanTemporaries();
+                }
                 // Unique per attempt. Writers on the same path used to share one "<file>.tmp" name,
                 // and the default TRUNCATE_EXISTING of newBufferedWriter let the later writer cut off
                 // the file the earlier one was still filling before both moved it into place.
@@ -903,10 +993,16 @@ public final class PersistentTranslationCache implements TranslationStore {
                 try (Writer writer = Files.newBufferedWriter(temporary, StandardCharsets.UTF_8)) {
                     properties.store(writer, "MC Auto Translation Tool cache; source keys are SHA-256 hashes");
                 }
+                // Restricted before the move as well: the temporary exists for the lifetime of the
+                // write and holds the same plaintext the target does.
+                restrictToOwnerBestEffort(temporary);
                 if (moveIntoPlace(temporary)) {
                     persistedRevision = snapshotRevision;
                     observedGeneration = ++state.generation;
                     observedClearEpoch = state.clearEpoch;
+                    // The move replaces the target with the temporary's inode, so the mode the
+                    // previous file carried does not survive it: every write has to apply this again.
+                    restrictToOwnerBestEffort(file);
                 }
             } catch (IOException failedWrite) {
                 // Translation must remain available even when the cache directory is read-only. The
@@ -1027,6 +1123,67 @@ public final class PersistentTranslationCache implements TranslationStore {
             throw race;
         }
         return true;
+    }
+
+    /**
+     * Applies owner-only permissions when the file store can carry them, and says nothing otherwise.
+     *
+     * <p>This runs on every write, so the capability is asked first: a Windows profile already has a
+     * per-user ACL, and asking would otherwise put one "unsupported" line into the debug log every
+     * few seconds. The file holds the translated values in plain text; only its keys are hashed.
+     */
+    private static void restrictToOwnerBestEffort(Path target) {
+        try {
+            if (!Files.getFileStore(target).supportsFileAttributeView(PosixFileAttributeView.class)) {
+                return;
+            }
+        } catch (IOException | RuntimeException unsupported) {
+            return;
+        }
+        LocalConfigSecurity.restrictToOwner(target);
+    }
+
+    /**
+     * Deletes the temporary files of this cache that an earlier process left behind.
+     *
+     * <p>The name of every attempt is unique, so a temporary that outlived its process is never
+     * reused and never read: it only accumulates a full copy of the translated text in the folder
+     * that launchers and cloud clients sync. Only names this class produces are touched, and only
+     * once they are older than {@link #ORPHAN_TEMPORARY_MILLIS}, so a write in flight is never a
+     * candidate.
+     */
+    private void deleteOrphanTemporaries() {
+        Path name = file.getFileName();
+        Path parent = file.toAbsolutePath().getParent();
+        if (name == null || parent == null) {
+            return;
+        }
+        long deadline = System.currentTimeMillis() - ORPHAN_TEMPORARY_MILLIS;
+        try (DirectoryStream<Path> stream =
+                     Files.newDirectoryStream(parent, name.toString() + ".*.tmp*")) {
+            for (Path orphan : stream) {
+                if (lastModifiedMillis(orphan) > deadline) {
+                    continue;
+                }
+                try {
+                    Files.deleteIfExists(orphan);
+                } catch (IOException ignored) {
+                    // Housekeeping must never be the reason a write fails; the next one retries.
+                }
+            }
+        } catch (IOException | RuntimeException unreadable) {
+            // A directory that cannot be listed is not a reason to skip the write itself.
+        }
+    }
+
+    /** Last modification time in milliseconds, or {@code Long.MAX_VALUE} when it cannot be read. */
+    private static long lastModifiedMillis(Path candidate) {
+        try {
+            return Files.getLastModifiedTime(candidate).toMillis();
+        } catch (IOException unreadable) {
+            // An unknown age counts as recent, so a file this class cannot date is never deleted.
+            return Long.MAX_VALUE;
+        }
     }
 
     /**

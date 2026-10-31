@@ -62,9 +62,18 @@ public final class RenderTranslationSession implements AutoCloseable {
      * Slots of the tooltip-line memos. Two or three lists are on screen at once (an item tooltip next
      * to a HUD panel, a WAILA-style overlay over the inventory), and with a single slot an alternating
      * A/B/A/B sequence missed on every frame. Four slots cover the alternating case while keeping only
-     * a few dozen line references alive.
+     * a few dozen line references alive; eight also keep two lists that are looked up with different
+     * kinds, and the line-count record they share, from overwriting each other between frames.
      */
-    private static final int LINE_MEMO_SLOTS = 4;
+    private static final int LINE_MEMO_SLOTS = 8;
+    /**
+     * Shortest gap between two line-count-mismatch log lines for the same slot.
+     *
+     * <p>The record of a mismatch is remembered per slot, so two differing lists that take turns in
+     * one slot overwrite each other on every frame and "one line per mismatching list" became one line
+     * per frame. The verdict itself is still remembered on every frame; only the line is rate limited.
+     */
+    private static final long SPLIT_FAILURE_LOG_INTERVAL_MILLIS = 10_000L;
 
     private final TranslationCoordinator coordinator;
     private final String providerCategory;
@@ -140,10 +149,15 @@ public final class RenderTranslationSession implements AutoCloseable {
      *
      * <p>That verdict is final for as long as both the lines and the translation are unchanged, but it
      * used to leave no trace at all: every frame the tooltip was drawn re-split the translation and
-     * threw it away again. Four slots, like the memos it belongs to.
+     * threw it away again. One slot per line memo, like the memos it belongs to.
      */
     private final AtomicReferenceArray<SplitFailure> splitFailures =
             new AtomicReferenceArray<SplitFailure>(LINE_MEMO_SLOTS);
+    /**
+     * When a line-count mismatch was last logged, per slot. Plain longs: only the render thread writes
+     * them, and a lost update costs at most one extra log line.
+     */
+    private final long[] lastSplitLogMillis = new long[LINE_MEMO_SLOTS];
     /**
      * Identity memo for the formatting-stripped form used by the re-entry guard, one slot per line
      * instead of one slot per session. Only consulted for text that carries a formatting code, which
@@ -286,6 +300,20 @@ public final class RenderTranslationSession implements AutoCloseable {
         if (rejected.containsKey(key)) {
             return original;
         }
+        // The retry backoff and the in-flight slot are answered from the key alone. Both maps are only
+        // ever written for text that already passed the keyword scan and the heuristic pass below, and
+        // setBlockedKeywords() clears them together with the memos, so neither verdict can change
+        // while the entry is present. Running those two scans first made every line that was already
+        // out or backing off pay a lower-case copy, a keyword loop, two regex passes and a code point
+        // walk per frame to re-derive the same "hand the original back".
+        long now = System.currentTimeMillis();
+        Long retryAt = retryAfter.get(key);
+        if (retryAt != null && retryAt.longValue() > now) {
+            return original;
+        }
+        if (pending.containsKey(key)) {
+            return original;
+        }
         // A keyword-filtered line and a heuristics-rejected line are the same thing to this cache:
         // the caller gets the original back. Both are remembered, so the keyword scan (a lower-case
         // copy plus a contains per keyword) runs once per string instead of once per frame.
@@ -303,11 +331,6 @@ public final class RenderTranslationSession implements AutoCloseable {
             return original;
         }
 
-        Long retryAt = retryAfter.get(key);
-        long now = System.currentTimeMillis();
-        if (retryAt != null && retryAt.longValue() > now) {
-            return original;
-        }
         // A busy multiplayer lobby can expose thousands of rapidly changing
         // strings in a few frames. Drop excess render-time work and try again on
         // a later frame instead of growing an unbounded queue and freezing MC.
@@ -319,9 +342,6 @@ public final class RenderTranslationSession implements AutoCloseable {
             if (pending.size() >= MAX_PENDING_TRANSLATIONS) {
                 return original;
             }
-        }
-        if (pending.containsKey(key)) {
-            return original;
         }
         // A global font hook can see hundreds of unique labels per second in a lobby.
         // Keep the local model from running at 100% continuously. Interactive and HUD
@@ -691,6 +711,14 @@ public final class RenderTranslationSession implements AutoCloseable {
             return;
         }
         splitFailures.set(slot, new SplitFailure(originals, kind, translatedText));
+        long now = System.currentTimeMillis();
+        if (now - lastSplitLogMillis[slot] < SPLIT_FAILURE_LOG_INTERVAL_MILLIS) {
+            // The verdict is recorded above either way; only the line waits. Two differing lists that
+            // share this slot replace each other's record on every frame, and each replacement used to
+            // append a line from the render thread.
+            return;
+        }
+        lastSplitLogMillis[slot] = now;
         DebugLog.global().log("render-lines", "line-count-mismatch",
                 "lines", Integer.toString(originals.size()),
                 "translated", Integer.toString(translatedLines));
@@ -1282,6 +1310,8 @@ public final class RenderTranslationSession implements AutoCloseable {
             joinedLines.set(slot, null);
             bilingualLinesMemos.set(slot, null);
             splitFailures.set(slot, null);
+            // The record it timed is gone, so the next mismatch is a new one and has to be logged.
+            lastSplitLogMillis[slot] = 0L;
         }
         for (int slot = 0; slot < STRIPPED_MEMO_SLOTS; slot++) {
             strippedInputs.set(slot, null);
@@ -1403,10 +1433,11 @@ public final class RenderTranslationSession implements AutoCloseable {
     /**
      * Releases this session without waiting for workers that are parked in a provider read.
      *
-     * <p>For a session the player has already replaced. Its teardown runs on the reaper, and a burst
-     * of switches queues one of these per press: paying the full five-second worker budget on each
-     * one is what made the reaper's backlog last minutes. The store is still flushed, so a burst of
-     * toggles cannot lose the translations that were already answered.
+     * <p>For a session the player has already replaced. A burst of switches queues one of these per
+     * press, and paying the full five-second worker budget on each one is what made a teardown
+     * backlog last minutes; this call returns as soon as the store is flushed and the provider is
+     * closed, and the provider belongs to this session alone. The store is still flushed first, so a
+     * burst of toggles cannot lose the translations that were already answered.
      */
     public void closeWithoutWaiting() {
         synchronized (this) {

@@ -24,20 +24,46 @@ public final class ShutdownBudget {
      * there has to come back here, or the budget below stops covering it.
      */
     public static final long CACHE_FLUSH_WAIT_MILLIS = 2_000L;
-    /** Longest a session's provider teardown may take after its workers have drained. */
+    /**
+     * Longest the store flush's own write may take: the snapshot, the {@code Properties.store} of up
+     * to the whole entry cap, the temporary file and the atomic move that publishes it, and on the
+     * merge path one more read of the file on disk.
+     *
+     * <p>That write is not a wait that can be bounded from inside, so it used to be covered by nothing
+     * but the slack at the end of the sum below -- while it is the one piece of the teardown whose
+     * interruption loses data instead of time.
+     */
+    public static final long CACHE_WRITE_MILLIS = 3_000L;
+    /**
+     * Longest a session's provider teardown may take after its workers have drained. A close that
+     * skipped the wait for them hands the same teardown to a background thread, which gives the
+     * workers this bound first, so the number covers that path too.
+     */
     public static final long PROVIDER_CLOSE_MILLIS = 1_000L;
     /**
      * Longest a client's stop hook waits for the teardown thread it started.
      *
-     * <p>Deliberately longer than everything that thread does inside the budget: the configuration
-     * write it drains first, the session close that waits {@link #SESSION_CLOSE_MILLIS} for its
-     * workers, the store flush that follows the close (which may wait
-     * {@link #CACHE_FLUSH_WAIT_MILLIS} for a read still in flight before writing the deferred burst),
-     * and the provider teardown. A close that is cut off halfway leaves the store flush inside it
-     * unfinished, and no later path writes that burst.
+     * <p>Long enough for everything that thread does <em>before</em> the worker wait: the
+     * configuration write it drains first, then the session close's store flush -- which may wait
+     * {@link #CACHE_FLUSH_WAIT_MILLIS} for a read still in flight and then spends up to
+     * {@link #CACHE_WRITE_MILLIS} writing the deferred burst. That flush now runs before the close
+     * waits for its workers, so a hook that stops waiting here loses the wait and never the burst: the
+     * entries are already on disk, and the workers it stops waiting for were interrupted and can only
+     * report failures nobody reads. The provider teardown it also drops is covered on the way out by
+     * the offline provider's own JVM shutdown hook.
+     *
+     * <p>Shorter than {@link #TEARDOWN_JOIN_MILLIS} on purpose: that one is the full synchronous
+     * bound, and it is what "close the game" used to wait -- a window with the window already gone and
+     * the process still alive behind it.
+     */
+    public static final long HOOK_JOIN_MILLIS = CONFIG_WRITE_MILLIS
+            + CACHE_FLUSH_WAIT_MILLIS + CACHE_WRITE_MILLIS + 500L;
+    /**
+     * Longest a teardown that cannot be cut off may take: the configuration write, the session close
+     * with its worker wait and store flush, and the provider teardown.
      */
     public static final long TEARDOWN_JOIN_MILLIS = CONFIG_WRITE_MILLIS + SESSION_CLOSE_MILLIS
-            + CACHE_FLUSH_WAIT_MILLIS + PROVIDER_CLOSE_MILLIS + 1_000L;
+            + CACHE_FLUSH_WAIT_MILLIS + CACHE_WRITE_MILLIS + PROVIDER_CLOSE_MILLIS + 1_000L;
 
     private ShutdownBudget() {
     }

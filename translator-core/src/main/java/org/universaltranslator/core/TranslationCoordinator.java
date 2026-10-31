@@ -458,7 +458,12 @@ public final class TranslationCoordinator implements AutoCloseable {
                 pendingCommit.rollback(cache);
                 throw rejected;
             }
-            pendingCommit.commit();
+            // A request the close sweep already settled as "session closed" must not be counted as a
+            // success afterwards: its caller never receives this result, and the counters are
+            // process-wide, so the extra success would never be balanced by anything.
+            if (!created.isDone()) {
+                pendingCommit.commit();
+            }
             created.complete(TranslationResult.success(text, restored));
         } catch (Exception exception) {
             created.complete(settleFailure(text, exception));
@@ -744,6 +749,16 @@ public final class TranslationCoordinator implements AutoCloseable {
                 DebugLog.global().logFailure(providerId, failure);
                 throw failure;
             }
+            // The session can be closed while this worker is parked in the provider read: the sweep in
+            // close() reports that request as closed, so this answer is never shown to anybody. Storing
+            // it would put a translation no caller ever received into the shared store -- after the
+            // close already flushed -- and counting it as a success would add one to process-wide
+            // counters that the caller's own view of the request does not contain. The failure branch
+            // above is the exit that keeps the request accounted for.
+            if (closed.get()) {
+                pendingCommit.recordFailure();
+                throw new SessionClosedException("Translation session was closed");
+            }
             pendingCommit.recordSuccess(providerId, elapsedMillis(startedAt));
             // The key is journalled before the write because a store may accept the entry and only
             // then fail while persisting it; removing a key that was never stored is a no-op.
@@ -775,9 +790,15 @@ public final class TranslationCoordinator implements AutoCloseable {
      * <p>Zero is the path a client takes when it drops a session the player has already replaced: a
      * burst of switches (holding the toggle key down, a HUD drag) queues one teardown per press, and
      * every one of them waiting the full budget turns the backlog into minutes of held resource. The
-     * wait itself is what keeps an interrupted worker from looping back into a provider that is about
-     * to be torn down, so it stays the default; only the caller that has already dropped the session
-     * for good skips it. The store flush below runs either way.
+     * wait is what keeps an interrupted worker from looping back into a provider that is about to be
+     * torn down, so it stays the default; the caller that has already dropped the session for good
+     * skips it, and therefore also accepts that its workers may still be inside the provider when it
+     * goes.
+     *
+     * <p>Everything that has to be durable happens before that wait: the store is flushed right after
+     * the interrupt, so a caller that cuts this call short -- a stop hook joins it with a budget --
+     * loses no deferred entry. Nothing is queued for a later thread and no thread is started here: the
+     * provider teardown runs on this thread either way.
      */
     void close(long waitMillis) {
         if (!closed.compareAndSet(false, true)) {
@@ -801,44 +822,64 @@ public final class TranslationCoordinator implements AutoCloseable {
         // a future is the one that counts, every later call is a no-op, so no request is
         // settled twice even though both sweeps can see the same entry.
         settleOpenRequests();
+        // The store may coalesce writes, so the last burst is only durable once this runs -- and it has
+        // to run unconditionally. No store implementation has a background flush of its own (the
+        // disk-backed one says so in its own javadoc), and the interface contract puts the call on the
+        // owner, so skipping it here loses the coalesced window outright the moment this session is
+        // dropped.
+        //
+        // Before the wait, not after it: the flush takes its own snapshot under its own guard, so it
+        // never needed the workers to stop, and running it first puts the deferred burst on disk
+        // ahead of the only segment of this teardown a caller can cut off -- a client's stop hook
+        // joins this call with a budget, and behind a five-second worker wait the flush was the piece
+        // that budget threw away.
+        cache.flush();
         // Wait for interrupted workers to leave provider.translate(...) before the provider
         // is torn down. Otherwise a worker can loop back into a retrying provider (for
         // example ResilientTranslationProvider retrying an IOException) against an
-        // already-closed endpoint, the offline provider kills its child process under a
-        // live loopback call, and a replacement session races this one on the same
-        // cache .tmp file. Proceed after the bounded wait so a stuck provider cannot
+        // already-closed endpoint and the offline provider kills its child process under a
+        // live loopback call. Proceed after the bounded wait so a stuck provider cannot
         // hang Minecraft shutdown.
         boolean workersStopped = false;
         try {
             workersStopped = executor.awaitTermination(
                     waitMillis, TimeUnit.MILLISECONDS);
-            if (!workersStopped) {
+            if (!workersStopped && waitMillis > 0L) {
                 // The debug log instead of stderr: this used to be the only core path that wrote to
                 // stdout regardless of the debug-log switch, so it printed with no level and no
-                // timestamp and could not be turned off.
+                // timestamp and could not be turned off. Only a close that asked for a wait can fail
+                // to get one: a caller that skips the wait (a replaced session) expects its workers to
+                // outlive it, and recording that as an anomaly turned every settings change into
+                // shutdown noise.
                 DebugLog.global().log("shutdown", "workers", "did-not-stop",
                         "timeoutMillis", String.valueOf(waitMillis));
             }
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
         }
-        // The store may coalesce writes, so the last burst is only durable once this runs -- and it has
-        // to run unconditionally. No store implementation has a background flush of its own (the
-        // disk-backed one says so in its own javadoc), and the interface contract puts the call on the
-        // owner, so skipping it here loses the coalesced window outright the moment this session is
-        // dropped. A worker that outlived the timeout is not a reason to skip it either: the flush
-        // takes its own snapshot under its own guard, so an entry written afterwards is at worst left
-        // out of this snapshot instead of taking the whole window down with it.
-        cache.flush();
-        if (!workersStopped) {
+        if (!workersStopped && waitMillis > 0L) {
+            // Same reason as the line above: a close that never asked for a wait cannot have been cut
+            // off by one.
             DebugLog.global().log("shutdown", "cache", "flushed-with-live-workers");
         }
         // Graceful, so a completion that is already queued still settles its future; no new request
         // can be registered after close(), and the sweep above has settled everything still in flight.
         completions.shutdown();
         if (provider instanceof AutoCloseable) {
+            final AutoCloseable closing = (AutoCloseable) provider;
+            if (!workersStopped) {
+                // One torn-down provider per dropped session used to leave one more live session
+                // behind: a close that had not got its workers back handed the teardown to a thread of
+                // its own, so holding the toggle key down stacked hundreds of sessions, each with its
+                // own worker pool and -- offline -- its own child process, all of them waiting out the
+                // same bound. The provider belongs to this session alone (the platform builds one per
+                // session), so tearing it down here cannot reach a live one, and the worker that is
+                // still inside provider.translate(...) has already been interrupted: it can only
+                // report a failure nobody is waiting for.
+                DebugLog.global().log("shutdown", "provider", "closed-with-live-workers");
+            }
             try {
-                ((AutoCloseable) provider).close();
+                closing.close();
             } catch (Exception ignored) {
                 // Minecraft is shutting down or applying a replacement configuration.
             }
