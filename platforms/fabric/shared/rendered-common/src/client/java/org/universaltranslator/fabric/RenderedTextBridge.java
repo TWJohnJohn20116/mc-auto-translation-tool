@@ -5,7 +5,7 @@ import net.minecraft.text.OrderedText;
 import net.minecraft.text.Style;
 import net.minecraft.text.Text;
 import net.minecraft.text.StringVisitable;
-import net.minecraft.util.CharacterVisitor;
+import net.minecraft.text.CharacterVisitor;
 import net.minecraft.util.Formatting;
 import org.universaltranslator.core.DebugLog;
 import org.universaltranslator.core.TranslationTextColor;
