@@ -888,10 +888,7 @@ tasks.register("validateSharedPlatformLayouts") {
                 "translator-core/src/main/java/org/universaltranslator/core/HudLabelCache.java",
                 // 26.x paints its own HUD label and still resolves it from the literal; it is mounted
                 // by every fabric 26.x target and ships in fabric-all.
-                "platforms/fabric/26.x/shared/common/src/client/java/org/universaltranslator/fabric/mixin/HudIndicatorPainter.java",
-                // The legacy Forge jars (1.8.9 and 1.12.2) have no label cache at all, so this is
-                // their only HUD label path.
-                "platforms/forge/shared/legacy-common/src/main/java/org/universaltranslator/forge/legacy/LegacyClientEvents.java"
+                "platforms/fabric/26.x/shared/common/src/client/java/org/universaltranslator/fabric/mixin/HudIndicatorPainter.java"
         ]
         // Same reasoning for the interval: these are the only HUD label intervals still written as a
         // literal instead of taking HudLabelCache.REFRESH_MILLIS.
