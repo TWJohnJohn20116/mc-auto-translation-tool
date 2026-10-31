@@ -154,10 +154,11 @@ test("server-renders the public-benefit project home page", async () => {
   // `/og-card.png` to `<host>/og-card.png` (the base path is discarded), which is
   // an image no server hosts.
   //
-  // 這條斷言必須雙向明確。只驗「結尾是 /og-card.png」時，正確的絕對 URL 與沒有
-  // 設環境變數時的相對路徑都通過，而社交平台不接受相對 URL —— 兩者結果天差地遠，
-  // 測試卻分不出來。所以：有設 `NEXT_PUBLIC_SITE_URL` 就要求同來源的絕對 URL，
-  // 沒設就要求正好是 `/og-card.png`（該模式在 website/README.md 的部署章節有說明）。
+  // 這條斷言必須雙向明確。只驗「結尾是 /og-card.png」時，正確的絕對 URL 與指向錯誤網域的
+  // URL 都通過，測試卻分不出來。所以：有設 `NEXT_PUBLIC_SITE_URL` 就要求同來源的絕對 URL；
+  // 沒設時 Next 會拿請求來源（本測試是 http://localhost:3000）補全相對路徑，因此要求
+  // pathname 正好是 `/og-card.png` 且來源只能是那個 loopback（該模式在 website/README.md
+  // 的部署章節有說明）。
   const socialImages = [
     ...html.matchAll(
       /<meta[^>]+(?:property="og:image"|name="twitter:image")[^>]+content="([^"]+)"/g,
@@ -180,10 +181,11 @@ test("server-renders the public-benefit project home page", async () => {
       );
       assert.equal(new URL(content).pathname, "/og-card.png", content);
     } else {
+      assert.equal(new URL(content).pathname, "/og-card.png", content);
       assert.equal(
-        content,
-        "/og-card.png",
-        `未設定 NEXT_PUBLIC_SITE_URL 時社交預覽圖只會是相對路徑（等於沒有預覽圖）：${content}`,
+        new URL(content).origin,
+        "http://localhost:3000",
+        `未設定 NEXT_PUBLIC_SITE_URL 時社交預覽圖不得帶上其他網域（Next 會用請求來源補全）：${content}`,
       );
     }
   }

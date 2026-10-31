@@ -83,7 +83,17 @@ final class HudIndicatorPainter {
     }
 
     /** Draws the indicator square, the outgoing preview and the optional label for this frame. */
-    static void paint(GuiGraphicsExtractor graphics) {
+    static void paint(GuiGraphicsExtractor graphics, boolean hudHidden) {
+        // The injection sits at the RETURN of the HUD render, which still runs while F1 hides the
+        // HUD: without this the square and its label stayed on an otherwise empty screen and were
+        // painted over the chat and the hotbar, because RETURN is the last thing that happens.
+        //
+        // The flag is passed in instead of read here: 26.1 to 26.1.2 keep the HUD-hidden flag on
+        // {@code Gui.hideGui} while 26.2 and 26.3 renamed it to {@code Gui.hide}, and this file is
+        // compiled once for all three targets, so a field access would only build for one of them.
+        if (hudHidden) {
+            return;
+        }
         // Read the settings first: a disabled indicator draws nothing at all.
         // One read per frame: the runtime publishes a finished snapshot, and this method needs
         // four different fields off the same one.
@@ -108,12 +118,6 @@ final class HudIndicatorPainter {
             case ALWAYS:
             default:
                 break;
-        }
-        // The injection sits at the RETURN of the HUD render, which still runs while F1 hides the
-        // HUD: without this the square and its label stayed on an otherwise empty screen and were
-        // painted over the chat and the hotbar, because RETURN is the last thing that happens.
-        if (Minecraft.getInstance().options.hideGui) {
-            return;
         }
         HudIndicatorCorner corner = settings.getCorner();
         int margin = settings.getMargin();

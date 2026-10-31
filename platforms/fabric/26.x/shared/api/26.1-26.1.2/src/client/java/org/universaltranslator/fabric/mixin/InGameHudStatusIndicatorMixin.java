@@ -1,6 +1,7 @@
 package org.universaltranslator.fabric.mixin;
 
 import net.minecraft.client.DeltaTracker;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import org.spongepowered.asm.mixin.Mixin;
@@ -28,6 +29,7 @@ abstract class InGameHudStatusIndicatorMixin {
             at = @At("RETURN"))
     private void universalTranslator$renderStatusIndicator(
             GuiGraphicsExtractor graphics, DeltaTracker deltaTracker, CallbackInfo callback) {
-        HudIndicatorPainter.paint(graphics);
+        // 26.1 to 26.1.2 keep the HUD-hidden flag on Gui.hideGui; the 26.2+ layer renamed it.
+        HudIndicatorPainter.paint(graphics, Minecraft.getInstance().gui.hideGui);
     }
 }
