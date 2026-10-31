@@ -106,7 +106,11 @@ public final class TranslationRenderContext {
             LATCHED_AT.get()[KIND_LATCH] = System.nanoTime();
         }
         if (kinds.size() >= MAX_DEPTH) {
+            // Starting over is a new outermost latch, so it gets a timestamp of its own. Leaving the
+            // old one behind compared the recovery window against a latch that no longer exists, and
+            // zeroing it left the leak detection off until the stack emptied again.
             kinds.clear();
+            LATCHED_AT.get()[KIND_LATCH] = System.nanoTime();
         }
         kinds.push(kind);
     }
@@ -117,7 +121,9 @@ public final class TranslationRenderContext {
             kinds.pop();
         }
         if (kinds.isEmpty()) {
-            KINDS.remove();
+            // The deque itself stays on the thread: this runs for every surface of every frame, and
+            // removing it meant re-allocating one deque plus its ThreadLocalMap entry per surface per
+            // frame while the very next call rebuilt them. reset() is what releases it.
             LATCHED_AT.get()[KIND_LATCH] = 0L;
         }
     }

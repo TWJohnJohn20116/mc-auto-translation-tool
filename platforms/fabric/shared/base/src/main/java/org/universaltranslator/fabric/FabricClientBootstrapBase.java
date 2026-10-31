@@ -3,6 +3,7 @@ package org.universaltranslator.fabric;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.loader.api.FabricLoader;
 import org.universaltranslator.core.LogMessages;
+import org.universaltranslator.core.ShutdownBudget;
 import org.universaltranslator.core.TranslationResult;
 import org.universaltranslator.core.TranslationStatusLocalizer;
 
@@ -26,6 +27,14 @@ import org.universaltranslator.core.TranslationStatusLocalizer;
  */
 public abstract class FabricClientBootstrapBase implements ClientModInitializer {
     private static final long FAILURE_NOTIFICATION_COOLDOWN_MILLIS = 60_000L;
+    /**
+     * The thread a blocked session close runs on.
+     *
+     * <p>Also the marker the stop hook reads: five generations already start this thread themselves
+     * and hand it the hook, so a hook that finds itself on it runs the close inline instead of
+     * nesting a second one.
+     */
+    private static final String TEARDOWN_THREAD_NAME = "universal-translator-stop";
 
     private boolean connectedLastTick;
     private int joinHintTicks = -1;
@@ -100,22 +109,71 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
     protected abstract boolean toggleKeyPressed();
 
     /**
-     * True when {@code screen} is a chat screen.
+     * The names {@code ChatScreen} is known by, one per naming scheme this mod ships against.
      *
-     * <p>Answered by class name rather than {@code instanceof}: this base is compiled once for every
+     * <p>Answered by class rather than {@code instanceof}: this base is compiled once for every
      * generation from 1.14 to 26.3, and a compile-time {@code ChatScreen} reference would tie it to
-     * one generation's package. <b>Every shipped generation overrides this with an exact
-     * {@code instanceof}</b>, because the name comparison cannot work in a production client: the
-     * game remaps {@code ChatScreen} to an intermediary name ({@code net.minecraft.class_408} on
-     * 1.14+), so both suffixes below are false at runtime and the chat-screen guard silently
-     * disappeared. The string form stays as the answer for a tree that cannot name the class.
+     * one generation's package. A bare name comparison is not enough either, because the game remaps
+     * the class: {@code net.minecraft.class_408} in a production 1.14+ client, the yarn name in a
+     * development client, and 26.x's Mojmap package. Every shipped generation overrides
+     * {@link #isChatScreen(Object)} with an exact {@code instanceof}, but the generation that forgot
+     * to — eight of the thirteen client layers — left the chat-screen guard answering {@code false}
+     * for the whole session, so the list below is resolved once and answers for them.
      *
      * <p>Used by {@link #openSettingsFor(Object)}: while the chat screen is open, the settings key
      * belongs to the chat box, not to this mod.
      */
+    private static final String[] CHAT_SCREEN_TYPES = {
+            "net.minecraft.client.gui.screen.ChatScreen",
+            "net.minecraft.client.gui.screens.ChatScreen",
+            "net.minecraft.class_408",
+    };
+    /**
+     * The resolved form of {@link #CHAT_SCREEN_TYPES}; {@code null} until the first lookup.
+     *
+     * <p>Resolved without initializing the classes and cached for the life of the process: the
+     * entries are {@code Class} objects the class loader already holds, so there is no per-session
+     * state to release.
+     */
+    private static volatile Class<?>[] chatScreenTypes;
+
+    private static Class<?>[] chatScreenTypes() {
+        Class<?>[] resolved = chatScreenTypes;
+        if (resolved != null) {
+            return resolved;
+        }
+        java.util.List<Class<?>> found = new java.util.ArrayList<Class<?>>(CHAT_SCREEN_TYPES.length);
+        ClassLoader loader = FabricClientBootstrapBase.class.getClassLoader();
+        for (String name : CHAT_SCREEN_TYPES) {
+            try {
+                found.add(Class.forName(name, false, loader));
+            } catch (ClassNotFoundException absent) {
+                // Not one of this tree's names: try the next one.
+            } catch (LinkageError unreadable) {
+                // A name that resolves but cannot be linked is equally not an answer here.
+            }
+        }
+        resolved = found.toArray(new Class<?>[found.size()]);
+        chatScreenTypes = resolved;
+        return resolved;
+    }
+
+    /**
+     * True when {@code screen} is a chat screen.
+     *
+     * <p>Tries the resolved {@code ChatScreen} classes first and keeps the name comparison as the
+     * last resort for a tree where none of them resolves. Used by
+     * {@link #openSettingsFor(Object)}: while the chat screen is open, the settings key belongs to
+     * the chat box, not to this mod.
+     */
     protected boolean isChatScreen(Object screen) {
         if (screen == null) {
             return false;
+        }
+        for (Class<?> type : chatScreenTypes()) {
+            if (type.isInstance(screen)) {
+                return true;
+            }
         }
         String name = screen.getClass().getName();
         return name.endsWith(".ChatScreen") || name.endsWith(".ChatScreenBase");
@@ -158,7 +216,28 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
                 // Flush a queued settings write first: the teardown below can spend seconds closing
                 // the session, and a write queued behind it would never be finished.
                 FabricTranslationRuntimeBase.drainPendingSaves();
-                FabricTranslationRuntime.shutdown();
+                // The 1.8–1.13 trees already run this hook on a teardown thread of their own, so the
+                // close stays inline there and one shutdown keeps one thread. Every other generation
+                // calls the hook on the client thread, where the same close blocks "close the game"
+                // for up to five seconds with no upper bound, so it gets the bounded wait those trees
+                // already used — the budget the older copies took from ShutdownBudget.
+                if (TEARDOWN_THREAD_NAME.equals(Thread.currentThread().getName())) {
+                    FabricTranslationRuntime.shutdown();
+                    return;
+                }
+                final Thread teardown = new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        FabricTranslationRuntime.shutdown();
+                    }
+                }, TEARDOWN_THREAD_NAME);
+                teardown.setDaemon(false);
+                teardown.start();
+                try {
+                    teardown.join(ShutdownBudget.TEARDOWN_JOIN_MILLIS);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
             }
         });
         registerSendMessageHooks();

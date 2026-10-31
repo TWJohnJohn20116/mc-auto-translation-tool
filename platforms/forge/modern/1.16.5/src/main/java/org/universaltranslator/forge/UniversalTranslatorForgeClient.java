@@ -46,8 +46,29 @@ public final class UniversalTranslatorForgeClient {
         }
         configFlushHookInstalled = true;
         try {
-            Runtime.getRuntime().addShutdownHook(
-                    new Thread(ForgeTranslationRuntime::shutdown, "universal-translator-config-flush"));
+            Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    // The hook only starts the teardown and waits for it with a bound: shutdown()
+                    // drains the configuration writer and then closes the session, which waits for
+                    // workers parked in a provider read, so running it inline made "close the game"
+                    // wait for all of it with no upper limit.
+                    Thread teardown = new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            ForgeTranslationRuntime.shutdown();
+                        }
+                    }, "universal-translator-stop");
+                    teardown.setDaemon(false);
+                    teardown.start();
+                    try {
+                        teardown.join(
+                                org.universaltranslator.core.ShutdownBudget.TEARDOWN_JOIN_MILLIS);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            }, "universal-translator-config-flush"));
         } catch (IllegalStateException alreadyStopping) {
             // The JVM is already shutting down; no thread is left for a queued write to land on.
             configFlushHookInstalled = false;
@@ -181,11 +202,15 @@ public final class UniversalTranslatorForgeClient {
             }
             ForgeTranslationRuntime.initialize(updated);
             ForgeRuntimeStatusNotifier.reset();
-            // Queued off the client tick; a failed write is logged rather than shown, because the
-            // toggle itself has already taken effect in memory.
-            ForgeConfigWriter.saveOffTick(updated, failure ->
-                    UniversalTranslatorForgeMod.LOGGER.warn(
-                            "Could not persist the toggled settings", failure));
+            // Queued off the client tick. A failed write is reported on the action bar as well as
+            // logged: the toggle only took effect in memory, so a player who is told nothing keeps a
+            // setting that the next launch silently reverts.
+            ForgeConfigWriter.saveOffTick(updated, failure -> {
+                UniversalTranslatorForgeMod.LOGGER.warn(
+                        "Could not persist the toggled settings", failure);
+                client.execute(() -> client.gui.setOverlayMessage(new TranslationTextComponent(
+                        "message.universal_translator.toggle_failed"), false));
+            });
             client.gui.setOverlayMessage(new TranslationTextComponent(
                     "message.universal_translator.toggle", new TranslationTextComponent(
                     updated.enabled ? "value.universal_translator.enabled"

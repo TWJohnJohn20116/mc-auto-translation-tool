@@ -9,10 +9,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Collections;
-import java.util.concurrent.ConcurrentHashMap;
 import org.universaltranslator.core.UserAgent;
 import org.universaltranslator.core.net.CryptoSupport;
 
@@ -21,20 +21,26 @@ public final class VerifiedDownloader {
     private static final int MAX_REDIRECTS = 8;
     /** Smallest progress step reported to the caller; the final byte is always reported. */
     private static final long PROGRESS_STEP_BYTES = 1024L * 1024L;
+    /** Window in which a mirror has to deliver {@link #MINIMUM_WINDOW_BYTES}, or it is stalled. */
+    private static final long MINIMUM_THROUGHPUT_WINDOW_NANOS = 60L * 1000L * 1000L;
     /**
-     * SHA-256 mismatches a partial file may produce before its existing prefix is trusted again.
+     * Fewest bytes one window above must deliver.
      *
-     * <p>Dropping the whole partial on every mismatch is safe, and it is the first answer because the
-     * resume offset is a length nothing ever verified — keeping it made one corrupt prefix
-     * uninstallable. It is also the wrong answer for the other failure this class meets: a proxy or
-     * CDN that corrupts one range deterministically leaves every byte outside that range correct, so
-     * always restarting from zero can never converge while a kept prefix gets past it. The prefix is
-     * therefore trusted only once a full restart has been shown not to help.
+     * <p>A read timeout only bounds the silence between two reads, so a mirror that sends a few
+     * kilobytes just inside it keeps this thread for as long as it likes: at one kilobyte per
+     * twenty-nine seconds a 1.12 GB model would take a millennium. Below this rate the transfer is
+     * not downloading, and the partial file resumes next time without losing a byte.
      */
-    private static final int SHA_MISMATCH_RESTARTS_BEFORE_KEEPING_PREFIX = 2;
-    /** How many mismatches one partial file has produced in this process, keyed by its path. */
-    private static final ConcurrentHashMap<String, Integer> SHA_MISMATCH_STREAK =
-            new ConcurrentHashMap<String, Integer>();
+    private static final long MINIMUM_WINDOW_BYTES = 256L * 1024L;
+
+    /** Never cancels, so the overloads without a cancellation hook keep their old behaviour. */
+    private static final OfflineProcessSupport.CancellationCheck NEVER_CANCELLED =
+            new OfflineProcessSupport.CancellationCheck() {
+                @Override
+                public boolean isCancelled() {
+                    return false;
+                }
+            };
 
     /** Receives verified byte progress without owning any UI or platform code. */
     public interface ProgressListener {
@@ -78,6 +84,38 @@ public final class VerifiedDownloader {
             String expectedSha256,
             ProgressListener progress
     ) throws IOException {
+        try {
+            return download(sources, destination, expectedSize, expectedSha256, progress,
+                    NEVER_CANCELLED);
+        } catch (InterruptedException unreachable) {
+            // Only the overload that takes a caller supplied predicate can cancel, and this one
+            // passes a predicate that is never true.
+            Thread.currentThread().interrupt();
+            throw new IOException("Download was interrupted", unreachable);
+        }
+    }
+
+    /**
+     * Same verified download that also stops when the caller's startup attempt was superseded.
+     *
+     * <p>A model transfer is the longest lived request in the offline package and used to have no
+     * way out: closing the world or switching provider left it writing into a directory nobody
+     * would read. The partial file is kept, so the next attempt resumes instead of starting over.
+     *
+     * @param cancellation polled after every chunk, for example {@code () -> !isCurrent(token)}
+     * @throws IOException when every source failed, or the transfer failed its pinned size or digest
+     * @throws InterruptedException when the caller cancelled; the partial file is left in place
+     */
+    public static Path download(
+            Iterable<URI> sources,
+            Path destination,
+            long expectedSize,
+            String expectedSha256,
+            ProgressListener progress,
+            OfflineProcessSupport.CancellationCheck cancellation
+    ) throws IOException, InterruptedException {
+        OfflineProcessSupport.CancellationCheck cancelled =
+                cancellation == null ? NEVER_CANCELLED : cancellation;
         if (expectedSize < 1L) {
             throw new IllegalArgumentException("A pinned size and SHA-256 are required");
         }
@@ -108,7 +146,7 @@ public final class VerifiedDownloader {
             try {
                 requireSafeDownloadUri(source);
                 return downloadFromSource(
-                        source, destination, expectedSize, expectedSha256, progress);
+                        source, destination, expectedSize, expectedSha256, progress, cancelled);
             } catch (IOException error) {
                 failure = appendFailure(failure, source, error);
             }
@@ -124,8 +162,9 @@ public final class VerifiedDownloader {
             Path destination,
             long expectedSize,
             String expectedSha256,
-            ProgressListener progress
-    ) throws IOException {
+            ProgressListener progress,
+            OfflineProcessSupport.CancellationCheck cancellation
+    ) throws IOException, InterruptedException {
         Path partial = destination.resolveSibling(destination.getFileName().toString() + ".part");
         long offset = Files.isRegularFile(partial) ? Files.size(partial) : 0L;
         if (offset > expectedSize) {
@@ -134,7 +173,6 @@ public final class VerifiedDownloader {
         } else if (offset == expectedSize) {
             if (isVerifiedContent(partial, expectedSha256)) {
                 progress.onProgress(expectedSize, expectedSize);
-                forgetMismatch(partial);
                 moveVerifiedPartial(partial, destination);
                 ModelVerificationCache.forget(partial);
                 ModelVerificationCache.remember(destination, expectedSha256);
@@ -174,11 +212,25 @@ public final class VerifiedDownloader {
         StandardOpenOption[] options = append
                 ? new StandardOpenOption[]{StandardOpenOption.CREATE, StandardOpenOption.APPEND}
                 : new StandardOpenOption[]{StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING};
+        // A transfer that starts at byte zero writes every byte of this file through the buffer
+        // below exactly once, so hashing them here costs nothing instead of reading the finished
+        // 1.12 GB off the disk again. An appended transfer cannot reuse that: the digest of the
+        // prefix is not known in this process, and a wrong one would be worse than a second read.
+        MessageDigest digestWhileWriting = null;
+        if (!append) {
+            try {
+                digestWhileWriting = MessageDigest.getInstance("SHA-256");
+            } catch (NoSuchAlgorithmException impossible) {
+                throw new IllegalStateException("SHA-256 is unavailable", impossible);
+            }
+        }
         try (InputStream input = connection.getInputStream();
              OutputStream output = Files.newOutputStream(partial, options)) {
             byte[] buffer = new byte[64 * 1024];
             long total = offset;
             long reported = offset;
+            long windowStartedNanos = System.nanoTime();
+            long windowBytes = 0L;
             int count;
             while ((count = input.read(buffer)) >= 0) {
                 if (count == 0) {
@@ -189,6 +241,25 @@ public final class VerifiedDownloader {
                     throw new IOException("Download exceeded its pinned size");
                 }
                 output.write(buffer, 0, count);
+                if (digestWhileWriting != null) {
+                    digestWhileWriting.update(buffer, 0, count);
+                }
+                windowBytes += count;
+                long now = System.nanoTime();
+                // A read timeout bounds one read, never the transfer: a mirror sending a few
+                // kilobytes just inside it keeps this thread forever. The bytes one window
+                // actually delivered is the bound that ends a trickle.
+                if (now - windowStartedNanos > MINIMUM_THROUGHPUT_WINDOW_NANOS) {
+                    if (windowBytes < MINIMUM_WINDOW_BYTES) {
+                        throw new IOException("Download stalled at " + total + "/" + expectedSize
+                                + " bytes; it will resume automatically next time");
+                    }
+                    windowStartedNanos = now;
+                    windowBytes = 0L;
+                }
+                if (cancellation.isCancelled()) {
+                    throw new InterruptedException("Offline model download was cancelled");
+                }
                 // The interface used to hand the throttle to the caller, so a 1.12 GB model
                 // produced 17 090 callbacks and every consumer had to re-implement the same gate.
                 if (total - reported >= PROGRESS_STEP_BYTES || total == expectedSize) {
@@ -205,27 +276,27 @@ public final class VerifiedDownloader {
             throw new IOException("Download is incomplete (" + actualSize + "/" + expectedSize
                     + " bytes); it will resume automatically next time");
         }
-        String actualSha256 = sha256(partial);
+        String actualSha256 = digestWhileWriting != null
+                ? CryptoSupport.hex(digestWhileWriting.digest())
+                : sha256(partial);
         if (!expectedSha256.equalsIgnoreCase(actualSha256)) {
             // Nothing in this file is known to be right: the resume offset is only the length of
             // bytes no verification ever covered, so keeping the part written before this attempt
             // replayed the same mismatch forever and one broken prefix made the asset uninstallable.
-            // Dropping the partial is therefore the first answer. It is not the only one: a range one
-            // proxy or CDN corrupts deterministically leaves everything outside it correct, and that
-            // case converges only if the prefix survives. Which of the two this is cannot be told from
-            // one mismatch, so the prefix is trusted once full restarts have shown they do not help.
-            boolean keepPrefix = keepPrefixAfterMismatch(partial);
-            discardUnverifiedTail(partial, keepPrefix ? offset : 0L);
+            // A count of past mismatches is not evidence about these bytes either — the prefix kept
+            // there contained the corrupted range that caused them — so the whole partial goes and
+            // the next attempt starts from the first byte.
+            discardUnverifiedTail(partial, 0L);
             throw new IOException("Downloaded file failed SHA-256 verification; "
                     + partial.getFileName()
-                    + (keepPrefix
-                            ? " was truncated to the " + offset + "-byte prefix the next attempt"
-                                    + " resumes from"
-                            : " was discarded, so the next attempt starts from the first byte"));
+                    + " was discarded, so the next attempt starts from the first byte");
         }
-        forgetMismatch(partial);
         progress.onProgress(expectedSize, expectedSize);
         moveVerifiedPartial(partial, destination);
+        // The partial is gone, so a record describing it is a stale conclusion about a file that
+        // no longer exists. This is the same cleanup the complete-partial branch above performs;
+        // the two success exits are the only places that own the sidecar.
+        ModelVerificationCache.forget(partial);
         ModelVerificationCache.remember(destination, expectedSha256);
         return destination;
     }
@@ -261,30 +332,6 @@ public final class VerifiedDownloader {
     }
 
     /**
-     * Notes one SHA-256 mismatch of {@code partial}.
-     *
-     * @param partial partial file that failed verification
-     * @return {@code true} when full restarts have already been shown not to help
-     */
-    private static boolean keepPrefixAfterMismatch(Path partial) {
-        String key = streakKey(partial);
-        Integer previous = SHA_MISMATCH_STREAK.get(key);
-        int streak = previous == null ? 1 : previous.intValue() + 1;
-        SHA_MISMATCH_STREAK.put(key, Integer.valueOf(streak));
-        return streak > SHA_MISMATCH_RESTARTS_BEFORE_KEEPING_PREFIX;
-    }
-
-    /** Forgets the mismatch memory of {@code partial}, which now verifies. */
-    private static void forgetMismatch(Path partial) {
-        SHA_MISMATCH_STREAK.remove(streakKey(partial));
-    }
-
-    /** Identity of one partial file in {@link #SHA_MISMATCH_STREAK}. */
-    private static String streakKey(Path partial) {
-        return partial.toAbsolutePath().normalize().toString();
-    }
-
-    /**
      * Fails before the transfer when the destination volume cannot hold it.
      *
      * @param neededBytes bytes the transfer still has to add
@@ -316,10 +363,13 @@ public final class VerifiedDownloader {
         if (ModelVerificationCache.isVerified(file, expectedSha256)) {
             return true;
         }
+        // Read the state before the hash: remember() reads it afterwards, so a write landing inside
+        // the reading window used to record the digest of the replaced bytes against the new state.
+        BasicFileAttributes observed = ModelVerificationCache.observe(file);
         if (!expectedSha256.equalsIgnoreCase(sha256(file))) {
             return false;
         }
-        ModelVerificationCache.remember(file, expectedSha256);
+        ModelVerificationCache.rememberIfUnchanged(file, expectedSha256, observed);
         return true;
     }
 

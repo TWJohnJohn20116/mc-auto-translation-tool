@@ -30,6 +30,20 @@ abstract class MinecraftMixin {
         // above zero, which silently disables translation for the session) and then drives the join
         // hint and the runtime status line. The hook used to be an empty method, so none of it ran.
         UniversalTranslatorFabricClient.tickFromMixin();
+        try {
+            universalTranslator$pollHotkeys();
+        } catch (RuntimeException failure) {
+            // A drifted mapping in the hotkey half used to escape through Minecraft.tick()V and take
+            // the whole client down over one key press.
+            OrnitheClientAccess.reportHotkeyFailure(failure);
+        } catch (Error failure) {
+            OrnitheClientAccess.reportHotkeyFailure(failure);
+        }
+    }
+
+    /** The hotkey and task-queue half of the tick injection, isolated so one failure is contained. */
+    @Unique
+    private void universalTranslator$pollHotkeys() {
         // The hotkeys come from universal-translator.properties (settings-key / toggle-key): this
 // generation has no key-binding API, so they cannot live in the vanilla controls screen.
 int settingsCode = HotkeyKeys.settingsLwjgl2Code();

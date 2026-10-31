@@ -56,6 +56,22 @@ public final class TranslationRenderContext {
             };
     /** Cap on {@link #TRANSLATED_RESULTS}; one frame cannot legitimately need more. */
     private static final int MAX_FRAME_TRANSLATIONS = 512;
+    /**
+     * Inputs this frame already rendered unchanged. See {@link #rememberUnchanged}.
+     *
+     * <p>Kept apart from {@link #TRANSLATED_RESULTS} because the answer differs: an entry here says
+     * "the right output for this string is the string itself", which holds for every surface, so no
+     * key has to be built and nothing is allocated to look one up. The modern context has had this
+     * set from the start; without it the 1.0–1.13 trees ran the whole guard chain twice per line for
+     * every line that stays as it is, which is most of them.
+     */
+    private static final ThreadLocal<Set<String>> UNCHANGED_INPUTS =
+            new ThreadLocal<Set<String>>() {
+                @Override
+                protected Set<String> initialValue() {
+                    return new HashSet<String>();
+                }
+            };
     private static final AtomicBoolean LEAK_REPORTED = new AtomicBoolean();
 
     private static final int KIND_LATCH = 0;
@@ -77,7 +93,11 @@ public final class TranslationRenderContext {
             LATCHED_AT.get()[KIND_LATCH] = System.nanoTime();
         }
         if (kinds.size() >= MAX_DEPTH) {
+            // Starting over is a new outermost latch, so it gets a timestamp of its own: keeping the
+            // old one compared the recovery window against a latch that no longer exists, and zeroing
+            // it left the leak detection off until the stack emptied again.
             kinds.clear();
+            LATCHED_AT.get()[KIND_LATCH] = System.nanoTime();
         }
         kinds.push(kind);
     }
@@ -88,7 +108,8 @@ public final class TranslationRenderContext {
             kinds.pop();
         }
         if (kinds.isEmpty()) {
-            KINDS.remove();
+            // The deque stays on the thread; reset() is what releases it. Removing it here rebuilt
+            // one deque plus its ThreadLocalMap entry for every surface of every frame.
             LATCHED_AT.get()[KIND_LATCH] = 0L;
         }
     }
@@ -104,6 +125,7 @@ public final class TranslationRenderContext {
         TEXT_INPUT_DEPTH.remove();
         LATCHED_AT.remove();
         TRANSLATED_RESULTS.remove();
+        UNCHANGED_INPUTS.remove();
     }
 
     public static TextKind current() {
@@ -160,6 +182,30 @@ public final class TranslationRenderContext {
     /** True when {@code text} is a translation this bridge produced earlier in the same frame. */
     static boolean isTranslatedResult(String text) {
         return text != null && TRANSLATED_RESULTS.get().contains(text);
+    }
+
+    /**
+     * Records a string the render bridge found nothing to translate in.
+     *
+     * <p>The legacy {@code TextRenderer} hooks fire once for the measurement and again for the draw
+     * of the same line, and the bridge translates both times. A line that stays as it is — already in
+     * the target language, a blocked keyword, no provider answer yet — therefore paid for two whole
+     * guard chains and two lookups per frame. See the copy in {@code shared/common}.
+     */
+    static void rememberUnchanged(String original) {
+        if (original == null) {
+            return;
+        }
+        Set<String> unchanged = UNCHANGED_INPUTS.get();
+        if (unchanged.size() >= MAX_FRAME_TRANSLATIONS) {
+            unchanged.clear();
+        }
+        unchanged.add(original);
+    }
+
+    /** True when {@code original} already rendered as itself earlier in the same frame. */
+    static boolean isUnchangedResult(String original) {
+        return original != null && UNCHANGED_INPUTS.get().contains(original);
     }
 
     private static boolean isLeaked(long latchedSince) {

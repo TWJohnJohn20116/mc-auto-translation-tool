@@ -113,6 +113,12 @@ public final class DebugLog {
     /** Characters lost because a batch could not be written; reported in the next batch. */
     private int droppedCharacters;
     private volatile boolean directoryReady;
+    /**
+     * Whether owner-only permissions were applied to the current file. The log carries per-request
+     * text previews, so it is the same material the configuration file is restricted for; the try is
+     * repeated once per file instead of once per batch, and a rotation creates a new file.
+     */
+    private volatile boolean permissionsApplied;
     private Thread flusher;
     private final StringBuilder prelude = new StringBuilder(512);
     private String streamProvider;
@@ -168,6 +174,7 @@ public final class DebugLog {
             droppedLines = 0;
             droppedCharacters = 0;
             directoryReady = false;
+            permissionsApplied = false;
             streamProvider = null;
             streamEvent = null;
             streamCount = 0;
@@ -253,7 +260,14 @@ public final class DebugLog {
             target = file;
             batch = takeBatchLocked();
         }
-        writeBatch(batch, target);
+        try {
+            writeBatch(batch, target);
+        } catch (RuntimeException | Error failed) {
+            // Every platform calls this on its shutdown path, so a failure here has to stay inside
+            // the log: the queue was already taken and the batch is reported by the next one.
+            recordDroppedCharacters(batch == null ? 0 : batch.length());
+            DebugLog.global().logFailure("debug-log", failed);
+        }
     }
 
     /** One provider request, with the fields support needs to reproduce it. */
@@ -307,9 +321,16 @@ public final class DebugLog {
         if (!enabled) {
             return;
         }
+        // A failure message can be an entire provider error page, a captive portal or the request
+        // itself echoed back, so it is flattened and bounded like a preview: the same file promises
+        // at most MAXIMUM_PREVIEW_CHARS of text per request, and one unbounded line also used to eat
+        // a whole queue slot and push the lines that explain the failure out of the batch.
+        String message = failure == null || failure.getMessage() == null
+                ? "" : failure.getMessage();
         log("failure", "provider", provider, "reason", TranslationStats.reasonOf(failure),
                 "error", failure == null ? "unknown" : failure.getClass().getSimpleName(),
-                "message", failure == null ? "" : failure.getMessage());
+                "message", TextPreview.oneLine(message, MAXIMUM_PREVIEW_CHARS),
+                "message-length", Integer.toString(message.length()));
     }
 
     /**
@@ -494,9 +515,13 @@ public final class DebugLog {
 
     /** Starts the single daemon thread that drains the queue. Caller holds {@link #lock}. */
     private void startFlusherLocked() {
-        if (flusher != null) {
+        if (flusher != null && flusher.isAlive()) {
             return;
         }
+        // A thread that left drainLoop through anything other than its two own exits keeps its
+        // reference here while doing nothing, and this guard used to read that as "still running":
+        // every later configure() then returned early and the log stayed silent for the session.
+        flusher = null;
         Thread thread = new Thread(new Runnable() {
             @Override
             public void run() {
@@ -531,7 +556,16 @@ public final class DebugLog {
                 }
             }
             // Outside the monitor: the point of the queue is that no caller ever waits here.
-            writeBatch(batch, target);
+            try {
+                writeBatch(batch, target);
+            } catch (RuntimeException | Error failed) {
+                // The write is the one step of this loop that is not a simple state change, and an
+                // escaping throwable used to kill the only writer: the queue then filled up and every
+                // later line was dropped, so the log the user switched on to report a problem stopped
+                // for the rest of the process while the setting still read "on".
+                recordDroppedCharacters(batch == null ? 0 : batch.length());
+                DebugLog.global().logFailure("debug-log", failed);
+            }
         }
     }
 
@@ -598,6 +632,8 @@ public final class DebugLog {
                 if (sizeOf(target) + bytes.length > MAXIMUM_BYTES) {
                     Files.move(target, target.resolveSibling(ROTATED_FILE_NAME),
                             StandardCopyOption.REPLACE_EXISTING);
+                    // The append below creates a new file, which starts with the default mode.
+                    permissionsApplied = false;
                 }
             } catch (IOException | RuntimeException unrotated) {
                 // A log viewer holding the rotated file must not cost the batch: appending past the
@@ -605,6 +641,12 @@ public final class DebugLog {
             }
             try {
                 Files.write(target, bytes, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                if (!permissionsApplied) {
+                    // Readable by every account on a shared POSIX home directory, the log quotes up
+                    // to MAXIMUM_PREVIEW_CHARS of what the player and the provider said. Once per
+                    // file: setPosixFilePermissions costs two system calls on every batch otherwise.
+                    permissionsApplied = LocalConfigSecurity.restrictToOwner(target);
+                }
             } catch (IOException | RuntimeException unwritable) {
                 // Named in the next batch instead of vanishing: the queue was already emptied.
                 recordDroppedCharacters(batch.length());

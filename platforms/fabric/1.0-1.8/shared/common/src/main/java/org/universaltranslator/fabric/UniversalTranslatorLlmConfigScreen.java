@@ -214,9 +214,7 @@ final class UniversalTranslatorLlmConfigScreen extends Screen {
     }
 
     private static void setFieldEditing(TextFieldWidget field, boolean editable) {
-        if (field != null) {
-            field.setEditable(editable);
-        }
+        OrnitheClientAccess.setEditable(field, editable);
     }
 
     private void setStatus(String message, boolean error) {

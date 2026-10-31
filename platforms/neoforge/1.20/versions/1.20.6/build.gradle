@@ -17,6 +17,13 @@ ext.neoforgePackFormat = 32
 
 apply from: rootProject.file("platforms/neoforge/shared.gradle")
 
+// 1.20.6 runs the 1.21-era client: the HUD is drawn from extractRenderState and Gui.render no longer
+// takes a float, so the only copy of InGameHudStatusIndicatorMixin this module can reach - the 1.20.1
+// one under neoforgeForgeExtraRoots, whose @Inject names that old signature with require = 0 - could
+// never apply. Compiling it in shipped a hook that cannot fire and left its absence from
+// metadata/1.20.6's client list looking like an oversight: the HUD indicator is not offered on 1.20.6.
+sourceSets.main.java.exclude "**/mixin/InGameHudStatusIndicatorMixin.java"
+
 neoForge {
     version = project.ext.neoforgeVersion
     runs {

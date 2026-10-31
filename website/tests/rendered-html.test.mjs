@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import test from "node:test";
 
 async function render() {
@@ -123,17 +123,9 @@ test("server-renders the public-benefit project home page", async () => {
     pageDescription.includes(releaseVersion),
     `metadata description 沒有提到目前版本 ${releaseVersion}`,
   );
-  // 文案宣稱的 JAR 數量必須等於實際渲染出的 .jar 連結數，而不是把當下的數字寫死在測試裡：
-  // 原本這裡是 assert.match(html, /31 个经过校验的 JAR/)，每次發布都要多改一處，而且它守的
-  // 不是真契約——文案與下載卡可以各自漂移而測試全綠。
-  const claimedJars = source.match(/(\d+) 个经过校验的 JAR/)?.[1];
-  assert.ok(claimedJars, "app/page.tsx 找不到「N 个经过校验的 JAR」");
+  // 文案宣稱的可安裝 JAR 數量不再由這裡單獨比對：同一個數字在四份 README 與六份 docs 用四種措辭
+  // 手抄（見下面的 INSTALLABLE_CLAIMS），只守 page.tsx 的一種措辭等於只守了其中一處。
   const jarLinks = downloadNames.filter((name) => name.endsWith(".jar")).length;
-  assert.equal(
-    Number(claimedJars),
-    jarLinks,
-    `文案宣稱 ${claimedJars} 顆 JAR，但頁面只渲染出 ${jarLinks} 個 .jar 連結`,
-  );
   assert.equal(
     downloadNames.length,
     jarLinks + 1,
@@ -307,8 +299,8 @@ test("keeps every documented download name in sync with the rendered page", asyn
 
   // `downloads/<版本>/release-assets.txt` 是 31 個可安裝檔名的權威清單：它由
   // `scripts/prepare_release_assets.py` 與可安裝 JAR 同一批產生，並由 `prepare-release.yml`
-  // 寫回 `downloads/<版本>/` 隨 PR 提交。存在時就以它為準再比一次；不存在時只提示、不紅燈——
-  // 版本號 bump 後 `downloads/` 還沒重新產生時，網站檢查不該先壞掉（那個窗口一過就該看到它）。
+  // 寫回 `downloads/<版本>/` 隨 PR 提交。存在時就以它為準再比一次；只有在 `downloads/<版本>`
+  // 這個目錄本身還不存在（版本號 bump 後、prepare-release 還沒跑）時才略過。
   let manifest = null;
   try {
     manifest = await readFile(
@@ -319,8 +311,20 @@ test("keeps every documented download name in sync with the rendered page", asyn
     manifest = null;
   }
   if (manifest === null) {
+    // 只有「版本號 bump 後 `downloads/<新版本>` 還沒產生」這種窗口才該略過；目錄已經在、清單卻
+    // 不在，就是清單沒提交（G10 的產生者與寫回步驟都在，缺的是這一份檔案本身）。
+    let downloadDirectoryExists = true;
+    try {
+      await readdir(new URL(`../../downloads/${releaseVersion}`, import.meta.url));
+    } catch {
+      downloadDirectoryExists = false;
+    }
+    assert.ok(
+      !downloadDirectoryExists,
+      `downloads/${releaseVersion} 已存在但缺 release-assets.txt：清單是「文件 ↔ 真實資產」比對的唯一憑據`,
+    );
     t.diagnostic(
-      `downloads/${releaseVersion}/release-assets.txt 不存在，略過與發佈清單的比對`,
+      `downloads/${releaseVersion} 不存在，略過與發佈清單的比對`,
     );
   } else {
     const listed = new Set(
@@ -494,4 +498,287 @@ test("keeps the headline coverage numbers in sync with their producers", async (
     }
   }
   assert.deepEqual(problems, [], "頭條數字與產生端不一致：改文件或改產生端，兩者必須同步");
+});
+
+// page.tsx 的 metadata description 是分享卡片與搜尋摘要的唯一來源，而它先前承諾「1.0.0–1.12.2 的
+// Fabric／Ornithe 目標仍需自行構建」——那 12 個目錄早已被刪除，與同一頁 :43 的「26 個版本」互相打臉。
+test("keeps the source-only Fabric range counts in app/page.tsx equal to their directories", async () => {
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const ranges = [
+    [/1\.3\.1–1\.8\.8 共 (\d+) 个版本/, "1.0-1.8"],
+    [/1\.8\.9–1\.12\.2 共 (\d+) 个版本/, "1.8-1.12"],
+  ];
+  for (const [pattern, bundle] of ranges) {
+    const claimed = source.match(pattern)?.[1];
+    assert.ok(claimed, `app/page.tsx 找不到「${pattern.source}」`);
+    const entries = await readdir(
+      new URL(`../../platforms/fabric/${bundle}/versions`, import.meta.url),
+    );
+    assert.equal(
+      Number(claimed),
+      entries.length,
+      `app/page.tsx 宣稱 ${claimed} 個 ${bundle} 版本，但 versions/ 有 ${entries.length} 個目錄`,
+    );
+  }
+  // 這 12 個版本（1.0.0–1.2.5、1.6.2、1.7.3、1.7.5、1.7.7）沒有目標目錄，不得再被寫成「可自行構建」。
+  assert.doesNotMatch(
+    source,
+    /1\.0\.0–(?:1\.12\.2|1\.2\.5)/,
+    "app/page.tsx 不得再宣稱 1.0.0 起的目標存在（那 12 個目錄已於 S2-128 刪除）",
+  );
+});
+
+// 目前這份清單覆蓋 13 個檔案。文件是「照著做」的前提，所以路徑與版本號都要能被機械比對。
+const DOC_FILES = [
+  "../../README.md",
+  "../../docs/README.md",
+  "../../docs/Zh-cn/ARCHITECTURE.md",
+  "../../docs/Zh-cn/BUILDING.md",
+  "../../docs/Zh-cn/COMPATIBILITY.md",
+  "../../docs/Zh-cn/ONLINE_APIS.md",
+  "../../docs/Zh-cn/README.md",
+  "../../docs/Zh-cn/THIRD_PARTY_OFFLINE.md",
+  "../../docs/Zh-cn/USER_GUIDE.md",
+  "../../docs/Zh-tw/ARCHITECTURE.md",
+  "../../docs/Zh-tw/BUILDING.md",
+  "../../docs/Zh-tw/COMPATIBILITY.md",
+  "../../docs/Zh-tw/ONLINE_APIS.md",
+  "../../docs/Zh-tw/README.md",
+  "../../docs/Zh-tw/THIRD_PARTY_OFFLINE.md",
+  "../../docs/Zh-tw/USER_GUIDE.md",
+  "../../docs/en/ARCHITECTURE.md",
+  "../../docs/en/BUILDING.md",
+  "../../docs/en/COMPATIBILITY.md",
+  "../../docs/en/ONLINE_APIS.md",
+  "../../docs/en/README.md",
+  "../../docs/en/THIRD_PARTY_OFFLINE.md",
+  "../../docs/en/USER_GUIDE.md",
+];
+
+// 反引號內、以倉庫目錄開頭的字串才會被當成「這條路徑應該存在」。`legacy/` 這種泛稱不算，
+// 只有 `legacy/<還有內容>` 才算：根目錄已經沒有 legacy/，舊版 Forge 在 platforms/forge/legacy/。
+const DOC_PATH_TOKEN = /^(?:platforms|translator-core|docs|scripts|website|gradle|downloads|\.github)\/|^legacy\/.+/;
+// 輸出目錄（build/…）不在版控裡；含佔位符或 glob 的字串無從比對，跳過。
+const DOC_BUILD_SUFFIX = /\/build(?:\/.*)?$/;
+const DOC_PLACEHOLDER = /[<>*…{}$\s]/;
+
+test("keeps every repository path quoted in the docs pointing at a real file or directory", async () => {
+  const problems = [];
+  let checked = 0;
+  for (const relative of DOC_FILES) {
+    const text = await readFile(new URL(relative, import.meta.url), "utf8");
+    for (const [, token] of text.matchAll(/`([^`\n]+)`/g)) {
+      const candidate = token.trim();
+      if (!DOC_PATH_TOKEN.test(candidate) || DOC_PLACEHOLDER.test(candidate)) continue;
+      const target = candidate.replace(DOC_BUILD_SUFFIX, "").replace(/\/+$/, "");
+      if (!target) continue;
+      checked += 1;
+      let found = true;
+      try {
+        await stat(new URL(`../../${target}`, import.meta.url));
+      } catch {
+        found = false;
+      }
+      if (!found) {
+        problems.push(`${relative}：\`${candidate}\` 指向不存在的路徑 ${target}`);
+      }
+    }
+  }
+  assert.ok(checked > 60, `只比對了 ${checked} 個文件路徑，抽取規則可能已經失效`);
+  assert.deepEqual(
+    problems,
+    [],
+    "文件指名的路徑必須真的存在：目錄重構（legacy/ → platforms/forge/legacy/、版本專案 → versions/）之後要一起改",
+  );
+});
+
+// 兩類會被照抄的版本號：產物檔名（`...-1.3.9.jar`）與 commands 裡的 `downloads/1.4`、`--version 1.4`。
+// 前者今天就是錯的（現行 1.4），後者會在 bump 後失效——而 `downloads/` 只保留現行版本的目錄，
+// `prepare-release` 會把舊目錄整個刪掉，所以照著過期文件做必然失敗。
+const DOC_STALE_ARTIFACT = /mc-auto-translation-tool-[a-z0-9.\-]+?-\d+\.\d+(?:\.\d+)?(?:-[a-z0-9]+)?\.jar/g;
+const DOC_STALE_RELEASE_DIR = /downloads\/\d+\.\d+(?:\.\d+)?/g;
+const DOC_STALE_VERSION_OPTION = /--version\s+\d+\.\d+(?:\.\d+)?/g;
+
+test("keeps the version numbers hard-coded in the docs equal to gradle.properties", async () => {
+  const properties = await readFile(new URL("../../gradle.properties", import.meta.url), "utf8");
+  const modVersion = properties.match(/^mod_version=(.+)$/m)?.[1]?.trim();
+  assert.ok(modVersion, "gradle.properties 找不到 mod_version");
+  const problems = [];
+  for (const relative of DOC_FILES) {
+    const text = await readFile(new URL(relative, import.meta.url), "utf8");
+    for (const stale of text.match(DOC_STALE_ARTIFACT) ?? []) {
+      if (!stale.endsWith(`-${modVersion}.jar`)) {
+        problems.push(`${relative}：產物檔名 \`${stale}\` 寫死了非現行版本（現行 ${modVersion}）`);
+      }
+    }
+    for (const stale of text.match(DOC_STALE_RELEASE_DIR) ?? []) {
+      if (stale !== `downloads/${modVersion}`) {
+        problems.push(`${relative}：\`${stale}\` 不是現行版本目錄（現行 downloads/${modVersion}）`);
+      }
+    }
+    for (const stale of text.match(DOC_STALE_VERSION_OPTION) ?? []) {
+      if (stale !== `--version ${modVersion}`) {
+        problems.push(`${relative}：\`${stale}\` 應該改成 \`--version ${modVersion}\` 或佔位符`);
+      }
+    }
+  }
+  assert.deepEqual(problems, [], "文件裡的版本號要跟 gradle.properties 的 mod_version 一致，或改用佔位符");
+});
+
+// 「可安裝 JAR 數量」（今天是 31）與 48／51 一樣是手抄的頭條數字，但它被抄在 13 個檔案、四種措辭，
+// 而先前的守只認 `page.tsx` 的「N 个经过校验的 JAR」。加一筆發布目標時 48 會被既有關卡逼著改，
+// 同一句裡的 31 卻留在原地：官網同一頁會自相矛盾（文案 32、下載卡 32、另一句仍寫 31）。
+const INSTALLABLE_CLAIMS = [
+  /(\d+)\s+个可直接安装的 JAR/,
+  /(\d+)\s+個可直接安裝的 JAR/,
+  /(\d+)\s+个可直接安装的发布 JAR/,
+  /(\d+)\s+個可直接安裝的發行 JAR/,
+  /(\d+)\s+directly installable/,
+  /(\d+)\s+个可安装 JAR/,
+  /(\d+)\s+個可安裝 JAR/,
+  /(\d+)\s+installable JAR/,
+  /(\d+)\s+个经过校验的 JAR/,
+  /(\d+)\s+個經過校驗的 JAR/,
+  /(\d+)\s+颗可安装 JAR/,
+  /(\d+)\s+顆可安裝 JAR/,
+];
+
+const INSTALLABLE_COVERAGE_DOCS = [
+  "../../README.md",
+  "../../docs/Zh-cn/README.md",
+  "../../docs/Zh-tw/README.md",
+  "../../docs/en/README.md",
+  "../../docs/Zh-cn/BUILDING.md",
+  "../../docs/Zh-tw/BUILDING.md",
+  "../../docs/en/BUILDING.md",
+  "../../docs/Zh-cn/COMPATIBILITY.md",
+  "../../docs/Zh-tw/COMPATIBILITY.md",
+  "../../docs/en/COMPATIBILITY.md",
+  "../../docs/Zh-cn/USER_GUIDE.md",
+  "../../docs/Zh-tw/USER_GUIDE.md",
+  "../../docs/en/USER_GUIDE.md",
+];
+
+test("keeps the installable JAR count in every document in sync with the rendered page", async () => {
+  const pageSource = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const releaseVersion = pageSource.match(/const releaseVersion = "([^"]+)"/)?.[1];
+  assert.ok(releaseVersion, "app/page.tsx 找不到 releaseVersion");
+  const html = await (await render()).text();
+  const installableJars = new Set(
+    html.match(new RegExp(`download/v${escapeRe(releaseVersion)}/[A-Za-z0-9.-]+\\.jar`, "g")) ?? [],
+  ).size;
+  assert.ok(installableJars > 0, "頁面沒有渲染出任何 .jar 下載連結");
+
+  const sources = [["website/app/page.tsx", pageSource]];
+  for (const relative of INSTALLABLE_COVERAGE_DOCS) {
+    sources.push([relative, await readFile(new URL(relative, import.meta.url), "utf8")]);
+  }
+
+  const problems = [];
+  for (const [label, text] of sources) {
+    let mentions = false;
+    for (const pattern of INSTALLABLE_CLAIMS) {
+      for (const [matched, digits] of text.matchAll(new RegExp(pattern.source, "g"))) {
+        mentions = true;
+        if (Number(digits) !== installableJars) {
+          problems.push(
+            `${label}：「${matched}」寫 ${digits}，但頁面渲染 ${installableJars} 個 .jar 下載連結`,
+          );
+        }
+      }
+    }
+    // 這一句是使用者判斷「我該下載幾顆、有沒有漏」的第一手依據，所以每份文件都必須寫。
+    if (!mentions) {
+      problems.push(`${label} 完全沒有寫可安裝 JAR 數量（例如「31 个可直接安装的 JAR」）`);
+    }
+  }
+  assert.deepEqual(problems, [], "可安裝 JAR 數量與真實下載不一致：改文件或改產生端，兩者必須同步");
+});
+
+function versionKey(text) {
+  const parts = text.split(".").map((part) => Number(part));
+  while (parts.length < 3) parts.push(0);
+  return parts;
+}
+
+function compareVersions(left, right) {
+  for (let index = 0; index < 3; index += 1) {
+    if (left[index] !== right[index]) return left[index] - right[index];
+  }
+  return 0;
+}
+
+// 「N 個精確實作」的清單（1.13–…–26.3）在 8 個檔案 9 處手抄，而既有的關卡只綁那個數字。
+// 新增一個 Fabric 版本目錄時，IMPLEMENTATION_CLAIMS 會逼七份文件把 51 改成 52，括號與冒號後面的
+// 區間清單卻留在原處——加起來仍然是 51 個版本名，而使用者問的是「我的版本在不在清單裡」。
+const FABRIC_LIST_SOURCES = [
+  ["../../README.md", /覆盖：(.+?)。列表之外的版本/],
+  ["../../docs/Zh-cn/README.md", /覆盖：(.+?)。列表之外的版本/],
+  ["../../docs/Zh-tw/README.md", /涵蓋：(.+?)。清單以外/],
+  ["../../docs/en/README.md", /exact-version implementations\*\*: ([\s\S]+?)\. A game version outside/],
+  ["../app/page.tsx", /\$\{fabricImplementations\} 个精确版本实现（([^）]+)）/],
+  ["../app/page.tsx", /个精确版本实现：([^。]+)。/],
+  ["../../docs/Zh-cn/USER_GUIDE.md", /\|\s*(1\.13[^|\n]*?)（单一 JAR，\d+ 个精确实现）/],
+  ["../../docs/Zh-tw/USER_GUIDE.md", /\|\s*(1\.13[^|\n]*?)（單一 JAR，\d+ 個精確實作）/],
+  ["../../docs/en/USER_GUIDE.md", /\|\s*(1\.13[^\n]*?)\(single JAR, \d+ exact implementations\)/],
+];
+
+test("keeps the hand-copied Fabric version lists covering every implementation directory", async () => {
+  // 權威是目錄名集合：26.x 的版本掛在 bundle 根，其餘在各自的 `versions/` 底下；
+  // 1.13.0 的目錄在啟動器與文件裡都叫 `1.13`，所以去掉結尾的 `.0`。
+  const directoryNames = [];
+  for (const bundle of FABRIC_VERSIONED_BUNDLES) {
+    const entries = await readdir(new URL(`../../platforms/fabric/${bundle}/versions`, import.meta.url));
+    for (const name of entries) directoryNames.push(name.replace(/\.0$/, ""));
+  }
+  for (const name of await readdir(new URL("../../platforms/fabric/26.x", import.meta.url))) {
+    if (/^\d/.test(name)) directoryNames.push(name);
+  }
+  const universe = [...new Set(directoryNames)].sort((left, right) =>
+    compareVersions(versionKey(left), versionKey(right)),
+  );
+  assert.ok(universe.length > 0, "platforms/fabric 的實作目錄數算成 0");
+
+  const problems = [];
+  for (const [relative, pattern] of FABRIC_LIST_SOURCES) {
+    const text = await readFile(new URL(relative, import.meta.url), "utf8");
+    const listed = text.match(pattern)?.[1];
+    if (!listed) {
+      problems.push(`${relative}：找不到 Fabric 版本清單（${pattern.source}）`);
+      continue;
+    }
+    const covered = new Set();
+    for (const segment of listed.split(/[、，,;；\n]/)) {
+      const entry = segment.trim();
+      if (!entry) continue;
+      const single = /^(\d+\.\d+(?:\.\d+)?)$/.exec(entry);
+      if (single) {
+        covered.add(single[1]);
+        continue;
+      }
+      const span = /^(\d+\.\d+(?:\.\d+)?)\s*[–—-]\s*(\d+\.\d+(?:\.\d+)?)$/.exec(entry);
+      if (!span) {
+        problems.push(`${relative}：無法解析的版本區間「${entry}」`);
+        continue;
+      }
+      const low = versionKey(span[1]);
+      const high = versionKey(span[2]);
+      let touchesUniverse = false;
+      for (const version of universe) {
+        const key = versionKey(version);
+        if (compareVersions(low, key) <= 0 && compareVersions(key, high) <= 0) {
+          covered.add(version);
+          touchesUniverse = true;
+        }
+      }
+      if (!touchesUniverse) {
+        problems.push(`${relative}：區間「${entry}」對不到任何實作目錄`);
+      }
+    }
+    const missing = universe.filter((version) => !covered.has(version));
+    if (missing.length > 0) {
+      problems.push(`${relative}：清單漏掉 ${missing.join("、")}`);
+    }
+  }
+  assert.deepEqual(problems, [], "Fabric 版本清單必須涵蓋所有實作目錄：新增版本時 9 處清單都要一起改");
 });

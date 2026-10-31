@@ -268,6 +268,15 @@ tasks.named("processResources", ProcessResources).configure {
 
 apply from: rootProject.file("gradle/jar-contents.gradle")
 
+// The class-file gate the Fabric and Forge trees run. These nineteen release targets had none: the
+// bytecode level rested on this module's neoforgeJavaRelease alone, and a tree-wide toolchain change
+// would have shipped without anything reading the produced jar back. No remapJar exists here, so the
+// gate inspects jar, whose entries are this project's own compiled classes. ModDevGradle also writes
+// compile options of its own, so the gate keeps only the class-header half here.
+ext.fabricReleaseJava = project.ext.neoforgeJavaRelease
+ext.fabricReleaseJarSkipReleaseCheck = true
+apply from: rootProject.file("gradle/fabric-release-jar-verify.gradle")
+
 tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
     options.release = project.ext.neoforgeJavaRelease

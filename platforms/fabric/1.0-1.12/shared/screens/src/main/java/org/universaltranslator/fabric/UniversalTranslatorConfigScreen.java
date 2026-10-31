@@ -509,8 +509,14 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorConfigScr
             runtimeChanged = true;
             FabricTranslationRuntime.initialize(updated);
             // Same writer as the F8 toggles, so an older queued snapshot cannot overwrite this one.
-            FabricTranslationRuntimeBase.saveInBackgroundAndWait(updated);
-            setTestStatus(tr("screen.universal_translator.diagnostics.settings_saved"), false);
+            // The result decides the message: a write still queued past the bounded wait, or one that
+            // failed, used to be reported as saved and was then silently missing on the next launch.
+            if (FabricTranslationRuntimeBase.saveInBackgroundAndWait(updated)) {
+                setTestStatus(tr("screen.universal_translator.diagnostics.settings_saved"), false);
+            } else {
+                setTestStatus(tr("status.universal_translator.save_failed",
+                        updated.configFile().getFileName()), true);
+            }
         } catch (Exception exception) {
             if (runtimeChanged) {
                 try {
@@ -1111,7 +1117,7 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
                             hudIndicatorVisibility, hudIndicatorOffsetX, hudIndicatorOffsetY))
                     // Save writes the engine tab's prompt controls too, so applying the prompt and
                     // then saving cannot silently restore the value the screen was opened with.
-                    .withPromptSettings(quality, TranslationPrompt.fromEditorText(
+                    .withPromptSettings(quality, TranslationPrompt.clampEditorText(
                             customPrompt == null ? "" : customPrompt.getText()))
                     .withTranslationTuning(workers, batchSize);
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
@@ -1124,8 +1130,14 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
             runtimeChanged = true;
             FabricTranslationRuntime.initialize(updated);
             // Same writer as the F8 toggles, so an older queued snapshot cannot overwrite this one.
-            FabricTranslationRuntimeBase.saveInBackgroundAndWait(updated);
-            OrnitheClientAccess.openScreen(parent);
+            // Only leave the screen once the file is known to be on disk: a save still queued past
+            // the bounded wait used to close the screen and hide that it had not landed.
+            if (FabricTranslationRuntimeBase.saveInBackgroundAndWait(updated)) {
+                OrnitheClientAccess.openScreen(parent);
+            } else {
+                status = tr("status.universal_translator.save_failed",
+                        updated.configFile().getFileName());
+            }
         } catch (Exception exception) {
             if (runtimeChanged) {
                 try {
@@ -1281,7 +1293,8 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
             blockedKeywords.render();
             if (blockedKeywords.getText().isEmpty()) {
                 renderer.drawWithShadow(
-                        tr("screen.universal_translator.blocked_keywords_hint"),
+                        tr("screen.universal_translator.blocked_keywords_hint",
+                                UiLimits.KEYWORDS_MAX_ENTRIES, UiLimits.KEYWORD_MAX_CHARS),
                         layout.left() + 4, layout.contentRow(3) + 6, 0x70A0A0A0);
             }
         } else if (activeTab == Tab.ENGINE) {

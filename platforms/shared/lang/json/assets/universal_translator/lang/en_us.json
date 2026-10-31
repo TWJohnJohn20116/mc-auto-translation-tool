@@ -141,7 +141,7 @@
   "screen.universal_translator.home.open": "Translation settings",
   "screen.universal_translator.option.player_names": "Player names: %s",
   "screen.universal_translator.blocked_keywords": "Blocked keywords",
-  "screen.universal_translator.blocked_keywords_hint": "Blocked keywords (comma-separated, up to 100 entries of 128 characters each)",
+  "screen.universal_translator.blocked_keywords_hint": "Blocked keywords (comma-separated, up to %s entries of %s characters each)",
   "screen.universal_translator.tab.general": "General",
   "screen.universal_translator.tab.scopes": "Scopes",
   "screen.universal_translator.tab.engine": "Engine",

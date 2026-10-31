@@ -7,6 +7,8 @@ import net.minecraft.client.gui.screens.Screen;
 import org.universaltranslator.core.TranslationTextStyling;
 
 import java.lang.reflect.Field;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /** Identifies text currently being edited by the local player in the chat box. */
 final class ForgeLocalTextGuard {
@@ -19,9 +21,25 @@ final class ForgeLocalTextGuard {
      * superclass walk, allocation included, for every string of every frame.
      */
     private static volatile Class<?> resolvedFor;
-    /** Cached styling strip: the same rendered line is asked about once per frame. */
-    private static String strippedSource;
-    private static String strippedValue;
+    /**
+     * Stripped lines, most recently used last; bounded because they are player and server text.
+     *
+     * <p>One slot was not enough: the chat window draws a hundred lines in a fixed order, so a memo
+     * with a single entry missed on nearly every lookup, and every miss rebuilt the whole line.
+     */
+    private static final int STRIPPED_MEMO_LIMIT = 64;
+    private static final ThreadLocal<LinkedHashMap<String, String>> STRIPPED =
+            new ThreadLocal<LinkedHashMap<String, String>>() {
+                @Override
+                protected LinkedHashMap<String, String> initialValue() {
+                    return new LinkedHashMap<String, String>(16, 0.75F, true) {
+                        @Override
+                        protected boolean removeEldestEntry(Map.Entry<String, String> eldest) {
+                            return size() > STRIPPED_MEMO_LIMIT;
+                        }
+                    };
+                }
+            };
     /**
      * The draft this class last saw, plus its two cursor-marker forms.
      *
@@ -111,16 +129,20 @@ final class ForgeLocalTextGuard {
         return visible.equals(underscore) || visible.equals(pipe);
     }
 
-    /** Strips legacy colour codes, reusing the answer for the same rendered line. */
+    /**
+     * Strips legacy colour codes, reusing the answer for the lines of this frame.
+     *
+     * <p>The chat window draws a hundred lines in a fixed order, so one slot evicted itself between
+     * every pair of lines and every lookup rebuilt the whole line.
+     */
     private static String stripped(String rendered) {
-        String value = strippedValue;
-        if (value != null && (rendered == strippedSource || rendered.equals(strippedSource))) {
-            return value;
+        LinkedHashMap<String, String> memo = STRIPPED.get();
+        String cached = memo.get(rendered);
+        if (cached != null) {
+            return cached;
         }
         String computed = TranslationTextStyling.stripLegacyFormatting(rendered);
-        // Value before source, for the same reason as the draft markers above.
-        strippedValue = computed;
-        strippedSource = rendered;
+        memo.put(rendered, computed);
         return computed;
     }
 }

@@ -9,6 +9,12 @@ requiredProperties.each { propertyName ->
     }
 }
 
+// The loader requirement under the name gradle/bundle-metadata-verify.gradle reads when it derives a
+// bundle's floor from its weakest member. The 1.16-1.20 members declare legacyLoaderVersion
+// themselves; this tree stores the same fact as fabricLoaderVersion, and without the alias the floor
+// check would find an empty member list and pass without comparing anything for all five releases.
+ext.legacyLoaderVersion = project.ext.fabricLoaderVersion.toString()
+
 // Each version lists its source layers in override order: later layers win.
 // api/26.1-26.3 holds the three settings screens; they reach the screen stack through
 // FabricScreenOpener, which is the only part that 26.2 changed.
@@ -38,6 +44,35 @@ if (layers == null) {
 def sharedFlagLayers = [] as Set
 
 def sharedRoot = rootProject.file("platforms/fabric/26.x/shared")
+
+// api/26.1-26.1.2 and api/26.2-26.3 each keep a copy of these two classes, and the copies differ only
+// in the javadoc that names their generation. The layers are mutually exclusive srcDirs, so nothing at
+// compile time notices when a change lands in one copy only; compare the code here (comments dropped)
+// and fail the configuration instead, so 26.1.x and 26.2/26.3 cannot drift apart in silence.
+def mirroredClasses = ["FabricTranslationRuntime.java", "FabricLocalTextGuard.java"]
+def codeOnly = { File source ->
+    source.getText("UTF-8").readLines().findAll { line ->
+        def trimmed = line.trim()
+        !(trimmed.startsWith("//") || trimmed.startsWith("/*") || trimmed.startsWith("*"))
+    }
+}
+mirroredClasses.each { fileName ->
+    def firstCopy = new File(sharedRoot,
+            "api/26.1-26.1.2/src/client/java/org/universaltranslator/fabric/${fileName}")
+    def secondCopy = new File(sharedRoot,
+            "api/26.2-26.3/src/client/java/org/universaltranslator/fabric/${fileName}")
+    if (!firstCopy.isFile() || !secondCopy.isFile()) {
+        throw new GradleException(
+                "The 26.x mirror pair ${fileName} is incomplete: expected both " +
+                        "${relativePath(firstCopy)} and ${relativePath(secondCopy)}")
+    }
+    if (codeOnly(firstCopy) != codeOnly(secondCopy)) {
+        throw new GradleException(
+                "${relativePath(firstCopy)} and ${relativePath(secondCopy)} no longer hold the same " +
+                        "code apart from their javadoc; the two API layers compile separately, so a " +
+                        "change applied to one copy silently divides 26.1.x from 26.2 and 26.3")
+    }
+}
 
 version = project.mod_version
 group = project.maven_group
@@ -74,6 +109,24 @@ sourceSets {
         resources.srcDir new File(sharedRoot, "common/src/main/resources")
         resources.srcDir rootProject.file("platforms/shared/lang/json")
     }
+}
+
+// The client source directories below are hard-coded instead of coming from sourceLayers, so none of
+// them is covered by the layer check inside sourceSets. Gradle ignores a missing srcDir in silence, so
+// renaming or moving one of these four directories let all five 26.x targets build without their
+// settings screen while every task stayed green — the same failure the 1.21 tree records next to its
+// own copy of this list.
+def requiredSharedDirs = [
+        new File(sharedRoot, "common/src/client/java"),
+        rootProject.file("platforms/fabric/shared/settings/modern/src/main/java"),
+        rootProject.file("platforms/fabric/shared/common/src/client/java"),
+        rootProject.file("platforms/fabric/shared/base/src/main/java")
+]
+def missingSharedDirs = requiredSharedDirs.findAll { !it.isDirectory() }
+if (!missingSharedDirs.isEmpty()) {
+    throw new GradleException(
+            "Missing shared Fabric source directories for ${gameVersion}: " +
+                    missingSharedDirs.collect { relativePath(it) }.join(", "))
 }
 
 loom {
@@ -128,6 +181,9 @@ def javaReleaseTarget = gradle.ext.treeJavaTarget("platforms/fabric/26.x/")
 // Handed to the class-file gate applied below, so the bytecode is checked against the same number the
 // compiler is given instead of a second copy of it.
 ext.fabricReleaseJava = javaReleaseTarget
+// The same number under the name gradle/bundle-metadata-verify.gradle reads (legacyJavaRelease), so
+// the bundle floor check compares against real members instead of an empty list.
+ext.legacyJavaRelease = javaReleaseTarget.toString()
 tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
     // Read from settings.gradle's treeJavaRelease so the compile target and the Mixin bounds derived

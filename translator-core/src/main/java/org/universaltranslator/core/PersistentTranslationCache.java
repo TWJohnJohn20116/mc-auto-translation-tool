@@ -97,6 +97,14 @@ public final class PersistentTranslationCache implements TranslationStore {
      */
     private final Set<String> revokedKeys =
             Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+    /**
+     * Guarded by {@code this}. Records the owner keeps next to the entries -- today the generation
+     * marker -- stored under their own name instead of their digest and exempt from the entry cap.
+     * The marker is written first into an emptied cache, so insertion order made it the eldest entry
+     * and eviction dropped it exactly when the cache filled up; the next session then read "no
+     * generation" and the owner emptied the whole file.
+     */
+    private final Map<String, String> storeState = new LinkedHashMap<String, String>();
 
     /**
      * Guarded by {@code this}. True once the file has been consulted, whether the read succeeded,
@@ -218,6 +226,9 @@ public final class PersistentTranslationCache implements TranslationStore {
 
     @Override
     public String get(String key) {
+        if (isStoreStateKey(key)) {
+            return storeStateOf(key);
+        }
         // Hashed before the monitor: the key carries the whole source text, and a SHA-256 computed
         // under the instance monitor serialized every worker on work that shares no state.
         String hashed = hash(key);
@@ -227,8 +238,83 @@ public final class PersistentTranslationCache implements TranslationStore {
         }
     }
 
+    /**
+     * Reads one {@link #isStoreStateKey(String) store record}.
+     *
+     * <p>A file written while those records still lived in the entry map holds the generation marker
+     * under its digest, exactly like a translation. Adopting it here keeps that file usable instead
+     * of reporting an unknown generation, which the owner answers by emptying the whole cache.
+     */
+    private String storeStateOf(String key) {
+        String hashed = hash(key);
+        ensureLoaded();
+        synchronized (this) {
+            String state = storeState.get(key);
+            if (state != null) {
+                return state;
+            }
+            String legacy = entries.get(hashed);
+            if (legacy != null) {
+                storeState.put(key, legacy);
+            }
+            return legacy;
+        }
+    }
+
+    /**
+     * Stores one {@link #isStoreStateKey(String) store record}.
+     *
+     * <p>Written out on this call rather than under the coalescing bounds of a translation: an owner
+     * records these once per session, and the record is what decides whether the entries survive the
+     * next launch.
+     */
+    private void putStoreState(String key, String value) {
+        Map<String, String> snapshot;
+        long snapshotRevision;
+        ensureLoaded();
+        synchronized (this) {
+            String previous = storeState.get(key);
+            if (previous != null && previous.equals(value)) {
+                return;
+            }
+            storeState.put(key, value);
+            snapshotRevision = ++revision;
+            unsaved++;
+            if (loading) {
+                // Same reason as put(): the map this would persist is missing the file's entries.
+                return;
+            }
+            if (flushing) {
+                dirty = true;
+                return;
+            }
+            flushing = true;
+            unsaved = 0;
+            lastFlushMillis = System.currentTimeMillis();
+            dirty = false;
+            snapshot = snapshot();
+        }
+        flushLoop(snapshot, snapshotRevision, false);
+    }
+
+    /**
+     * Whether {@code key} names one of {@link #storeState}'s records instead of a cached translation.
+     *
+     * <p>Every key built from a source line starts with the owner's version prefix, which is readable
+     * text; an owner keeps its own records under a leading character outside that range so they can
+     * never collide with a translation of the same text. Such a record describes the entries rather
+     * than being one, so the entry cap must not be allowed to decide whether it survives.
+     */
+    private static boolean isStoreStateKey(String key) {
+        return key != null && !key.isEmpty() && key.charAt(0) < ' ';
+    }
+
     @Override
     public void put(String key, String value) {
+        if (isStoreStateKey(key)) {
+            putStoreState(key, value);
+            return;
+        }
         String hashed = hash(key);
         Map<String, String> snapshot;
         long snapshotRevision;
@@ -279,6 +365,17 @@ public final class PersistentTranslationCache implements TranslationStore {
 
     @Override
     public void remove(String key) {
+        if (isStoreStateKey(key)) {
+            ensureLoaded();
+            synchronized (this) {
+                if (storeState.remove(key) != null) {
+                    // Carried to the file by the next write, exactly like a coalesced entry.
+                    revision++;
+                    unsaved++;
+                }
+            }
+            return;
+        }
         String hashed = hash(key);
         Map<String, String> snapshot;
         long snapshotRevision;
@@ -328,15 +425,23 @@ public final class PersistentTranslationCache implements TranslationStore {
     public void clear() {
         Map<String, String> snapshot;
         long snapshotRevision;
+        boolean unreadableFile;
         synchronized (this) {
             // Mark the file as already consulted before dropping the entries. Without this a later
             // put would lazily read the file back and resurrect everything the user just deleted.
             loaded = true;
             entries.clear();
             clearGeneration++;
+            // Store records are deliberately left in place: they describe the entries rather than
+            // being one of them, and a user who empties the cache has not asked for the generation
+            // to be forgotten. Dropping it made the next launch clear an already empty file and then
+            // every launch after that.
             // Nothing is left to protect: with the entries gone there is no stored value a merge
             // could bring back, and keeping the revocations only made every later merge scan them.
             revokedKeys.clear();
+            // An unreadable file is what made that generation look unknown in the first place, so
+            // the write below must not be the only thing that happens to it.
+            unreadableFile = loadFailed;
             // Clearing is an explicit user action, so this thread writes the empty map itself and
             // only returns once the file reflects it. A flush still in flight carries an older
             // revision and is dropped by persistBestEffort, so it cannot resurrect deleted entries.
@@ -348,12 +453,39 @@ public final class PersistentTranslationCache implements TranslationStore {
             snapshotRevision = ++revision;
             snapshot = snapshot();
         }
+        if (unreadableFile) {
+            // A file this session could not read was still overwritten by the empty snapshot below,
+            // which destroyed the very entries the failed read was supposed to protect. Keeping a
+            // copy aside is the difference between "unknown generation" and "lost data".
+            preserveUnreadableFile();
+        }
         // Deliberately not merged with the file: the user asked for the entries to be gone, so the
         // empty snapshot must replace whatever is there instead of adopting it back. The clear epoch
         // is published by that same write, inside its path critical section: bumping it afterwards
         // left a window in which another instance saw the new generation next to the old epoch and
         // merged every deleted entry back into the file.
         persistBestEffort(snapshot, snapshotRevision, false, true, false);
+    }
+
+    /**
+     * Keeps a file that could not be read out of the way of {@link #clear()}'s empty snapshot.
+     *
+     * <p>Best effort by construction: the write that follows either way replaces the target, so a
+     * failed move leaves exactly the behaviour this class had before -- losing the file is simply no
+     * longer the only outcome.
+     */
+    private void preserveUnreadableFile() {
+        try {
+            if (!Files.exists(file)) {
+                return;
+            }
+            Path preserved = file.resolveSibling(file.getFileName().toString() + ".unreadable");
+            Files.move(file, preserved, StandardCopyOption.REPLACE_EXISTING);
+            DebugLog.global().log("cache", "unreadable-kept",
+                    "file", preserved.getFileName().toString());
+        } catch (IOException | RuntimeException failed) {
+            DebugLog.global().logFailure("cache-preserve", failed);
+        }
     }
 
     /**
@@ -563,6 +695,12 @@ public final class PersistentTranslationCache implements TranslationStore {
                 return;
             }
             for (Map.Entry<String, String> entry : fromFile.entrySet()) {
+                if (isStoreStateKey(entry.getKey())) {
+                    if (!storeState.containsKey(entry.getKey())) {
+                        storeState.put(entry.getKey(), entry.getValue());
+                    }
+                    continue;
+                }
                 // A value translated while the file was being read is newer than the stored one.
                 if (!entries.containsKey(entry.getKey())) {
                     entries.put(entry.getKey(), entry.getValue());
@@ -611,6 +749,12 @@ public final class PersistentTranslationCache implements TranslationStore {
                     // of the process, which turned a file this class can write itself into a cache
                     // that never recovered; starting empty keeps the write path alive, so the next
                     // flush replaces the file with this session's entries.
+                    //
+                    // Recorded, because this is one of the three ways the generation marker can come
+                    // back missing and the owner then empties the file: without a line here that
+                    // cause was indistinguishable from a genuine upgrade.
+                    DebugLog.global().log("cache-load", "result", "oversized",
+                            "bytes", Long.toString(storedBytes));
                     observedGeneration = state.generation;
                     observedClearEpoch = state.clearEpoch;
                     return Collections.emptyMap();
@@ -622,6 +766,13 @@ public final class PersistentTranslationCache implements TranslationStore {
                 fromFile = new LinkedHashMap<String, String>(
                         Math.min(properties.size(), maximumEntries));
                 for (String key : properties.stringPropertyNames()) {
+                    String stored = properties.getProperty(key);
+                    if (isStoreStateKey(key)) {
+                        // Not an entry, so the cap below must not drop it: a store whose record was
+                        // read away here reports an unknown generation and gets emptied by its owner.
+                        fromFile.put(key, stored);
+                        continue;
+                    }
                     if (fromFile.size() >= maximumEntries) {
                         break;
                     }
@@ -631,7 +782,7 @@ public final class PersistentTranslationCache implements TranslationStore {
                     if (key.length() != HASH_HEX_LENGTH) {
                         continue;
                     }
-                    fromFile.put(key, properties.getProperty(key));
+                    fromFile.put(key, stored);
                 }
             }
             // Recorded after the read: a write that lands while this instance is loading bumps the
@@ -717,6 +868,15 @@ public final class PersistentTranslationCache implements TranslationStore {
                         Math.min(maximumEntries, onDisk.size() + snapshot.size()) * 2);
                 contents.putAll(snapshot);
                 for (Map.Entry<String, String> entry : onDisk.entrySet()) {
+                    if (isStoreStateKey(entry.getKey())) {
+                        // A store record from the file is adopted whenever this snapshot has none:
+                        // it decides whether the merged entries survive the next launch, so dropping
+                        // it here empties the file one session later.
+                        if (!contents.containsKey(entry.getKey())) {
+                            contents.put(entry.getKey(), entry.getValue());
+                        }
+                        continue;
+                    }
                     if (contents.size() >= maximumEntries) {
                         break;
                     }
@@ -786,7 +946,10 @@ public final class PersistentTranslationCache implements TranslationStore {
         try {
             // The same bound load() applies: the merge runs on the thread that is retiring a session,
             // and it must not materialize a file that cannot be one this cache wrote.
-            if (Files.size(file) > MAXIMUM_CACHE_FILE_BYTES) {
+            long storedBytes = Files.size(file);
+            if (storedBytes > MAXIMUM_CACHE_FILE_BYTES) {
+                DebugLog.global().log("cache-load", "result", "oversized-merge",
+                        "bytes", Long.toString(storedBytes));
                 return null;
             }
             try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
@@ -800,13 +963,19 @@ public final class PersistentTranslationCache implements TranslationStore {
         Map<String, String> existing = new LinkedHashMap<String, String>(
                 Math.min(properties.size(), maximumEntries));
         for (String key : properties.stringPropertyNames()) {
+            String stored = properties.getProperty(key);
+            if (isStoreStateKey(key)) {
+                // Returned so the merge can keep the file's own store records; see the caller.
+                existing.put(key, stored);
+                continue;
+            }
             if (existing.size() >= maximumEntries) {
                 break;
             }
             if (key.length() != HASH_HEX_LENGTH) {
                 continue;
             }
-            existing.put(key, properties.getProperty(key));
+            existing.put(key, stored);
         }
         return existing;
     }
@@ -880,7 +1049,12 @@ public final class PersistentTranslationCache implements TranslationStore {
 
     /** Caller must hold the monitor of {@code this}. */
     private Map<String, String> snapshot() {
-        return new LinkedHashMap<String, String>(entries);
+        Map<String, String> copy = new LinkedHashMap<String, String>(
+                entries.size() + storeState.size());
+        copy.putAll(entries);
+        // Store records travel under their own name, which the read path tells apart from a digest.
+        copy.putAll(storeState);
+        return copy;
     }
 
     /** Lowercase SHA-256 hex of the key, identical to the previous hand-rolled hex loop. */

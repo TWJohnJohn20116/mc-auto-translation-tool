@@ -5,6 +5,9 @@ import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.ChatScreen;
 import org.universaltranslator.core.TranslationTextStyling;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 /** Identifies text currently being edited by the local player in the chat box. */
 public final class ForgeLocalTextGuard {
     /**
@@ -24,9 +27,25 @@ public final class ForgeLocalTextGuard {
     private static volatile String cachedTyped;
     private static volatile String cachedTypedUnderscore;
     private static volatile String cachedTypedPipe;
-    /** Last stripped line, kept so the same drawn line is not re-walked for every hook. */
-    private static volatile String strippedSource;
-    private static volatile String strippedValue;
+    /**
+     * Stripped lines, most recently used last; bounded because they are player and server text.
+     *
+     * <p>One slot was not enough: the chat window draws a hundred lines in a fixed order, so a memo
+     * with a single entry missed on nearly every lookup, and every miss rebuilt the whole line.
+     */
+    private static final int STRIPPED_MEMO_LIMIT = 64;
+    private static final ThreadLocal<LinkedHashMap<String, String>> STRIPPED =
+            new ThreadLocal<LinkedHashMap<String, String>>() {
+                @Override
+                protected LinkedHashMap<String, String> initialValue() {
+                    return new LinkedHashMap<String, String>(16, 0.75F, true) {
+                        @Override
+                        protected boolean removeEldestEntry(Map.Entry<String, String> eldest) {
+                            return size() > STRIPPED_MEMO_LIMIT;
+                        }
+                    };
+                }
+            };
 
     private ForgeLocalTextGuard() {
     }
@@ -85,17 +104,18 @@ public final class ForgeLocalTextGuard {
     }
 
     /**
-     * {@code rendered} without its legacy colour codes, memoized for the last line seen; the value
-     * is published before its source, so a racing reader sees the pair or recomputes.
+     * {@code rendered} without its legacy colour codes, memoized for the lines of this frame; the
+     * chat window draws a hundred lines in a fixed order, so one slot was a miss on nearly every
+     * lookup.
      */
     private static String stripped(String rendered) {
-        String source = strippedSource;
-        if (source != null && source.equals(rendered)) {
-            return strippedValue;
+        LinkedHashMap<String, String> memo = STRIPPED.get();
+        String cached = memo.get(rendered);
+        if (cached != null) {
+            return cached;
         }
         String value = TranslationTextStyling.stripLegacyFormatting(rendered);
-        strippedValue = value;
-        strippedSource = rendered;
+        memo.put(rendered, value);
         return value;
     }
 }

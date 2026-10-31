@@ -26,6 +26,7 @@ TARGET_ENTRY = re.compile(r'"target":\s*"([^"]+)"')
 
 PREPARE_WORKFLOW = ROOT / ".github" / "workflows" / "prepare-release.yml"
 LEGACY_WORKFLOW = ROOT / ".github" / "workflows" / "legacy-targets.yml"
+SETTINGS = ROOT / "settings.gradle"
 
 # build.gradle 的 subprojects 區塊只對這三個前綴給 Java 25 toolchain，其餘一律 21。三個字串在那裡
 # 是逐字寫的，而「哪個目標用哪個 JDK」在四份清單（build.yml matrix、build-targets.json、
@@ -197,15 +198,20 @@ class BuildTargetsTest(unittest.TestCase):
             all(entry["java"] for entry in entries),
             "prepare-release.yml 的每一筆目標都必須帶 java",
         )
-        twenty_six = sorted(
-            entry["target"] for entry in entries if expected_java(entry["project"]) == "25"
-        )
-        with_25 = sorted(entry["target"] for entry in entries if entry["java"] == "25")
-        self.assertEqual(
-            twenty_six,
-            with_25,
-            "prepare-release.yml 裡 26.x 的目標與 java: \"25\" 的目標必須是同一批",
-        )
+        # 逐筆比對，不是「哪些是 25」。先前只比對 25 那一半：`java: "17"` 的
+        # platform-forge-1.16.5／1.18.2／1.19.2／1.20.1 既不在左邊也不在右邊，於是 toolchain 是 21
+        # 而 setup-java 裝 17 這件事永遠不受約束（docstring 卻宣稱「必須與 toolchain 前綴一致」）。
+        # 兩個獨立 Gradle 建置（project == ""）不套用根 subprojects 的 toolchain，JDK 8 由各自的
+        # setup-java 決定，所以排除。
+        for entry in entries:
+            if entry["project"] == "":
+                continue
+            self.assertEqual(
+                expected_java(entry["project"]),
+                entry["java"],
+                "prepare-release.yml 的 %s 與 build.gradle 的 toolchain 前綴不一致"
+                % entry["target"],
+            )
         # 這兩個是獨立 Gradle 建置（platforms/forge/legacy/*），JDK 8 寫在各自的 setup-java。
         self.assertEqual(
             ["mc1.12.2-forge", "mc1.8.9-forge"],
@@ -228,6 +234,32 @@ class BuildTargetsTest(unittest.TestCase):
                 expected_java("platform-" + entry["target"]),
                 entry["java"],
                 "legacy-targets.yml 的 %s 與 build.gradle 的 toolchain 前綴不一致" % entry["target"],
+            )
+
+    def test_release_bundle_calls_match_the_settings_table(self):
+        # release-assets 的 -PtargetPlatform 與 8 個 verifyPreparedReleaseBundle 是 settings.gradle
+        # fabricReleaseBundles 的第三份複本，而且完全手抄：漏抄一個名字那個 bundle 就沒有被 include，
+        # 漏抄一個任務則是「任務存在、沒有呼叫點」（A12-002 的形狀：17 個已發布版本沒有任何覆蓋）。
+        # 這條不跑 Gradle，只比對兩個文字檔，所以「加一個 bundle 只改 settings.gradle」在 lint 就紅。
+        settings = SETTINGS.read_text(encoding="utf-8")
+        declared = re.findall(
+            r'"(platform-fabric-[^"]+)"',
+            settings.split("fabricReleaseBundles = [", 1)[1].split("]", 1)[0],
+        )
+        self.assertTrue(declared, "settings.gradle 找不到 fabricReleaseBundles 的成員")
+        block = "\n".join(job_block(workflow_text(), "release-assets"))
+        selected = re.search(r"-PtargetPlatform=(\S+)", block)
+        self.assertIsNotNone(selected, "release-assets 沒有 -PtargetPlatform")
+        self.assertEqual(
+            [name[len("platform-"):] for name in declared],
+            selected.group(1).split(","),
+            "build.yml 的 release-assets 呼叫面與 settings.gradle 的 fabricReleaseBundles 不一致",
+        )
+        for name in declared:
+            self.assertIn(
+                ":%s:verifyPreparedReleaseBundle" % name,
+                block,
+                "%s 沒有 verifyPreparedReleaseBundle 的呼叫點，那個 bundle 不會被驗證" % name,
             )
 
 

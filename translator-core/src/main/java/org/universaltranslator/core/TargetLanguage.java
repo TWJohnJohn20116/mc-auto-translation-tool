@@ -76,6 +76,12 @@ public final class TargetLanguage {
 
     public static String nextPreset(String language) {
         String canonical = canonicalize(language);
+        if (isAuto(canonical)) {
+            // AUTO is the source-detection sentinel and never a target, so cycling used to answer
+            // "auto" for ever and the hotkey did nothing at all. A target of auto means "nothing
+            // chosen", which is the same default translationInstruction() falls back to.
+            return SIMPLIFIED_CHINESE;
+        }
         for (int index = 0; index < PRESETS.length; index++) {
             if (PRESETS[index].equals(canonical)) {
                 return PRESETS[(index + 1) % PRESETS.length];

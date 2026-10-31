@@ -28,12 +28,22 @@ pnpm test
 逐一比对（同一批 31 个档名被手抄了五份，原本没有任何关卡），权威则是
 `downloads/<releaseVersion>/release-assets.txt`：那份清单由 `scripts/prepare_release_assets.py`
 与 31 颗可安装 JAR 同一批产生（`prepare-release.yml` 把它写进 `downloads/<版本>/` 并随 PR 提交），
-测试在它存在时以它为准再比一次。它不存在时只提示、不红灯——版本号 bump 后 `downloads/`
-还没重新产生时，网站检查不该先坏；这个窗口一过就该看到清单。
+测试在它存在时以它为准再比一次。只有 `downloads/<releaseVersion>` 这个目录本身还不存在
+（版本号 bump 后、`prepare-release` 还没跑）时才略过；目录在、清单不在一律算失败——
+清单是「文件 ↔ 真实资产」比对的唯一凭据。
 同一支测试还会把两个头条数字绑回产生端：「48 个发布目标」比对 `prepare-release.yml` 的
 `TARGETS_JSON` 笔数，「51 个精确版本实现」比对 `platforms/fabric/*/versions` 的实作目录数
 （`26.x` 的版本目录直接挂在 bundle 根）。改发布目标、家族档名或新增 Fabric 版本时，
 这五份文件与 `page.tsx` 必须一起改，否则网站检查会红。
+
+同一支测试还有四条关卡，都用来接住「照著文件做会失败」的漂移：把「31 个可直接安装的 JAR」
+绑回页面渲染出的 `.jar` 连结数（13 份文件用四种措辞手抄，先前只守 `page.tsx` 的一种）；把文件里
+反引号内的仓库路径逐一比对实际目录（`legacy/` → `platforms/forge/legacy/`、版本专案 → `versions/`
+这类目录重构之后最容易漏）；把产物档名、`downloads/<版本>` 与 `--version` 的版本号绑回
+`gradle.properties` 的 `mod_version`；把四份 README、`page.tsx` 与三份 `USER_GUIDE.md` 的 Fabric
+版本区间清单展开后比对 `platforms/fabric/*/versions` 的目录集合（数字有守、清单没守，新增版本时
+就会变成「内含 52 个实作」但只列出 51 个版本名）。这些关卡随 `website/`、`README.md`、`docs/`
+的变动在 website job 执行（`build.yml` 用 `git diff` 决定是否启动该 job），push `main` 时一律执行。
 
 ## 部署
 

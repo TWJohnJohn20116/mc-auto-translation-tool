@@ -15,7 +15,6 @@ import org.universaltranslator.core.WeakIdentitySet;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class RenderedTextBridge {
@@ -61,16 +60,52 @@ public final class RenderedTextBridge {
      * {@code translateStyledSiblings} ran for every component with siblings — a scoreboard side bar
      * or a tab list is one such component per row, every frame. The lists are cleared before each
      * walk and never escape it, so one set per thread is enough.
+     *
+     * <p>The walk itself is here too: it used to be a capturing lambda over a fresh
+     * {@code StringBuilder} and a fresh {@code AtomicReference}, so every multi-style line paid
+     * three more allocations per call on the path that exists to avoid allocating.
      */
-    private static final class RunScratch {
+    private static final class RunScratch implements OrderedText.CharacterVisitor {
         private final List<String> texts = new ArrayList<String>();
         private final List<Object> styleKeys = new ArrayList<Object>();
         private final List<Style> styles = new ArrayList<Style>();
+        /** Text of the run being collected; cleared at every style boundary and after each emit. */
+        private final StringBuilder run = new StringBuilder();
+        /**
+         * Style of the run being collected.
+         *
+         * <p>A one-element array because the visitor needs a mutable answer and this file is
+         * compiled for Java 8, where there is no other way to write one into a final field.
+         */
+        private final Style[] style = new Style[1];
 
         private void reset() {
             texts.clear();
             styleKeys.clear();
             styles.clear();
+            run.setLength(0);
+            style[0] = null;
+        }
+
+        @Override
+        public boolean accept(int index, Style runStyle, int codePoint) {
+            if (style[0] == null || !runStyle.equals(style[0])) {
+                addRun();
+                style[0] = runStyle;
+            }
+            run.appendCodePoint(codePoint);
+            return true;
+        }
+
+        /** Emits the run collected so far; the first boundary of a line emits nothing. */
+        private void addRun() {
+            if (run.length() == 0) {
+                return;
+            }
+            texts.add(run.toString());
+            styleKeys.add(style[0]);
+            styles.add(style[0]);
+            run.setLength(0);
         }
     }
 
@@ -88,8 +123,11 @@ public final class RenderedTextBridge {
      * {@code boolean[]} for every drawn line; the builder is the only part that has to grow with the
      * text, so it is kept and reset instead. Nothing nested calls back into this method on the same
      * thread, so one buffer per thread is enough.
+     *
+     * <p>The visitor is the holder itself, so the {@code accept} call of every drawn line passes one
+     * object that already exists instead of a lambda instance capturing the two fields above.
      */
-    private static final class Flattened {
+    private static final class Flattened implements OrderedText.CharacterVisitor {
         private final StringBuilder text = new StringBuilder();
         private Style first = Style.EMPTY;
         private boolean multiStyle;
@@ -99,6 +137,17 @@ public final class RenderedTextBridge {
             first = Style.EMPTY;
             multiStyle = false;
             return text;
+        }
+
+        @Override
+        public boolean accept(int index, Style style, int codePoint) {
+            if (text.length() == 0) {
+                first = style;
+            } else if (!multiStyle && !style.equals(first)) {
+                multiStyle = true;
+            }
+            text.appendCodePoint(codePoint);
+            return true;
         }
     }
 
@@ -225,15 +274,7 @@ public final class RenderedTextBridge {
         }
         Flattened flattened = FLATTENED.get();
         StringBuilder original = flattened.reset();
-        text.accept((index, style, codePoint) -> {
-            if (original.length() == 0) {
-                flattened.first = style;
-            } else if (!flattened.multiStyle && !style.equals(flattened.first)) {
-                flattened.multiStyle = true;
-            }
-            original.appendCodePoint(codePoint);
-            return true;
-        });
+        text.accept(flattened);
         String visible = original.toString();
         if (TranslationRenderContext.isUnchangedResult(visible)) {
             // The measuring hook of a line the drawing hook already answered with the input.
@@ -277,17 +318,8 @@ public final class RenderedTextBridge {
         List<String> texts = scratch.texts;
         List<Object> styleKeys = scratch.styleKeys;
         List<Style> styles = scratch.styles;
-        StringBuilder current = new StringBuilder();
-        AtomicReference<Style> currentStyle = new AtomicReference<Style>();
-        text.accept((index, style, codePoint) -> {
-            if (currentStyle.get() == null || !style.equals(currentStyle.get())) {
-                addRun(texts, styleKeys, styles, current, currentStyle.get());
-                currentStyle.set(style);
-            }
-            current.appendCodePoint(codePoint);
-            return true;
-        });
-        addRun(texts, styleKeys, styles, current, currentStyle.get());
+        text.accept(scratch);
+        scratch.addRun();
         List<TranslationStyleRuns.Run> runs = TranslationStyleRuns.mergeAdjacent(texts, styleKeys);
         if (!TranslationStyleRuns.shouldRebuildRuns(runs)) {
             return null;
@@ -304,22 +336,6 @@ public final class RenderedTextBridge {
         MutableText rebuilt = Text.literal(translated)
                 .setStyle(applyColor(styles.get(runs.get(0).sourceIndex()), color));
         return rebuilt.asOrderedText();
-    }
-
-    private static void addRun(
-            List<String> texts,
-            List<Object> styleKeys,
-            List<Style> styles,
-            StringBuilder current,
-            Style style
-    ) {
-        if (current.length() == 0) {
-            return;
-        }
-        texts.add(current.toString());
-        styleKeys.add(style);
-        styles.add(style);
-        current.setLength(0);
     }
 
     public static StringVisitable translate(StringVisitable text) {

@@ -30,7 +30,10 @@ This document records only completed validation. “Builds successfully” is no
 - Path handling, platform selection, and native library lookup are covered by the shared core tests.
   Full Android in-game results still depend on launcher permissions, Android version, and available RAM.
 
-## Version 1.3.4 release validation
+## Current release validation
+
+This table describes the current release (`<mod_version>` from `gradle.properties`); the per-version
+fix notes for 1.3.6 / 1.3.5 / 1.3.4 are in the sections above.
 
 | Minecraft | Loader | Java | Build and self-test | Launched to main menu | Full manual in-server regression |
 | --- | --- | --- | --- | --- | --- |

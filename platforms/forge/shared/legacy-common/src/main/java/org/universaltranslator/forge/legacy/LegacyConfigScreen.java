@@ -1097,7 +1097,7 @@ final class LegacyConfigScreen extends GuiScreen {
                             hudIndicatorVisibility, hudIndicatorOffsetX, hudIndicatorOffsetY))
                     // Save writes the engine tab's prompt controls too, so applying the prompt and
                     // then saving cannot silently restore the value the screen was opened with.
-                    .withPromptSettings(quality, TranslationPrompt.fromEditorText(
+                    .withPromptSettings(quality, TranslationPrompt.clampEditorText(
                             customPrompt == null ? "" : customPrompt.getText()))
                     .withTranslationTuning(workers, batchSize);
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
@@ -1261,7 +1261,8 @@ final class LegacyConfigScreen extends GuiScreen {
             blockedKeywords.drawTextBox();
             if (blockedKeywords.getText().isEmpty()) {
                 renderer.drawStringWithShadow(
-                        tr("screen.universal_translator.blocked_keywords_hint"),
+                        tr("screen.universal_translator.blocked_keywords_hint",
+                                UiLimits.KEYWORDS_MAX_ENTRIES, UiLimits.KEYWORD_MAX_CHARS),
                         layout.left() + 4, layout.contentRow(3) + 6, 0x70A0A0A0);
             }
         } else if (activeTab == Tab.ENGINE) {

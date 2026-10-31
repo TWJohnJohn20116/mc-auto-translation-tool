@@ -33,6 +33,15 @@ public final class OnlineProviderConfig {
     private static final int MINIMUM_READ_TIMEOUT_MILLIS = 1000;
     private static final int MAXIMUM_READ_TIMEOUT_MILLIS = 300000;
     /**
+     * Range of {@code api-connect-timeout-ms}.
+     *
+     * <p>Named so the diagnostics line reports the same range {@code create()} enforces: two literal
+     * copies of 250/60000 would let the report and the clamp drift apart.
+     */
+    private static final int DEFAULT_CONNECT_TIMEOUT_MILLIS = 5000;
+    private static final int MINIMUM_CONNECT_TIMEOUT_MILLIS = 250;
+    private static final int MAXIMUM_CONNECT_TIMEOUT_MILLIS = 60000;
+    /**
      * The quality key, as a constant the platform configuration classes reuse.
      *
      * <p>They have to claim exactly the key they write when they save (see
@@ -355,6 +364,11 @@ public final class OnlineProviderConfig {
      * value is silently replaced rather than reported at load time, so without these lines a
      * surprising worker count or a batch that never forms would be impossible to explain.
      *
+     * <p>The retry, interval and timeout keys are reported for the same reason and with more force:
+     * none of them has an in-game control, so the file is the only place they can be typed, and a typo
+     * in one of them was invisible everywhere — the effective value silently became the default and the
+     * only symptom was "the setting does nothing".
+     *
      * @param configFile configuration file to read; {@code null} reports the defaults
      */
     public static List<String> effectiveSettingsLines(Path configFile) {
@@ -371,7 +385,7 @@ public final class OnlineProviderConfig {
             }
         }
         OnlineProviderConfig config = from(stored);
-        List<String> lines = new ArrayList<String>(3);
+        List<String> lines = new ArrayList<String>(7);
         // The label used to read "Translation workers", which presented a platform setting as if it
         // were the provider's concurrency. Nothing inside a provider reads it — the platform runtime
         // decides how many threads call in — so the line now says where the value is actually used.
@@ -389,6 +403,33 @@ public final class OnlineProviderConfig {
                 config.batchWindowMillis(), TranslationTuning.DEFAULT_BATCH_WINDOW_MILLIS,
                 TranslationTuning.MINIMUM_BATCH_WINDOW_MILLIS,
                 TranslationTuning.MAXIMUM_BATCH_WINDOW_MILLIS));
+        lines.add(settingLine("Connect timeout (ms)", "api-connect-timeout-ms",
+                stored.getProperty("api-connect-timeout-ms"),
+                config.integer("api-connect-timeout-ms", DEFAULT_CONNECT_TIMEOUT_MILLIS,
+                        MINIMUM_CONNECT_TIMEOUT_MILLIS, MAXIMUM_CONNECT_TIMEOUT_MILLIS),
+                DEFAULT_CONNECT_TIMEOUT_MILLIS, MINIMUM_CONNECT_TIMEOUT_MILLIS,
+                MAXIMUM_CONNECT_TIMEOUT_MILLIS));
+        lines.add(settingLine("Read timeout (ms)", "api-read-timeout-ms",
+                stored.getProperty("api-read-timeout-ms"),
+                config.integer("api-read-timeout-ms", DEFAULT_READ_TIMEOUT_MILLIS,
+                        MINIMUM_READ_TIMEOUT_MILLIS, MAXIMUM_READ_TIMEOUT_MILLIS),
+                DEFAULT_READ_TIMEOUT_MILLIS, MINIMUM_READ_TIMEOUT_MILLIS,
+                MAXIMUM_READ_TIMEOUT_MILLIS));
+        lines.add(settingLine("Attempts per request", "api-max-attempts",
+                stored.getProperty("api-max-attempts"),
+                config.integer("api-max-attempts", TranslationTuning.DEFAULT_ATTEMPTS,
+                        TranslationTuning.MINIMUM_ATTEMPTS, TranslationTuning.MAXIMUM_ATTEMPTS),
+                TranslationTuning.DEFAULT_ATTEMPTS, TranslationTuning.MINIMUM_ATTEMPTS,
+                TranslationTuning.MAXIMUM_ATTEMPTS));
+        lines.add(settingLine("Minimum request interval (ms)", "api-min-request-interval-ms",
+                stored.getProperty("api-min-request-interval-ms"),
+                config.integer("api-min-request-interval-ms",
+                        TranslationTuning.DEFAULT_REQUEST_INTERVAL_MILLIS,
+                        TranslationTuning.MINIMUM_REQUEST_INTERVAL_MILLIS,
+                        TranslationTuning.MAXIMUM_REQUEST_INTERVAL_MILLIS),
+                TranslationTuning.DEFAULT_REQUEST_INTERVAL_MILLIS,
+                TranslationTuning.MINIMUM_REQUEST_INTERVAL_MILLIS,
+                TranslationTuning.MAXIMUM_REQUEST_INTERVAL_MILLIS));
         return lines;
     }
 
@@ -585,7 +626,8 @@ public final class OnlineProviderConfig {
         int readTimeoutMillis = integer("api-read-timeout-ms", DEFAULT_READ_TIMEOUT_MILLIS,
                 MINIMUM_READ_TIMEOUT_MILLIS, MAXIMUM_READ_TIMEOUT_MILLIS);
         HttpJsonClient http = new HttpJsonClient(
-                integer("api-connect-timeout-ms", 5000, 250, 60000),
+                integer("api-connect-timeout-ms", DEFAULT_CONNECT_TIMEOUT_MILLIS,
+                        MINIMUM_CONNECT_TIMEOUT_MILLIS, MAXIMUM_CONNECT_TIMEOUT_MILLIS),
                 readTimeoutMillis);
         TranslationProvider raw;
         if ("libretranslate".equals(selected)) {
@@ -629,7 +671,7 @@ public final class OnlineProviderConfig {
         } else if ("azure-openai".equals(selected)) {
             raw = new AzureOpenAiTranslationProvider(value("azure-openai-endpoint"),
                     value("azure-openai-api-key"), value("azure-openai-model"),
-                    value("azure-openai-api-version"), http, promptSettings());
+                    value("azure-openai-api-version"), http, promptSettings(), tuning());
         } else if ("deepl".equals(selected)) {
             raw = new DeepLTranslationProvider(value("deepl-endpoint"), value("deepl-api-key"),
                     value("deepl-model"), http);

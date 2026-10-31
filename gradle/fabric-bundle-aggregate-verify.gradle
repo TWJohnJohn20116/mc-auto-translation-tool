@@ -53,13 +53,20 @@ tasks.register("verifyPreparedReleaseBundle", JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
     mainClass = "org.universaltranslator.bundle.BundleResolutionVerifier"
     // The launcher has to match this bundle's own toolchain: only the 26.x projects are given Java 25
-    // by the root build (their names carry the platform-fabric-26. prefix); everything else compiles
-    // and runs on 21, and settings.gradle installs no toolchain resolver that could provision a 25
-    // for them. Requesting 25 unconditionally failed with "No matching toolchains found" in any job
-    // that only had the JDK the project declares.
+    // by the root build; everything else compiles and runs on 21, and settings.gradle installs no
+    // toolchain resolver that could provision a 25 for them. Requesting 25 unconditionally failed with
+    // "No matching toolchains found" in any job that only had the JDK the project declares. The rule
+    // is read from settings.gradle (gradle.ext.toolchainJavaFor) instead of being repeated with a
+    // "platform-fabric-26." prefix here: this task only runs in the release job, so a copy that
+    // disagreed with the compiler would fail as UnsupportedClassVersionError after 48 targets built.
+    if (!project.gradle.ext.has("toolchainJavaFor")) {
+        throw new GradleException(
+                "gradle.ext.toolchainJavaFor is missing; settings.gradle must define it before " +
+                        "${project.path} applies gradle/fabric-bundle-aggregate-verify.gradle.")
+    }
     javaLauncher = javaToolchains.launcherFor {
         languageVersion = JavaLanguageVersion.of(
-                platformProjectName.startsWith("platform-fabric-26.") ? 25 : 21)
+                project.gradle.ext.toolchainJavaFor(platformProjectName).toString().toInteger())
     }
 
     def aggregateJar = rootProject.layout.buildDirectory.file(

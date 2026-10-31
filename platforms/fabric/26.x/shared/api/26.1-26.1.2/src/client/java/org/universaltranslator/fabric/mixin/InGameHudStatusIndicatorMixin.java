@@ -29,9 +29,10 @@ abstract class InGameHudStatusIndicatorMixin {
             at = @At("RETURN"))
     private void universalTranslator$renderStatusIndicator(
             GuiGraphicsExtractor graphics, DeltaTracker deltaTracker, CallbackInfo callback) {
-        // 26.1 through 26.1.2 no longer expose the HUD-hidden flag on Options, Gui or Minecraft (all
-        // three reference the name but declare no such member), and the HUD render is skipped by Gui
-        // while F1 hides it, so there is nothing to read here.
-        HudIndicatorPainter.paint(graphics, false);
+        // 26.1 through 26.1.2 keep the HUD-hidden flag in Options.hideGui (public since these three
+        // releases; 26.2 removed it and moved the state to Hud.isHidden, which the 26.2/26.3 copies
+        // reach with @Shadow). The HUD render still runs while F1 hides the HUD, so without this flag
+        // the square, its label and the outgoing preview were painted over an empty screen.
+        HudIndicatorPainter.paint(graphics, Minecraft.getInstance().options.hideGui);
     }
 }

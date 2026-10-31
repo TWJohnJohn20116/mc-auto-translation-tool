@@ -8,6 +8,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.universaltranslator.core.HotkeyKeys;
+import org.universaltranslator.fabric.OrnitheClientAccess;
 import org.universaltranslator.fabric.UniversalTranslatorFabricClient;
 
 @Mixin(Minecraft.class)
@@ -25,6 +26,23 @@ abstract class MinecraftMixin {
         // drives the join hint and the runtime status line. Running the reset and the status line
         // here as well would do both twice per tick.
         UniversalTranslatorFabricClient.tickFromMixin();
+        // require = 0 keeps a renamed tick()V from failing the launch, so the one thing that
+        // distinguishes "the hook never applied" from "the keys stopped working" is this line.
+        OrnitheClientAccess.noteTickSurface();
+        try {
+            universalTranslator$pollHotkeys();
+        } catch (RuntimeException failure) {
+            // A drifted mapping in the hotkey half used to escape through Minecraft.tick()V and take
+            // the whole client down over one key press.
+            OrnitheClientAccess.reportHotkeyFailure(failure);
+        } catch (Error failure) {
+            OrnitheClientAccess.reportHotkeyFailure(failure);
+        }
+    }
+
+    /** The hotkey half of the tick injection, isolated so one failure is contained. */
+    @Unique
+    private void universalTranslator$pollHotkeys() {
         Minecraft client = (Minecraft) (Object) this;
         if (client.window == null) {
             return;

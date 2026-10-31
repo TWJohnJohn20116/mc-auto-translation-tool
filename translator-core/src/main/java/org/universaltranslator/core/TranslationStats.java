@@ -9,8 +9,10 @@ import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFileAttributeView;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -98,6 +100,13 @@ public final class TranslationStats {
     private long writtenRevision = -1L;
     private volatile Path file;
     private volatile boolean flusherStarted;
+    /**
+     * True when the last {@link #load(Path)} could not read the file, whether it was locked by a sync
+     * client, held by another instance or malformed. The counters then hold what this session
+     * counted and nothing else, so writing them back would replace the totals the file still holds
+     * with a zero nobody asked for.
+     */
+    private volatile boolean loadFailed;
 
     private TranslationStats() {
     }
@@ -145,6 +154,11 @@ public final class TranslationStats {
         synchronized (lock) {
             replaced = file != null;
             file = statisticsFile;
+            // A different file gets its own read result.
+            loadFailed = false;
+            // The counters that reached the previous path say nothing about this one, so the first
+            // flush after the switch has to write even when nothing was counted since the last one.
+            writtenRevision = -1L;
         }
         if (replaced) {
             DebugLog.global().log("stats-attach", "result", "replaced");
@@ -398,10 +412,26 @@ public final class TranslationStats {
         if (target == null) {
             return;
         }
+        if (loadFailed) {
+            // The read failed, so these counters are a partial view of a file this session could not
+            // see: writing them would replace the totals still on disk with a zero. The periodic
+            // flusher and the shutdown hook both run this, which is how one locked read used to
+            // erase the history permanently.
+            return;
+        }
         Properties properties;
         long snapshotRevision;
         synchronized (lock) {
             snapshotRevision = revision;
+            if (writtenRevision == snapshotRevision) {
+                // Nothing has been counted since the counters last reached the disk, so the file
+                // already says exactly this. The flusher runs every minute for the whole life of the
+                // client: rewriting an unchanged file meant one temporary file, one full write and
+                // one atomic move per minute, which a synced directory turns into an upload and an
+                // antivirus scan of the same bytes. A stale read of writtenRevision can only make
+                // this write one extra time, never skip one.
+                return;
+            }
             properties = toProperties();
         }
         synchronized (lockFor(target)) {
@@ -425,6 +455,13 @@ public final class TranslationStats {
                 }
                 temporary = null;
                 writtenRevision = snapshotRevision;
+                if (supportsOwnerPermissions(target)) {
+                    // Every flush writes a fresh temporary file and moves it over the target, so the
+                    // mode has to be applied again: the file carries a provider id per line, endpoint
+                    // host included, which is the same material the configuration file is restricted
+                    // for. Two system calls on a call that runs once a minute.
+                    LocalConfigSecurity.restrictToOwner(target);
+                }
             } catch (IOException | RuntimeException failed) {
                 // Not a translation failure, but no longer invisible: a statistics file that never
                 // lands used to be indistinguishable from one that was simply not due yet.
@@ -438,6 +475,22 @@ public final class TranslationStats {
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * Whether owner-only permissions can be verified on {@code target} at all.
+     *
+     * <p>A file store without POSIX attribute support -- Windows, or a mount that reports it as
+     * unsupported -- answers every {@code setPosixFilePermissions} with an exception. This runs on
+     * every flush, so asking first costs one lookup and keeps the debug log free of a line a minute.
+     */
+    private static boolean supportsOwnerPermissions(Path target) {
+        try {
+            return Files.getFileStore(target)
+                    .supportsFileAttributeView(PosixFileAttributeView.class);
+        } catch (IOException | RuntimeException unsupported) {
+            return false;
         }
     }
 
@@ -798,10 +851,20 @@ public final class TranslationStats {
         Properties properties = new Properties();
         try (Reader reader = Files.newBufferedReader(source, StandardCharsets.UTF_8)) {
             properties.load(reader);
+        } catch (NoSuchFileException absent) {
+            // A first run, not a failed read: there is nothing on disk to preserve.
+            loadFailed = false;
+            return;
         } catch (IOException | RuntimeException unreadable) {
+            // Not the same as "there is no file yet": the totals are on disk and this session simply
+            // could not see them. Starting from zero is unavoidable here -- flushing that zero back
+            // over them is what turned one locked read into a permanently erased history.
+            loadFailed = true;
+            DebugLog.global().logFailure("stats-load", unreadable);
             return;
         }
         synchronized (lock) {
+            loadFailed = false;
             requests = longValue(properties, "requests");
             successes = longValue(properties, "successes");
             failures = longValue(properties, "failures");

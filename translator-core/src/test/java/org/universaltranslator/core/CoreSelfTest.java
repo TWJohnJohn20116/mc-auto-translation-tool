@@ -391,10 +391,19 @@ public final class CoreSelfTest {
                 OfflineModel.QUALITY.expectedBytes(),
                 1_500L,
                 "离线模型失败 https://secret.example/translate api-key=abc123\n重试中");
-        String output = String.join("\n", snapshot.displayLines());
-        assertTrue(output.contains("离线模型：Quality"));
-        assertTrue(output.contains("模型文件：已安装并且大小正确"));
-        assertTrue(output.contains("运行服务：离线模型 + API 回退"));
+        // The screens resolve language keys, so the assertions name the keys they would look up. The
+        // method they used to call was a second, hard-coded copy with no producer: a line added to it
+        // turned this test green while every diagnostics screen kept showing the old page.
+        UiTranslator translator = new UiTranslator() {
+            @Override
+            public String translate(String key, Object... arguments) {
+                return key + (arguments.length == 0 ? "" : "=" + java.util.Arrays.toString(arguments));
+            }
+        };
+        String output = String.join("\n", snapshot.localizedLines(translator));
+        assertTrue(output.contains("screen.universal_translator.diagnostics.offline_model"));
+        assertTrue(output.contains("value.universal_translator.model_valid"));
+        assertTrue(output.contains("value.universal_translator.provider_offline_fallback"));
         assertFalse(output.contains("secret.example"));
         assertFalse(output.contains("https://"));
         assertFalse(output.contains("abc123"));
@@ -1354,11 +1363,18 @@ public final class CoreSelfTest {
         String[] decoratedBullets = {
                 "\u00a77\u25c6 Wins: 0",
                 " \u25c6 Wins: 0",
-                "Wins: 0\n\u00a7e\u25c6 Losses: 1"
+                "Wins: 0\n\u00a7e\u25c6 Losses: 1",
+                // A tab list writes the code, then the space, then the symbol. The run only allowed
+                // spacing in front of the first code, so a decoration below it was left translatable
+                // again and the model replaced the glyph.
+                "\u00a77 \u25c6 Wins: 0",
+                "Wins: 0\n\u00a77 \u25c6 Wins",
+                "\u00a78 \u00a7l\u25ba Home"
         };
         for (int index = 0; index < decoratedBullets.length; index++) {
             ProtectedText decorated = ProtectedText.parse(decoratedBullets[index]);
             assertFalse(decorated.getTemplate().contains("\u25c6"));
+            assertFalse(decorated.getTemplate().contains("\u25ba"));
             assertEquals(decoratedBullets[index], decorated.restore(decorated.getTemplate()));
         }
         // The placeholder branch has to win over the bullet branch: "\u00a77%player%" is a format code
@@ -2052,6 +2068,13 @@ public final class CoreSelfTest {
             TranslationStats third = TranslationStats.isolated();
             third.attach(file);
             assertCount(0L, third.snapshot().requests());
+
+            // A read that failed must not turn into a write. The file still holds whatever it holds,
+            // and overwriting it with this session's zeroes is what erased a whole history behind a
+            // temporarily locked file; the counters here are only what this session counted.
+            third.recordSuccess("offline-llama:1", 5L);
+            third.flush();
+            assertEquals(malformed, new String(Files.readAllBytes(file), StandardCharsets.UTF_8));
 
             // An unwritable target and an unattached accumulator are both no-ops, not failures.
             TranslationStats unattached = TranslationStats.isolated();

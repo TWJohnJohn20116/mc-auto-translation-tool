@@ -58,17 +58,68 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
      * {@code ThreadLocalMap} and a megabyte of reserved stack — with a fixed name, so several
      * same-named threads existed at once and tracing them in a thread dump was guesswork. Two
      * daemon threads are enough: the two in-flight flags already serialize each kind of request.
+     *
+     * <p>Released on the way out and rebuilt on demand, like the request pool each tree owns: this
+     * field used to be {@code static final} and nothing ever shut it down, so a closed game kept two
+     * threads alive — and kept running the connection check's {@code validateProviderConfiguration}
+     * on them — after the session behind the screens had been torn down. The name no longer collides
+     * with the tree's own {@code universal-translator-screen} threads either.
      */
-    private static final java.util.concurrent.ExecutorService SCREEN_WORKERS =
-            java.util.concurrent.Executors.newFixedThreadPool(2,
+    private static java.util.concurrent.ExecutorService screenWorkers;
+
+    static {
+        // Registered on class load: the screens have no lifecycle of their own, so the JVM hook is
+        // the only place a game exit can be observed from here.
+        Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+            @Override
+            public void run() {
+                shutdownScreenWorkers();
+            }
+        }, "universal-translator-settings-request-shutdown"));
+    }
+
+    /**
+     * Runs {@code task} on the next free request worker.
+     *
+     * @return false when a shutdown closed the pool before the task could be queued, so the caller
+     *         releases the in-flight flag it set before asking: the worker body would have done it.
+     */
+    private static boolean submitScreenWork(Runnable task) {
+        for (int attempt = 0; attempt < 2; attempt++) {
+            try {
+                currentScreenWorkers().execute(task);
+                return true;
+            } catch (java.util.concurrent.RejectedExecutionException shuttingDown) {
+                // The pool current() handed out was closed by the hook before execute() reached it;
+                // the next pass asks for the replacement pool instead of running the request on the
+                // thread that pressed the button.
+            }
+        }
+        return false;
+    }
+
+    /** Drops the request pool; the next {@link #submitScreenWork} builds a replacement. */
+    private static synchronized void shutdownScreenWorkers() {
+        if (screenWorkers != null) {
+            screenWorkers.shutdownNow();
+            screenWorkers = null;
+        }
+    }
+
+    private static synchronized java.util.concurrent.ExecutorService currentScreenWorkers() {
+        if (screenWorkers == null) {
+            screenWorkers = java.util.concurrent.Executors.newFixedThreadPool(2,
                     new java.util.concurrent.ThreadFactory() {
                         @Override
                         public Thread newThread(Runnable runnable) {
-                            Thread thread = new Thread(runnable, "universal-translator-screen");
+                            Thread thread = new Thread(runnable, "universal-translator-settings-request");
                             thread.setDaemon(true);
                             return thread;
                         }
                     });
+        }
+        return screenWorkers;
+    }
     /** Shared request client for the reachability check; {@code HttpJsonClient} is a timeout holder. */
     private final HttpJsonClient httpClient = new HttpJsonClient(5000, 15000);
 
@@ -453,7 +504,8 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
                 tr("screen.universal_translator.blocked_keywords")));
         this.blockedKeywords.setMaxLength(UiLimits.KEYWORDS_MAX_CHARS);
         this.blockedKeywords.setText(blockedKeywordsValue);
-        this.blockedKeywords.setSuggestion(tr("screen.universal_translator.blocked_keywords_hint"));
+        this.blockedKeywords.setSuggestion(tr("screen.universal_translator.blocked_keywords_hint",
+                UiLimits.KEYWORDS_MAX_ENTRIES, UiLimits.KEYWORD_MAX_CHARS));
 
         // --- Tab 3：引擎 ---
         // The engine rows are centred in the free band (see engineRow) so the tab does not sit in
@@ -814,8 +866,14 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
             FabricTranslationRuntime.initialize(updated);
             // Same writer as the F8 toggles: two threads writing this file let an older queued
             // snapshot land after the newer one and silently revert what the player just saved.
-            FabricTranslationRuntimeBase.saveInBackgroundAndWait(updated);
-            setTestStatus(tr("screen.universal_translator.diagnostics.settings_saved"), false);
+            // The result decides the message: a write still queued past the bounded wait, or one that
+            // failed, used to be reported as saved and was then silently missing on the next launch.
+            if (FabricTranslationRuntimeBase.saveInBackgroundAndWait(updated)) {
+                setTestStatus(tr("screen.universal_translator.diagnostics.settings_saved"), false);
+            } else {
+                setTestStatus(tr("status.universal_translator.save_failed",
+                        updated.configFile().getFileName()), true);
+            }
         } catch (Exception exception) {
             setTestStatus(tr("screen.universal_translator.diagnostics.settings_failed",
                     describe(exception)), true);
@@ -956,7 +1014,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
                             hudIndicatorContent, hudIndicatorVisibility,
                             hudIndicatorOffsetX, hudIndicatorOffsetY),
                     quality,
-                    TranslationPrompt.fromEditorText(
+                    TranslationPrompt.clampEditorText(
                             customPrompt == null ? "" : customPrompt.getText()),
                     workers,
                     batchSize);
@@ -971,11 +1029,17 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
             FabricTranslationRuntime.initialize(updated);
             // Same writer as the F8 toggles: two threads writing this file let an older queued
             // snapshot land after the newer one and silently revert what the player just saved.
-            FabricTranslationRuntimeBase.saveInBackgroundAndWait(updated);
-            status = tr("status.universal_translator.saved");
-            // Drawn once before the screen goes away; closing in this callback meant the success
-            // line never appeared anywhere, so Save gave no feedback unless it failed.
-            closeAfterSave();
+            // Only leave the screen once the file is known to be on disk: a save still queued past
+            // the bounded wait used to close the screen and hide that it had not landed.
+            if (FabricTranslationRuntimeBase.saveInBackgroundAndWait(updated)) {
+                status = tr("status.universal_translator.saved");
+                // Drawn once before the screen goes away; closing in this callback meant the success
+                // line never appeared anywhere, so Save gave no feedback unless it failed.
+                closeAfterSave();
+            } else {
+                status = tr("status.universal_translator.save_failed",
+                        updated.configFile().getFileName());
+            }
         } catch (Exception exception) {
             if (runtimeChanged) {
                 try {
@@ -1471,7 +1535,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         fetchingModels = true;
         releaseFieldFocus();
         setTestStatus(tr("screen.universal_translator.llm.fetching"), false);
-        SCREEN_WORKERS.execute(new Runnable() {
+        if (!submitScreenWork(new Runnable() {
             @Override
             public void run() {
                 OpenAiModelCatalog.Catalog catalog = null;
@@ -1511,7 +1575,11 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
                 modelListOpen = true;
                 setTestStatus("", false);
             }
-        });
+        })) {
+            // The request never started, so the flag it would have released in its finally has to be
+            // released here or the button stays dead for the rest of the screen's life.
+            fetchingModels = false;
+        }
     }
 
     /**
@@ -1532,7 +1600,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         final String startedProvider = provider;
         testing = true;
         setTestStatus(tr("screen.universal_translator.engine.testing"), false);
-        SCREEN_WORKERS.execute(new Runnable() {
+        if (!submitScreenWork(new Runnable() {
             @Override
             public void run() {
                 // Every branch publishes a key plus its one argument: tr(...) resolves through the
@@ -1584,7 +1652,10 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
                 }
                 setTestResult(key, argument, error);
             }
-        });
+        })) {
+            // See fetchModels: the worker body releases this flag in its finally, and it never ran.
+            testing = false;
+        }
     }
 
     /** Publishes a line that is already text: an exception message, or a client-thread lookup. */

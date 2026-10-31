@@ -5,8 +5,6 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.AbstractGui;
 import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.IngameGui;
-import net.minecraft.util.text.ITextComponent;
-import net.minecraft.util.text.StringTextComponent;
 import net.minecraft.util.text.TranslationTextComponent;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -14,6 +12,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.universaltranslator.core.HudIndicatorContent;
 import org.universaltranslator.core.HudIndicatorCorner;
+import org.universaltranslator.core.HudLabelCache;
 import org.universaltranslator.core.HomeQuickSettingsState;
 import org.universaltranslator.core.HudIndicatorSettings;
 import org.universaltranslator.core.HudIndicatorVisibility;
@@ -21,6 +20,7 @@ import org.universaltranslator.core.OutgoingTranslationPreview;
 import org.universaltranslator.core.TranslationActivity;
 import org.universaltranslator.forge.ForgeMixinDiagnostics;
 import org.universaltranslator.forge.ForgeTranslationRuntime;
+import org.universaltranslator.forge.HudLabels;
 import org.universaltranslator.forge.TranslationRenderContext;
 
 /**
@@ -131,8 +131,14 @@ abstract class InGameHudStatusIndicatorMixin {
                 label = quickSettings.getProvider();
             } else if (content == HudIndicatorContent.ACTIVITY
                     && TranslationActivity.isTranslating()) {
-                label = new TranslationTextComponent(
-                        "value.universal_translator.hud_content.activity").getString();
+                // Resolved once per second instead of once per frame: the language-table lookup and
+                // the fresh String it returns were the whole per-frame cost of this branch.
+                long now = System.currentTimeMillis();
+                if (HudLabels.activityExpired(now)) {
+                    HudLabels.rememberActivity(new TranslationTextComponent(
+                            HudLabelCache.ACTIVITY_KEY).getString(), now);
+                }
+                label = HudLabels.activity();
             }
             if (label != null && !label.isEmpty()) {
                 FontRenderer font = Minecraft.getInstance().font;
@@ -142,10 +148,16 @@ abstract class InGameHudStatusIndicatorMixin {
                     // threw an NPE out of the render loop.
                     return;
                 }
-                ITextComponent text = new StringTextComponent(label);
+                long now = System.currentTimeMillis();
                 TranslationRenderContext.pushTextInput();
                 try {
-                    int labelWidth = font.width(label);
+                    // A glyph walk per frame, for a string that only changes when the language or the
+                    // font does: both are covered by the one-second slot.
+                    int labelWidth = HudLabels.width(label, now);
+                    if (labelWidth < 0) {
+                        labelWidth = font.width(label);
+                        HudLabels.rememberWidth(label, labelWidth, now);
+                    }
                     // Beside the square, never over it: a 6px square cannot hold "zh-TW", and a label
                     // centred on a right-corner square would run off the screen edge.
                     int labelCenterX = corner.isRight()
@@ -154,7 +166,7 @@ abstract class InGameHudStatusIndicatorMixin {
                     // y is the top of the text line, so centre it against the square by hand.
                     int labelY = top + (size - 8) / 2;
                     AbstractGui.drawCenteredString(
-                            pose, font, text.getString(), labelCenterX, labelY, 0xFFFFFFFF);
+                            pose, font, label, labelCenterX, labelY, 0xFFFFFFFF);
                 } finally {
                     TranslationRenderContext.popTextInput();
                 }

@@ -220,6 +220,28 @@ if (!undeclaredProjects.isEmpty()) {
                     "every PR and published nowhere; add it to platformDependencies or to the exempt list.")
 }
 
+// 這 9 個 Forge 版本是發布資產，卻沒有任何定期 workflow 編譯它們：build.yml 的 platform-build 只建
+// 6 個 Forge 目標、legacy-build 建 4 個舊版，legacy-targets.yml 一個 Forge 都沒有，所以只有手動的
+// prepare-release.yml 會碰它們。清單放這裡是為了讓 build.gradle 的 check 把「這次不會被驗證」印出來，
+// 而不是等到發布前 10 分鐘才在設定階段 throw（forge/1.21 與 forge/26.x 的 versionFamilies／
+// sourceLayers 漏接一個版本就是這樣炸的）。要讓某個版本回到定期路徑，改的是 workflow 的 matrix，
+// 不是這份清單；這裡只宣告現況，並擋下打字錯誤。
+def releaseOnlyForgeTargets = [
+        "platform-forge-1.21", "platform-forge-1.21.3", "platform-forge-1.21.4",
+        "platform-forge-1.21.5", "platform-forge-1.21.6", "platform-forge-1.21.8",
+        "platform-forge-1.21.10", "platform-forge-26.1", "platform-forge-26.1.2"
+].collect { it.toString() }
+def unknownReleaseOnlyTargets = releaseOnlyForgeTargets.findAll {
+    !platformProjects.containsKey(it)
+}.sort()
+if (!unknownReleaseOnlyTargets.isEmpty()) {
+    throw new GradleException(
+            "releaseOnlyForgeTargets names projects that platformProjects does not declare: " +
+                    "${unknownReleaseOnlyTargets.join(', ')}. A renamed or deleted project has to be " +
+                    "removed from that list as well, or the note it drives names nothing.")
+}
+gradle.ext.releaseOnlyForgeTargets = releaseOnlyForgeTargets
+
 // MCAutoTranslationTool-<mod_version>-fabric-all.jar 內嵌的版本：也就是會出現在 downloads/
 // 的 Fabric bundle 成員。1.0-1.8.x 與 1.8-1.12.x 刻意不在其中——它們只由 legacy-targets.yml
 // 建置，從來不是發布資產，也不會進到那個合併 jar。清單由上面的 platformDependencies 推導，
@@ -309,6 +331,18 @@ gradle.ext.treeJavaTarget = { String prefix ->
                         "halves are told apart")
     }
     return releases[1]
+}
+
+// The toolchain every platform project compiles with, in one place: build.gradle hands this to
+// java.toolchain, and gradle/fabric-bundle-aggregate-verify.gradle hands it to the verifier launcher.
+// Those two used to carry the same "26.x => 25, everything else => 21" rule separately, and the
+// launcher copy is only reached by the release job, so a rule that moved in one of them surfaced as
+// UnsupportedClassVersionError after all 48 targets had built.
+gradle.ext.toolchainJavaFor = { Object platformProjectName ->
+    def name = platformProjectName.toString()
+    name.startsWith("platform-fabric-26.")
+            || name.startsWith("platform-forge-26.")
+            || name.startsWith("platform-neoforge-26.") ? 25 : 21
 }
 
 // Fabric API's mod id. The bundle metadata that is hand-written per bundle used to spell it three

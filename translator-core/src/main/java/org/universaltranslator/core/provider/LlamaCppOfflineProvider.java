@@ -79,6 +79,16 @@ public final class LlamaCppOfflineProvider
      * nothing to show.
      */
     private static final long STARTUP_WAIT_MILLIS = 5L * 60L * 1000L;
+    /**
+     * Longest one loopback translation request may stay silent before it is given up on.
+     *
+     * <p>The reply is not streamed, so the socket carries nothing at all while the model generates, and
+     * this number is therefore the whole answer's time budget. The offline completion budget reaches
+     * about 896 tokens and a small model on two threads writes 10–30 of them per second, so 15 s was
+     * below what a long line needs: the finished answer was discarded and, with {@code api-fallback}
+     * on, the same text was then sent to the cloud API.
+     */
+    private static final int LOCAL_READ_TIMEOUT_MILLIS = 60000;
 
     /**
      * Header line of the sidecar that records the last completed full-file verification
@@ -108,7 +118,17 @@ public final class LlamaCppOfflineProvider
     private volatile Thread shutdownHook;
     private volatile String progressStage = "";
     private volatile int progressPercent = -1;
-    private volatile long nextStartupAttemptAt;
+    /**
+     * {@link System#nanoTime()} instant before which a failed startup is not retried.
+     *
+     * <p>The wall clock is corrected by NTP, by the user and by a resume from sleep; a step backwards
+     * pushed this instant further into the future and a step forward ended the five-minute pause early.
+     * Meaningless until {@link #startupRetryScheduled} is set, because {@code nanoTime()} may start
+     * below any fixed value.
+     */
+    private volatile long nextStartupAttemptAtNanos;
+    /** Whether {@link #nextStartupAttemptAtNanos} holds an instant at all. */
+    private volatile boolean startupRetryScheduled;
     private volatile String startupFailureMessage = "";
     private boolean engineRepairAttempted;
     /**
@@ -247,8 +267,9 @@ public final class LlamaCppOfflineProvider
             if (activeStartupToken.get() >= 0L) {
                 throw new IOException("离线模型正在启动中");
             }
-            long now = System.currentTimeMillis();
-            if (nextStartupAttemptAt > now && !startupFailureMessage.isEmpty()) {
+            if (startupRetryScheduled
+                    && System.nanoTime() - nextStartupAttemptAtNanos < 0L
+                    && !startupFailureMessage.isEmpty()) {
                 throw new IOException(startupFailureMessage);
             }
             // Claiming the startup starts a new generation, so a previous startup
@@ -300,9 +321,11 @@ public final class LlamaCppOfflineProvider
      * @throws InterruptedException when this worker was cancelled while waiting
      */
     private boolean awaitStartupInProgress() throws InterruptedException {
-        long deadline = System.currentTimeMillis() + STARTUP_WAIT_MILLIS;
+        // The budget is measured on the monotonic clock: a wall-clock correction during a startup would
+        // otherwise either end this wait early or keep it past its five minutes.
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(STARTUP_WAIT_MILLIS);
         while (activeStartupToken.get() >= 0L) {
-            if (System.currentTimeMillis() >= deadline) {
+            if (System.nanoTime() - deadline >= 0L) {
                 return false;
             }
             Thread.sleep(100L);
@@ -434,7 +457,8 @@ public final class LlamaCppOfflineProvider
             OpenAiChatTranslationProvider api = new OpenAiChatTranslationProvider(
                     "http://127.0.0.1:" + port + "/v1/chat/completions",
                     "", LOCAL_MODEL_ALIAS, "offline-loopback",
-                    new org.universaltranslator.core.net.HttpJsonClient(1_000, 15_000),
+                    new org.universaltranslator.core.net.HttpJsonClient(1_000,
+                            LOCAL_READ_TIMEOUT_MILLIS),
                     JsonOutputMode.NONE);
             synchronized (lifecycleLock) {
                 // Same race for the ready hand-off. A close() may have happened while the
@@ -443,7 +467,7 @@ public final class LlamaCppOfflineProvider
                     throw new IOException("离线模型启动已被取消");
                 }
                 localApi = api;
-                nextStartupAttemptAt = 0L;
+                startupRetryScheduled = false;
                 startupFailureMessage = "";
                 status = "离线模型已就绪";
             }
@@ -465,7 +489,10 @@ public final class LlamaCppOfflineProvider
     private IOException delayStartupRetries(Exception failure) {
         String message = safeMessage(failure) + "；已暂停自动重试 5 分钟";
         startupFailureMessage = message;
-        nextStartupAttemptAt = System.currentTimeMillis() + STARTUP_FAILURE_RETRY_MILLIS;
+        nextStartupAttemptAtNanos = System.nanoTime()
+                + TimeUnit.MILLISECONDS.toNanos(STARTUP_FAILURE_RETRY_MILLIS);
+        // Set after the instant, so a reader that sees the flag also sees the deadline it belongs to.
+        startupRetryScheduled = true;
         return new IOException(message, failure);
     }
 
@@ -740,10 +767,12 @@ public final class LlamaCppOfflineProvider
             Path log,
             long logStart
     ) throws Exception {
-        long deadline = System.currentTimeMillis() + timeoutMillis;
+        // Measured on the monotonic clock: a wall-clock step during a 90-second startup either ended this
+        // poll or kept it running past its budget.
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
         IOException lastFailure = null;
         long pollDelayMillis = 250L;
-        while (System.currentTimeMillis() < deadline) {
+        while (System.nanoTime() - deadline < 0L) {
             // A close() or a replaced startup interrupts this poll so the wait can
             // never hold a closing render thread hostage for the full timeout.
             if (Thread.interrupted() || !isCurrentStartup(token)) {
@@ -771,7 +800,8 @@ public final class LlamaCppOfflineProvider
             if (healthy) {
                 // Deliberately outside the catch above: "the port belongs to someone else" has to
                 // reach startServer as its own outcome, not be mistaken for another failed probe.
-                waitForOwnModel(port, token, System.currentTimeMillis() + OWN_MODEL_VERIFY_TIMEOUT_MILLIS);
+                waitForOwnModel(port, token, System.nanoTime()
+                        + TimeUnit.MILLISECONDS.toNanos(OWN_MODEL_VERIFY_TIMEOUT_MILLIS));
                 return;
             }
             // Every poll opens a new TCP connection, so a fixed 250 ms interval spent hundreds of
@@ -786,11 +816,12 @@ public final class LlamaCppOfflineProvider
     /**
      * Waits until the healthy port reports this provider's model alias.
      *
+     * @param deadlineNanos {@link System#nanoTime()} instant at which the wait ends
      * @throws LoopbackPortNotOursException when the alias never appears before the deadline
      */
-    private void waitForOwnModel(int port, long token, long deadline) throws Exception {
+    private void waitForOwnModel(int port, long token, long deadlineNanos) throws Exception {
         long pollDelayMillis = 100L;
-        while (System.currentTimeMillis() <= deadline) {
+        while (System.nanoTime() - deadlineNanos <= 0L) {
             if (Thread.interrupted() || !isCurrentStartup(token)) {
                 throw new InterruptedException("Offline model startup was cancelled");
             }

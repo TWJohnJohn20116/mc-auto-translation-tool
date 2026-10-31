@@ -75,17 +75,18 @@ flowchart TD
 | `platforms/forge/26.x/` | 已發布（26.1–26.2） | 26.1 ~ 26.2 | Forge | **Java 25**| ForgeGradle / NeoDev |
 | `platforms/neoforge/` | NeoForge 獨立系列 | 1.20.1, 1.20.x, 1.21.x, 26.x | NeoForge | **Java 17/21/25**| ModDev Gradle |
 
-> 本表只做速查：每個 bundle 的版本數以 `docs/Zh-cn/BUILDING.md` 對應章節為權威（該檔逐 bundle 說明，
+> 本文件只做速查：每個 bundle 的版本數以 `docs/Zh-cn/BUILDING.md` 對應章節為權威（該檔逐 bundle 說明，
 > 新增版本時只改那裡），目錄路徑與目錄內容以 `settings.gradle` 的 `projectDir` 及實際目錄為權威；
-> 本表只在整批增減時跟著動。
+> 共用層的掛載關係以各層的 `*.gradle`（例如 `platforms/fabric/legacy/shared.gradle`）為權威。
+> 本文件只在整批增減時跟著動。
 
 ---
 
 ## 3. 常見架構疑問解答 (FAQ)
 
-### Q1: 為什麼專案根目錄有 `legacy/`，但 `platforms/fabric/` 底下又有一個 `legacy/`？
-* **根目錄的 `legacy/`（Forge 1.8.9 與 1.12.2）**：
-  Minecraft 1.8.9 與 1.12.2 的 Forge 官方外掛（ForgeGradle 2.x）是 2016 年前後的古老產物，**強制依賴 Gradle 4.9 且與 Gradle 8.x 完全不相容**。因此它們不能作為根專案的 subproject，必須獨立放在根目錄自成一個 Gradle 專案（擁有自己的 `gradlew` 與 `build.gradle`）。
+### Q1: 為什麼 `platforms/forge/legacy/` 與 `platforms/fabric/legacy/` 都要各自獨立成層？
+* **`platforms/forge/legacy/`（Forge 1.8.9 與 1.12.2）**：
+  Minecraft 1.8.9 與 1.12.2 的 Forge 官方外掛（ForgeGradle 2.x）是 2016 年前後的古老產物，**強制依賴 Gradle 4.x 且與 Gradle 8.x 完全不相容**。因此它們不能作為根專案的 subproject，而是分別放在 `platforms/forge/legacy/1.8.9/` 與 `platforms/forge/legacy/1.12.2/`，各自自立一個 Gradle 專案（擁有自己的 `gradlew` 與 `build.gradle`，不在根專案的 `settings.gradle` 裡）。根目錄本身**沒有** `legacy/` 這個目錄。
 * **`platforms/fabric/legacy/`**：
   這裡只放 `shared/`（`shared.gradle`）跨版本 API 轉接層，本身沒有任何版本專案。1.16.5、1.19.2、1.20.1 的專案目錄分別在 `platforms/fabric/1.16/versions/1.16.5`、`platforms/fabric/1.19/versions/1.19.2`、`platforms/fabric/1.20/versions/1.20.1`（見 `settings.gradle` 的 `projectDir`），它們依然受根專案的 Gradle 8.14 統一管理。
 
@@ -95,7 +96,7 @@ flowchart TD
 **完全不需要！** 專案採用了 **Gradle sourceSets 階層疊加** 機制：
 1. **純邏輯層**：全部寫在 `translator-core/`。翻譯演算法、字串過濾、正則匹配改動時，**全平台 60+ 版本自動同步生效**。
 2. **UI 與渲染層**：
-   - `platforms/fabric/legacy/shared/`：將 1.14 至 1.20.6 依照 Minecraft 的 GUI 繪製 API 變革劃分為 `rendered/1.16.5`、`rendered/1.19.2-plus`、`chat-hud/1.20-1.20.4` 等模組。
+   - `platforms/fabric/legacy/shared/` 只是這一層的根目錄：`common/`（共用資源與工具）、`family/1.16.5-1.19.2/`（1.16.2–1.19.2 共用的那一份）、`rendered/1.16.5/`（1.16.2–1.18.2 的渲染入口）、`screen-base/{1.16.0-1.16.4,1.16.5,1.17,1.17.1-1.18.1,1.18.2}/`、`screens/1.16-1.18/`；1.19.2 以後的分支與 `chat-hud/` 不在這一層（分別在 `platforms/fabric/1.19/shared/` 與 `platforms/fabric/1.20/shared/`），`rendered/1.19.2-plus` 只是掛載旗標、程式碼在 `platforms/fabric/shared/rendered-common/`。實際掛載關係以 `platforms/fabric/legacy/shared.gradle` 的 `sourceLayers` 為權威。
    - 子專案（例如 `platforms/fabric/1.20/versions/1.20.4`）內部只有 `fabric.mod.json` 與版本相依性宣告，其 Java 代碼是在編譯時直接掛載共用目錄的 sourceSet。
 3. **Forge 共用層**：
    - `platforms/forge/shared/` 封裝了現代 Forge 的 Client Mod 事件與 Mixin 進入點，1.16.5 至 1.20.1 共用同一套客戶端代碼。

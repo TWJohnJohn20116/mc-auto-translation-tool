@@ -107,4 +107,9 @@ java {
 }
 
 apply from: rootProject.file("gradle/jar-contents.gradle")
+// A mixin class that no shipped mixins.json lists is compiled, shipped and never applied — the
+// failure mode 1.19.3-1.19.4 shipped with — and required:true never complains about the reverse.
+// This tree is only built by the scheduled legacy-targets run, so without this check nothing looks
+// at the class-to-config mapping it ships at all.
+apply from: rootProject.file("gradle/fabric-mixin-config-verify.gradle")
 

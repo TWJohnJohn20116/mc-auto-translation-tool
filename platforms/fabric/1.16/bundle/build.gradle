@@ -10,8 +10,15 @@ repositories {
 version = project.mod_version
 group = project.maven_group
 
+// The Loader the discovery harness resolves the nested jars with. It is the version
+// platforms/fabric/bundles/shared-test is compiled against, so it is not derived from the members: the
+// 1.20 bundle's members declare 0.15.11/0.16.9, a generation older than that harness. The floor
+// players see is bundleLoaderFloor below; this value only picks the test-time Loader, and
+// verifyLoaderSelection prints it so a bump shows up in the CI log instead of staying an edit.
+def bundleLoaderVersion = "0.19.3"
+
 dependencies {
-    testImplementation "net.fabricmc:fabric-loader:0.19.3"
+    testImplementation "net.fabricmc:fabric-loader:${bundleLoaderVersion}"
     testRuntimeOnly "org.ow2.asm:asm:9.10.1"
     testRuntimeOnly "org.ow2.asm:asm-analysis:9.10.1"
     testRuntimeOnly "org.ow2.asm:asm-commons:9.10.1"
@@ -101,6 +108,12 @@ tasks.register("verifyLoaderSelection", JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
     mainClass = "org.universaltranslator.bundle.BundleResolutionVerifier"
     args([jar.archiveFile.get().asFile.absolutePath] + supportedVersions)
+    doFirst {
+        // Which nested jar the Loader picks is decided by the Loader on the classpath above, so a
+        // resolution result only means something together with the generation it ran on.
+        println "verifyLoaderSelection: resolving ${supportedVersions.size()} implementations with " +
+                "fabric-loader ${bundleLoaderVersion}"
+    }
 }
 
 test {

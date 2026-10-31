@@ -8,6 +8,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.universaltranslator.core.HotkeyKeys;
+import org.universaltranslator.fabric.OrnitheClientAccess;
 import org.universaltranslator.fabric.UniversalTranslatorFabricClient;
 
 @Mixin(MinecraftClient.class)
@@ -26,6 +27,23 @@ abstract class MinecraftMixin {
         // so none of that ran in 1.13.2. The status line is not called a second time here for the same
         // reason; it is part of that tick body now.
         UniversalTranslatorFabricClient.tickFromMixin();
+        // require = 0 keeps a renamed tick()V from failing the launch, so the one thing that
+        // distinguishes "the hook never applied" from "the keys stopped working" is this line.
+        OrnitheClientAccess.noteTickSurface();
+        try {
+            universalTranslator$pollHotkeys();
+        } catch (RuntimeException failure) {
+            // A drifted mapping in the hotkey half used to escape through MinecraftClient.tick()V
+            // and take the whole client down over one key press.
+            OrnitheClientAccess.reportHotkeyFailure(failure);
+        } catch (Error failure) {
+            OrnitheClientAccess.reportHotkeyFailure(failure);
+        }
+    }
+
+    /** The hotkey half of the tick injection, isolated so one failure is contained. */
+    @Unique
+    private void universalTranslator$pollHotkeys() {
         long window = GLFW.glfwGetCurrentContext();
         if (window == 0L) {
             // glfwGetKey on handle 0 reports every key as released and raises a GLFW error on each

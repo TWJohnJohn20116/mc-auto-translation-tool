@@ -82,6 +82,11 @@ public final class TranslationCoordinator implements AutoCloseable {
     private final AtomicBoolean closed = new AtomicBoolean();
     /** Guards the once-per-coordinator {@link #migrateStoredGeneration()} run. */
     private final AtomicBoolean cacheGenerationChecked = new AtomicBoolean();
+    /**
+     * Serializes that run against the other workers of the first burst: the migration clears the
+     * store, so a worker that stored a segment while it was reading the file would lose it.
+     */
+    private final Object cacheGenerationGate = new Object();
 
     public TranslationCoordinator(TranslationProvider provider, TranslationStore cache, int workerCount) {
         this.provider = Objects.requireNonNull(provider, "provider");
@@ -144,6 +149,10 @@ public final class TranslationCoordinator implements AutoCloseable {
      * <p>Package-private on purpose: the public overloads must keep doing the check themselves,
      * because a caller that has not run it would otherwise silently skip text that has to be
      * translated.
+     *
+     * <p>The two booleans are this session's own {@code chineseTarget} and {@code traditionalTarget},
+     * taken from the verdict the caller already resolved; they must come from the same
+     * {@code targetLanguage} the text verdict was reached for.
      */
     CompletableFuture<TranslationResult> translateKnownTranslatable(
             final String text,
@@ -151,10 +160,12 @@ public final class TranslationCoordinator implements AutoCloseable {
             final String targetLanguage,
             final TextKind kind,
             final Iterable<String> protectedLiterals,
-            final boolean preserveHanText
+            final boolean preserveHanText,
+            final boolean chineseTarget,
+            final boolean traditionalTarget
     ) {
         return translate(text, sourceLanguage, targetLanguage, kind, protectedLiterals, preserveHanText,
-                null, true);
+                null, true, chineseTarget, traditionalTarget);
     }
 
     /**
@@ -205,14 +216,6 @@ public final class TranslationCoordinator implements AutoCloseable {
             final TranslationStreamListener listener,
             final boolean heuristicSettled
     ) {
-        Objects.requireNonNull(text, "text");
-        if (targetLanguage == null || targetLanguage.trim().isEmpty()) {
-            throw new IllegalArgumentException("targetLanguage is required");
-        }
-        if (closed.get()) {
-            return CompletableFuture.completedFuture(
-                    TranslationResult.failure(text, "Translation session is closed"));
-        }
         // Resolved once per request. shouldTranslate(text, targetLanguage) re-normalizes the language
         // identifier on every call (two String allocations) and this method used it twice — for the
         // raw text and again for the unprotected template — on the caller's thread, which on the
@@ -223,6 +226,39 @@ public final class TranslationCoordinator implements AutoCloseable {
         // Chinese target treats every Han-only string as already translated, so a zh-TW session never
         // converted Simplified input — the only reason that preset exists.
         final boolean traditionalTarget = LanguageHeuristics.isTraditionalTarget(targetLanguage);
+        return translate(text, sourceLanguage, targetLanguage, kind, protectedLiterals, preserveHanText,
+                listener, heuristicSettled, chineseTarget, traditionalTarget);
+    }
+
+    /**
+     * The body, with the two language properties already resolved by the caller.
+     *
+     * <p>Both must come from this exact {@code targetLanguage}: a verdict taken from another language
+     * either treats a Han-only line as already translated or skips the other-script conversion. The
+     * render path holds them as session constants, and passing them in is what keeps
+     * {@link TargetLanguage}'s canonicalization — trim, lower case and the preset loop that builds two
+     * strings per iteration — off the render thread for every string the hooks see for the first time.
+     */
+    private CompletableFuture<TranslationResult> translate(
+            final String text,
+            final String sourceLanguage,
+            final String targetLanguage,
+            final TextKind kind,
+            final Iterable<String> protectedLiterals,
+            final boolean preserveHanText,
+            final TranslationStreamListener listener,
+            final boolean heuristicSettled,
+            final boolean chineseTarget,
+            final boolean traditionalTarget
+    ) {
+        Objects.requireNonNull(text, "text");
+        if (targetLanguage == null || targetLanguage.trim().isEmpty()) {
+            throw new IllegalArgumentException("targetLanguage is required");
+        }
+        if (closed.get()) {
+            return CompletableFuture.completedFuture(
+                    TranslationResult.failure(text, "Translation session is closed"));
+        }
         if (!heuristicSettled
                 && !LanguageHeuristics.shouldTranslateToTarget(text, chineseTarget, traditionalTarget)) {
             return CompletableFuture.completedFuture(TranslationResult.unchanged(text));
@@ -284,9 +320,10 @@ public final class TranslationCoordinator implements AutoCloseable {
             completeOutsideCaller(created, TranslationResult.failure(
                     submission.text, "Translation queue is busy; retrying later"));
         } catch (Throwable fatal) {
-            // begin() already ran; without this the count would never come back down and the
-            // HUD indicator would be stuck showing "translating" for the rest of the session.
-            TranslationActivity.end();
+            // No explicit TranslationActivity.end() belongs here: completing the future below runs the
+            // whenComplete installed on it above, and that is the one end() this begin() is paired
+            // with. The second call this used to make was decremented off the count of another request
+            // that was still running, because end() only clamps at zero and cannot report the mistake.
             // The future has to be settled as well: ThreadPoolExecutor.execute can fail with an
             // OutOfMemoryError while it creates the worker thread, and an entry left in inFlight
             // would answer every later request for the same text with a future that never completes.
@@ -328,6 +365,11 @@ public final class TranslationCoordinator implements AutoCloseable {
      *
      * <p>Runs on a worker, never on the caller: this reads the disk store and may rewrite it, and the
      * render path must not wait for either.
+     *
+     * <p>Only a store that reports a generation other than the current one is dropped. A store that
+     * reports none proves nothing about what it holds -- a first run, a file this session could not
+     * read, and a store whose one reserved entry was pushed out by the entry cap all look like that --
+     * and dropping it on that guess is what turned a full cache into nothing once per launch.
      */
     private void migrateStoredGeneration() {
         // Only a store that outlives the process can hold a previous generation; the memory store is
@@ -335,26 +377,47 @@ public final class TranslationCoordinator implements AutoCloseable {
         if (!(cache instanceof PersistentTranslationCache)) {
             return;
         }
-        if (!cacheGenerationChecked.compareAndSet(false, true)) {
+        if (cacheGenerationChecked.get()) {
             return;
         }
-        try {
-            String wanted = CACHE_FORMAT_VERSION + '\n' + VALIDATION_RULES_VERSION;
-            String stored = cache.get(CACHE_GENERATION_KEY);
-            if (wanted.equals(stored)) {
+        // The migration has to finish before the other workers of this burst store anything, not just
+        // before they run one of their own: clear() empties the map those workers are writing into, so
+        // their first paid results were thrown away by the migration that was running next to them.
+        synchronized (cacheGenerationGate) {
+            if (cacheGenerationChecked.get()) {
                 return;
             }
-            cache.clear();
-            cache.put(CACHE_GENERATION_KEY, wanted);
-            // Written out now: a session that ended before its own flush would leave no generation
-            // behind and repeat this clear on the next launch, dropping a whole cache every time.
-            cache.flush();
-            DebugLog.global().log("cache", "generation-invalidated",
-                    "from", stored == null ? "none" : stored.replace('\n', ' '),
-                    "to", wanted.replace('\n', ' '));
-        } catch (RuntimeException failed) {
-            // A store that cannot be migrated must not fail the translation that ran into it.
-            DebugLog.global().logFailure("cache-generation", failed);
+            try {
+                String wanted = CACHE_FORMAT_VERSION + '\n' + VALIDATION_RULES_VERSION;
+                String stored = cache.get(CACHE_GENERATION_KEY);
+                if (wanted.equals(stored)) {
+                    return;
+                }
+                if (stored == null) {
+                    // Nothing recorded, so nothing is known to be of an older generation. Writing the
+                    // record makes the next launch able to tell, and the entries the store may still
+                    // hold are left to age out against the entry cap instead of being deleted here.
+                    cache.put(CACHE_GENERATION_KEY, wanted);
+                    cache.flush();
+                    DebugLog.global().log("cache", "generation-recorded");
+                    return;
+                }
+                cache.clear();
+                cache.put(CACHE_GENERATION_KEY, wanted);
+                // Written out now: a session that ended before its own flush would leave no generation
+                // behind and repeat this clear on the next launch, dropping a whole cache every time.
+                cache.flush();
+                DebugLog.global().log("cache", "generation-invalidated",
+                        "from", stored.replace('\n', ' '),
+                        "to", wanted.replace('\n', ' '));
+            } catch (RuntimeException failed) {
+                // A store that cannot be migrated must not fail the translation that ran into it.
+                DebugLog.global().logFailure("cache-generation", failed);
+            } finally {
+                // Set on the failure path as well: every other worker of this burst would otherwise be
+                // sent to the disk to fail the same way.
+                cacheGenerationChecked.set(true);
+            }
         }
     }
 
@@ -702,6 +765,21 @@ public final class TranslationCoordinator implements AutoCloseable {
 
     @Override
     public void close() {
+        close(WORKER_SHUTDOWN_TIMEOUT_MILLIS);
+    }
+
+    /**
+     * Releases this session, waiting at most {@code waitMillis} for workers parked in a provider
+     * read.
+     *
+     * <p>Zero is the path a client takes when it drops a session the player has already replaced: a
+     * burst of switches (holding the toggle key down, a HUD drag) queues one teardown per press, and
+     * every one of them waiting the full budget turns the backlog into minutes of held resource. The
+     * wait itself is what keeps an interrupted worker from looping back into a provider that is about
+     * to be torn down, so it stays the default; only the caller that has already dropped the session
+     * for good skips it. The store flush below runs either way.
+     */
+    void close(long waitMillis) {
         if (!closed.compareAndSet(false, true)) {
             return;
         }
@@ -733,13 +811,13 @@ public final class TranslationCoordinator implements AutoCloseable {
         boolean workersStopped = false;
         try {
             workersStopped = executor.awaitTermination(
-                    WORKER_SHUTDOWN_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
+                    waitMillis, TimeUnit.MILLISECONDS);
             if (!workersStopped) {
                 // The debug log instead of stderr: this used to be the only core path that wrote to
                 // stdout regardless of the debug-log switch, so it printed with no level and no
                 // timestamp and could not be turned off.
                 DebugLog.global().log("shutdown", "workers", "did-not-stop",
-                        "timeoutMillis", String.valueOf(WORKER_SHUTDOWN_TIMEOUT_MILLIS));
+                        "timeoutMillis", String.valueOf(waitMillis));
             }
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();

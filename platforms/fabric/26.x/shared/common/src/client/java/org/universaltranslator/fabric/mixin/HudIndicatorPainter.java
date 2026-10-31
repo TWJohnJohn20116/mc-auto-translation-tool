@@ -130,7 +130,8 @@ final class HudIndicatorPainter {
         // painted over the chat and the hotbar, because RETURN is the last thing that happens.
         //
         // The flag is passed in instead of read here: 26.1 to 26.1.2 keep the HUD-hidden flag on
-        // {@code Gui.hideGui} while 26.2 and 26.3 renamed it to {@code Gui.hide}, and this file is
+        // {@code Minecraft.options.hideGui} while 26.2 and 26.3 moved it to {@code Hud.isHidden},
+        // which is private and only reachable through the mixin's {@code @Shadow}, and this file is
         // compiled once for all three targets, so a field access would only build for one of them.
         if (hudHidden) {
             return;

@@ -154,6 +154,16 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
      */
     private final BatchBudget.ByEntries acceptedBatchTokens =
             new BatchBudget.ByEntries(MAXIMUM_BATCH_COMPLETION_TOKENS);
+    /**
+     * Largest number of texts one request has been observed to accept, lowered only by a refusal that
+     * named the request's own length.
+     *
+     * <p>Nothing used to learn this: an endpoint whose context could not hold a batch of sixteen was
+     * sent sixteen again on the next screen, and each attempt cost one refused request plus sixteen
+     * repair requests. See {@link BatchBudget.ByBatchSize} — the value is package-private state of the
+     * provider instance, so editing the settings starts from the configured {@code batch-size} again.
+     */
+    private final BatchBudget.ByBatchSize acceptedBatchSizes;
 
     /**
      * Groups nearby texts into one request, and decides who waits for whom.
@@ -280,10 +290,14 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         // An unspecified mode means "do not send a field this endpoint was never asked about".
         this.jsonOutput = jsonOutput == null ? JsonOutputMode.NONE : jsonOutput;
         TranslationTuning effectiveTuning = tuning == null ? TranslationTuning.DEFAULTS : tuning;
+        this.acceptedBatchSizes = new BatchBudget.ByBatchSize(effectiveTuning.batchSize());
         this.gatherer = new BatchGatherer(effectiveTuning.batchSize(),
                 effectiveTuning.batchWindowMillis(),
                 effectiveTuning.maximumConcurrentBatches(),
                 effectiveTuning.requestIntervalMillis());
+        // OnlineProviderConfig puts every provider it builds inside ResilientTranslationProvider,
+        // which retries the very failures the gatherer would resend a group for.
+        this.gatherer.setOuterRetries(true);
         // The cache key has to name the endpoint and the header the credential travels in, not just
         // the model: two hosts that serve the same model name are not the same engine, and before
         // this the second one was never asked. Only the address and the header *name* are hashed, so
@@ -717,7 +731,10 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
         if (reasoningContent(root, "delta") != null) {
             attempt.sawReasoning = true;
             DebugLog.global().logStreamEvent(provider, "reasoning", 0);
-            return true;
+            // A thinking model may carry its finish reason on the last chunk it reasons in, so the same
+            // "the endpoint already said it is done" test applies to this branch as well.
+            markFinished(attempt, root);
+            return !attempt.complete;
         }
         markFinished(attempt, root);
         if (isRelayError(root)) {
@@ -726,7 +743,10 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             DebugLog.global().logStreamEvent(provider, "error-event", 0);
             return false;
         }
-        return true;
+        // A closing chunk that carries no text is how the relays named in {@link #markFinished} end
+        // an answer: returning true here kept the read — and the worker — waiting for a sentinel
+        // those endpoints never send, until the read timeout threw a complete translation away.
+        return !attempt.complete;
     }
 
     /**
@@ -862,7 +882,7 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             DebugLog.global().logRequest(providerId, model, endpoint.toString(),
                     group.get(0).getKind().name(), batchPreview(group));
         }
-        String response = postBatchWithinBudget(system, user, maximumTokens, group.size());
+        String response = postBatchWithinBudget(group, system, user, maximumTokens);
         Object root = JsonTree.parseOrNull(response);
         List<String> parsed = parseBatch(root, response, group.size());
         if (parsed == null && maximumTokens < REASONING_COMPLETION_TOKENS
@@ -870,12 +890,16 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
             reasoningModel = true;
             int reasoningBudget = Math.min(REASONING_COMPLETION_TOKENS, acceptedReasoningTokens);
             if (reasoningBudget > maximumTokens) {
-                response = postBatchWithinBudget(system, user, reasoningBudget, group.size());
+                response = postBatchWithinBudget(group, system, user, reasoningBudget);
                 root = JsonTree.parseOrNull(response);
                 parsed = parseBatch(root, response, group.size());
             }
         }
         if (parsed == null) {
+            // A reply that is not one JSON object is the third shape of "this batch was too large": the
+            // model ran out of room before closing the object. Nothing remembered that, so the next
+            // screen asked for the same number of entries and paid for the same failure again.
+            gatherer.setBatchSize(acceptedBatchSizes.rememberTooLarge(group.size()));
             throw missingContent(root, response);
         }
         recordUsage(root);
@@ -1155,10 +1179,20 @@ public final class OpenAiChatTranslationProvider implements TranslationProvider 
      * three batching providers cannot drift apart on what may lower a budget, and the memory is held
      * per batch size (see {@link #acceptedBatchTokens}).
      */
-    private String postBatchWithinBudget(String system, String text, int budget, int entries)
-            throws Exception {
-        return BatchBudget.post(acceptedBatchTokens.forEntries(entries), budget,
-                MINIMUM_COMPLETION_TOKENS, attempt -> postBatch(system, text, attempt));
+    private String postBatchWithinBudget(List<TranslationRequest> group, String system, String text,
+            int budget) throws Exception {
+        try {
+            return BatchBudget.post(acceptedBatchTokens.forEntries(group.size()), budget,
+                    MINIMUM_COMPLETION_TOKENS, attempt -> postBatch(system, text, attempt));
+        } catch (HttpStatusException rejected) {
+            // A refusal that names the request's own length is about how many texts travelled in it:
+            // nothing lowered that number, so every later batch was built the same size and refused
+            // again, each time for one refused request plus one request per line.
+            if (BatchBudget.refusedBecauseTooManyEntries(rejected, text, group)) {
+                gatherer.setBatchSize(acceptedBatchSizes.rememberTooLarge(group.size()));
+            }
+            throw rejected;
+        }
     }
 
     /**

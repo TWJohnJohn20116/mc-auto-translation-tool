@@ -9,6 +9,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 
 /**
@@ -22,7 +23,7 @@ import java.util.function.Consumer;
  * caller.
  */
 final class ForgeConfigWriter {
-    /** How long {@link #shutdown()} waits for the queued writes before leaving them to the daemon. */
+    /** How long {@link #shutdown()} and the Save barrier wait for the queued writes to land. */
     private static final long SHUTDOWN_WAIT_MILLIS = 2000L;
 
     private static final Object LOCK = new Object();
@@ -89,11 +90,14 @@ final class ForgeConfigWriter {
     }
 
     /**
-     * Blocks until every write queued so far has run.
+     * Blocks until every write queued so far has run, or until the wait above runs out.
      *
      * <p>The barrier is an empty task: a single-thread executor runs it after everything ahead of
      * it, so returning from {@code get()} means the queue is empty. A write that failed inside its
-     * own task reports through {@code onFailure}, so its exception never reaches this call.
+     * own task reports through {@code onFailure}, so its exception never reaches this call. The
+     * wait is bounded because this runs on the render thread and the queue can be stuck on I/O the
+     * process does not control (a network or cloud-synced {@code config/} directory): freezing the
+     * frame indefinitely is worse than writing in a slightly weaker order.
      */
     private static void drainQueuedWrites() {
         ExecutorService current;
@@ -109,9 +113,12 @@ final class ForgeConfigWriter {
                 public void run() {
                     // Nothing to do: reaching the end of the queue is the whole point.
                 }
-            }).get();
+            }).get(SHUTDOWN_WAIT_MILLIS, TimeUnit.MILLISECONDS);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
+        } catch (TimeoutException timedOut) {
+            DebugLog.global().log("config", "save", "drain-timeout",
+                    "wait-millis", Long.toString(SHUTDOWN_WAIT_MILLIS));
         } catch (ExecutionException | RejectedExecutionException ignored) {
             // A closed writer, or a failure already reported by a queued task: the synchronous write
             // that follows is the authoritative one either way.

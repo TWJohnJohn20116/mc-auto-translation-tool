@@ -15,6 +15,7 @@ import org.universaltranslator.core.HudIndicatorVisibility;
 import org.universaltranslator.core.OutgoingTranslationPreview;
 import org.universaltranslator.core.TranslationActivity;
 import org.universaltranslator.forge.ForgeTranslationRuntime;
+import org.universaltranslator.forge.HudLabelMemo;
 import org.universaltranslator.forge.TranslationRenderContext;
 
 /**
@@ -110,7 +111,7 @@ abstract class InGameHudStatusIndicatorMixin {
             try {
                 graphics.centeredText(
                         net.minecraft.client.Minecraft.getInstance().font,
-                        net.minecraft.network.chat.Component.literal(outgoingPreview),
+                        HudLabelMemo.preview(outgoingPreview),
                         previewCenterX, previewY, 0xFFFFFFFF);
             } finally {
                 TranslationRenderContext.popTextInput();
@@ -128,8 +129,7 @@ abstract class InGameHudStatusIndicatorMixin {
                 label = quickSettings.getProvider();
             } else if (content == HudIndicatorContent.ACTIVITY
                     && TranslationActivity.isTranslating()) {
-                label = net.minecraft.network.chat.Component.translatable(
-                        "value.universal_translator.hud_content.activity").getString();
+                label = HudLabelMemo.activity();
             }
             if (label != null && !label.isEmpty()) {
                 net.minecraft.client.gui.Font font =
@@ -140,8 +140,7 @@ abstract class InGameHudStatusIndicatorMixin {
                     // threw an NPE out of the render loop.
                     return;
                 }
-                net.minecraft.network.chat.Component text =
-                        net.minecraft.network.chat.Component.literal(label);
+                net.minecraft.network.chat.Component text = HudLabelMemo.label(label);
                 TranslationRenderContext.pushTextInput();
                 try {
                     int labelWidth = font.width(text);

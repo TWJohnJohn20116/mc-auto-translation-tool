@@ -409,8 +409,14 @@ public final class TranslationPrompt {
             return allowAuto ? "auto-detect" : "";
         }
         String trimmed = language.trim();
-        if (allowAuto && TargetLanguage.isAuto(trimmed)) {
-            return "auto-detect";
+        if (TargetLanguage.isAuto(trimmed)) {
+            // AUTO is the source-detection sentinel and never a target: the source side says so,
+            // while the target side describes the language translationInstruction() falls back to.
+            // Left as a custom code it reached the prompt as "未设置 (auto)".
+            if (allowAuto) {
+                return "auto-detect";
+            }
+            trimmed = TargetLanguage.SIMPLIFIED_CHINESE;
         }
         String canonical = TargetLanguage.canonicalize(trimmed);
         if (canonical.isEmpty()) {

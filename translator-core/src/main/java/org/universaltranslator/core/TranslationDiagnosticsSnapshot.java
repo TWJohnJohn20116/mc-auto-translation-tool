@@ -41,25 +41,15 @@ public final class TranslationDiagnosticsSnapshot {
         this.runtimeStatus = sanitizeStatus(runtimeStatus);
     }
 
-    public List<String> displayLines() {
-        List<String> lines = new ArrayList<String>();
-        lines.add("自动翻译：" + onOff(enabled));
-        lines.add("配置服务：" + providerLabel(configuredProvider));
-        lines.add("运行服务：" + activeProviderLabel());
-        lines.add("目标语言：" + (targetLanguage.isEmpty() ? "未设置" : targetLanguage));
-        if ("offline".equalsIgnoreCase(configuredProvider)) {
-            lines.add("离线模型：" + offlineModel.displayName()
-                    + "（预计 " + formatBytes(offlineModel.expectedBytes()) + "）");
-            lines.add("模型文件：" + modelFileStatus());
-            lines.add("模型自动下载：" + onOff(offlineAutoDownload));
-        }
-        lines.add("磁盘缓存：" + cacheStatus());
-        lines.add("运行状态：" + (runtimeStatus.isEmpty()
-                ? (enabled ? "等待首次翻译" : "翻译已关闭")
-                : runtimeStatus));
-        return Collections.unmodifiableList(lines);
-    }
-
+    /**
+     * The snapshot as localizable lines.
+     *
+     * <p>The only producer path: every diagnostics screen calls this one, and the class no longer
+     * carries a second hard-coded copy that a new line could be added to without reaching a screen.
+     *
+     * @param translator platform language-key resolver
+     * @return display lines, never {@code null}
+     */
     public List<String> localizedLines(UiTranslator translator) {
         List<String> lines = new ArrayList<String>();
         lines.add(translator.translate("screen.universal_translator.diagnostics.enabled",
@@ -150,56 +140,6 @@ public final class TranslationDiagnosticsSnapshot {
 
     private static String localizedOnOff(boolean value, UiTranslator translator) {
         return translator.translate(UiTextKeys.onOff(value));
-    }
-
-    private String modelFileStatus() {
-        if (modelFileBytes < 0L) {
-            return "未安装";
-        }
-        if (modelFileBytes == offlineModel.expectedBytes()) {
-            return "已安装并且大小正确";
-        }
-        return "大小异常（" + formatBytes(modelFileBytes) + " / "
-                + formatBytes(offlineModel.expectedBytes()) + "）";
-    }
-
-    private String cacheStatus() {
-        if (!diskCache) {
-            return "关闭（仅内存）";
-        }
-        return cacheFileBytes < 0L
-                ? "开启（尚未建立文件）"
-                : "开启（" + formatBytes(cacheFileBytes) + "）";
-    }
-
-    private String activeProviderLabel() {
-        if (activeProviderId.isEmpty()) {
-            return "未启动";
-        }
-        if (activeProviderId.startsWith("fallback:")) {
-            return "离线模型 + API 回退";
-        }
-        if (activeProviderId.startsWith("offline-llama:")) {
-            return "离线模型";
-        }
-        return providerLabel(activeProviderCategory());
-    }
-
-    private static String providerLabel(String provider) {
-        if ("offline".equalsIgnoreCase(provider)) {
-            return "离线";
-        }
-        if ("libretranslate".equalsIgnoreCase(provider)) {
-            return "LibreTranslate";
-        }
-        if ("tencent-hunyuan".equalsIgnoreCase(provider)) {
-            return "腾讯混元";
-        }
-        return provider.isEmpty() ? "未设置" : provider;
-    }
-
-    private static String onOff(boolean value) {
-        return value ? "开启" : "关闭";
     }
 
     private static String formatBytes(long bytes) {

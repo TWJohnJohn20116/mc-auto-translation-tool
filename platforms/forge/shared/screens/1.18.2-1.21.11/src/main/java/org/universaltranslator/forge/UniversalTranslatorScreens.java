@@ -320,7 +320,8 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                 layout.totalWidth, 20, translatable("screen.universal_translator.blocked_keywords")));
         blockedKeywords.setMaxLength(UiLimits.KEYWORDS_MAX_CHARS);
         blockedKeywords.setValue(blockedKeywordsValue);
-        hint(blockedKeywords, translatable("screen.universal_translator.blocked_keywords_hint"));
+        hint(blockedKeywords, translatable("screen.universal_translator.blocked_keywords_hint",
+                UiLimits.KEYWORDS_MAX_ENTRIES, UiLimits.KEYWORD_MAX_CHARS));
 
         // --- Tab 3: Engine (引擎) ---
         // The engine rows are centred in the free band (see engineRow) so the tab does not sit in
@@ -705,7 +706,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                     // Save writes the engine tab's prompt controls too, so applying the prompt
                     // and then saving cannot silently restore the value the screen
                     // was opened with.
-                    .withPromptSettings(quality, TranslationPrompt.fromEditorText(
+                    .withPromptSettings(quality, TranslationPrompt.clampEditorText(
                             customPrompt == null ? "" : customPrompt.getValue()))
                     .withTranslationTuning(workers, batchSize);
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)

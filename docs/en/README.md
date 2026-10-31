@@ -70,8 +70,10 @@ because Yarn cannot remap those snapshots; the full settings UI starts at 1.14.3
 
 [Download the Fabric JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4/MCAutoTranslationTool-1.4-fabric-all.jar)
 
-1.0.0–1.12.2 (Fabric / Ornithe) is not shipped in v1.4. Do not use `fabric-all` on a game version
-that is not listed as included.
+1.3.1–1.12.2 (Fabric / Ornithe) is not shipped in this release: the 26 releases in 1.3.1–1.8.8 and
+the 15 releases in 1.8.9–1.12.2 can still be built from source, while 1.0.0–1.2.5, 1.6.2, 1.7.3,
+1.7.5, and 1.7.7 have no target project at all. Do not use `fabric-all` on a game version that is
+not listed as included.
 
 ### Forge: choose by Minecraft version
 

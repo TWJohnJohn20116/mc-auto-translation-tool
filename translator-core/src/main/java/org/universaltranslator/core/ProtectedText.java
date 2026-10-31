@@ -68,13 +68,14 @@ public final class ProtectedText {
      * bullets are split across them ("•" U+2022 is punctuation, "◆" U+25C6 is a symbol, "»" U+00BB
      * is final punctuation), and a run of leading decoration is never translatable text.
      *
-     * <p>The run also swallows the indentation and the formatting codes in front of it, and it only
+     * <p>The run also swallows the indentation and the formatting codes in front of it, together
+     * with the spaces a tab list puts between a code and the symbol it decorates, and it only
      * ends at a space, a line break, the end of the text or a non-ASCII character. That anchoring is
      * what keeps the pattern from claiming a placeholder: {@code "§7%player%"} must stay two tokens
      * (the format code and the placeholder), not "§7%" plus "player%".
      */
     private static final String BULLET_CORE = "^[ \\u3000]*(?:" + FORMAT_CODE
-            + ")*[\\p{S}\\p{P}]+(?:[ \\u3000]+|(?=\\n)|$|(?=[^\\x00-\\x7F]))";
+            + "[ \\u3000]*)*[\\p{S}\\p{P}]+(?:[ \\u3000]+|(?=\\n)|$|(?=[^\\x00-\\x7F]))";
     // The bullet branch sits before the bare FORMAT_CODE branch on purpose. Java takes the first
     // alternative that matches at the leftmost position, so a formatting code in front of a bullet
     // was consumed on its own and the bullet behind it was never at the start of a line any more,

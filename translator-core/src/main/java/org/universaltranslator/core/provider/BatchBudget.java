@@ -1,7 +1,10 @@
 package org.universaltranslator.core.provider;
 
+import org.universaltranslator.core.TranslationRequest;
 import org.universaltranslator.core.net.HttpStatusException;
 
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -98,6 +101,57 @@ final class BatchBudget {
     }
 
     /**
+     * How much of a refused batch request its longest text may already account for.
+     *
+     * <p>A refusal that names the request's own length does not say which part of it overflowed. When
+     * one text is already the whole prompt, sending it alone overflows too, and narrowing every later
+     * batch for it only doubles the number of requests for the rest of the session. Combining the lines
+     * has to be what is responsible before {@link ByBatchSize} lowers anything.
+     */
+    static final int LENGTH_REFUSAL_RATIO = 2;
+
+    /**
+     * Whether a refusal means "this one request carried too many texts".
+     *
+     * <p>Three conditions, all necessary: the endpoint refused the request itself (a client error that
+     * is not the output-budget refusal {@link #post} already handles), its message names the request's
+     * length, and the batch prompt is materially larger than its longest member — see
+     * {@link #LENGTH_REFUSAL_RATIO}. Without the last test a single long tooltip would shrink every
+     * later batch, which is the same one-way narrowing {@link ByEntries}'s comment warns about in the
+     * other direction.
+     *
+     * @param failure what the batch request threw
+     * @param requestBody the whole batch request as it was sent
+     * @param group the texts that request carried
+     * @return whether the number of texts is what has to come down
+     */
+    static boolean refusedBecauseTooManyEntries(
+            Throwable failure,
+            String requestBody,
+            List<TranslationRequest> group
+    ) {
+        if (!(failure instanceof HttpStatusException)) {
+            return false;
+        }
+        HttpStatusException status = (HttpStatusException) failure;
+        if (status.getStatusCode() != 400
+                || OpenAiChatTranslationProvider.rejectsCompletionBudget(status)) {
+            return false;
+        }
+        String message = status.getMessage() == null
+                ? "" : status.getMessage().toLowerCase(Locale.ROOT);
+        if (!message.contains("context") && !message.contains("prompt")
+                && !message.contains("input") && !message.contains("too long")) {
+            return false;
+        }
+        int longestLine = 0;
+        for (TranslationRequest request : group) {
+            longestLine = Math.max(longestLine, ChatBudget.estimatePromptTokens(request.getText()));
+        }
+        return ChatBudget.estimatePromptTokens(requestBody) > longestLine * LENGTH_REFUSAL_RATIO;
+    }
+
+    /**
      * The largest completion budget one endpoint accepted, lowered only by an actual refusal.
      *
      * <p>Held by the provider instance rather than here, so rebuilding a provider from edited
@@ -160,6 +214,45 @@ final class BatchBudget {
             Accepted created = new Accepted(initialBudget);
             Accepted raced = byEntries.putIfAbsent(key, created);
             return raced == null ? created : raced;
+        }
+    }
+
+    /**
+     * The largest number of texts one endpoint has been shown to accept in one request.
+     *
+     * <p>{@link ByEntries} remembers how many output tokens a batch of a given size may ask for, which
+     * cannot answer "this batch was refused because it carried too many texts": nothing else lowered the
+     * number of texts, so every later batch was rebuilt at the configured size and refused again — one
+     * guaranteed failure plus one repair request per line, on every screen, for the whole session.
+     *
+     * <p>One-way, like {@link Accepted}: the endpoint does not grow back on its own, and editing the
+     * settings builds a provider that starts from the configured size again. It never goes below
+     * {@link #MINIMUM_ENTRIES}, because a batch of one is the per-line path, whose meaning is
+     * "batch-size=1 was configured".
+     */
+    static final class ByBatchSize {
+        /** Smallest number of texts this memory lowers the batch to. */
+        static final int MINIMUM_ENTRIES = 2;
+
+        private volatile int maximumEntries;
+
+        ByBatchSize(int configured) {
+            this.maximumEntries = Math.max(MINIMUM_ENTRIES, configured);
+        }
+
+        /**
+         * Records that a batch carrying {@code entries} texts was too large, halving the limit once.
+         *
+         * @param entries number of texts the refused batch carried
+         * @return the largest number of texts one request may carry from now on
+         */
+        int rememberTooLarge(int entries) {
+            int current = maximumEntries;
+            if (entries < current || current <= MINIMUM_ENTRIES) {
+                return current;
+            }
+            maximumEntries = Math.max(MINIMUM_ENTRIES, current / 2);
+            return maximumEntries;
         }
     }
 }

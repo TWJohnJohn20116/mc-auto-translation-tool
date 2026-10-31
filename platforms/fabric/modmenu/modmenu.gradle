@@ -46,17 +46,28 @@ tasks.matching { it.name == "jar" || it.name == "remapJar" || it.name == "source
 // (see platforms/fabric/modmenu/README.md).
 def modmenuFactoryStubSignature = "createScreen(Screen parent);"
 def modmenuFactoryOverride = "public Screen createScreen(Screen parent)"
+// The second name in the same contract: the entrypoint interface's method. It was outside the guard,
+// so renaming it in both stubs and both call sites at once kept every task green — @Override holds
+// against the stub itself — and only Mod Menu's mod list would have failed with AbstractMethodError.
+// Where the name comes from: com.terraformersmc.modmenu.api.ModMenuApi declares
+// `ConfigScreenFactory<?> getModConfigScreenFactory()`; re-check it against the artifact whenever Mod
+// Menu is upgraded, together with createScreen (see platforms/fabric/modmenu/README.md).
+def modmenuApiStubSignature = "ConfigScreenFactory<?> getModConfigScreenFactory();"
+def modmenuApiOverride = "public ConfigScreenFactory<?> getModConfigScreenFactory()"
 def contractFamilies = ["yarn", "mojmap"]
 def contractStubs = contractFamilies.collect { family ->
     new File(modmenuRoot, "api/${family}/src/main/java/com/terraformersmc/modmenu/api/ConfigScreenFactory.java")
+}
+def contractApiStubs = contractFamilies.collect { family ->
+    new File(modmenuRoot, "api/${family}/src/main/java/com/terraformersmc/modmenu/api/ModMenuApi.java")
 }
 def contractIntegrations = contractFamilies.collect { family ->
     new File(modmenuRoot, "integration/${family}/src/client/java/org/universaltranslator/fabric/ModMenuIntegration.java")
 }
 tasks.register("verifyModMenuContract") {
     group = "verification"
-    description = "Checks both Mod Menu stubs and both call sites against the pinned createScreen(Screen)."
-    inputs.files(contractStubs + contractIntegrations)
+    description = "Checks both Mod Menu stubs and both call sites against the pinned Mod Menu names."
+    inputs.files(contractStubs + contractApiStubs + contractIntegrations)
     doLast {
         contractStubs.each { source ->
             // Whitespace is collapsed first so a reformatted signature is not reported as a rename.
@@ -68,8 +79,23 @@ tasks.register("verifyModMenuContract") {
                                 "then fails at run time with AbstractMethodError.")
             }
         }
+        contractApiStubs.each { source ->
+            def body = source.getText("UTF-8").replaceAll("\\s+", " ")
+            if (!body.contains(modmenuApiStubSignature)) {
+                throw new GradleException(
+                        "${source} does not declare '${modmenuApiStubSignature}'. Mod Menu's " +
+                                "entrypoint method is getModConfigScreenFactory, so any other name " +
+                                "links fine and then fails at run time with AbstractMethodError.")
+            }
+        }
         contractIntegrations.each { source ->
             def body = source.getText("UTF-8").replaceAll("\\s+", " ")
+            if (!body.contains(modmenuApiOverride)) {
+                throw new GradleException(
+                        "${source} does not implement '${modmenuApiOverride}': a rename applied to the " +
+                                "stub and the call site together still compiles, so the entrypoint name " +
+                                "has to be pinned outside the stub.")
+            }
             if (!body.contains(modmenuFactoryOverride)) {
                 throw new GradleException(
                         "${source} does not override '${modmenuFactoryOverride}': the call site has " +

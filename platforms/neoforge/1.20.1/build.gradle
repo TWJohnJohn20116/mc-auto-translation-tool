@@ -124,6 +124,14 @@ tasks.named("jar", Jar).configure {
 }
 apply from: rootProject.file("gradle/jar-contents.gradle")
 
+// This module keeps a hand-written source set instead of applying neoforge/shared.gradle, so the
+// release it compiles for is written out below; the class-file gate has to be given the same number by
+// hand, or this would be the one NeoForge release with no bytecode check on the build path. The plugin
+// also writes compile options of its own, so the gate keeps only the class-header half here.
+ext.fabricReleaseJava = 17
+ext.fabricReleaseJarSkipReleaseCheck = true
+apply from: rootProject.file("gradle/fabric-release-jar-verify.gradle")
+
 tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
     options.release = 17

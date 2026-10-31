@@ -142,13 +142,21 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
             FabricConfig updated = config.withDebugLog(debugEnabled);
             FabricTranslationRuntime.initialize(updated);
             // Same writer as the F8 toggles, so an older queued snapshot cannot overwrite this one.
-            FabricTranslationRuntimeBase.saveInBackgroundAndWait(updated);
+            // The result decides the message: a write still queued past the bounded wait, or one that
+            // failed, used to be announced as applied while the file still held the old value.
+            boolean written = FabricTranslationRuntimeBase.saveInBackgroundAndWait(updated);
             Path configFile = updated.configFile();
             DebugLog.global().configure(
                     configFile.resolveSibling(DebugLog.FILE_NAME), debugEnabled);
-            exportStatus = tr("screen.universal_translator.debug.changed",
-                    tr(UiTextKeys.onOff(debugEnabled)));
-            exportFailed = false;
+            if (written) {
+                exportStatus = tr("screen.universal_translator.debug.changed",
+                        tr(UiTextKeys.onOff(debugEnabled)));
+                exportFailed = false;
+            } else {
+                exportStatus = tr("status.universal_translator.save_failed",
+                        configFile.getFileName());
+                exportFailed = true;
+            }
         } catch (Exception failure) {
             String message = failure.getMessage();
             exportStatus = tr("screen.universal_translator.diagnostics.settings_failed",

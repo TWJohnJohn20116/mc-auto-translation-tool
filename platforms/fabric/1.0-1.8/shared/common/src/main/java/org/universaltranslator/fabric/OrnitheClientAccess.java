@@ -2,6 +2,7 @@ package org.universaltranslator.fabric;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.client.render.TextRenderer;
 
 import java.lang.reflect.Constructor;
@@ -30,6 +31,7 @@ public final class OrnitheClientAccess {
     private static final AtomicBoolean CHAT_FALLBACK_REPORTED = new AtomicBoolean();
     private static final AtomicBoolean SERVER_ADDRESS_REPORTED = new AtomicBoolean();
     private static final AtomicBoolean HOTKEY_FALLBACK_REPORTED = new AtomicBoolean();
+    private static final AtomicBoolean HOTKEY_FAILURE_REPORTED = new AtomicBoolean();
 
     private OrnitheClientAccess() {
     }
@@ -47,6 +49,35 @@ public final class OrnitheClientAccess {
 
     public static void openScreen(Screen screen) {
         client().openScreen(screen);
+    }
+
+    /**
+     * True when F1 has hidden the HUD.
+     *
+     * <p>The only read of the flag in this tree: the name has moved between generations (26.x no
+     * longer exposes it on the options object at all), and this tree is compiled by the scheduled
+     * legacy-targets run rather than by every pull request, so a name that no longer matches should
+     * cost one line here instead of one call site per HUD hook.
+     */
+    public static boolean hudHidden(Minecraft client) {
+        if (client == null || client.options == null) {
+            return false;
+        }
+        return client.options.hudHidden;
+    }
+
+    /**
+     * Sets whether {@code field} accepts typing.
+     *
+     * <p>The settings screen takes the keystrokes away while the model catalog covers the form; the
+     * switch is reached through here so that "this generation's text field" stays in the one class
+     * that already owns the version-specific widget API.
+     */
+    public static void setEditable(TextFieldWidget field, boolean editable) {
+        if (field == null) {
+            return;
+        }
+        field.setEditable(editable);
     }
 
     /**
@@ -237,6 +268,23 @@ public final class OrnitheClientAccess {
                 "toggle-key", HotkeyKeys.toggleName(),
                 "toggle-key-lwjgl2", toggleUnmapped ? "unmapped" : "ok",
                 "result", "not-polled");
+    }
+
+    /**
+     * Records once that the hotkey poll threw, and drops the failure.
+     *
+     * <p>The poll runs from {@code Minecraft.tick()} through a mixin, so a drifted mapping there used
+     * to throw out of the vanilla tick loop and take the client down for one key press. Reported once
+     * because the poll runs again on the next tick and would otherwise flood the log.
+     */
+    public static void reportHotkeyFailure(Throwable failure) {
+        if (!HOTKEY_FAILURE_REPORTED.compareAndSet(false, true)) {
+            return;
+        }
+        LOGGER.log(Level.SEVERE, "MC Auto Translation Tool hotkey failed", failure);
+        DebugLog.global().log("hotkey",
+                "result", "failed",
+                "failure", failure.getClass().getName());
     }
 
     /** The {@code I18n} entry point this Minecraft version exposes, resolved at most once. */

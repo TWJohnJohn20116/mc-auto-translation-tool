@@ -94,6 +94,14 @@ jobs:
           if [[ "${EVENT_NAME:-}" != "workflow_dispatch" ]]; then
             requested=""
           fi
+          # 只打了逗號（含「逗號加空白」）的輸入剝完空白後只剩分隔符：切清單得到空的 requested，
+          # 而空的 requested 在這裡的語意是「全部」，於是一次誤打的逗號會安靜地開滿 21 個 runner。
+          # build.yml 與 prepare-release.yml 對同一類輸入都是明確失敗，這裡補上同一道關卡。
+          names="${requested//,/}"
+          if [[ -n "$requested" && -z "$names" ]]; then
+            echo "::error::targets 只給了逗號或空白，沒有指定任何目標；留空才會建置全部" >&2
+            exit 1
+          fi
           export REQUESTED_TARGETS="$requested"
           # $GITHUB_OUTPUT 只接受 key=value，所以 key 由 Python 直接寫檔，notice 走 stdout。
           python3 - <<'PY'

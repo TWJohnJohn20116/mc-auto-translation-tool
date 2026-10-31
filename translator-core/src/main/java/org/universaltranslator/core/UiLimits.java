@@ -35,7 +35,13 @@ public final class UiLimits {
      */
     public static final int KEYWORDS_MAX_ENTRIES = TranslationBlocklist.MAX_KEYWORDS;
 
-    /** Longest single keyword that still matches; longer entries are cut to this length. */
+    /**
+     * Longest single keyword that still matches; longer entries are cut to this length.
+     *
+     * <p>Both this and {@link #KEYWORDS_MAX_ENTRIES} are handed to the blocklist hint as its two
+     * format arguments, so the numbers the nine language files print follow the limits instead of
+     * being written out by hand and left behind when a limit moves.
+     */
     public static final int KEYWORD_MAX_CHARS = TranslationBlocklist.MAX_KEYWORD_LENGTH;
 
     /** Longest endpoint URL the settings screen accepts, in characters. */

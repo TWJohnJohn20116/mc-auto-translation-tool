@@ -13,6 +13,9 @@
 //     ext.fabricReleaseJava = gradle.ext.treeJavaTarget("platforms/fabric/1.21/")
 //     apply from: rootProject.file("gradle/fabric-release-jar-verify.gradle")
 //
+// A tree whose compilation settings are written by a third-party plugin (ForgeGradle, ModDevGradle)
+// may also set ext.fabricReleaseJarSkipReleaseCheck = true to keep only the class-header check.
+//
 // Two checks, because either one alone has passed while the artifact was still wrong:
 //   1. the number the compiler was actually given equals ext.fabricReleaseJava — a table and a
 //      hard-coded options.release that disagree is exactly the "silently compiled for another
@@ -25,6 +28,13 @@ if (!project.ext.has("fabricReleaseJava")) {
 }
 def releaseJava = project.ext.fabricReleaseJava as int
 def expectedMajor = releaseJava + 44
+// Trees whose compilation settings belong to a third-party plugin (ForgeGradle, ModDevGradle) keep only
+// the class-header half of this gate: check 1 below asserts that the number this script was handed is
+// the number the compiler received, and those plugins can write options.release on their own — a
+// disagreement there would fail a build whose artifact is exactly what the tree declares. The header
+// check is the half that proves the shipped bytecode either way, and it is the half those trees were
+// missing.
+def verifyDeclaredRelease = !project.ext.has("fabricReleaseJarSkipReleaseCheck")
 // 26.x Loom no longer publishes a remapJar task (that layer remaps during jar), so fall back to jar:
 // this gate only decides which archive to inspect, not what is inspected.
 def remappedTask = tasks.findByName("remapJar") ?: tasks.findByName("jar")
@@ -38,13 +48,15 @@ tasks.register("verifyBuiltJar") {
     inputs.property "expectedClassMajor", expectedMajor
     doLast {
         // Check 1: the compiler target and the number this gate was handed come from one table.
-        tasks.withType(JavaCompile).each { compile ->
-            def declared = compile.options.release.getOrNull()
-            if (declared != null && declared != releaseJava) {
-                throw new GradleException(
-                        "${compile.path} compiles with options.release = ${declared} but " +
-                                "fabricReleaseJava is ${releaseJava}: the table and the compiler " +
-                                "disagree, so the class-file gate below would check the wrong bound.")
+        if (verifyDeclaredRelease) {
+            tasks.withType(JavaCompile).each { compile ->
+                def declared = compile.options.release.getOrNull()
+                if (declared != null && declared != releaseJava) {
+                    throw new GradleException(
+                            "${compile.path} compiles with options.release = ${declared} but " +
+                                    "fabricReleaseJava is ${releaseJava}: the table and the compiler " +
+                                    "disagree, so the class-file gate below would check the wrong bound.")
+                }
             }
         }
         def archive = remapped.get().archiveFile.get().asFile

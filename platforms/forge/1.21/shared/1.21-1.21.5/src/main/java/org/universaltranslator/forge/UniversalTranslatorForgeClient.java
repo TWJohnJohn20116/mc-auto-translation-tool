@@ -35,7 +35,54 @@ public final class UniversalTranslatorForgeClient {
     private UniversalTranslatorForgeClient() {
     }
 
+    /** Whether the shutdown hook that flushes queued configuration writes is already registered. */
+    private static boolean configFlushHookInstalled;
+
+    /**
+     * Gives the queued configuration writes a bounded moment to land when the process ends.
+     *
+     * <p>Only a failed startup ever called {@code ForgeTranslationRuntime.shutdown()}, so the writer's
+     * own flush never ran: "press F8 and quit" dropped the toggle, and the session and the screen
+     * worker threads outlived the configuration they belonged to. A shutdown hook is the one seam
+     * every supported loader and game version has without naming a version-specific stopping event.
+     */
+    private static void installConfigFlushHook() {
+        if (configFlushHookInstalled) {
+            return;
+        }
+        configFlushHookInstalled = true;
+        try {
+            Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    // The hook only starts the teardown and waits for it with a bound: shutdown()
+                    // drains the configuration writer and then closes the session, which waits for
+                    // workers parked in a provider read, so running it inline made "close the game"
+                    // wait for all of it with no upper limit.
+                    Thread teardown = new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            ForgeTranslationRuntime.shutdown();
+                        }
+                    }, "universal-translator-stop");
+                    teardown.setDaemon(false);
+                    teardown.start();
+                    try {
+                        teardown.join(
+                                org.universaltranslator.core.ShutdownBudget.TEARDOWN_JOIN_MILLIS);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            }, "universal-translator-config-flush"));
+        } catch (IllegalStateException alreadyStopping) {
+            // The JVM is already shutting down; no thread is left for a queued write to land on.
+            configFlushHookInstalled = false;
+        }
+    }
+
     private static void loadConfig() {
+        installConfigFlushHook();
         // Registered before the configuration is loaded on purpose: the title-screen entry performs
         // its own configuration read when clicked, so it must not depend on this initialization
         // succeeding. Registering it after initialize() left the entry a dead button for the whole

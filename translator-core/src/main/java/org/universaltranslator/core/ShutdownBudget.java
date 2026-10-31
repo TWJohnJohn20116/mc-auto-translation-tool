@@ -19,12 +19,25 @@ public final class ShutdownBudget {
     /** Longest a configuration writer waits for the writes already queued when it stops. */
     public static final long CONFIG_WRITE_MILLIS = 2_000L;
     /**
+     * Longest a session's store flush waits for a read that is still in flight before it writes its
+     * burst anyway. The disk store owns the wait itself (its load timed out by this number); a change
+     * there has to come back here, or the budget below stops covering it.
+     */
+    public static final long CACHE_FLUSH_WAIT_MILLIS = 2_000L;
+    /** Longest a session's provider teardown may take after its workers have drained. */
+    public static final long PROVIDER_CLOSE_MILLIS = 1_000L;
+    /**
      * Longest a client's stop hook waits for the teardown thread it started.
      *
-     * <p>Deliberately longer than {@link #SESSION_CLOSE_MILLIS}: a close that is cut off halfway
-     * leaves the store flush inside it unfinished, and no later path writes that burst.
+     * <p>Deliberately longer than everything that thread does inside the budget: the configuration
+     * write it drains first, the session close that waits {@link #SESSION_CLOSE_MILLIS} for its
+     * workers, the store flush that follows the close (which may wait
+     * {@link #CACHE_FLUSH_WAIT_MILLIS} for a read still in flight before writing the deferred burst),
+     * and the provider teardown. A close that is cut off halfway leaves the store flush inside it
+     * unfinished, and no later path writes that burst.
      */
-    public static final long TEARDOWN_JOIN_MILLIS = SESSION_CLOSE_MILLIS + 1_000L;
+    public static final long TEARDOWN_JOIN_MILLIS = CONFIG_WRITE_MILLIS + SESSION_CLOSE_MILLIS
+            + CACHE_FLUSH_WAIT_MILLIS + PROVIDER_CLOSE_MILLIS + 1_000L;
 
     private ShutdownBudget() {
     }

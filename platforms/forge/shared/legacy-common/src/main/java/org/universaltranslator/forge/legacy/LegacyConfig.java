@@ -54,6 +54,27 @@ final class LegacyConfig {
      * file changes by any other means.
      */
     private static volatile DiskCopy diskCopy;
+    /**
+     * When this process last landed a file of its own, in {@link System#nanoTime()} terms.
+     *
+     * <p>The stamp above cannot prove that the cached copy is the file that is on disk now: a
+     * filesystem whose timestamp granularity is coarser than the gap between two saves (FAT 2 s, some
+     * SMB and cloud-sync directories 1 s) reports the same (mtime, size) for a same-length rewrite,
+     * and the cache then restores the advanced keys that were on disk <em>before</em> that save.
+     */
+    private static volatile long lastOwnWriteNanos;
+    /** How long after a write of our own the stamp is distrusted; covers the coarsest granularity. */
+    private static final long OWN_WRITE_GUARD_NANOS = 2000000000L;
+
+    /**
+     * The last configuration this process loaded, or {@code null} before the first success.
+     *
+     * <p>{@link LegacyTranslationRuntime#shutdown()} drops the live copy when a load fails, which is
+     * exactly the case where the player needs the settings screen to repair the file; only the
+     * successful path of {@link #load(File)} writes this, so it can never present a configuration
+     * that was never readable.
+     */
+    private static volatile LegacyConfig lastLoaded;
 
     /** One read of the configuration file: its parsed contents plus the stamp they were read at. */
     private static final class DiskCopy {
@@ -228,6 +249,10 @@ final class LegacyConfig {
         return Collections.unmodifiableSet(claimed);
     }
 
+    static LegacyConfig lastLoaded() {
+        return lastLoaded;
+    }
+
     static LegacyConfig load(File configDirectory) throws IOException {
         if (!configDirectory.exists() && !configDirectory.mkdirs()) {
             throw new IOException("Could not create config directory: " + configDirectory);
@@ -282,6 +307,7 @@ final class LegacyConfig {
                 file.toPath().resolveSibling(TranslationStats.FILE_NAME));
         DebugLog.global().configure(
                 file.toPath().resolveSibling(DebugLog.FILE_NAME), loaded.debugLog());
+        lastLoaded = loaded;
         return loaded;
     }
 
@@ -496,6 +522,9 @@ final class LegacyConfig {
         }
         synchronized (monitor) {
             writeAtomically(file);
+            // What is on disk is now this snapshot, so no cached copy can be newer than it.
+            diskCopy = null;
+            lastOwnWriteNanos = System.nanoTime();
         }
     }
 
@@ -656,7 +685,12 @@ final class LegacyConfig {
             return null;
         }
         DiskCopy cached = diskCopy;
-        if (cached != null && cached.file.equals(file)
+        // A save of our own is only seconds old here when the stamp cannot be trusted yet; re-read
+        // instead of handing back the copy that predates it. Zero means this process has not written
+        // the file, and nanoTime has no fixed origin, so it is the only safe "never wrote" marker.
+        boolean justWrote = lastOwnWriteNanos != 0L
+                && System.nanoTime() - lastOwnWriteNanos < OWN_WRITE_GUARD_NANOS;
+        if (!justWrote && cached != null && cached.file.equals(file)
                 && cached.lastModified == lastModified && cached.size == size) {
             return cached.properties;
         }
@@ -674,6 +708,7 @@ final class LegacyConfig {
     /** Drops the shared copy of the file; called when the client releases its configuration. */
     static void clearCaches() {
         diskCopy = null;
+        lastOwnWriteNanos = 0L;
     }
 
     private Properties toProperties() {

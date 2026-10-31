@@ -140,7 +140,11 @@ public final class FabricTranslationRuntime {
 
                         @Override
                         public String next() {
-                            return source.next().getProfile().getName();
+                            PlayerListEntry entry = source.next();
+                            // A tab-list entry whose profile never arrived is the one value here that
+                            // can be null, and the walk that reads this list treats a null name as
+                            // "nothing to protect" instead of failing the whole refresh.
+                            return entry.getProfile() == null ? null : entry.getProfile().getName();
                         }
 
                         @Override

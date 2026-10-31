@@ -324,7 +324,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
         blockedKeywords.setMaxLength(UiLimits.KEYWORDS_MAX_CHARS);
         blockedKeywords.setValue(blockedKeywordsValue);
         blockedKeywords.setHint(Component.translatable(
-                "screen.universal_translator.blocked_keywords_hint"));
+                "screen.universal_translator.blocked_keywords_hint",
+                UiLimits.KEYWORDS_MAX_ENTRIES, UiLimits.KEYWORD_MAX_CHARS));
 
         // --- Tab 3: Engine (引擎) ---
         // The engine rows are centred in the free band (see engineRow) so the tab does not sit in
@@ -752,7 +753,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
                     // withPromptSettings and withTranslationTuning re-read the config file from
                     // disk, so a chained build cost four reads and one write per button press.
                     quality,
-                    TranslationPrompt.fromEditorText(
+                    TranslationPrompt.clampEditorText(
                             customPrompt == null ? "" : customPrompt.getValue()),
                     workers,
                     batchSize);
@@ -892,6 +893,12 @@ final class UniversalTranslatorConfigScreen extends Screen {
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        // Same guard as the shared pre-1.21.9 screen: only the left button drags the HUD handle or
+        // picks a list row. The handlers below take coordinates alone and commit state, so without
+        // this a right click dragged the indicator and submitted a selection.
+        if (event.button() != 0) {
+            return super.mouseClicked(event, doubleClick);
+        }
         if (activeTab == Tab.ENGINE && modelListOpen) {
             handleModelListClick(event.x(), event.y());
             return true;

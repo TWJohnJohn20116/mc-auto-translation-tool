@@ -63,8 +63,29 @@ public final class UniversalTranslatorNeoForgeClient {
         }
         configFlushHookInstalled = true;
         try {
-            Runtime.getRuntime().addShutdownHook(
-                    new Thread(ForgeTranslationRuntime::shutdown, "universal-translator-config-flush"));
+            Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    // The hook only starts the teardown and waits for it with a bound: shutdown()
+                    // drains the configuration writer and then closes the session, which waits for
+                    // workers parked in a provider read, so running it inline made "close the game"
+                    // wait for all of it with no upper limit.
+                    Thread teardown = new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            ForgeTranslationRuntime.shutdown();
+                        }
+                    }, "universal-translator-stop");
+                    teardown.setDaemon(false);
+                    teardown.start();
+                    try {
+                        teardown.join(
+                                org.universaltranslator.core.ShutdownBudget.TEARDOWN_JOIN_MILLIS);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            }, "universal-translator-config-flush"));
         } catch (IllegalStateException alreadyStopping) {
             // The JVM is already shutting down; no thread is left for a queued write to land on.
             configFlushHookInstalled = false;

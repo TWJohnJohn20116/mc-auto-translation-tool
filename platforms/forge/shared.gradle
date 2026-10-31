@@ -120,6 +120,16 @@ tasks.named("compileJava", JavaCompile).configure {
 
 apply from: rootProject.file("gradle/jar-contents.gradle")
 
+// The class-file gate the Fabric trees already run, for the same reason: options.release is only a
+// request to the compiler, and nothing read the artifact back, so the bytecode level of these fifteen
+// targets rested on that one line. forgeJavaRelease comes from settings.gradle's treeJavaRelease, and
+// this tree has no remapJar, so the gate inspects jar, whose entries are this project's own classes.
+// ForgeGradle also writes compile options of its own, so the gate keeps only the class-header half
+// here: the header is what proves the shipped level either way.
+ext.fabricReleaseJava = project.ext.forgeJavaRelease
+ext.fabricReleaseJarSkipReleaseCheck = true
+apply from: rootProject.file("gradle/fabric-release-jar-verify.gradle")
+
 tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
     options.release = project.ext.forgeJavaRelease as int

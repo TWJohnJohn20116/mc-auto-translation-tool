@@ -64,7 +64,7 @@ Java 隨遊戲為 8、17、21 或 25。1.14–1.14.2 因 Yarn 無法 remap，僅
 
 [下載 Fabric JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4/MCAutoTranslationTool-1.4-fabric-all.jar)
 
-1.0.0–1.12.2（Fabric / Ornithe）尚未隨 v1.4 提供。請不要把 `fabric-all` 用在未列出的遊戲版本上。
+1.3.1–1.12.2（Fabric / Ornithe）未隨本版提供：1.3.1–1.8.8 共 26 個版本、1.8.9–1.12.2 共 15 個版本可自原始碼建置；1.0.0–1.2.5、1.6.2、1.7.3、1.7.5、1.7.7 沒有目標目錄。請不要把 `fabric-all` 用在未列出的遊戲版本上。
 
 ### Forge：依 Minecraft 版本選擇
 

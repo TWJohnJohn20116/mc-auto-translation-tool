@@ -37,6 +37,18 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
                 thread.setDaemon(true);
                 return thread;
             });
+
+    static {
+        // The screen has no lifecycle of its own, so class load is the only place a game exit can be
+        // observed from here: without this the export thread was still parked on its queue, together
+        // with its unbounded task queue, after the client was gone.
+        Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+            @Override
+            public void run() {
+                EXPORTER.shutdownNow();
+            }
+        }, "universal-translator-diagnostics-export-shutdown"));
+    }
     /** Vertical distance between two text lines. */
     private static final int LINE_STEP = 17;
     /** First line's y, just under the title. */

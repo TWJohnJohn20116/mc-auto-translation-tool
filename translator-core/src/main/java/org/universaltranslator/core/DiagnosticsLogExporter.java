@@ -3,6 +3,7 @@ package org.universaltranslator.core;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -14,6 +15,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** Writes a deliberately small, secret-free diagnostics report for issue attachments. */
 public final class DiagnosticsLogExporter {
@@ -23,6 +25,8 @@ public final class DiagnosticsLogExporter {
     private static final String FILE_PREFIX = "diagnostics-";
     /** Reports kept in the directory; the oldest ones are deleted before a new one is written. */
     private static final int MAXIMUM_RETAINED_EXPORTS = 5;
+    /** Suffixes tried by {@link #reserve} before giving up on a free name. */
+    private static final int MAXIMUM_NAME_RETRIES = 1000;
 
     /**
      * Credential-ish names. The suffix of {@code secret} is optional so that provider specific
@@ -39,6 +43,38 @@ public final class DiagnosticsLogExporter {
      */
     private static final String TOKEN_RUN =
             "(?:[A-Za-z0-9._~+/=-]{16,}|(?=[A-Za-z0-9._~+/=-]*[0-9])[A-Za-z0-9._~+/=-]{8,})";
+
+    /**
+     * The rules below, compiled once.
+     *
+     * <p>{@code String.replaceAll} compiles its argument on every call, and these run per field of
+     * every debug log line as well as per line of every export: one request carries five to six
+     * fields, so the debug path alone recompiled the same two unconditional and up to four
+     * conditional patterns tens of times per request, on the machine of a player who turned tracing
+     * on because the game was already stuttering. Every argument here is a compile-time constant, so
+     * one {@link Pattern} per rule is exactly equivalent.
+     */
+    private static final Pattern ADDRESS = Pattern.compile("(?i)https?://\\S+");
+    /**
+     * A credential inside a JSON body. Its name is quoted, so the assignments below never reached it,
+     * and a provider that echoes its own request back in an error message put the key into the report
+     * and into the bundle verbatim.
+     */
+    private static final Pattern JSON_SECRET =
+            Pattern.compile("(?i)\"" + SECRET_NAMES + "\"\\s*:\\s*\"[^\"]*\"");
+    /** "name=value" / "name: value" / "name: Bearer value", whatever the shape. */
+    private static final Pattern ASSIGNED_SECRET =
+            Pattern.compile("(?i)(?<![A-Za-z0-9_])" + SECRET_NAMES + "\\s*[=:]\\s*(?:bearer\\s+)?\\S+");
+    /** "Authorization Bearer value" (no separator at all). */
+    private static final Pattern BEARER_TOKEN =
+            Pattern.compile("(?i)(?<![A-Za-z0-9_])bearer\\s+" + TOKEN_RUN);
+    /** Space separated shapes such as "API key provided: value" or "key is value". */
+    private static final Pattern SPACED_SECRET = Pattern.compile(
+            "(?i)(?<![A-Za-z0-9_])" + SECRET_NAMES
+                    + "[\\s_]+(?:provided|supplied|used|set|is|was|returned|"
+                    + "rejected|invalid|incorrect|expired)?[\\s_:]*" + TOKEN_RUN);
+    /** A bare OpenAI-style key. */
+    private static final Pattern SK_KEY = Pattern.compile("(?i)\\bsk-[a-z0-9_-]{8,}");
 
     /**
      * What both exported artefacts promise about their contents.
@@ -59,9 +95,9 @@ public final class DiagnosticsLogExporter {
             throw new IOException("Diagnostics directory is unavailable");
         }
         Files.createDirectories(outputDirectory);
-        pruneOldExports(outputDirectory);
+        prune(outputDirectory, FILE_PREFIX, MAXIMUM_RETAINED_EXPORTS);
         String timestamp = LocalDateTime.now().format(FILE_TIME);
-        Path output = uniqueFile(outputDirectory, timestamp);
+        Path output = reserve(outputDirectory, FILE_PREFIX + timestamp, ".txt");
         StringBuilder report = new StringBuilder(512);
         report.append("MC Auto Translation Tool - Diagnostics\n");
         report.append("Generated: ").append(LocalDateTime.now()).append('\n');
@@ -79,8 +115,13 @@ public final class DiagnosticsLogExporter {
         for (String line : TranslationStats.global().plainLines()) {
             report.append(sanitize(line)).append('\n');
         }
+        // reserve() already created the file to claim the name, so this fills it instead of claiming
+        // the same name a second time.
         Files.write(output, report.toString().getBytes(StandardCharsets.UTF_8),
-                StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+                StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
+        // The report carries the per-provider lines of the statistics file and the redacted status
+        // text, so it is restricted the same way the bundle and the configuration file are.
+        LocalConfigSecurity.restrictToOwner(output);
         return output;
     }
 
@@ -99,57 +140,66 @@ public final class DiagnosticsLogExporter {
             String keyPlaceholder
     ) {
         String clean = value == null ? "" : value.replace('\r', ' ').replace('\n', ' ').trim();
-        clean = clean.replaceAll("(?i)https?://\\S+", Matcher.quoteReplacement(addressPlaceholder));
-        // A credential inside a JSON body. Its name is quoted, so the assignments below never reached
-        // it, and a provider that echoes its own request back in an error message put the key into
-        // the report and into the bundle verbatim.
-        clean = clean.replaceAll(
-                "(?i)\"" + SECRET_NAMES + "\"\\s*:\\s*\"[^\"]*\"",
-                "\"$1\":\"" + Matcher.quoteReplacement(secretPlaceholder) + "\"");
-        // "name=value" / "name: value" / "name: Bearer value" / "Authorization Bearer value".
+        clean = ADDRESS.matcher(clean).replaceAll(Matcher.quoteReplacement(addressPlaceholder));
+        clean = JSON_SECRET.matcher(clean)
+                .replaceAll("\"$1\":\"" + Matcher.quoteReplacement(secretPlaceholder) + "\"");
         // An explicit assignment to a credential-ish name is always redacted, whatever the shape.
-        clean = clean.replaceAll(
-                "(?i)(?<![A-Za-z0-9_])" + SECRET_NAMES
-                        + "\\s*[=:]\\s*(?:bearer\\s+)?\\S+",
-                "$1=" + Matcher.quoteReplacement(secretPlaceholder));
-        // "Authorization Bearer value" (no separator at all).
-        clean = clean.replaceAll("(?i)(?<![A-Za-z0-9_])bearer\\s+" + TOKEN_RUN,
-                "bearer=" + Matcher.quoteReplacement(secretPlaceholder));
-        // Space separated shapes such as "API key provided: value" or "key is value".
-        clean = clean.replaceAll(
-                "(?i)(?<![A-Za-z0-9_])" + SECRET_NAMES
-                        + "[\\s_]+(?:provided|supplied|used|set|is|was|returned|"
-                        + "rejected|invalid|incorrect|expired)?[\\s_:]*" + TOKEN_RUN,
-                "$1=" + Matcher.quoteReplacement(secretPlaceholder));
-        clean = clean.replaceAll("(?i)\\bsk-[a-z0-9_-]{8,}",
-                Matcher.quoteReplacement(keyPlaceholder));
+        clean = ASSIGNED_SECRET.matcher(clean)
+                .replaceAll("$1=" + Matcher.quoteReplacement(secretPlaceholder));
+        clean = BEARER_TOKEN.matcher(clean)
+                .replaceAll("bearer=" + Matcher.quoteReplacement(secretPlaceholder));
+        clean = SPACED_SECRET.matcher(clean)
+                .replaceAll("$1=" + Matcher.quoteReplacement(secretPlaceholder));
+        clean = SK_KEY.matcher(clean).replaceAll(Matcher.quoteReplacement(keyPlaceholder));
         return clean;
     }
 
-    private static Path uniqueFile(Path directory, String timestamp) {
-        Path candidate = directory.resolve(FILE_PREFIX + timestamp + ".txt");
-        int suffix = 2;
-        while (Files.exists(candidate)) {
-            candidate = directory.resolve(FILE_PREFIX + timestamp + "-" + suffix + ".txt");
-            suffix++;
+    /**
+     * Reserves a name that belongs to this export alone; shared with the bundle exporter.
+     *
+     * <p>{@code Files.exists} followed by a truncating write let two exports of the same second pick
+     * the same name, so the second one cut the first artefact in half. Creating the file instead
+     * makes the choice atomic, and the suffix loop retries a name that was taken. The suffix goes
+     * before {@code extension}, so a retried name keeps the shape the pruning below recognises.
+     *
+     * @param directory directory the file is created in
+     * @param baseName name without the extension
+     * @param extension extension including the dot
+     * @return an existing, empty file whose name belongs to this caller
+     * @throws IOException when no name in the retry range was free
+     */
+    static Path reserve(Path directory, String baseName, String extension) throws IOException {
+        for (int suffix = 1; suffix <= MAXIMUM_NAME_RETRIES; suffix++) {
+            Path candidate = directory.resolve(
+                    suffix == 1 ? baseName + extension : baseName + "-" + suffix + extension);
+            try {
+                Files.newOutputStream(candidate, StandardOpenOption.CREATE_NEW,
+                        StandardOpenOption.WRITE).close();
+                return candidate;
+            } catch (FileAlreadyExistsException taken) {
+                // Another export claimed this name a moment ago; try the next one.
+            }
         }
-        return candidate;
+        throw new IOException("Too many exports in " + directory);
     }
 
     /**
-     * Deletes the oldest reports of this class so repeated exports cannot fill the folder.
+     * Deletes the oldest artefacts of one exporter so repeated exports cannot fill the folder.
      *
-     * <p>Nothing ever deleted them, so a player who exports on every retry leaves a growing pile of
-     * reports in the configuration directory, which launchers and cloud clients sync. Only names
-     * carrying {@link #FILE_PREFIX} are touched, one slot is left for the report the caller is about
-     * to write, and any failure here is swallowed: housekeeping must never fail an export.
+     * <p>Each artefact carries up to two megabytes of debug log, and nothing ever deleted them: a
+     * hundred exports left two hundred megabytes in a directory that launchers and cloud clients
+     * sync. Only names carrying {@code prefix} are touched, one slot is left for the file the caller
+     * is about to write, and any failure here is swallowed -- housekeeping must never be the reason a
+     * support request cannot be exported.
      *
-     * @param directory directory the reports are written into
+     * @param directory directory the artefacts are written into
+     * @param prefix file name prefix identifying that exporter's artefacts
+     * @param keep how many of them to keep, including the one about to be written
      */
-    private static void pruneOldExports(Path directory) {
+    static void prune(Path directory, String prefix, int keep) {
         List<Path> existing = new ArrayList<Path>();
         try (DirectoryStream<Path> stream =
-                     Files.newDirectoryStream(directory, FILE_PREFIX + "*")) {
+                     Files.newDirectoryStream(directory, prefix + "*")) {
             for (Path candidate : stream) {
                 if (Files.isRegularFile(candidate)) {
                     existing.add(candidate);
@@ -158,7 +208,7 @@ public final class DiagnosticsLogExporter {
         } catch (IOException | RuntimeException unreadable) {
             return;
         }
-        int excess = existing.size() - (MAXIMUM_RETAINED_EXPORTS - 1);
+        int excess = existing.size() - (keep - 1);
         if (excess <= 0) {
             return;
         }

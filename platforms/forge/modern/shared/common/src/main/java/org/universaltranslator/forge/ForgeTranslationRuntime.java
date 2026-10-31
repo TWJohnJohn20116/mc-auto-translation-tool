@@ -217,9 +217,11 @@ public final class ForgeTranslationRuntime {
      *
      * <p>The reaper is a single unbounded queue, so a burst of switches — holding F8 down, or a
      * HUD drag that re-initializes several times a second — used to queue one live session with its
-     * thread pool and caches per press, each worth up to five seconds of teardown. Past
-     * {@link #MAX_PENDING_TEARDOWNS} the caller now performs the teardown itself: the tick that
-     * switched pays the cost instead of the process growing an unbounded backlog of live sessions.
+     * thread pool and caches per press, each worth up to five seconds of teardown. A replaced
+     * session is therefore retired without waiting for its workers, so one queued teardown is cheap
+     * and the queue drains as fast as the switches arrive; past {@link #MAX_PENDING_TEARDOWNS} the
+     * caller performs that same bounded teardown itself instead of the process growing an unbounded
+     * backlog of live sessions.
      */
     private static void closeInBackground(final RenderTranslationSession replaced) {
         if (replaced == null) {
@@ -227,7 +229,9 @@ public final class ForgeTranslationRuntime {
         }
         if (PENDING_TEARDOWNS.incrementAndGet() > MAX_PENDING_TEARDOWNS) {
             try {
-                replaced.close();
+                // Dropped rather than drained: waiting for its workers is what made a held-down
+                // toggle key freeze the tick.
+                replaced.closeWithoutWaiting();
             } catch (Throwable ignored) {
                 // Same contract as the reaper body: a teardown must never take the caller down.
             } finally {
@@ -240,7 +244,7 @@ public final class ForgeTranslationRuntime {
                 @Override
                 public void run() {
                     try {
-                        replaced.close();
+                        replaced.closeWithoutWaiting();
                     } catch (Throwable ignored) {
                         // A reaper must never die with a teardown still pending. The session is
                         // already unreachable from the live fields, so a failure here can only
@@ -251,7 +255,7 @@ public final class ForgeTranslationRuntime {
                 }
             });
         } catch (Throwable rejected) {
-            // The executor only rejects once it has been shut down, which this class never does.
+            // The executor only rejects once shutdown() has run, which is the client-going-away path.
             // Leaving the replaced session unclosed still beats blocking the caller.
             PENDING_TEARDOWNS.decrementAndGet();
         }
@@ -348,6 +352,9 @@ public final class ForgeTranslationRuntime {
         if (active != null) {
             active.close();
         }
+        // The reaper is the second pool this class owns. Like the writer it is daemon-only, so nothing
+        // else would ever close it, and shutdown() is the one place a client exit reaches.
+        SESSION_REAPER.shutdownNow();
     }
 
     private static List<String> playerNameSnapshot() {

@@ -146,7 +146,7 @@ Fabric Loader 會選擇相符實作，建置會驗證全部六個選擇。
 ./gradlew :platform-fabric-1.20.1:build
 ```
 
-輸出位於 `platforms/fabric/legacy/1.20.1/build/libs/`。
+輸出位於 `platforms/fabric/1.20/versions/1.20.1/build/libs/`。`platforms/fabric/legacy/` 只放跨版本共用層；1.16.5／1.19.2／1.20.1 的專案分別在 `platforms/fabric/1.16/versions/1.16.5`、`platforms/fabric/1.19/versions/1.19.2`、`platforms/fabric/1.20/versions/1.20.1`（見 `settings.gradle` 的 `projectDir`）。
 
 ## 1.20.1 Forge
 
@@ -284,7 +284,7 @@ $env:GRADLE_USER_HOME = "D:\Gradle\cache"
 
 ## 1.12.2 Forge
 
-需要完整 JDK 8。進入 `legacy/forge-1.12.2/` 後執行：
+需要完整 JDK 8。這個目標與 1.8.9 各自是獨立 Gradle 建置（有自己的 wrapper 與 `build.gradle`，不在根專案的 `settings.gradle` 裡）。進入 `platforms/forge/legacy/1.12.2/` 後執行：
 
 ```bash
 ./gradlew build
@@ -294,7 +294,7 @@ Wrapper 固定為 Gradle 4.10.3，ForgeGradle 固定為 3.0.197，Forge 固定�
 
 ## 1.8.9 Forge
 
-需要完整 JDK 8。進入 `legacy/forge-1.8.9/` 後執行：
+需要完整 JDK 8。進入 `platforms/forge/legacy/1.8.9/` 後執行：
 
 ```bash
 ./gradlew build
@@ -308,6 +308,8 @@ Wrapper 固定為 Gradle 2.14.1，ForgeGradle 使用 2.1 系列，Forge 固定�
 環境不需要此參數。
 
 ## 發佈 JAR 驗證與縮減
+
+下面的 `<mod_version>` 換成 `gradle.properties` 的現行值；`downloads/` 只保留現行版本的目錄。
 
 PR 必經的 `./gradlew check` **不驗發佈資產**：它需要 `downloads/<mod_version>`，而那個目錄是發佈後
 才存在的，把它掛回 `check` 會讓「改版本號」與「必經檢查」互鎖（C2-163）。發佈資產的驗證入口是三個：
@@ -332,9 +334,9 @@ Forge／NeoForge 1.20.1 保留為分別驗證的載入器專用 JAR。不同 API
 
 ```bash
 python3 scripts/prepare_release_assets.py \
-  --release-dir downloads/1.4 \
+  --release-dir downloads/<mod_version> \
   --output-dir build/release-assets \
-  --version 1.4
+  --version <mod_version>
 ```
 
 發佈目標與 source-only bundle 是兩種不同的東西，混成一類就會寫出與實際產出相反的說明：

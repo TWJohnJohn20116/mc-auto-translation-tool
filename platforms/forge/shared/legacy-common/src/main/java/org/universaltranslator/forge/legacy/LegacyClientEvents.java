@@ -96,8 +96,29 @@ public final class LegacyClientEvents {
         }
         configFlushHookInstalled = true;
         try {
-            Runtime.getRuntime().addShutdownHook(
-                    new Thread(LegacyTranslationRuntime::shutdown, "universal-translator-config-flush"));
+            Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    // The hook only starts the teardown and waits for it with a bound: shutdown()
+                    // drains the configuration writer and then closes the session, which waits for
+                    // workers parked in a provider read, so running it inline made "close the game"
+                    // wait for all of it with no upper limit.
+                    Thread teardown = new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            LegacyTranslationRuntime.shutdown();
+                        }
+                    }, "universal-translator-stop");
+                    teardown.setDaemon(false);
+                    teardown.start();
+                    try {
+                        teardown.join(
+                                org.universaltranslator.core.ShutdownBudget.TEARDOWN_JOIN_MILLIS);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            }, "universal-translator-config-flush"));
         } catch (IllegalStateException alreadyStopping) {
             // The JVM is already shutting down; no thread is left for a queued write to land on.
             configFlushHookInstalled = false;
@@ -144,6 +165,11 @@ public final class LegacyClientEvents {
             // The runtime already holds the configuration it is running; the file is only the answer
             // before the first load succeeded.
             LegacyConfig config = LegacyTranslationRuntime.diagnosticsConfig();
+            if (config == null) {
+                // A failed load drops the live copy and re-reading the same unreadable file throws
+                // again, which left the one screen that repairs it unreachable.
+                config = LegacyConfig.lastLoaded();
+            }
             if (config == null) {
                 config = LegacyConfig.load(configDirectory);
             }
@@ -254,6 +280,11 @@ public final class LegacyClientEvents {
             // The runtime already holds the configuration it is running; the file is only the
             // answer before the first load succeeded.
             LegacyConfig config = LegacyTranslationRuntime.diagnosticsConfig();
+            if (config == null) {
+                // A failed load drops the live copy and re-reading the same unreadable file throws
+                // again, which left the one screen that repairs it unreachable.
+                config = LegacyConfig.lastLoaded();
+            }
             if (config == null) {
                 config = LegacyConfig.load(configDirectory);
             }

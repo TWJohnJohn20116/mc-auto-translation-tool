@@ -367,6 +367,68 @@ def unmerged_forge_groups(
     ]
 
 
+def _logical_jar_names(release_dir: Path) -> list[str]:
+    """`release_dir` 的邏輯 JAR 檔名（分片以 ``part-aa`` 還原成 ``*.jar``），不讀位元組。
+
+    `discover_jars` 會把每顆 JAR 讀進記憶體（分片還要接起來），那是組裝資產才需要的成本；
+    「有哪些可安裝檔名」只取決於檔名。
+    """
+    names = {path.name for path in release_dir.glob("*.jar")}
+    for part in release_dir.glob("*.jar.part-*"):
+        match = PART_PATTERN.match(part.name)
+        if not match:
+            raise PreparationError(f"invalid split JAR part name: {part.name}")
+        names.add(match.group("jar"))
+    if not names:
+        raise PreparationError(f"no release JARs found in {release_dir}")
+    # 分片本身的合法性（完整檔與分片並存、後綴不連續）用同一支檢查，只是不讀內容。
+    for name in names:
+        _split_parts(release_dir / name)
+    return sorted(names)
+
+
+def list_installable(release_dir: Path, version: str) -> list[str]:
+    """`release-assets.txt` 需要的可安裝檔名，不建置也不解壓任何 JAR。
+
+    `prepare-release.yml` 只需要那 31 個檔名，先前卻為它把整支腳本跑了一遍：48 顆 JAR 被完整
+    解壓、`fabric-all.jar` 被重建，那份產物立刻被丟掉，同一個版本隨後又在 `build.yml` 與
+    `publish-release.yml` 各重建一次。檔名只取決於 ``downloads/<version>`` 的檔名與
+    `FORGE_FAMILIES`，所以用檔名推導出與 `prepare_release` 相同的一組「可安裝」名稱。
+    """
+    release_dir = release_dir.resolve()
+    if not release_dir.is_dir():
+        raise PreparationError(f"release directory is missing: {release_dir}")
+    names = _logical_jar_names(release_dir)
+    expected_prefix = f"MCAutoTranslationTool-{version}-"
+    mismatched = sorted(name for name in names if not name.startswith(expected_prefix))
+    if mismatched:
+        raise PreparationError(
+            "release JAR filename does not match version "
+            f"{version}: {', '.join(mismatched)}"
+        )
+    fabric = [name for name in names if name.lower().endswith("-fabric.jar")]
+    if not fabric:
+        raise PreparationError("release contains no Fabric implementations")
+    consumed = set(fabric)
+    generated = [f"MCAutoTranslationTool-{version}-fabric-all.jar"]
+    for family in FORGE_FAMILIES:
+        present: dict[str, str] = {}
+        for name in names:
+            forge_version = _forge_version_from_name(name, version)
+            if forge_version in family.members:
+                present.setdefault(forge_version, name)
+        missing = [item for item in family.members if item not in present]
+        if missing:
+            raise PreparationError(
+                f"Forge family {family.output_range} is missing: {', '.join(missing)}"
+            )
+        consumed.update(present.values())
+        generated.append(
+            f"MCAutoTranslationTool-{version}-mc{family.output_range}-forge.jar"
+        )
+    return generated + [name for name in names if name not in consumed]
+
+
 def _is_within(path: Path, parent: Path) -> bool:
     """Return True when `path` is `parent` itself or nested inside it.
 
@@ -502,10 +564,22 @@ def prepare_release(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--release-dir", required=True, type=Path)
-    parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--version", required=True)
+    parser.add_argument(
+        "--manifest-only",
+        action="store_true",
+        help="只把 release-assets.txt 的內容印到 stdout：不建置、不解壓、不寫入任何 JAR",
+    )
     args = parser.parse_args(argv)
+    if not args.manifest_only and args.output_dir is None:
+        parser.error("--output-dir is required unless --manifest-only is given")
     try:
+        if args.manifest_only:
+            sys.stdout.write(
+                installable_manifest(list_installable(args.release_dir, args.version))
+            )
+            return 0
         assets = prepare_release(args.release_dir, args.output_dir, args.version)
         for asset in assets:
             print(f"Created {asset}")

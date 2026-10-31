@@ -4,18 +4,17 @@ import org.universaltranslator.core.provider.OnlineProviderConfig;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.DirectoryStream;
-import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.zip.ZipEntry;
@@ -63,17 +62,29 @@ public final class DiagnosticsBundleExporter {
             throw new IOException("Diagnostics directory is unavailable");
         }
         Files.createDirectories(configDirectory);
-        pruneOldExports(configDirectory);
-        Path output = reserveUniqueFile(configDirectory,
-                FILE_PREFIX + LocalDateTime.now().format(FILE_TIME) + ".zip");
-        try (OutputStream file = Files.newOutputStream(output);
-                ZipOutputStream zip = new ZipOutputStream(file)) {
-            put(zip, "environment.txt", environment(platform));
-            put(zip, "diagnostics.txt", report(diagnosticLines, configFile));
-            putRedactedFile(zip, "config.properties", configFile,
-                    "# The configuration is redacted: keys, tokens and endpoints are replaced.");
-            putRedactedFile(zip, "debug.log", debugLogFile,
-                    "# Debug logging was off, so no log was written.");
+        DiagnosticsLogExporter.prune(configDirectory, FILE_PREFIX, MAXIMUM_RETAINED_EXPORTS);
+        Path output = DiagnosticsLogExporter.reserve(configDirectory,
+                FILE_PREFIX + LocalDateTime.now().format(FILE_TIME), ".zip");
+        try {
+            try (OutputStream file = Files.newOutputStream(output);
+                    ZipOutputStream zip = new ZipOutputStream(file)) {
+                put(zip, "environment.txt", environment(platform));
+                put(zip, "diagnostics.txt", report(diagnosticLines, configFile));
+                putRedactedFile(zip, "config.properties", configFile,
+                        "# The configuration is redacted: keys, tokens and endpoints are replaced.");
+                putRedactedFile(zip, "debug.log", debugLogFile,
+                        "# Debug logging was off, so no log was written.");
+            }
+        } catch (IOException | RuntimeException failed) {
+            // A half-written archive is worse than none: it cannot be opened, it still counts against
+            // the retention limit and it hides the bundle that did work. The failure is rethrown, so
+            // the caller still reports it.
+            try {
+                Files.deleteIfExists(output);
+            } catch (IOException ignored) {
+                // Best effort: the archive was closed by now, so a locked file is the only cause.
+            }
+            throw failed;
         }
         // The archive carries the configuration plus a slice of what the player and the provider
         // said, so it is restricted the same way the configuration it was derived from is instead of
@@ -102,13 +113,29 @@ public final class DiagnosticsBundleExporter {
             zip.closeEntry();
             return;
         }
-        try (BufferedReader reader = Files.newBufferedReader(source, StandardCharsets.UTF_8)) {
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(Files.newInputStream(source), tolerantUtf8()), 8192)) {
             String line;
             while ((line = reader.readLine()) != null) {
                 zip.write((DebugLog.redact(line) + '\n').getBytes(StandardCharsets.UTF_8));
             }
         }
         zip.closeEntry();
+    }
+
+    /**
+     * A UTF-8 decoder that replaces bytes it cannot use instead of refusing the whole file.
+     *
+     * <p>{@code Files.newBufferedReader} reports malformed input, so one truncated byte failed the
+     * whole export with an {@code IOException} -- in exactly the situation a bundle is made for: a
+     * process killed in the middle of an append, a full disk, or a sync client that cut the file.
+     * The redaction and the streaming shape are unaffected; only invalid bytes become {@code ?}.
+     */
+    private static CharsetDecoder tolerantUtf8() {
+        // A fresh decoder per call: a CharsetDecoder keeps state and must not be shared.
+        return StandardCharsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPLACE)
+                .onUnmappableCharacter(CodingErrorAction.REPLACE);
     }
 
     private static String environment(String platform) {
@@ -156,81 +183,6 @@ public final class DiagnosticsBundleExporter {
         zip.putNextEntry(new ZipEntry(name));
         zip.write(content.getBytes(StandardCharsets.UTF_8));
         zip.closeEntry();
-    }
-
-    /**
-     * Reserves a name that belongs to this export alone.
-     *
-     * <p>{@code Files.exists} followed by a truncating open let two exports in the same second pick
-     * the same name, so the second one cut the first archive in half. Creating the file instead makes
-     * the choice atomic, and the suffix loop retries the name that was taken.
-     */
-    private static Path reserveUniqueFile(Path directory, String fileName) throws IOException {
-        for (int suffix = 1; suffix <= 1000; suffix++) {
-            String candidate = suffix == 1 ? fileName : fileName + "-" + suffix + ".zip";
-            Path target = directory.resolve(candidate);
-            try {
-                Files.newOutputStream(target, StandardOpenOption.CREATE_NEW,
-                        StandardOpenOption.WRITE).close();
-                return target;
-            } catch (FileAlreadyExistsException taken) {
-                // Another export claimed this name a moment ago; try the next one.
-            }
-        }
-        throw new IOException("Too many diagnostics bundles in " + directory);
-    }
-
-    /**
-     * Deletes the oldest archives of this class so repeated exports cannot fill the folder.
-     *
-     * <p>Each archive carries up to two megabytes of debug log, and nothing ever deleted them: a
-     * hundred exports left two hundred megabytes in a directory that launchers and cloud clients
-     * sync. Only names carrying {@link #FILE_PREFIX} are touched, one slot is left for the archive
-     * the caller is about to write, and any failure here is swallowed -- housekeeping must never be
-     * the reason a support request cannot be exported.
-     *
-     * @param directory directory the archives are written into
-     */
-    private static void pruneOldExports(Path directory) {
-        List<Path> existing = new ArrayList<Path>();
-        try (DirectoryStream<Path> stream =
-                     Files.newDirectoryStream(directory, FILE_PREFIX + "*")) {
-            for (Path candidate : stream) {
-                if (Files.isRegularFile(candidate)) {
-                    existing.add(candidate);
-                }
-            }
-        } catch (IOException | RuntimeException unreadable) {
-            return;
-        }
-        int excess = existing.size() - (MAXIMUM_RETAINED_EXPORTS - 1);
-        if (excess <= 0) {
-            return;
-        }
-        Collections.sort(existing, new Comparator<Path>() {
-            @Override
-            public int compare(Path first, Path second) {
-                long left = lastModifiedMillis(first);
-                long right = lastModifiedMillis(second);
-                return left < right ? -1 : (left > right ? 1 : 0);
-            }
-        });
-        for (int index = 0; index < excess; index++) {
-            try {
-                Files.deleteIfExists(existing.get(index));
-            } catch (IOException ignored) {
-                // A read-only directory must not fail the export that called this.
-            }
-        }
-    }
-
-    /** Last modification time in milliseconds, or {@code 0} when it cannot be read. */
-    private static long lastModifiedMillis(Path candidate) {
-        try {
-            return Files.getLastModifiedTime(candidate).toMillis();
-        } catch (IOException unreadable) {
-            return 0L;
-        }
     }
 
     /** The entry names the archive always contains, for callers that want to verify a bundle. */

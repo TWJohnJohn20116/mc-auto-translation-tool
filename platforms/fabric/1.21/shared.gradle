@@ -10,6 +10,12 @@ requiredProperties.each { propertyName ->
     }
 }
 
+// The loader requirement under the name gradle/bundle-metadata-verify.gradle reads when it derives a
+// bundle's floor from its weakest member. The 1.16-1.20 members declare legacyLoaderVersion
+// themselves; this tree stores the same fact as fabricLoaderVersion, and without the alias the floor
+// check would find an empty member list and pass without comparing anything for all twelve releases.
+ext.legacyLoaderVersion = project.ext.fabricLoaderVersion.toString()
+
 def sourceLayers = [
         "1.21"   : ["runtime/pre-1.21.9", "draw/1.21-1.21.5", "text-renderer/1.21-1.21.1", "input/pre-1.21.9"],
         "1.21.1" : ["runtime/pre-1.21.9", "draw/1.21-1.21.5", "text-renderer/1.21-1.21.1", "input/pre-1.21.9"],
@@ -187,6 +193,48 @@ sourceSets {
     }
 }
 
+// The twelve fabric.mod.json files are hand-maintained, one per version, and differ only in the two
+// entries that describe the release itself: "fabricloader" and "minecraft". Only the loader one is
+// rewritten below, so the rest of the 36 lines were copied by hand and nothing compared them: adding
+// 1.21.12 meant copying all of them, and an edit to one file (an entrypoint, a dependency, the java
+// floor) could leave the other eleven behind with every task still green. Compare the tree here, at
+// configuration time and without adding a task, so the copies may differ only in those two values and
+// each one has to name its own release.
+def versionsMetadataRoot = rootProject.file("platforms/fabric/1.21/versions")
+def canonicalMetadata = null
+def canonicalMetadataName = null
+versionsMetadataRoot.listFiles()?.findAll { it.isDirectory() }?.sort { it.name }?.each { versionDir ->
+    def metadataFile = new File(versionDir, "src/main/resources/fabric.mod.json")
+    if (!metadataFile.isFile()) {
+        throw new GradleException(
+                "${relativePath(metadataFile)} is missing: every registered 1.21 version keeps one " +
+                        "fabric.mod.json of its own")
+    }
+    def parsedMetadata = new groovy.json.JsonSlurper().parseText(metadataFile.getText("UTF-8")) as Map
+    def parsedDepends = (parsedMetadata.depends ?: [:]) as Map
+    if (parsedDepends.get("minecraft") != versionDir.name) {
+        throw new GradleException(
+                "${relativePath(metadataFile)} declares minecraft ${parsedDepends.get('minecraft')} " +
+                        "but lives under versions/${versionDir.name}/")
+    }
+    def shape = new LinkedHashMap(parsedMetadata)
+    def shapeDepends = new LinkedHashMap(parsedDepends)
+    shapeDepends.remove("fabricloader")
+    shapeDepends.remove("minecraft")
+    shape.remove("depends")
+    shape.put("depends", shapeDepends)
+    if (canonicalMetadata == null) {
+        canonicalMetadata = shape
+        canonicalMetadataName = versionDir.name
+    } else if (shape != canonicalMetadata) {
+        throw new GradleException(
+                "${relativePath(metadataFile)} differs from versions/${canonicalMetadataName}/" +
+                        "src/main/resources/fabric.mod.json in more than the version-dependent " +
+                        "'fabricloader'/'minecraft' entries; the twelve 1.21 metadata files have to " +
+                        "stay one shape or one of them silently ships a different mod")
+    }
+}
+
 processResources {
     inputs.property "version", project.version
     // The declared loader floor is derived from the loader this target is actually compiled
@@ -229,6 +277,9 @@ def javaReleaseTarget = gradle.ext.treeJavaTarget("platforms/fabric/1.21/")
 // Handed to the class-file gate applied below, so the bytecode is checked against the same number the
 // compiler is given instead of a second copy of it.
 ext.fabricReleaseJava = javaReleaseTarget
+// The same number under the name gradle/bundle-metadata-verify.gradle reads (legacyJavaRelease), so
+// the bundle floor check compares against real members instead of an empty list.
+ext.legacyJavaRelease = javaReleaseTarget.toString()
 tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
     // Read from settings.gradle's treeJavaRelease so the compile target and the Mixin bounds derived

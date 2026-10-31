@@ -15,10 +15,15 @@ on:
       - "scripts/ci/read-mod-version.sh"
       - "scripts/prepare_release_assets.py"
       - "scripts/verify_release_jars.py"
-      # 文件也要觸發：下面的「比對四份 README 的檔名與真實可安裝資產」只有同時看到資產與文件時
-      # 才有意義，而「改了家族名卻漏改其中一份 README」正是這種只動文件的 push。
-      - "README.md"
-      - "docs/**"
+      # 分片門檻（PART_SIZE）與後綴公式（part_suffix）的唯一實作，而驗證端 import 的是同一份
+      # 常數：改壞它時生產端與驗證端一起漂移、彼此一致，只有已提交的分片會對不上。它決定
+      # downloads/ 的佈局，所以和上面兩支腳本同一個理由要列進來。
+      - "scripts/release_layout.py"
+      # README.md／docs/** 刻意**不**列進來：只改文件或只改下載連結的 push 不會改變任何位元組，
+      # 卻會讓這個 job 重解 48 顆 JAR、重建 fabric-all.jar，再用 --clobber 把 31 顆先刪後傳
+      # （那段視窗裡 Release 的下載連結會 404）。“改了家族名卻漏改其中一份 README”改由
+      # scripts/ci/test_ci_docs.py 在 PR 上比對 downloads/<version>/release-assets.txt，成本是
+      # 幾份文字檔，而且在那個 PR 就紅，不必等合併。
   workflow_dispatch:
 
 permissions:

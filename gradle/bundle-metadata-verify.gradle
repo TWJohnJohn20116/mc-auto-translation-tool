@@ -88,6 +88,33 @@ ext.verifyBundleMetadata = {
     }
     def metadata = new groovy.json.JsonSlurper().parse(bundleMetadataFile)
     project.ext.verifyBundleMetadataAgainst(metadata, supported)
+    // supportedVersions is a hand-copied list in every bundle, while settings.gradle derives the same
+    // set from platformDependencies; nothing compared the two, so a version added to one side only was
+    // invisible in both directions — either the bundle ships a version nothing resolves, or the
+    // resolver is handed a version the jar does not contain. fabricBundleVersions already applies the
+    // 1.13.0 -> 1.13 normalisation the launcher ids need, so the two lists are comparable.
+    if (!project.gradle.ext.has("fabricBundleVersions")) {
+        throw new GradleException(
+                "gradle.ext.fabricBundleVersions is missing; settings.gradle has to expose it before " +
+                        "${project.path} applies gradle/bundle-metadata-verify.gradle")
+    }
+    def supportedAsText = supported.collect { it.toString() }
+    def fromSettings = (project.gradle.ext.fabricBundleVersions(project.name) as List)
+            .collect { it.toString() }
+    if (fromSettings.isEmpty()) {
+        throw new GradleException(
+                "${project.path}: settings.gradle's platformDependencies has no entry for " +
+                        "'${project.name}', so supportedVersions ${supportedAsText} is derived from " +
+                        "nothing; add the bundle to platformDependencies")
+    }
+    def onlyInBundle = supportedAsText.findAll { !fromSettings.contains(it) }.sort()
+    def onlyInSettings = fromSettings.findAll { !supportedAsText.contains(it) }.sort()
+    if (!onlyInBundle.isEmpty() || !onlyInSettings.isEmpty()) {
+        throw new GradleException(
+                "${project.path}: supportedVersions and settings.gradle's platformDependencies " +
+                        "disagree — only in the bundle ${onlyInBundle}, only in settings " +
+                        "${onlyInSettings}. Both lists have to name the same Minecraft versions.")
+    }
     // Fabric API's mod id. The ten hand-written bundle metadata files spelled it three ways ("fabric"
     // in three, no entry at all in 1.19, "fabric-api" in six); "fabric" only resolves through Fabric
     // API's `provides` alias, so nothing compared the three answers. settings.gradle's
@@ -143,6 +170,24 @@ ext.verifyBundleMetadata = {
                     memberJavas << member.ext.legacyJavaRelease.toString()
                 }
             }
+        }
+        // Only members that declare the ext are collected, so a member that declares neither silently
+        // shrank the comparison: the 1.14-1.15 bundle's three stub modules (1.14, 1.14.1, 1.14.2) had
+        // no legacyLoaderVersion/legacyJavaRelease at all, and the floor was derived from the other
+        // five members while those three were never reconciled with it. A missing declaration is a
+        // hole in this check, not an exemption, so it fails here.
+        def undeclaredMembers = supported.findAll { version ->
+            def member = project.rootProject.findProject(":platform-fabric-${version}")
+            member == null
+                    || !member.ext.has("legacyLoaderVersion")
+                    || !member.ext.has("legacyJavaRelease")
+        }
+        if (!undeclaredMembers.isEmpty()) {
+            throw new GradleException(
+                    "${project.path}: these members declare no legacyLoaderVersion/legacyJavaRelease, " +
+                            "so the weakest-member floor would be derived from the remaining members " +
+                            "only: ${undeclaredMembers}. Declare both ext values on the member; a stub " +
+                            "module that only applies the java plugin needs them too.")
         }
         def declared = metadata.depends
         // The template has to carry the placeholder: a literal here is the hand-copied value this

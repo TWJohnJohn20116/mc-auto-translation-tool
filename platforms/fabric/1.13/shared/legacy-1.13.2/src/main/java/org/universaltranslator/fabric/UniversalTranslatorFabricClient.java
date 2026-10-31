@@ -48,7 +48,7 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
      */
     public static void tickFromMixin() {
         Runnable hook = tickHook;
-        if (hook == null) {
+        if (hook == null || shutdownRequested) {
             return;
         }
         try {
@@ -71,12 +71,15 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
         // The screens' shared pool is dropped here so a closed game does not keep two daemon threads
         // (and whatever request they are waiting on) alive.
         ScreenWorkers.shutdown();
+        // Dropped here, not just flagged: the tick mixin keeps calling tickFromMixin() on every
+        // tick after this point, and a hook left in place kept resetting the render context and
+        // re-running the status notifier against a runtime with no session.
+        tickHook = null;
         Runnable hook = stopHook;
         stopHook = null;
-        // Flush a queued settings write before the teardown is attempted, so the write does not wait
-        // behind a session close that can spend its whole budget on a worker parked in a provider read.
-        FabricTranslationRuntimeBase.drainPendingSaves();
         if (hook == null) {
+            // Nothing to tear down, but a queued settings write still has to land.
+            FabricTranslationRuntimeBase.drainPendingSaves();
             return;
         }
         // Bounded wait instead of running the teardown inline: it closes the coordinator (which
@@ -85,7 +88,18 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
         // game" wait for all of that with no upper bound. The join budget is longer than that close
         // on purpose, so the flush is not cut short; a teardown that still outlives it is ended by
         // the JVM exiting.
-        final Thread teardown = new Thread(hook, "universal-translator-stop");
+        final Runnable teardownBody = hook;
+        final Thread teardown = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                // Inside the joined thread so the join budget covers it: a settings write queued
+                // behind a session close that spends its whole budget on a parked worker is exactly
+                // the burst this drain exists to save, and on the hook thread it ran outside every
+                // bound there is.
+                FabricTranslationRuntimeBase.drainPendingSaves();
+                teardownBody.run();
+            }
+        }, "universal-translator-stop");
         teardown.setDaemon(false);
         teardown.start();
         try {
@@ -97,6 +111,9 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
 
     @Override
     public void onInitializeClient() {
+        // A fresh initialization (a client that re-enters after a full shutdown) must be able to
+        // shut down again: the flag describes one stopped hook, not the whole process.
+        shutdownRequested = false;
         INSTANCE.onInitializeClient();
     }
 

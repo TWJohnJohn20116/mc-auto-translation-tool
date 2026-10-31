@@ -48,7 +48,10 @@ sourceSets {
     }
 }
 
-project.ext.forgeJavaRelease = 25
+// The release this tree compiles for comes from settings.gradle's treeJavaRelease — the same table the
+// Mixin compatibilityLevel bounds are derived from — instead of being a second copy of the number that
+// the bounds would not follow.
+project.ext.forgeJavaRelease = gradle.ext.treeJavaTarget("platforms/forge/26.x/")
 apply from: rootProject.file("platforms/forge/shared.gradle")
 
 tasks.named("processResources", ProcessResources).configure {

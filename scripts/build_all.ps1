@@ -5,8 +5,8 @@
 # 目標清單的權威來源是 .github/workflows/prepare-release.yml 的 TARGETS_JSON（48 個發布目標）。
 # 下面的分組只是把那 48 個目標依 JDK 分群後的結果：
 #   JDK 25 -> 26.x（fabric-26.x bundle + 4 forge + 4 neoforge）
-#   JDK 21 -> 8 個 fabric bundle／1.13–1.21 與其餘 forge／neoforge
-#   JDK 17 -> forge 1.16.5–1.20.1 與 neoforge-1.20.1
+#   JDK 21 -> 8 個 fabric bundle／1.13–1.21、其餘 forge／neoforge，以及 forge modern 1.16.5–1.20.1
+#             與 neoforge-1.20.1（根 build.gradle 的 subprojects 對它們要求的 toolchain 也是 21）
 #   JDK 8  -> platforms/forge/legacy 的 1.8.9、1.12.2（各自獨立 Gradle 建置）
 # 改動任一份清單時，prepare-release.yml、settings.gradle 與這裡必須一起改。
 $ErrorActionPreference = "Continue"
@@ -124,15 +124,18 @@ $jdk21Tasks = @(
 )
 $failed += Invoke-TargetBuild "jdk21-combined" $j21 $jdk21Platforms $jdk21Tasks
 
-# === JDK 17: Forge Modern & NeoForge 1.20.1 ===
-$j17 = Resolve-Jdk 17
-$jdk17Platforms = "forge-1.16.5,forge-1.18.2,forge-1.19.2,forge-1.20.1,neoforge-1.20.1"
-$jdk17Tasks = @(
+# === JDK 21: Forge Modern & NeoForge 1.20.1 ===
+# 這一組先前用 JDK 17，但根 build.gradle 的 subprojects 對 platform-forge-1.16.5／1.18.2／1.19.2／
+# 1.20.1 與 platform-neoforge-1.20.1 要求的 toolchain 是 21（只有 26.x 的前綴是 25），
+# options.release 才負責 8／17 的位元碼目標。用 17 等於讓 Gradle 去找一個 21 的工具鏈。
+$j21Modern = Resolve-Jdk 21
+$jdk21ModernPlatforms = "forge-1.16.5,forge-1.18.2,forge-1.19.2,forge-1.20.1,neoforge-1.20.1"
+$jdk21ModernTasks = @(
     ":platform-forge-1.16.5:build", ":platform-forge-1.18.2:build",
     ":platform-forge-1.19.2:build", ":platform-forge-1.20.1:build",
     ":platform-neoforge-1.20.1:build"
 )
-$failed += Invoke-TargetBuild "jdk17-forge-modern" $j17 $jdk17Platforms $jdk17Tasks
+$failed += Invoke-TargetBuild "jdk21-forge-modern" $j21Modern $jdk21ModernPlatforms $jdk21ModernTasks
 
 # === JDK 8: Legacy 1.8.9 & 1.12.2 (Parallel) ===
 $j8 = Resolve-Jdk 8

@@ -6,6 +6,7 @@ POM 全部已存在時回 0，那是最常見的健康狀態）。README 是這�
 改動時，這裡要讓它在 PR 上就紅，而不是等維護者照文件去查一個不存在的設定。
 """
 
+import json
 import pathlib
 import re
 import sys
@@ -16,10 +17,19 @@ README = ROOT / "scripts" / "README.md"
 DEFENDER = ROOT / "scripts" / "ci" / "set-defender-exclusions.ps1"
 POMS = ROOT / "scripts" / "tools" / "_gen_mojang_poms.py"
 VERSION_SCRIPT = ROOT / "scripts" / "ci" / "read-mod-version.sh"
+TARGETS = ROOT / "scripts" / "ci" / "build-targets.json"
+#: 四份 README 是「31 個可安裝檔名」的手抄副本（`publish-release.yml` 只在資產變動時才會比對）。
+READMES = (
+    ROOT / "README.md",
+    ROOT / "docs" / "Zh-cn" / "README.md",
+    ROOT / "docs" / "Zh-tw" / "README.md",
+    ROOT / "docs" / "en" / "README.md",
+)
 
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from release_layout import VERSION_PATTERN  # noqa: E402  (需要先設好 sys.path)
+from prepare_release_assets import MANIFEST_NAME  # noqa: E402  (需要先設好 sys.path)
+from release_layout import PART_SIZE, VERSION_PATTERN  # noqa: E402  (同上)
 
 # `if written == 0:` 的等價寫法（`if not written:`）必須定位到同一個分支：先前是字面字串比對，
 # 把條件改寫成等價形式就會以「沒有 written == 0 的分支」紅燈，而行為完全沒變。
@@ -82,6 +92,53 @@ class ScriptsReadmeTest(unittest.TestCase):
             shell,
             "read-mod-version.sh 的白名單與 release_layout.VERSION_PATTERN 不一致",
         )
+
+    def test_readme_states_the_target_count(self):
+        # `build-targets.json` 是「權威清單有幾筆」的事實，而 README 是唯一說明筆數的地方：B07-004
+        # 刪掉 fabric-1.21.4-1.21.5 之後那行仍寫著平台 17 筆，讀者會照著去找一個不存在的目標。
+        counts = {
+            key: len(value)
+            for key, value in json.loads(TARGETS.read_text(encoding="utf-8")).items()
+        }
+        text = README.read_text(encoding="utf-8")
+        self.assertIn("平台 %d 筆" % counts["platform"], text)
+        self.assertIn("舊版 %d 筆" % counts["legacy"], text)
+
+    def test_committed_split_parts_match_the_part_size(self):
+        # PART_SIZE 與 part_suffix 只有一份實作（scripts/release_layout.py），生產端與驗證端都 import
+        # 同一份：門檻被改壞時兩邊一起漂移、彼此一致，唯一會露出來的就是已經提交在 downloads/ 的分片。
+        groups = {}
+        for part in sorted((ROOT / "downloads").glob("*/*.jar.part-*")):
+            groups.setdefault(part.name.rsplit(".part-", 1)[0], []).append(part)
+        self.assertTrue(groups, "downloads/ 至少要有一組分片，否則這條斷言沒有樣本")
+        for base, parts in sorted(groups.items()):
+            for part in parts[:-1]:
+                self.assertEqual(
+                    PART_SIZE,
+                    part.stat().st_size,
+                    "%s 不是用 PART_SIZE 切的：改門檻要連 downloads/ 一起重新產生" % part.name,
+                )
+            # 最後一片只受「不超過門檻」約束：完整 JAR 很少剛好是門檻的整數倍。
+            self.assertLessEqual(parts[-1].stat().st_size, PART_SIZE, base)
+            self.assertGreater(parts[-1].stat().st_size, 0, base)
+
+    def test_readmes_list_the_committed_installable_assets(self):
+        # 這條比對原本只存在於 publish-release.yml，而那一版需要「剛重建的資產」在場，於是任何只動
+        # 文件的 push 都會重解 48 顆 JAR、再用 --clobber 把 31 顆先刪後傳（位元組完全沒變）。清單
+        # 本身是已提交的（prepare-release 產生），所以在 PR 上用純文字比對就夠，而且提早一輪變紅。
+        manifests = sorted((ROOT / "downloads").glob("*/" + MANIFEST_NAME))
+        if not manifests:
+            self.skipTest("downloads/ 還沒有 %s（下一次 prepare-release 才會產生）" % MANIFEST_NAME)
+        self.assertEqual(1, len(manifests), "downloads/ 只能有一個 %s" % MANIFEST_NAME)
+        manifest = manifests[0]
+        expected = [
+            line for line in manifest.read_text(encoding="utf-8").splitlines() if line.strip()
+        ]
+        names = re.compile(r"MCAutoTranslationTool-[A-Za-z0-9.-]*\.jar")
+        for readme in READMES:
+            found = sorted(set(names.findall(readme.read_text(encoding="utf-8"))))
+            self.assertTrue(found, "%s 沒有任何 MCAutoTranslationTool-*.jar 檔名" % readme)
+            self.assertEqual(expected, found, "%s 的 JAR 檔名與 %s 不一致" % (readme, manifest))
 
 
 if __name__ == "__main__":

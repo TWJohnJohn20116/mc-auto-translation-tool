@@ -62,10 +62,29 @@ public final class AzureOpenAiTranslationProvider implements TranslationProvider
             HttpJsonClient http,
             TranslationPrompt.Settings prompt
     ) {
+        this(endpoint, apiKey, deployment, apiVersion, http, prompt, TranslationTuning.DEFAULTS);
+    }
+
+    /**
+     * @param tuning throughput settings the delegate applies; {@code batch-size},
+     *               {@code batch-window-ms} and {@code api-min-request-interval-ms} reached this
+     *               provider for the first time here, because the delegate used to be built with
+     *               {@link TranslationTuning#DEFAULTS} no matter what the configuration said
+     */
+    AzureOpenAiTranslationProvider(
+            String endpoint,
+            String apiKey,
+            String deployment,
+            String apiVersion,
+            HttpJsonClient http,
+            TranslationPrompt.Settings prompt,
+            TranslationTuning tuning
+    ) {
         this.deployment = requireText("Azure OpenAI deployment", deployment);
         this.requestUrl = compose(endpoint, this.deployment, apiVersion);
         this.delegate = new OpenAiChatTranslationProvider(
-                requestUrl, apiKey, this.deployment, "azure-openai", http, prompt, "api-key", "");
+                requestUrl, apiKey, this.deployment, "azure-openai", http, prompt, "api-key", "",
+                JsonOutputMode.RESPONSE_FORMAT, tuning);
     }
 
     /**

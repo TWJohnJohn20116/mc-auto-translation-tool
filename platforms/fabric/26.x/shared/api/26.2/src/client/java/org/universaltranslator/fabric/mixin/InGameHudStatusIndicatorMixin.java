@@ -1,10 +1,10 @@
 package org.universaltranslator.fabric.mixin;
 
 import net.minecraft.client.DeltaTracker;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.Hud;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -23,19 +23,24 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * <p>The painting itself lives in {@code HudIndicatorPainter} (shared/common), because this class
  * is instantiated once per 26.x API layer with nothing but a different {@code @Mixin} target: 26.2
  * and 26.3 rename the HUD class {@code Hud}, and their copies used to differ by a javadoc line. All
- * state stays in the painter and in locals on purpose: a mixin that declares extra fields or helper
- * methods risks colliding with members of the target class.
+ * state stays in the painter and in locals on purpose: the one member declared here is the
+ * {@code @Shadow} of {@code Hud.isHidden}, which is the sanctioned way to read a field of the target
+ * class — 26.2 dropped {@code Options.hideGui}, so the HUD-hidden flag now lives on {@code Hud}.
  */
 @Mixin(Hud.class)
 abstract class InGameHudStatusIndicatorMixin {
+    @Shadow
+    private boolean isHidden;
+
     @Inject(
             method = "extractRenderState(Lnet/minecraft/client/gui/GuiGraphicsExtractor;Lnet/minecraft/client/DeltaTracker;)V",
             at = @At("RETURN"))
     private void universalTranslator$renderStatusIndicator(
             GuiGraphicsExtractor graphics, DeltaTracker deltaTracker, CallbackInfo callback) {
-        // 26.2 and 26.3 render the HUD through Hud, which Gui skips entirely while F1 hides it, so
-        // there is no flag to read here: the HUD-hidden state lives on a member this layer no longer
-        // exposes as a field (Options.hideGui is gone and Gui.hide is not readable from the Hud side).
-        HudIndicatorPainter.paint(graphics, false);
+        // 26.2 and 26.3 render the HUD through Hud, and F1 sets Hud.isHidden (private, hence the
+        // @Shadow above) instead of the Options.hideGui the 26.1.x copy reads. The render still runs
+        // while the HUD is hidden, so the flag has to reach the painter or the square, its label and
+        // the outgoing preview stay on an otherwise empty screen.
+        HudIndicatorPainter.paint(graphics, this.isHidden);
     }
 }

@@ -9,7 +9,14 @@ version = project.mod_version
 group = project.maven_group
 base { archivesName = "mc-auto-translation-tool-fabric-1.14.1" }
 
-dependencies { compileOnly "net.fabricmc:fabric-loader:0.19.3" }
+// The two values gradle/bundle-metadata-verify.gradle reconciles against the 1.14-1.15 bundle's floor.
+// This module declared neither, so that comparison derived the weakest member from the other five
+// members and never looked at this one; the loader version now comes from the same gradle.properties
+// key the 1.14.3+ modules read instead of being a second hard-coded copy.
+ext.legacyLoaderVersion = project.loader_1_14_1_version
+ext.legacyJavaRelease = 8
+
+dependencies { compileOnly "net.fabricmc:fabric-loader:${project.ext.legacyLoaderVersion}" }
 
 sourceSets {
     main {

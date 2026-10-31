@@ -31,6 +31,12 @@ abstract class UniversalTranslatorConfigScreenBase extends UniversalTranslatorSe
 
     @Override
     public boolean mouseClicked(Click click, boolean doubleClick) {
+        // Same guard as input/pre-1.21.9: only the left button drags the HUD handle or picks a list
+        // row. Both handlers take coordinates alone and commit state, so without this a right click
+        // started a drag and submitted a selection.
+        if (click.button() != 0) {
+            return super.mouseClicked(click, doubleClick);
+        }
         return handleDragStart(click.x(), click.y())
                 || handleSelectionClick(click.x(), click.y())
                 || super.mouseClicked(click, doubleClick);

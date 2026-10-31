@@ -23,6 +23,12 @@ public final class TranslationOutputValidator {
      *
      * <p>Kept on top of the live markers from {@link TranslationPrompt#echoMarkers()}: a reply that is
      * served from a cache written by an older build, or copied out of an old log, is still rejected.
+     *
+     * <p>Only phrasing that cannot be a translation of anything belongs here: "do not explain",
+     * "never repeat text" and "player names, numbers, urls" are also how a model legitimately renders
+     * those sentences into an English target, and a rejection is the retry-every-thirty-seconds
+     * failure, while a source carrying one of them was never sent to a provider at all because
+     * {@link LanguageHeuristics} reads it as an internal artifact.
      */
     private static final String[] HISTORICAL_INSTRUCTION_FRAGMENTS = {
             "translate minecraft server interface text",
@@ -37,11 +43,8 @@ public final class TranslationOutputValidator {
             "preserve tokens like",
             "keep every __ut_",
             "copy every __ut_",
-            "player names, numbers, urls",
             "minecraft formatting markers",
             "urls, punctuation and minecraft",
-            "do not explain",
-            "never repeat text",
             "游戏服务器界面文本从自动翻译",
             "服务器界面文本从自动翻译",
             "返回的是原文本翻译",
@@ -99,6 +102,20 @@ public final class TranslationOutputValidator {
      * would misfire on them, and every misfire sends the line into the retry loop.
      */
     private static final int MINIMUM_UNCHANGED_LATIN_LETTERS = 3;
+    /**
+     * How far a translation may grow past its source before it counts as garbage, in characters.
+     *
+     * <p>The ceiling exists to reject an endpoint that was pointed at the wrong URL and answered with
+     * a page of HTML or JSON. The previous 3x + 24 was sized on Latin text and assumed source and
+     * output use the same script, so a 20-character Chinese line legitimately answered with 95-115
+     * characters of Russian was rejected -- and a rejection is not the "cannot succeed" verdict, so
+     * the line retried every thirty seconds and never showed a translation at all.
+     */
+    private static final int MAXIMUM_OUTPUT_GROWTH = 6;
+    /** Smallest ceiling {@link #maximumOutputLength(String)} allows, for very short sources. */
+    private static final int MINIMUM_OUTPUT_CEILING = 96;
+    /** Slack added past the growth allowance, so a short source keeps room for a whole sentence. */
+    private static final int OUTPUT_CEILING_SLACK = 48;
 
     private TranslationOutputValidator() {
     }
@@ -121,7 +138,7 @@ public final class TranslationOutputValidator {
         if (output.isEmpty()) {
             throw new IllegalArgumentException("Translation output is empty");
         }
-        int maximumLength = Math.max(48, source.length() * 3 + 24);
+        int maximumLength = maximumOutputLength(source);
         if (output.length() > maximumLength) {
             throw new IllegalArgumentException("Translation output is unexpectedly long");
         }
@@ -206,7 +223,7 @@ public final class TranslationOutputValidator {
         // trailing whitespace back in, so trimming the whole answer here undid the indentation that
         // keeps scoreboards aligned and book pages laid out.
         String trimmed = restored.trim();
-        int maximumLength = Math.max(48, source.length() * 3 + 24);
+        int maximumLength = maximumOutputLength(source);
         if (trimmed.length() > maximumLength) {
             throw new IllegalArgumentException("Restored translation output is unexpectedly long");
         }
@@ -339,6 +356,18 @@ public final class TranslationOutputValidator {
             }
         }
         return lines;
+    }
+
+    /**
+     * The longest answer accepted for one source, shared by both validators.
+     *
+     * <p>One helper and not two copies of the formula: the two checks had the same arithmetic spelled
+     * out twice, so adjusting one left the other behind. This is a garbage guard, not a completeness
+     * check -- line count and the token sequence are what catch a truncated or merged answer.
+     */
+    private static int maximumOutputLength(String source) {
+        return Math.max(MINIMUM_OUTPUT_CEILING,
+                source.length() * MAXIMUM_OUTPUT_GROWTH + OUTPUT_CEILING_SLACK);
     }
 
     private static boolean containsInstructionArtifact(String text) {

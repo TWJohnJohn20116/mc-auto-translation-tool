@@ -17,19 +17,23 @@ list.
 | --- | --- | --- |
 | `ConfigScreenFactory`'s abstract method | `modmenu.gradle` → `modmenuFactoryStubSignature` | `createScreen(Screen parent);` |
 | The call site's override | `modmenu.gradle` → `modmenuFactoryOverride` | `public Screen createScreen(Screen parent)` |
+| `ModMenuApi`'s entrypoint method | `modmenu.gradle` → `modmenuApiStubSignature` | `ConfigScreenFactory<?> getModConfigScreenFactory();` |
+| The call site's entrypoint override | `modmenu.gradle` → `modmenuApiOverride` | `public ConfigScreenFactory<?> getModConfigScreenFactory()` |
 
-`verifyModMenuContract` (part of `check`) compares **both** stubs and **both** integration classes
-against those two constants. The stub itself is not the source of truth: a check that only greps the
+`verifyModMenuContract` (part of `check`) compares **both** stub files and **both** integration classes
+against those four constants. The stub itself is not the source of truth: a check that only greps the
 stub passes whenever the stub and the call site are renamed to the same wrong name, which is the one
 direction `@Override` cannot catch. Keeping the record in `modmenu.gradle` means such a rename has to
-edit the guard too.
+edit the guard too. Both contract names need this treatment — pinning only `createScreen` left
+`getModConfigScreenFactory()` free to be renamed everywhere at once, and Mod Menu's mod list is the only
+thing that would have noticed.
 
 ## Checklist when Mod Menu is upgraded (or a new Minecraft line is added)
 
 1. Read `com.terraformersmc.modmenu.api.ConfigScreenFactory` and `ModMenuApi` from the real artifact
    (`https://maven.terraformersmc.com/releases/com/terraformersmc/modmenu/`), not from the stub.
 2. Confirm the factory still declares `S createScreen(Screen parent)` and `ModMenuApi` still declares
-   `ConfigScreenFactory<?> getModConfigScreenFactory()`. Update `api/<family>/` and the two constants
+   `ConfigScreenFactory<?> getModConfigScreenFactory()`. Update `api/<family>/` and the four constants
    above together, in one commit.
 3. Confirm the package names are unchanged (`com.terraformersmc.modmenu.api`), since that is what the
    `jar` exclusion and `fabric.mod.json`'s `modmenu` entrypoint rely on.

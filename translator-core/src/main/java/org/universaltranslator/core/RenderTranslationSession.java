@@ -127,8 +127,23 @@ public final class RenderTranslationSession implements AutoCloseable {
      */
     private final AtomicReferenceArray<LinesMemo> translatedLinesMemo =
             new AtomicReferenceArray<LinesMemo>(LINE_MEMO_SLOTS);
-    /** Finished output of {@link #lookupLines} in bilingual mode, for the lines it already answered. */
-    private volatile LinesMemo bilingualLinesMemo;
+    /**
+     * Finished output of {@link #lookupLines} in bilingual mode, one slot per line list.
+     *
+     * <p>Slotted for the same reason as {@link #translatedLinesMemo}: two tooltips on screen at once
+     * take turns, and one slot made that an A/B/A/B sequence that missed on every frame.
+     */
+    private final AtomicReferenceArray<LinesMemo> bilingualLinesMemos =
+            new AtomicReferenceArray<LinesMemo>(LINE_MEMO_SLOTS);
+    /**
+     * Line lists whose joined translation came back with a different number of lines.
+     *
+     * <p>That verdict is final for as long as both the lines and the translation are unchanged, but it
+     * used to leave no trace at all: every frame the tooltip was drawn re-split the translation and
+     * threw it away again. Four slots, like the memos it belongs to.
+     */
+    private final AtomicReferenceArray<SplitFailure> splitFailures =
+            new AtomicReferenceArray<SplitFailure>(LINE_MEMO_SLOTS);
     /**
      * Identity memo for the formatting-stripped form used by the re-entry guard, one slot per line
      * instead of one slot per session. Only consulted for text that carries a formatting code, which
@@ -333,8 +348,12 @@ public final class RenderTranslationSession implements AutoCloseable {
         try {
             // The heuristic verdict for this exact text and these exact target properties was reached
             // a few lines above, so the coordinator must not repeat that scan on the render thread.
+            // The two language properties are session constants here and are handed over rather than
+            // re-derived: deriving them canonicalizes the identifier, which is a preset loop with two
+            // short-lived strings per iteration, once per newly seen string on the render thread.
             request = coordinator.translateKnownTranslatable(
-                    original, sourceLanguage, targetLanguage, effectiveKind, literals, preserveHanText);
+                    original, sourceLanguage, targetLanguage, effectiveKind, literals, preserveHanText,
+                    chineseTarget, traditionalTarget);
         } catch (Throwable failure) {
             // A provider can fail with an Error (for example an UnsatisfiedLinkError from the
             // offline native library) before a future exists at all. Release both the pending
@@ -574,7 +593,8 @@ public final class RenderTranslationSession implements AutoCloseable {
         // Bilingual formatting inserts the original and translated text together.
         // Preserve the established one-output-line-per-input-line behavior in that mode.
         if (displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED) {
-            LinesMemo memo = bilingualLinesMemo;
+            int slot = lineMemoSlot(originals, effectiveKind);
+            LinesMemo memo = bilingualLinesMemos.get(slot);
             if (memo != null && memo.matchesAllTranslated(originals, effectiveKind)) {
                 return memo.output();
             }
@@ -611,12 +631,12 @@ public final class RenderTranslationSession implements AutoCloseable {
             // honouring them is what keeps a forty-line tooltip from looking all forty up again on
             // every frame while the rest is still arriving; the lines it could not answer are never
             // served from it.
-            if (bilingualLinesMemo != null
-                    && bilingualLinesMemo.sameOutcome(originals, effectiveKind, translatedCount)) {
-                return bilingualLinesMemo.output();
+            if (memo != null && memo.sameOutcome(originals, effectiveKind, translatedCount)) {
+                return memo.output();
             }
-            bilingualLinesMemo = new LinesMemo(originals, effectiveKind, replacement);
-            return bilingualLinesMemo.output();
+            LinesMemo rebuilt = new LinesMemo(originals, effectiveKind, replacement);
+            bilingualLinesMemos.set(slot, rebuilt);
+            return rebuilt.output();
         }
         // The whole result is remembered, not just the join: a hit means the joined line is already
         // translated, so splitting it again only rebuilt n substrings for a list that cannot have
@@ -635,13 +655,45 @@ public final class RenderTranslationSession implements AutoCloseable {
         if (originalText.equals(translatedText)) {
             return Collections.unmodifiableList(originals);
         }
+        SplitFailure failed = splitFailures.get(slot);
+        if (failed != null && failed.matches(originals, effectiveKind, translatedText)) {
+            // This very translation of these very lines already came back with the wrong number of
+            // lines, and neither of them changed since, so splitting it again cannot answer anything.
+            return Collections.unmodifiableList(originals);
+        }
         List<String> translatedLines = splitLines(translatedText);
         if (translatedLines.size() != originals.size()) {
+            rememberSplitFailure(slot, originals, effectiveKind, translatedText, translatedLines.size());
             return Collections.unmodifiableList(originals);
         }
         LinesMemo rebuilt = new LinesMemo(originals, effectiveKind, translatedLines);
         translatedLinesMemo.set(slot, rebuilt);
         return rebuilt.output();
+    }
+
+    /**
+     * Records that the joined translation of {@code originals} cannot be split back onto them.
+     *
+     * <p>Written only when the verdict is new, so the log line appears once per mismatching list
+     * instead of once per frame. The mismatch itself is the answer to "why is this tooltip never
+     * translated": the translation is stored under the joined text and stays there, so without the
+     * record nothing anywhere said the line count was the reason.
+     */
+    private void rememberSplitFailure(
+            int slot,
+            List<String> originals,
+            TextKind kind,
+            String translatedText,
+            int translatedLines
+    ) {
+        SplitFailure previous = splitFailures.get(slot);
+        if (previous != null && previous.matches(originals, kind, translatedText)) {
+            return;
+        }
+        splitFailures.set(slot, new SplitFailure(originals, kind, translatedText));
+        DebugLog.global().log("render-lines", "line-count-mismatch",
+                "lines", Integer.toString(originals.size()),
+                "translated", Integer.toString(translatedLines));
     }
 
     /**
@@ -753,6 +805,31 @@ public final class RenderTranslationSession implements AutoCloseable {
             // item stayed on the new one for as long as the list kept changing.
             this.source = Collections.unmodifiableList(new ArrayList<String>(source));
             this.text = text;
+        }
+    }
+
+    /**
+     * One remembered line-count mismatch: the lines, the kind they were looked up with, and the
+     * translation whose split did not land back on them.
+     *
+     * <p>Bound to the translation as well as to the lines, so a retry that answers with a different
+     * number of lines is tried again instead of being answered from here. The source is a copy for the
+     * same reason {@link LinesMemo} keeps one: the tooltip path fills its list in place.
+     */
+    private static final class SplitFailure {
+        private final List<String> source;
+        private final TextKind kind;
+        private final String translatedText;
+
+        private SplitFailure(List<String> source, TextKind kind, String translatedText) {
+            this.source = Collections.unmodifiableList(new ArrayList<String>(source));
+            this.kind = kind;
+            this.translatedText = translatedText;
+        }
+
+        private boolean matches(List<String> current, TextKind currentKind, String currentTranslated) {
+            return kind == currentKind && translatedText.equals(currentTranslated)
+                    && sameLines(source, current);
         }
     }
 
@@ -1203,8 +1280,9 @@ public final class RenderTranslationSession implements AutoCloseable {
         for (int slot = 0; slot < LINE_MEMO_SLOTS; slot++) {
             translatedLinesMemo.set(slot, null);
             joinedLines.set(slot, null);
+            bilingualLinesMemos.set(slot, null);
+            splitFailures.set(slot, null);
         }
-        bilingualLinesMemo = null;
         for (int slot = 0; slot < STRIPPED_MEMO_SLOTS; slot++) {
             strippedInputs.set(slot, null);
             strippedOutputs.set(slot, null);
@@ -1319,6 +1397,25 @@ public final class RenderTranslationSession implements AutoCloseable {
         // monitor. Holding it across the wait made every settings change wait the full five-second
         // timeout, which in turn delayed the cache flush that follows it.
         coordinator.close();
+        clearRenderedTranslations();
+    }
+
+    /**
+     * Releases this session without waiting for workers that are parked in a provider read.
+     *
+     * <p>For a session the player has already replaced. Its teardown runs on the reaper, and a burst
+     * of switches queues one of these per press: paying the full five-second worker budget on each
+     * one is what made the reaper's backlog last minutes. The store is still flushed, so a burst of
+     * toggles cannot lose the translations that were already answered.
+     */
+    public void closeWithoutWaiting() {
+        synchronized (this) {
+            if (closed) {
+                return;
+            }
+            closed = true;
+        }
+        coordinator.close(0L);
         clearRenderedTranslations();
     }
 

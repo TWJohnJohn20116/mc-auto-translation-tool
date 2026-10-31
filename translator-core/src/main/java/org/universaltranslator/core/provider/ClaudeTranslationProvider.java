@@ -81,6 +81,15 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
      * lowering the budget of every later batch of the session.
      */
     private final BatchBudget.ByEntries acceptedBatchTokens;
+    /**
+     * Largest number of texts one request has been observed to accept, lowered only by a refusal that
+     * pointed at the batch itself.
+     *
+     * <p>Nothing learned it, so an endpoint whose context cannot hold the configured batch was sent the
+     * same number of lines again on the next screen, and each attempt cost one refused or truncated
+     * request plus one request per line. See {@link BatchBudget.ByBatchSize}.
+     */
+    private final BatchBudget.ByBatchSize acceptedBatchSizes;
     /** Set once this endpoint proved it cannot answer with an event stream. */
     private volatile boolean streamingUnsupported;
     /**
@@ -147,10 +156,14 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
                 "anthropic-version=" + API_VERSION, this.prompt.signature());
         TranslationTuning effectiveTuning = tuning == null ? TranslationTuning.DEFAULTS : tuning;
         this.acceptedBatchTokens = new BatchBudget.ByEntries(ESCALATED_TOKENS_LIMIT);
+        this.acceptedBatchSizes = new BatchBudget.ByBatchSize(effectiveTuning.batchSize());
         this.gatherer = new BatchGatherer(effectiveTuning.batchSize(),
                 effectiveTuning.batchWindowMillis(),
                 effectiveTuning.maximumConcurrentBatches(),
                 effectiveTuning.requestIntervalMillis());
+        // OnlineProviderConfig puts every provider it builds inside ResilientTranslationProvider,
+        // which retries the very failures the gatherer would resend a group for.
+        this.gatherer.setOuterRetries(true);
         this.work = new BatchGatherer.Work() {
             @Override
             public String translateAlone(TranslationRequest request) throws Exception {
@@ -266,10 +279,21 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
                 acceptedBatchTokens.forEntries(group.size()).budget());
         DebugLog.global().logRequest("claude:" + model, model, endpoint.toString(),
                 group.get(0).getKind().name(), user);
-        String response = BatchBudget.post(acceptedBatchTokens.forEntries(group.size()), budget,
-                MINIMUM_COMPLETION_TOKENS,
-                attempt -> http.post(endpoint, requestBody(user, system, attempt, false, true),
-                        headers()));
+        String response;
+        try {
+            response = BatchBudget.post(acceptedBatchTokens.forEntries(group.size()), budget,
+                    MINIMUM_COMPLETION_TOKENS,
+                    attempt -> http.post(endpoint, requestBody(user, system, attempt, false, true),
+                            headers()));
+        } catch (HttpStatusException rejected) {
+            // A refusal that names the request's own length is about how many texts travelled in it:
+            // nothing lowered that number, so every later batch was built the same size and refused
+            // again, each time for one refused request plus one request per line.
+            if (BatchBudget.refusedBecauseTooManyEntries(rejected, user, group)) {
+                gatherer.setBatchSize(acceptedBatchSizes.rememberTooLarge(group.size()));
+            }
+            throw rejected;
+        }
         Object root = JsonTree.parseOrNull(response);
         if (response != null && response.indexOf("\"usage\"") >= 0) {
             TranslationStats.global().recordParsedUsage("claude:" + model, root);
@@ -280,10 +304,17 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
         // where the budget is escalated and each answer is judged on its own.
         String stopReason = JsonStrings.readStringField(response, STOP_REASON_FIELD);
         if (content == null || (stopReason != null && !STOP_REASON_END_TURN.equals(stopReason))) {
+            if (STOP_REASON_MAX_TOKENS.equals(stopReason)) {
+                // The output budget ran out before the object was closed, and the number of entries is
+                // what decides how much output one batch needs: remembering it here is the only way the
+                // next screen stops asking for the same impossible answer.
+                gatherer.setBatchSize(acceptedBatchSizes.rememberTooLarge(group.size()));
+            }
             throw new IllegalStateException(ProviderJson.describeMissingContent("Claude", response));
         }
         List<String> parsed = ProviderSupport.parseBatchReply(content, group.size(), true);
         if (parsed == null) {
+            gatherer.setBatchSize(acceptedBatchSizes.rememberTooLarge(group.size()));
             throw new IllegalStateException("Claude answered a batch without a JSON object");
         }
         DebugLog.global().logResponse("claude:" + model, group.get(0).getKind().name(),
@@ -398,7 +429,10 @@ public final class ClaudeTranslationProvider implements TranslationProvider {
                     "characters", Integer.toString(accumulated.length()));
             if (streamMemory.rememberIncomplete()) {
                 // Recording the doubling without remembering it made every later line pay it again.
-                streamingUnsupported = true;
+                // A cooldown, not the permanent flag: StreamCompletionMemory says a dropped stream
+                // must cost a pause, and its own class comment names that behaviour as the contract.
+                streamingRetryAtNanos = StreamCompletionMemory.cooldownUntilNow();
+                DebugLog.global().logStreamEvent("claude:" + model, "streaming-abandoned", 0);
             }
             return TranslationProvider.super.translateStreaming(request, listener);
         }

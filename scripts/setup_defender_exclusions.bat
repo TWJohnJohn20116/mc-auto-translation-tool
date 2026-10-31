@@ -15,7 +15,10 @@ for %%I in ("%PROJECT_DIR%") do set "PROJECT_DIR=%%~fI"
 net session >nul 2>&1
 if %errorLevel% neq 0 (
     echo Requesting administrative privileges...
-    powershell -Command "Start-Process '%~f0' -Verb RunAs"
+    rem 路徑走環境變數：把 %~f0 插進 -Command 的字串內容時，含 ' 或 & 的路徑會讓整條命令提早
+    rem 結束、提權靜默失敗（下一行就 exit /b，離開碼看不出來）。-FilePath 吃的是變數本身。
+    set "BATCH_SELF=%~f0"
+    powershell -NoProfile -Command "Start-Process -FilePath $env:BATCH_SELF -Verb RunAs"
     exit /b
 )
 

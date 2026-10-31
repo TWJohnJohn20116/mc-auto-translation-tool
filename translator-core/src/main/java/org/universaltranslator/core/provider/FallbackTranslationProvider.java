@@ -6,6 +6,7 @@ import org.universaltranslator.core.TranslationProviderStatus;
 
 import java.io.InterruptedIOException;
 import java.net.SocketTimeoutException;
+import java.util.concurrent.TimeUnit;
 
 /** Tries a privacy-preserving primary provider before an optional online fallback. */
 public final class FallbackTranslationProvider
@@ -30,8 +31,18 @@ public final class FallbackTranslationProvider
      * short-circuit one request early.
      */
     private volatile int consecutiveFailures;
-    /** Instant until which the primary is skipped; {@code 0} while it is being tried. */
-    private volatile long primaryBlockedUntilMillis;
+    /**
+     * {@link System#nanoTime()} instant until which the primary is skipped.
+     *
+     * <p>The wall clock is corrected by NTP, by the user and by a resume from sleep, and a step
+     * backwards there turned an expired short-circuit into an unexpired one: the local engine was
+     * skipped and every line went to the online fallback until the clock caught up. {@code nanoTime} is
+     * the clock {@link RequestGate} already uses for the same reason; meaningless until
+     * {@link #primaryBlocked} is set, because {@code nanoTime()} may start below any fixed value.
+     */
+    private volatile long primaryBlockedUntilNanos;
+    /** Whether an instant was ever recorded; {@code nanoTime()} may be negative on some platforms. */
+    private volatile boolean primaryBlocked;
 
     public FallbackTranslationProvider(TranslationProvider primary, TranslationProvider fallback) {
         if (primary == null || fallback == null) {
@@ -100,8 +111,10 @@ public final class FallbackTranslationProvider
 
     /** Whether the primary is being skipped after a burst of transient failures. */
     private boolean primaryShortCircuited() {
-        long until = primaryBlockedUntilMillis;
-        return until != 0L && System.currentTimeMillis() < until;
+        if (!primaryBlocked) {
+            return false;
+        }
+        return System.nanoTime() - primaryBlockedUntilNanos < 0L;
     }
 
     /**
@@ -119,7 +132,9 @@ public final class FallbackTranslationProvider
         if (failures >= FAILURES_BEFORE_SHORT_CIRCUIT) {
             int step = Math.min(4, failures - FAILURES_BEFORE_SHORT_CIRCUIT);
             long backoff = Math.min(SHORT_CIRCUIT_MAX_MILLIS, SHORT_CIRCUIT_BASE_MILLIS << step);
-            primaryBlockedUntilMillis = System.currentTimeMillis() + backoff;
+            primaryBlockedUntilNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(backoff);
+            // Set after the instant, so a reader that sees the flag also sees the deadline it belongs to.
+            primaryBlocked = true;
         }
     }
 

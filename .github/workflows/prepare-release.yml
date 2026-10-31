@@ -91,10 +91,10 @@ jobs:
             {"target": "mc1.20.x-fabric", "project": "platform-fabric-1.20.x", "jar_dir": "platforms/fabric/1.20/bundle", "java": "21"},
             {"target": "mc1.21.x-fabric", "project": "platform-fabric-1.21.x", "jar_dir": "platforms/fabric/1.21/bundle", "java": "21"},
             {"target": "mc26.x-fabric", "project": "platform-fabric-26.x", "jar_dir": "platforms/fabric/26.x/bundle", "java": "25"},
-            {"target": "mc1.16.5-forge", "project": "platform-forge-1.16.5", "jar_dir": "platforms/forge/modern/1.16.5", "java": "17"},
-            {"target": "mc1.18.2-forge", "project": "platform-forge-1.18.2", "jar_dir": "platforms/forge/modern/1.18.2", "java": "17"},
-            {"target": "mc1.19.2-forge", "project": "platform-forge-1.19.2", "jar_dir": "platforms/forge/modern/1.19.2", "java": "17"},
-            {"target": "mc1.20.1-forge", "project": "platform-forge-1.20.1", "jar_dir": "platforms/forge/modern/1.20.1", "java": "17"},
+            {"target": "mc1.16.5-forge", "project": "platform-forge-1.16.5", "jar_dir": "platforms/forge/modern/1.16.5", "java": "21"},
+            {"target": "mc1.18.2-forge", "project": "platform-forge-1.18.2", "jar_dir": "platforms/forge/modern/1.18.2", "java": "21"},
+            {"target": "mc1.19.2-forge", "project": "platform-forge-1.19.2", "jar_dir": "platforms/forge/modern/1.19.2", "java": "21"},
+            {"target": "mc1.20.1-forge", "project": "platform-forge-1.20.1", "jar_dir": "platforms/forge/modern/1.20.1", "java": "21"},
             {"target": "mc1.21-forge", "project": "platform-forge-1.21", "jar_dir": "platforms/forge/1.21/versions/1.21", "java": "21"},
             {"target": "mc1.21.1-forge", "project": "platform-forge-1.21.1", "jar_dir": "platforms/forge/1.21/versions/1.21.1", "java": "21"},
             {"target": "mc1.21.3-forge", "project": "platform-forge-1.21.3", "jar_dir": "platforms/forge/1.21/versions/1.21.3", "java": "21"},
@@ -392,13 +392,16 @@ jobs:
           set -euo pipefail
           # downloads/<版本>/release-assets.txt 是四份 README 與官網唯一的「真實檔名」權威：
           # 31 個可安裝檔名只有 prepare_release_assets.py 推得出來（fabric-all 加四個 Forge
-          # 家族合併），而 downloads/ 只由這支 workflow 提交，所以在這裡跑同一支腳本、只留清單。
+          # 家族合併），而 downloads/ 只由這支 workflow 提交，所以在這裡用同一支腳本、只留清單。
           # 少了這一步，網站測試裡「有 manifest 就以它為權威」的分支永遠走不到。
+          # --manifest-only 只讀檔名（外加 FORGE_FAMILIES）就推出同一份清單；先前是整支腳本跑一遍，
+          # 於是 48 顆 JAR 在這裡被完整解壓、fabric-all.jar 被重建，而那份產物立刻被丟掉，
+          # 同一個版本隨後又在 build.yml 與 publish-release.yml 各重建一次。
           python3 scripts/prepare_release_assets.py \
             --release-dir "downloads/$VERSION" \
-            --output-dir build/release-assets \
-            --version "$VERSION"
-          cp build/release-assets/release-assets.txt "downloads/$VERSION/release-assets.txt"
+            --version "$VERSION" \
+            --manifest-only > "$RUNNER_TEMP/release-assets.txt"
+          cp "$RUNNER_TEMP/release-assets.txt" "downloads/$VERSION/release-assets.txt"
           echo "可安裝清單 $(grep -c . "downloads/$VERSION/release-assets.txt") 行"
 
       - name: 移除舊版本的 downloads 目錄

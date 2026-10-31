@@ -13,6 +13,7 @@ import org.universaltranslator.core.TranslationDiagnosticsSnapshot;
 import org.universaltranslator.core.TranslationStore;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.RecentUserText;
+import org.universaltranslator.core.ShutdownBudget;
 import org.universaltranslator.core.TranslationResult;
 import org.universaltranslator.core.TranslationStatusLocalizer;
 import org.universaltranslator.core.DiagnosticsLogExporter;
@@ -145,8 +146,13 @@ public abstract class FabricTranslationRuntimeBase {
      * here on happen on the caller instead of a queue that would be dropped.
      */
     private static volatile boolean savesDrained;
-    /** How long {@link #shutdown()} waits for a queued write; the file itself is a few hundred bytes. */
-    private static final long SAVE_WRITER_SHUTDOWN_MILLIS = 2_000L;
+    /**
+     * How long {@link #shutdown()} waits for a queued write; the file itself is a few hundred bytes.
+     *
+     * <p>Read from {@link ShutdownBudget} instead of being written here: the same number decides how
+     * long a stop hook may spend on the write, and two literals in two files cannot be compared.
+     */
+    private static final long SAVE_WRITER_SHUTDOWN_MILLIS = ShutdownBudget.CONFIG_WRITE_MILLIS;
     /** How long the settings screen's Save waits for its own write before resuming the frame. */
     private static final long SAVE_WRITER_WAIT_MILLIS = 500L;
 
@@ -189,7 +195,17 @@ public abstract class FabricTranslationRuntimeBase {
      * client tick thread is what froze the game for hundreds of milliseconds to several seconds on
      * every F8 toggle and settings save.
      */
-    synchronized void initialize(FabricConfig config) throws IOException {
+    void initialize(FabricConfig config) throws IOException {
+        // The monitor covers the build and the swap, and is released before the replaced session is
+        // handed over: closeInBackground() performs that teardown on this thread once the reaper's
+        // backlog is at its cap, and close() waits up to five seconds, so holding the monitor across
+        // it queued every other initialize() and toggleHome*() caller behind that wait.
+        RenderTranslationSession replaced = swap(config);
+        closeInBackground(replaced);
+    }
+
+    /** Builds the replacement, publishes it, and answers the session it displaced. */
+    private synchronized RenderTranslationSession swap(FabricConfig config) throws IOException {
         // Build the replacement without touching session/activeConfig/activeProvider: if anything
         // here throws, the caller still has the previous, fully working session.
         TranslationProvider createdProvider = null;
@@ -252,7 +268,7 @@ public abstract class FabricTranslationRuntimeBase {
         // A session that starts after a shutdown gets its background writer back, even in the rare
         // process that initialized, shut down and initialized again.
         savesDrained = false;
-        closeInBackground(replaced);
+        return replaced;
     }
 
     /**
@@ -263,9 +279,11 @@ public abstract class FabricTranslationRuntimeBase {
      *
      * <p>The reaper is a single unbounded queue, so a burst of switches — holding F8 down, or a
      * HUD drag that re-initializes several times a second — used to queue one live session with its
-     * thread pool and caches per press, each worth up to five seconds of teardown. Past
-     * {@link #MAX_PENDING_TEARDOWNS} the caller now performs the teardown itself: the tick that
-     * switched pays the cost instead of the process growing an unbounded backlog of live sessions.
+     * thread pool and caches per press, each worth up to five seconds of teardown. A replaced
+     * session is therefore retired without waiting for its workers, so one queued teardown is cheap
+     * and the queue drains as fast as the switches arrive; past {@link #MAX_PENDING_TEARDOWNS} the
+     * caller performs that same bounded teardown itself, without the instance monitor held, instead
+     * of the process growing an unbounded backlog of live sessions.
      */
     private static void closeInBackground(final RenderTranslationSession replaced) {
         if (replaced == null) {
@@ -273,7 +291,9 @@ public abstract class FabricTranslationRuntimeBase {
         }
         if (PENDING_TEARDOWNS.incrementAndGet() > MAX_PENDING_TEARDOWNS) {
             try {
-                replaced.close();
+                // A replaced session is dropped rather than drained: waiting for its workers here is
+                // what made a held-down toggle key freeze the tick.
+                replaced.closeWithoutWaiting();
             } catch (Throwable ignored) {
                 // Same contract as the reaper body: a teardown must never take the caller down.
             } finally {
@@ -286,7 +306,7 @@ public abstract class FabricTranslationRuntimeBase {
                 @Override
                 public void run() {
                     try {
-                        replaced.close();
+                        replaced.closeWithoutWaiting();
                     } catch (Throwable ignored) {
                         // A reaper must never die with a teardown still pending. The session is
                         // already unreachable from the live fields, so a failure here can only
@@ -409,61 +429,52 @@ public abstract class FabricTranslationRuntimeBase {
         if (!playerNameRefresh.compareAndSet(false, true)) {
             return snapshot;
         }
-        // The first snapshot of a session is built right here: the names this protects must be
-        // right from the first frame. Every later refresh runs on the reaper instead, because
-        // walking a tab list of up to a thousand names allocated three collections and a trimmed
-        // copy per name inside a single frame on the render thread.
-        if (protectedPlayerNamesExpireAt == 0L) {
-            try {
-                return refreshPlayerNames(now);
-            } finally {
-                playerNameRefresh.set(false);
-            }
-        }
+        // Built on the calling thread, which is the client thread: the tab list, the session and the
+        // server entry are client-thread state, and dispatching the walk to the reaper raced with the
+        // client editing the same tab list. Past the first window every refresh used to be dispatched
+        // there, and when one threw — a concurrent modification, a null profile — the expiry stamp
+        // was left behind, so the next submitted string queued another task, and another after it,
+        // behind the session teardowns on that same single reaper thread.
         try {
-            SESSION_REAPER.execute(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        refreshPlayerNames(System.currentTimeMillis());
-                    } catch (Throwable ignored) {
-                        // The previous snapshot simply stays published until the next window; it
-                        // only decides which names are excluded from translation.
-                    } finally {
-                        playerNameRefresh.set(false);
-                    }
-                }
-            });
-        } catch (Throwable rejected) {
+            return refreshPlayerNames(now);
+        } catch (Throwable ignored) {
+            // The previous snapshot stays published, and the walk below already pushed its window
+            // out, so this failure cannot turn into one retry per drawn string.
+            return snapshot;
+        } finally {
             playerNameRefresh.set(false);
         }
-        return snapshot;
     }
 
     private List<String> refreshPlayerNames(long now) {
-        boolean protectPlayerNames = activeConfig == null || !activeConfig.translatePlayerNames;
-        if (!hasConnection()) {
-            protectedPlayerNames = Collections.emptyList();
-        } else {
-            // Hash-set dedup keeps this O(n); the old linear scan was O(n^2) on the
-            // render thread with up to MAX_PROTECTED_PLAYER_NAMES tab-list entries.
-            LinkedHashSet<String> names = new LinkedHashSet<String>();
-            if (protectPlayerNames) {
-                addProtectedLiteral(names, localPlayerName());
-            }
-            addProtectedLiteral(names, serverAddress());
-            if (protectPlayerNames) {
-                for (String name : onlinePlayerNames()) {
-                    if (names.size() >= MAX_PROTECTED_PLAYER_NAMES) {
-                        break;
-                    }
-                    addProtectedLiteral(names, name);
+        try {
+            boolean protectPlayerNames = activeConfig == null || !activeConfig.translatePlayerNames;
+            if (!hasConnection()) {
+                protectedPlayerNames = Collections.emptyList();
+            } else {
+                // Hash-set dedup keeps this O(n); the old linear scan was O(n^2) on the
+                // render thread with up to MAX_PROTECTED_PLAYER_NAMES tab-list entries.
+                LinkedHashSet<String> names = new LinkedHashSet<String>();
+                if (protectPlayerNames) {
+                    addProtectedLiteral(names, localPlayerName());
                 }
+                addProtectedLiteral(names, serverAddress());
+                if (protectPlayerNames) {
+                    for (String name : onlinePlayerNames()) {
+                        if (names.size() >= MAX_PROTECTED_PLAYER_NAMES) {
+                            break;
+                        }
+                        addProtectedLiteral(names, name);
+                    }
+                }
+                protectedPlayerNames = Collections.unmodifiableList(new ArrayList<String>(names));
             }
-            protectedPlayerNames = Collections.unmodifiableList(new ArrayList<String>(names));
+            return protectedPlayerNames;
+        } finally {
+            // Advanced on the failure path too: the previous snapshot keeps being published, which is
+            // the whole reason a failed walk is allowed to be silent.
+            protectedPlayerNamesExpireAt = now + PLAYER_NAME_SNAPSHOT_MILLIS;
         }
-        protectedPlayerNamesExpireAt = now + PLAYER_NAME_SNAPSHOT_MILLIS;
-        return protectedPlayerNames;
     }
 
     private static void addProtectedLiteral(Set<String> values, String value) {
@@ -823,13 +834,14 @@ public abstract class FabricTranslationRuntimeBase {
     }
 
     /**
-     * Flushes pending configuration writes from a JVM shutdown hook, before the runtime teardown is
+     * Flushes pending configuration writes from a client's stop path, before the runtime teardown is
      * attempted.
      *
-     * <p>The hooks call this before they start the teardown, so a session close that spends its whole
-     * budget on a worker parked in a provider read cannot keep the write from landing. After this call
-     * no writer is built again: a late save writes on the caller, which is the only path that still
-     * survives the process.
+     * <p>Called on the teardown thread the stop hook joins, so the wait below is covered by that
+     * join's budget: a session close that spends its whole budget on a worker parked in a provider
+     * read cannot keep the write from landing, and the write cannot add an unbounded wait to the
+     * hook either. After this call no writer is built again: a late save writes on the caller, which
+     * is the only path that still survives the process.
      */
     static void drainPendingSaves() {
         savesDrained = true;
@@ -842,13 +854,16 @@ public abstract class FabricTranslationRuntimeBase {
      * <p>The settings screen's Save used to call {@code FabricConfig.save()} on the client thread
      * while the F8 toggles queued their own snapshot on the writer, so an older queued snapshot
      * could land after the newer whole-form save. Both writers now share one thread and therefore
-     * one order; the bounded wait keeps the "saved" message honest without letting a slow disk
-     * freeze the screen.
+     * one order.
+     *
+     * @return true only when the file is known to have been written before this call returned. A
+     *         write still queued past the bounded wait and a write that failed both answer false: the
+     *         caller has to say the save has not landed yet instead of announcing one that is not
+     *         there, and the two cases look the same to the player for exactly that reason.
      */
-    static void saveInBackgroundAndWait(FabricConfig config) {
+    static boolean saveInBackgroundAndWait(FabricConfig config) {
         if (savesDrained) {
-            writeConfig(config);
-            return;
+            return writeConfig(config);
         }
         Future<?> pending;
         try {
@@ -859,27 +874,32 @@ public abstract class FabricTranslationRuntimeBase {
                 }
             });
         } catch (RejectedExecutionException shuttingDown) {
-            writeConfig(config);
-            return;
+            return writeConfig(config);
         }
         try {
             pending.get(SAVE_WRITER_WAIT_MILLIS, TimeUnit.MILLISECONDS);
+            return true;
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
         } catch (ExecutionException failed) {
-            // writeConfig logs its own failure and never throws; nothing left to report here.
+            // writeConfig reports its own failure and never throws, so a wrapped one means the write
+            // did not happen.
         } catch (TimeoutException slowDisk) {
-            // Still queued in press order; the screen does not wait for a synced drive.
+            // Still queued in press order; the screen does not wait for a synced drive, and it does
+            // not claim a write it cannot see either.
         }
+        return false;
     }
 
-    private static void writeConfig(FabricConfig config) {
+    private static boolean writeConfig(FabricConfig config) {
         try {
             config.save();
+            return true;
         } catch (Exception failure) {
             // The runtime keeps running the new configuration; a failed write leaves the previous
             // file in place and the next load reports it. Nothing here may reach the render thread.
             DebugLog.global().log("settings", "save-failed", failure.getClass().getSimpleName());
+            return false;
         }
     }
 

@@ -12,6 +12,7 @@ import org.universaltranslator.core.HudIndicatorVisibility;
 import org.universaltranslator.core.OutgoingTranslationPreview;
 import org.universaltranslator.core.TranslationActivity;
 import org.universaltranslator.fabric.FabricTranslationRuntime;
+import org.universaltranslator.fabric.OrnitheClientAccess;
 import org.universaltranslator.fabric.TranslationRenderContext;
 /**
  * Draws the translation status indicator on the HUD.
@@ -59,7 +60,7 @@ final class HudIndicatorOverlay {
         // Every injection point here sits at the RETURN of a HUD render, which still runs while F1
         // hides the HUD: without this the square and its label stayed on an otherwise empty screen
         // and were painted over the chat and the hotbar.
-        if (client.options.hudHidden) {
+        if (client == null || OrnitheClientAccess.hudHidden(client)) {
             return;
         }
         TextRenderer font = client.textRenderer;

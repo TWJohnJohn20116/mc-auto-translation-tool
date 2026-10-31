@@ -89,7 +89,14 @@ final class BatchGatherer {
     private final List<Entry> pending = new ArrayList<Entry>();
     /** Leaders in flight per job key. */
     private final Map<String, Integer> serving = new HashMap<String, Integer>();
-    private final int batchSize;
+    /**
+     * Largest number of texts one request may carry.
+     *
+     * <p>Not a constant: an endpoint that refused a batch for carrying too many texts lowers it through
+     * {@link #setBatchSize}, and every reader — the collection loop, {@link #mayLead} and
+     * {@link #batching()} — has to see the same number.
+     */
+    private volatile int batchSize;
     /** How many groups of one job may be in request at the same time. */
     private final int maximumLeadersPerJob;
     /**
@@ -105,6 +112,17 @@ final class BatchGatherer {
      */
     private final RequestGate gate;
     private long windowMillis;
+    /**
+     * Whether the caller of this gatherer already sits inside a layer that retries the same failures.
+     *
+     * <p>{@link ResilientTranslationProvider} wraps every provider {@code OnlineProviderConfig} builds,
+     * and its {@code isRetryable} names exactly the set {@link FailurePolicy#retryableAsGroup} names. A
+     * whole-group retry issued here is therefore always a copy of the attempt the outer layer is about
+     * to make, so it could only pay for the same failure twice — six group requests where
+     * {@code api-max-attempts} allows three. The default stays {@code false}: a caller outside that
+     * wrapper has no other source for the retry.
+     */
+    private volatile boolean outerRetries;
 
     BatchGatherer(int batchSize, long windowMillis) {
         this(batchSize, windowMillis, 1, TranslationTuning.DEFAULT_REQUEST_INTERVAL_MILLIS);
@@ -141,6 +159,29 @@ final class BatchGatherer {
     /** Whether one request may carry more than one text. */
     boolean batching() {
         return batchSize > 1;
+    }
+
+    /**
+     * Declares that this gatherer is driven by a layer that retries a failed group itself, so the
+     * whole-group retry below must not send the same request a second time.
+     *
+     * @param retries whether an outer layer already retries the failures this class would retry
+     */
+    void setOuterRetries(boolean retries) {
+        this.outerRetries = retries;
+    }
+
+    /**
+     * Narrows the batch after this endpoint refused one for carrying too many texts.
+     *
+     * <p>Only a smaller number of texts per request can fix that refusal, and the caller that learned it
+     * owns the measurement ({@link BatchBudget.ByBatchSize}); this is the one place the queue reads the
+     * value from.
+     *
+     * @param size largest number of texts one request may carry from now on
+     */
+    void setBatchSize(int size) {
+        this.batchSize = Math.max(1, size);
     }
 
     /** Number of texts one request may carry. */
@@ -339,8 +380,10 @@ final class BatchGatherer {
                 // line: repeating it seven more times only multiplies the failure. One retry of the
                 // whole group rides out a transient 5xx for one request instead of one per line — but
                 // it waits first: reissued a few milliseconds after a 429 it landed inside the same
-                // rate-limit window, which is exactly the pattern an endpoint reads as scanning.
-                if (FailurePolicy.retryableAsGroup(batchFailure)) {
+                // rate-limit window, which is exactly the pattern an endpoint reads as scanning. When
+                // the caller is retried from the outside the group is not resent here at all: that
+                // layer recognises the same failures, so this retry could only pay for one twice.
+                if (!outerRetries && FailurePolicy.retryableAsGroup(batchFailure)) {
                     awaitGroupRetry(batchFailure);
                     // The reissued request is a request like any other, so the interval the user
                     // configured applies to it as well rather than only the backoff above.

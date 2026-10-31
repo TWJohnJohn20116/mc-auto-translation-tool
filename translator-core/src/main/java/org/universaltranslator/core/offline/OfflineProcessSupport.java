@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -642,10 +643,13 @@ public final class OfflineProcessSupport {
         if (ModelVerificationCache.isVerified(candidate, stableId)) {
             return true;
         }
+        // The state is read before the hash: remember() reads it afterwards, so a write landing
+        // inside that window recorded the digest of the replaced bytes against the new state.
+        BasicFileAttributes observed = ModelVerificationCache.observe(candidate);
         if (!stableId.equalsIgnoreCase(VerifiedDownloader.sha256(candidate))) {
             return false;
         }
-        ModelVerificationCache.remember(candidate, stableId);
+        ModelVerificationCache.rememberIfUnchanged(candidate, stableId, observed);
         return true;
     }
 

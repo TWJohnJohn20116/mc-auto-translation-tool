@@ -122,6 +122,52 @@ public final class ModelVerificationCache {
         }
     }
 
+    /**
+     * Reads the state of {@code file} before it is hashed.
+     *
+     * <p>Handed back to {@link #rememberIfUnchanged} so the conclusion written afterwards can be
+     * compared against the state the digest actually describes.
+     *
+     * @param file file that is about to be read from the first byte
+     * @return its attributes at that moment
+     */
+    static BasicFileAttributes observe(Path file) throws IOException {
+        return Files.readAttributes(file, BasicFileAttributes.class);
+    }
+
+    /**
+     * Records a digest the caller established by reading the file, but only while nothing changed.
+     *
+     * <p>{@link #remember} reads the attributes after the caller finished hashing, so a write that
+     * landed inside the reading window recorded the digest of the replaced bytes next to the new
+     * state: every later start then accepted content no verification ever covered. The caller passes
+     * the state it observed before reading, and nothing is recorded when the file no longer has it —
+     * the next start hashes again, which is the correct answer.
+     *
+     * @param file file that was hashed
+     * @param sha256 digest the hash pass produced
+     * @param observedBefore attributes read before that pass
+     * @return {@code true} when the conclusion was recorded
+     */
+    static boolean rememberIfUnchanged(Path file, String sha256, BasicFileAttributes observedBefore) {
+        if (file == null || observedBefore == null) {
+            return false;
+        }
+        BasicFileAttributes now;
+        try {
+            now = Files.readAttributes(file, BasicFileAttributes.class);
+        } catch (IOException | RuntimeException unreadable) {
+            return false;
+        }
+        if (now.size() != observedBefore.size()
+                || timestampNanos(now) != timestampNanos(observedBefore)
+                || !identity(now).equals(identity(observedBefore))) {
+            return false;
+        }
+        remember(file, sha256);
+        return true;
+    }
+
     /** Discards the record for a file that was replaced, so no stale conclusion survives it. */
     public static void forget(Path file) {
         if (file == null) {

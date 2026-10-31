@@ -194,11 +194,10 @@ public final class LegacyTranslationRuntime {
      *
      * <p>The reaper is a single unbounded queue, so a burst of switches — holding F8 down, or a
      * HUD drag that re-initializes several times a second — queues one live session with its thread
-     * pool and caches per press, each worth up to five seconds of teardown. That backlog is never
-     * handed back to the caller: {@link #PENDING_TEARDOWNS} reports its depth, and past
-     * {@link #MAX_PENDING_TEARDOWNS} the depth is recorded in the debug log, because performing the
-     * teardown here would block the client tick for up to five seconds per press — exactly the
-     * freeze this reaper exists to prevent.
+     * pool and caches per press. Each one is retired without waiting for its workers, so the queue
+     * drains as fast as the switches arrive instead of accumulating five seconds of teardown per
+     * press; {@link #PENDING_TEARDOWNS} still records its depth past
+     * {@link #MAX_PENDING_TEARDOWNS} in the debug log.
      */
     private static void closeInBackground(final RenderTranslationSession replaced) {
         if (replaced == null) {
@@ -213,7 +212,7 @@ public final class LegacyTranslationRuntime {
                 @Override
                 public void run() {
                     try {
-                        replaced.close();
+                        replaced.closeWithoutWaiting();
                     } catch (Throwable ignored) {
                         // A reaper must never die with a teardown still pending. The session is
                         // already unreachable from the live fields, so a failure here can only

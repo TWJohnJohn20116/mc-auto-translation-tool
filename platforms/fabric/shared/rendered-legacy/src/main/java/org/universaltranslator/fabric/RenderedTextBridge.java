@@ -45,6 +45,13 @@ public final class RenderedTextBridge {
         if (TranslationRenderContext.isTextInput()) {
             return text;
         }
+        // The legacy draw and width hooks both arrive here for the same line of the same frame, so
+        // the second call already has its answer: the paired TranslationRenderContext kept these two
+        // sets from the start and this bridge never wrote to either of them, which is why the tree
+        // ran the whole guard chain and one lookup twice per line.
+        if (answeredThisFrame(text)) {
+            return text;
+        }
         return translate(text, TranslationRenderContext.current());
     }
 
@@ -54,9 +61,80 @@ public final class RenderedTextBridge {
         }
         String translated = FabricTranslationRuntime.translateForRender(text, kind);
         if (text.equals(translated)) {
+            rememberUnchanged(text);
             return text;
         }
-        return styledText(text, translated);
+        String styled = styledText(text, translated);
+        // Both forms, because the two hooks only see the same string when no colour is applied.
+        rememberTranslated(translated);
+        rememberTranslated(styled);
+        return styled;
+    }
+
+    /**
+     * The frame memo of the {@code TranslationRenderContext} this tree compiles against.
+     *
+     * <p>Reached reflectively on purpose: the 1.13 trees pair this bridge with their own copy of the
+     * context, which has neither set, so a direct call would stop those two targets from compiling.
+     * A tree without the memo keeps the previous behaviour — the whole pipeline twice per line —
+     * and every other tree turns the second pass into one set lookup. Slots are
+     * {@code isTranslatedResult}, {@code isUnchangedResult}, {@code rememberTranslation} and
+     * {@code rememberUnchanged}, all taking and answering a {@code String}.
+     */
+    private static final java.lang.reflect.Method[] FRAME_MEMO = frameMemo();
+
+    private static java.lang.reflect.Method[] frameMemo() {
+        String[] names = {
+                "isTranslatedResult", "isUnchangedResult", "rememberTranslation", "rememberUnchanged"};
+        java.lang.reflect.Method[] methods = new java.lang.reflect.Method[names.length];
+        try {
+            for (int index = 0; index < names.length; index++) {
+                java.lang.reflect.Method method = TranslationRenderContext.class
+                        .getDeclaredMethod(names[index], String.class);
+                method.setAccessible(true);
+                methods[index] = method;
+            }
+        } catch (NoSuchMethodException | RuntimeException absent) {
+            // No memo in this tree's context: every slot stays null and the three callers below
+            // become no-ops instead of a build failure.
+        }
+        return methods;
+    }
+
+    /** True when this frame already answered {@code text}, either way. */
+    private static boolean answeredThisFrame(String text) {
+        return memoResult(FRAME_MEMO[0], text) || memoResult(FRAME_MEMO[1], text);
+    }
+
+    private static void rememberTranslated(String translated) {
+        memoStore(FRAME_MEMO[2], translated);
+    }
+
+    private static void rememberUnchanged(String original) {
+        memoStore(FRAME_MEMO[3], original);
+    }
+
+    private static boolean memoResult(java.lang.reflect.Method method, String value) {
+        if (method == null || value == null) {
+            return false;
+        }
+        try {
+            return Boolean.TRUE.equals(method.invoke(null, value));
+        } catch (ReflectiveOperationException | RuntimeException ignored) {
+            return false;
+        }
+    }
+
+    private static void memoStore(java.lang.reflect.Method method, String value) {
+        if (method == null || value == null) {
+            return;
+        }
+        try {
+            method.invoke(null, value);
+        } catch (ReflectiveOperationException | RuntimeException ignored) {
+            // A context that changed shape degrades to the previous behaviour, never to a broken
+            // frame: the memo only ever removes a repeat, so losing it costs what it costs today.
+        }
     }
 
     /** Styles one already translated line, reusing the answer when the same line is redrawn. */
