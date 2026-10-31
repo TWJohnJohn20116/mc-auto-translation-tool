@@ -222,12 +222,15 @@ public final class ServerSentEvents {
      * <p>The budget bounds how long the stream may stay silent, not how long the answer may be: a
      * 4096-token answer from a 15 token/s endpoint needs 273 s, so a budget on the whole stream
      * turned healthy answers into timeouts, and each retry re-sent the entire paid prompt. It is
-     * reported as a socket timeout — the same shape the transport uses for its total budget — so a
-     * caller classifying the failure sees a timeout and not a malformed answer.
+     * reported as the transport's own {@link TranslationBudgetExceededException} — still a
+     * {@code SocketTimeoutException}, so a caller classifying the failure sees a timeout and not a
+     * malformed answer — because silence for the whole budget is the same deterministic verdict
+     * {@code HttpJsonClient} reaches for its total budget, and reporting it as a bare socket timeout
+     * here was the one stall site the retry decision could not single out.
      */
     private static void requireProgress(long stallDeadlineNanos, long budgetNanos) throws IOException {
         if (System.nanoTime() - stallDeadlineNanos > 0L) {
-            throw new java.net.SocketTimeoutException("Server-sent event stream received no data for "
+            throw new TranslationBudgetExceededException("Server-sent event stream received no data for "
                     + (budgetNanos / 1000000L) + " ms");
         }
     }

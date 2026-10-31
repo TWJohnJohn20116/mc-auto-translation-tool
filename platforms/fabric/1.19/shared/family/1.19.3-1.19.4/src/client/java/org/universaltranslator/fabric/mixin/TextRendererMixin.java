@@ -8,6 +8,8 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.ModifyVariable;
 import org.universaltranslator.fabric.RenderedTextBridge;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 /**
  * Captures world-space text such as nameplates, holograms, signs and display entities.
  *
@@ -40,6 +42,17 @@ import org.universaltranslator.fabric.RenderedTextBridge;
  */
 @Mixin(TextRenderer.class)
 abstract class TextRendererMixin {
+    // One flag per require = 0 hook: only a hook that actually fired can separate a drifted
+    // descriptor from a version that never had that entry point.
+    private static final AtomicBoolean universalTranslator$orderedTextSurface = new AtomicBoolean();
+    private static final AtomicBoolean universalTranslator$orderedTextNoLayerSurface =
+            new AtomicBoolean();
+    private static final AtomicBoolean universalTranslator$measuredStringSurface =
+            new AtomicBoolean();
+    private static final AtomicBoolean universalTranslator$measuredTextSurface = new AtomicBoolean();
+    private static final AtomicBoolean universalTranslator$measuredOrderedSurface =
+            new AtomicBoolean();
+
     @ModifyVariable(
             method = "drawInternal",
             at = @At("HEAD"), argsOnly = true)
@@ -51,6 +64,8 @@ abstract class TextRendererMixin {
             method = "drawInternal(Lnet/minecraft/text/OrderedText;FFIZLorg/joml/Matrix4f;Lnet/minecraft/client/render/VertexConsumerProvider;Lnet/minecraft/client/font/TextRenderer$TextLayerType;II)I",
             at = @At("HEAD"), argsOnly = true, require = 0)
     private OrderedText universalTranslator$translatePreparedOrderedText(OrderedText text) {
+        RenderedTextBridge.surface("text-renderer-ordered-layer-1.19.4",
+                universalTranslator$orderedTextSurface);
         return RenderedTextBridge.translate(text);
     }
 
@@ -58,12 +73,16 @@ abstract class TextRendererMixin {
             method = "drawInternal(Lnet/minecraft/text/OrderedText;FFIZLorg/joml/Matrix4f;Lnet/minecraft/client/render/VertexConsumerProvider;ZII)I",
             at = @At("HEAD"), argsOnly = true, require = 0)
     private OrderedText universalTranslator$translatePreparedOrderedTextNoLayer(OrderedText text) {
+        RenderedTextBridge.surface("text-renderer-ordered-1.19.3",
+                universalTranslator$orderedTextNoLayerSurface);
         return RenderedTextBridge.translate(text);
     }
 
     @ModifyVariable(method = "getWidth(Ljava/lang/String;)I", at = @At("HEAD"),
             argsOnly = true, require = 0)
     private String universalTranslator$translateMeasuredString(String text) {
+        RenderedTextBridge.surface("text-renderer-width-string",
+                universalTranslator$measuredStringSurface);
         return RenderedTextBridge.translate(text);
     }
 
@@ -71,6 +90,8 @@ abstract class TextRendererMixin {
             method = "getWidth(Lnet/minecraft/text/StringVisitable;)I",
             at = @At("HEAD"), argsOnly = true, require = 0)
     private StringVisitable universalTranslator$translateMeasuredText(StringVisitable text) {
+        RenderedTextBridge.surface("text-renderer-width-text",
+                universalTranslator$measuredTextSurface);
         return RenderedTextBridge.translate(text);
     }
 
@@ -78,6 +99,8 @@ abstract class TextRendererMixin {
             method = "getWidth(Lnet/minecraft/text/OrderedText;)I",
             at = @At("HEAD"), argsOnly = true, require = 0)
     private OrderedText universalTranslator$translateMeasuredOrderedText(OrderedText text) {
+        RenderedTextBridge.surface("text-renderer-width-ordered",
+                universalTranslator$measuredOrderedSurface);
         return RenderedTextBridge.translate(text);
     }
 }

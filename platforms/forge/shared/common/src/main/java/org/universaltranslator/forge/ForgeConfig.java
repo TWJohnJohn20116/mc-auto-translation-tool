@@ -10,6 +10,7 @@ import org.universaltranslator.core.HudIndicatorVisibility;
 import org.universaltranslator.core.TranslationQuality;
 import org.universaltranslator.core.TranslationStats;
 import org.universaltranslator.core.DebugLog;
+import org.universaltranslator.core.PersistentTranslationCache;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TextKind;
 import org.universaltranslator.core.LocalConfigSecurity;
@@ -286,7 +287,7 @@ final class ForgeConfig {
         properties.setProperty("config-version", "6");
         LocalConfigSecurity.restrictToOwner(file);
         ForgeConfig loaded = new ForgeConfig(
-                properties, file, configDirectory.resolve("universal-translator-cache.properties"));
+                properties, file, configDirectory.resolve(PersistentTranslationCache.FILE_NAME));
         if (migrated || recovered) {
             try {
                 loaded.save();
@@ -341,8 +342,30 @@ final class ForgeConfig {
         if (live != null) {
             return live;
         }
-        ForgeConfig recovered = lastLoaded;
+        ForgeConfig recovered = lastLoaded();
         return recovered != null ? recovered : load(configDirectory);
+    }
+
+    /**
+     * {@link #forEditing} for the entry points whose rescue runs inside a {@code catch} block.
+     *
+     * <p>{@code forEditing} throws, so a caller that has already caught the first failure would have
+     * to catch a second one right next to it. That is how the settings entry points ended up each
+     * carrying their own copy of the ladder {@code forEditing} was introduced to replace. Answering
+     * {@code null} keeps the rescue a single expression, and every one of those entry points already
+     * has the branch that reports "the settings screen could not be opened".
+     *
+     * @param configDirectory directory the configuration file lives in
+     * @return the live configuration, the last loaded one, or {@code null} when none can be had
+     */
+    static ForgeConfig forEditingOrNull(Path configDirectory) {
+        try {
+            return forEditing(configDirectory);
+        } catch (Exception unreadable) {
+            // The caller's failure branch names the failure that sent it here; a second exception
+            // raised by the retry would only replace the cause the player needs to see.
+            return null;
+        }
     }
 
     /**
@@ -645,6 +668,10 @@ final class ForgeConfig {
 
     String editorModel(String selectedProvider) {
         return onlineProviderConfig.llmEditorSettings(selectedProvider).model();
+    }
+
+    String editorApiVersion(String selectedProvider) {
+        return onlineProviderConfig.llmEditorApiVersion(selectedProvider);
     }
 
     boolean allows(TextKind kind) {

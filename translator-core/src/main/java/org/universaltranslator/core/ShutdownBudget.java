@@ -35,11 +35,11 @@ public final class ShutdownBudget {
      */
     public static final long CACHE_WRITE_MILLIS = 3_000L;
     /**
-     * Longest a session's provider teardown may take after its workers have drained. It is the only
-     * placeholder the budget has for that stage: a close that got its workers back tears the provider
-     * down on the thread that called it, and one that did not leaves it to the worker that leaves last
-     * -- neither hands it to a thread of its own, so nothing waits on the call any more, and the number
-     * stays so that the two sums below still describe the same teardown.
+     * Longest a session's provider teardown may take. A close that waited its budget -- whether or
+     * not it got its workers back -- tears the provider down on the thread that called it, so this is
+     * part of {@link #TEARDOWN_JOIN_MILLIS}. Only a close that skipped the wait hands it to the
+     * worker that leaves last, and nothing then waits on it. No branch starts a thread of its own,
+     * which is why {@link #HOOK_JOIN_MILLIS} can leave it out and still describe the same teardown.
      */
     public static final long PROVIDER_CLOSE_MILLIS = 1_000L;
     /**

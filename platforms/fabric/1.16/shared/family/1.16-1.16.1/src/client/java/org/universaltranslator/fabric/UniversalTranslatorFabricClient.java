@@ -127,8 +127,19 @@ public final class UniversalTranslatorFabricClient implements ClientModInitializ
             // not available here. A JVM shutdown hook is the equivalent seam that needs no API: the
             // runtime is closed on exit like it is for 1.16.2-1.16.4, instead of never being closed
             // (which left the provider threads and the statistics file open for the whole session).
+            // The name must not be FabricClientBootstrapBase's teardown name: the hook thread would
+            // then look like the bootstrap's own bounded-wait thread and the close would run inline
+            // on it, unbounded — the seam the other legacy trees avoid with their own hook name.
             Runtime.getRuntime().addShutdownHook(
-                    new Thread(onStop, "universal-translator-stop"));
+                    new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            // The screens' shared pool is dropped here so a closed game does not keep
+                            // two daemon threads (and whatever request they are waiting on) alive.
+                            ScreenWorkers.shutdown();
+                            onStop.run();
+                        }
+                    }, "universal-translator-fabric-stop"));
         }
 
         @Override

@@ -7,6 +7,7 @@ import net.minecraft.text.Text;
 import net.minecraft.text.LiteralText;
 import net.minecraft.text.StringVisitable;
 import net.minecraft.util.Formatting;
+import org.universaltranslator.core.DebugLog;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TranslationTextStyling;
 import org.universaltranslator.core.TranslationStyleRuns;
@@ -15,6 +16,7 @@ import org.universaltranslator.core.WeakIdentitySet;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class RenderedTextBridge {
     /**
@@ -59,6 +61,20 @@ public final class RenderedTextBridge {
     }
 
     private RenderedTextBridge() {
+    }
+
+    /**
+     * Records that one injection of this generation really fired, once per session.
+     *
+     * <p>Every hook in this tree is declared {@code require = 0} so a descriptor that drifts between
+     * Minecraft versions degrades one surface instead of failing the launch. That choice used to be
+     * completely silent: nothing said which surfaces were alive, so "translation stopped working"
+     * and "this version never hooked that entry point" looked identical.
+     */
+    public static void surface(String name, AtomicBoolean once) {
+        if (once.compareAndSet(false, true)) {
+            DebugLog.global().log("render-surface", "applied", name);
+        }
     }
 
     public static String translate(String text) {
@@ -117,14 +133,18 @@ public final class RenderedTextBridge {
                 || TranslationRenderContext.isUnchangedResult(original)) {
             return text;
         }
+        // Translated before the run walk and handed to it: the walk used to translate every run on
+        // its own, so a two-segment chat line sent two requests and each half was translated without
+        // the other.
+        String translated = translateRaw(original);
         // A component with no children renders exactly its own literal under its own style, so the
         // run walk below would collect a single run and decline to rebuild it every time. Skipping
         // it keeps an ordinary label at one string copy and one cache lookup per frame.
-        Text styled = text.getSiblings().isEmpty() ? null : translateStyledSiblings(text);
+        Text styled = text.getSiblings().isEmpty()
+                ? null : translateStyledSiblings(text, original, translated);
         if (styled != null) {
             return styled;
         }
-        String translated = translateRaw(original);
         if (original.equals(translated)) {
             TranslationRenderContext.rememberUnchanged(original);
             return text;
@@ -149,14 +169,6 @@ public final class RenderedTextBridge {
         // measured line, which is what made chat and the tab list the biggest per-frame allocator.
         StyleRuns runs = new StyleRuns();
         text.accept((index, style, codePoint) -> runs.accept(style, codePoint));
-        if (runs.isMultiStyle()) {
-            // Flattening would keep only the first segment's colour and drop bold, italic and
-            // click events from later segments, so rebuild the line run by run instead.
-            OrderedText rebuilt = rebuildStyledRuns(runs);
-            if (rebuilt != null) {
-                return rebuilt;
-            }
-        }
         String original = runs.text();
         // Chat, the tab list and the nameplates reach both hooks with the same line, so the second
         // call is handed the answer the first one already produced.
@@ -164,7 +176,18 @@ public final class RenderedTextBridge {
                 || TranslationRenderContext.isUnchangedResult(original)) {
             return text;
         }
+        // One lookup for the whole line, shared by the run rebuild and the fallthrough below: the
+        // rebuild used to translate every run itself, so a two-segment line sent two requests and
+        // each half was translated without the other.
         String translated = translateRaw(original);
+        if (runs.isMultiStyle()) {
+            // Flattening would keep only the first segment's colour and drop bold, italic and
+            // click events from later segments, so rebuild the line run by run instead.
+            OrderedText rebuilt = rebuildStyledRuns(runs, original, translated);
+            if (rebuilt != null) {
+                return rebuilt;
+            }
+        }
         if (original.equals(translated)) {
             TranslationRenderContext.rememberUnchanged(original);
             return text;
@@ -176,12 +199,14 @@ public final class RenderedTextBridge {
     }
 
     /**
-     * Rebuilds a multi-style ordered line as one child per style run, or null when it cannot.
+     * Rebuilds a multi-style ordered line from the caller's one translation, carrying the style of
+     * the run its visible text starts with, or null when it cannot.
      *
      * <p>Works off the {@link StyleRuns} the single walk already produced: no second pass over the
-     * line, and no extra containers when the line carries one style only.
+     * line, and no extra containers when the line carries one style only. The line is translated
+     * once, by the caller: a run boundary is a style change, not a sentence boundary.
      */
-    private static OrderedText rebuildStyledRuns(StyleRuns runs) {
+    private static OrderedText rebuildStyledRuns(StyleRuns runs, String visible, String translated) {
         List<String> texts = runs.runTexts();
         List<Style> styles = runs.runStyles();
         List<Object> styleKeys = new ArrayList<Object>(styles);
@@ -195,11 +220,17 @@ public final class RenderedTextBridge {
         }
         TranslationTextColor color = TranslationStyleRuns.resolveTranslatedColor(
                 sourceHasColor, FabricTranslationRuntime.translatedTextColor());
-        MutableText rebuilt = new LiteralText("");
-        for (TranslationStyleRuns.Run run : merged) {
-            rebuilt.append(new LiteralText(translateRaw(run.text()))
-                    .setStyle(applyColor(styles.get(run.sourceIndex()), color)));
+        int firstRun = merged.get(0).sourceIndex();
+        if (firstRun < 0 || firstRun >= styles.size()) {
+            return null;
         }
+        // The rebuilt line carries the style of the run its visible text starts with: per-run styles
+        // cannot be mapped onto a translation that no longer aligns segment by segment.
+        if (visible.equals(translated)) {
+            return null;
+        }
+        MutableText rebuilt = new LiteralText(translated)
+                .setStyle(applyColor(styles.get(firstRun), color));
         return rebuilt.asOrderedText();
     }
 
@@ -352,15 +383,16 @@ public final class RenderedTextBridge {
     }
 
     /**
-     * Rebuilds the translation as one child per style the source's visible text renders with, so
-     * every server-provided style survives; flattening the component into a single literal keeps
-     * only the style of the node it was flattened from. Returns {@code null} when the visible text
-     * already renders with the root's own style, so the caller keeps the ordinary path.
+     * Rebuilds the line from the caller's one translation, carrying the style of the run its visible
+     * text starts with: server-provided styles cannot be mapped segment by segment onto a translation
+     * that no longer aligns with them. Returns {@code null} when the visible text already renders
+     * with the root's own style, or when it came back unchanged, so the caller keeps the ordinary
+     * path.
      *
      * <p>Invariant: a rebuild may only be returned when the runs cover every visible character, so
      * no node can drop out of the line.
      */
-    private static Text translateStyledSiblings(Text text) {
+    private static Text translateStyledSiblings(Text text, String visible, String translated) {
         List<String> texts = new ArrayList<String>();
         List<Object> styleKeys = new ArrayList<Object>();
         List<Style> styles = new ArrayList<Style>();
@@ -388,12 +420,20 @@ public final class RenderedTextBridge {
         }
         TranslationTextColor color = TranslationStyleRuns.resolveTranslatedColor(
                 sourceHasColor, FabricTranslationRuntime.translatedTextColor());
-        MutableText rebuilt = new LiteralText("");
-        rebuilt.setStyle(text.getStyle());
-        for (TranslationStyleRuns.Run run : runs) {
-            rebuilt.append(new LiteralText(translateRaw(run.text()))
-                    .setStyle(applyColor(styles.get(run.sourceIndex()), color)));
+        // runs indexes into texts, never into styles; keep a misalignment from throwing out of the
+        // middle of a draw and losing the frame.
+        int firstRun = runs.get(0).sourceIndex();
+        if (firstRun < 0 || firstRun >= styles.size()) {
+            return null;
         }
+        // One translation for the whole line: a run boundary is a style change, not a sentence
+        // boundary, and per-run translation sent one request per segment with neither half carrying
+        // the context the other provided.
+        if (visible.equals(translated)) {
+            return null;
+        }
+        MutableText rebuilt = new LiteralText(translated)
+                .setStyle(applyColor(styles.get(firstRun), color));
         return rebuilt;
     }
 

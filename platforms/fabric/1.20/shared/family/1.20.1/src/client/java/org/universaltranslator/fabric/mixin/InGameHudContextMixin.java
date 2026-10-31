@@ -8,7 +8,10 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.universaltranslator.core.TextKind;
+import org.universaltranslator.fabric.RenderedTextBridge;
 import org.universaltranslator.fabric.TranslationRenderContext;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Tags the HUD regions with the {@link TextKind} they draw.
@@ -26,6 +29,21 @@ import org.universaltranslator.fabric.TranslationRenderContext;
  */
 @Mixin(InGameHud.class)
 abstract class InGameHudContextMixin {
+    // One flag per require = 0 hook: only a hook that actually fired can separate a drifted
+    // descriptor from a version that never had that entry point.
+    private static final AtomicBoolean universalTranslator$enterChatSurface = new AtomicBoolean();
+    private static final AtomicBoolean universalTranslator$leaveChatSurface = new AtomicBoolean();
+    private static final AtomicBoolean universalTranslator$enterPlayerListSurface =
+            new AtomicBoolean();
+    private static final AtomicBoolean universalTranslator$leavePlayerListSurface =
+            new AtomicBoolean();
+    private static final AtomicBoolean universalTranslator$enterTitleSurface = new AtomicBoolean();
+    private static final AtomicBoolean universalTranslator$leaveTitleSurface = new AtomicBoolean();
+    private static final AtomicBoolean universalTranslator$enterActionBarSurface =
+            new AtomicBoolean();
+    private static final AtomicBoolean universalTranslator$leaveActionBarSurface =
+            new AtomicBoolean();
+
     @Inject(
             method = "renderScoreboardSidebar(Lnet/minecraft/client/gui/DrawContext;Lnet/minecraft/scoreboard/ScoreboardObjective;)V",
             at = @At("HEAD"))
@@ -47,6 +65,7 @@ abstract class InGameHudContextMixin {
             at = @At("HEAD"), require = 0)
     private void universalTranslator$enterChat(
             DrawContext context, float tickDelta, CallbackInfo callback) {
+        RenderedTextBridge.surface("hud-chat-enter-1.20", universalTranslator$enterChatSurface);
         TranslationRenderContext.push(TextKind.CHAT);
     }
 
@@ -55,6 +74,7 @@ abstract class InGameHudContextMixin {
             at = @At("RETURN"), require = 0)
     private void universalTranslator$leaveChat(
             DrawContext context, float tickDelta, CallbackInfo callback) {
+        RenderedTextBridge.surface("hud-chat-leave-1.20", universalTranslator$leaveChatSurface);
         TranslationRenderContext.pop();
     }
 
@@ -63,6 +83,8 @@ abstract class InGameHudContextMixin {
             at = @At("HEAD"), require = 0)
     private void universalTranslator$enterPlayerList(
             DrawContext context, float tickDelta, CallbackInfo callback) {
+        RenderedTextBridge.surface("hud-player-list-enter-1.20",
+                universalTranslator$enterPlayerListSurface);
         TranslationRenderContext.push(TextKind.PLAYER_LIST_HEADER);
     }
 
@@ -71,6 +93,8 @@ abstract class InGameHudContextMixin {
             at = @At("RETURN"), require = 0)
     private void universalTranslator$leavePlayerList(
             DrawContext context, float tickDelta, CallbackInfo callback) {
+        RenderedTextBridge.surface("hud-player-list-leave-1.20",
+                universalTranslator$leavePlayerListSurface);
         TranslationRenderContext.pop();
     }
 
@@ -79,6 +103,7 @@ abstract class InGameHudContextMixin {
             at = @At("HEAD"), require = 0)
     private void universalTranslator$enterTitle(
             DrawContext context, float tickDelta, CallbackInfo callback) {
+        RenderedTextBridge.surface("hud-title-enter-1.20", universalTranslator$enterTitleSurface);
         TranslationRenderContext.push(TextKind.TITLE);
     }
 
@@ -87,6 +112,7 @@ abstract class InGameHudContextMixin {
             at = @At("RETURN"), require = 0)
     private void universalTranslator$leaveTitle(
             DrawContext context, float tickDelta, CallbackInfo callback) {
+        RenderedTextBridge.surface("hud-title-leave-1.20", universalTranslator$leaveTitleSurface);
         TranslationRenderContext.pop();
     }
 
@@ -95,6 +121,8 @@ abstract class InGameHudContextMixin {
             at = @At("HEAD"), require = 0)
     private void universalTranslator$enterActionBar(
             DrawContext context, float tickDelta, CallbackInfo callback) {
+        RenderedTextBridge.surface("hud-action-bar-enter-1.20",
+                universalTranslator$enterActionBarSurface);
         TranslationRenderContext.push(TextKind.ACTION_BAR);
     }
 
@@ -103,6 +131,8 @@ abstract class InGameHudContextMixin {
             at = @At("RETURN"), require = 0)
     private void universalTranslator$leaveActionBar(
             DrawContext context, float tickDelta, CallbackInfo callback) {
+        RenderedTextBridge.surface("hud-action-bar-leave-1.20",
+                universalTranslator$leaveActionBarSurface);
         TranslationRenderContext.pop();
     }
 }

@@ -307,13 +307,20 @@ public final class TranslationCoordinator implements AutoCloseable {
 
         final String effectiveSource = sourceLanguage == null ? TargetLanguage.AUTO : sourceLanguage.trim();
         final TextKind effectiveKind = kind == null ? TextKind.OTHER : kind;
+        // A target that has to change the script makes the Han text the content to translate, not a
+        // value to carry over. Protecting it anyway left the template with no letter at all, so both
+        // the check below and the worker's own one judged the line untranslatable and a zh-TW target
+        // never converted anything -- which is the only reason that preset exists.
+        final boolean effectivePreserveHanText = preserveHanText
+                && !(chineseTarget && traditionalTarget);
 
         // Keep all regex construction, cache I/O and provider work off the render thread.
         // The protected-literal snapshot is identified by its contents so that requests with
         // different player-name snapshots cannot accidentally share an in-flight result, while
         // requests that only differ in the list instance still de-duplicate.
         final Submission submission = new Submission(text, effectiveSource, targetLanguage,
-                effectiveKind, protectedLiterals, preserveHanText, chineseTarget, traditionalTarget,
+                effectiveKind, protectedLiterals, effectivePreserveHanText, chineseTarget,
+                traditionalTarget,
                 listener, provider.id(), protectedLiteralsSignature(protectedLiterals));
         final CompletableFuture<TranslationResult> settled = settle(submission);
         if (listener != null) {
@@ -628,6 +635,7 @@ public final class TranslationCoordinator implements AutoCloseable {
         private final String targetLanguage;
         private final TextKind kind;
         private final Iterable<String> protectedLiterals;
+        /** Whether Han text is protected; already narrowed by the target script in {@code translate}. */
         private final boolean preserveHanText;
         private final boolean chineseTarget;
         /** Whether the target asks for Traditional Chinese; see {@link LanguageHeuristics}. */
@@ -897,7 +905,8 @@ public final class TranslationCoordinator implements AutoCloseable {
      * <p>Everything that has to be durable happens before that wait: the store is flushed right after
      * the interrupt, so a caller that cuts this call short -- a stop hook joins it with a budget --
      * loses no deferred entry. No thread is started here: the provider teardown runs on this thread
-     * whenever this call got its workers back, and on the last worker otherwise.
+     * whenever this call waited its budget -- even if it did not get its workers back -- and on the
+     * last worker only when it skipped the wait.
      */
     void close(long waitMillis) {
         if (!closed.compareAndSet(false, true)) {

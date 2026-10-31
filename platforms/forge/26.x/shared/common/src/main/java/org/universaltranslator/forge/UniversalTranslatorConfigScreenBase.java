@@ -564,7 +564,12 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                 updated.validateProviderConfiguration();
             }
             ForgeTranslationRuntime.initialize(updated);
-            ForgeConfigWriter.saveNow(updated);
+            // Queued off the render thread: the prompt is already live through initialize(), and the
+            // click no longer pays a temporary create, a write, an atomic move and two ownership
+            // changes before the next frame. The failure still reaches this tab's status line.
+            ForgeConfigWriter.saveOffTick(updated, failure -> setTestStatus(
+                    tr("screen.universal_translator.diagnostics.settings_failed", describe(failure)),
+                    true));
             setTestStatus(tr("screen.universal_translator.diagnostics.settings_saved"), false);
         } catch (Exception exception) {
             setTestStatus(tr("screen.universal_translator.diagnostics.settings_failed",
@@ -1402,7 +1407,8 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                         message = tr("screen.universal_translator.engine.test_need_model");
                         error = true;
                     } else {
-                        ProviderProbe.probe(provider, endpointValue, keyValue, model);
+                        ProviderProbe.probe(provider, endpointValue, keyValue, model,
+                                original.editorApiVersion(provider));
                         message = tr("screen.universal_translator.engine.test_ok_probe", model);
                         error = false;
                     }
@@ -1449,7 +1455,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         testStatus = new TestStatus(message, error);
     }
 
-    private static String describe(Exception error) {
+    private static String describe(Throwable error) {
         String message = error.getMessage();
         return message == null || message.trim().isEmpty() ? error.getClass().getSimpleName() : message;
     }

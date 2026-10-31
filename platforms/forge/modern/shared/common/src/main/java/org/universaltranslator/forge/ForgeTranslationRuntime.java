@@ -1,6 +1,8 @@
 package org.universaltranslator.forge;
 
 import net.minecraft.client.Minecraft;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.universaltranslator.core.RenderTranslationSession;
 import org.universaltranslator.core.MinecraftContentScope;
 import org.universaltranslator.core.HomeQuickSettingsState;
@@ -30,12 +32,26 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 public final class ForgeTranslationRuntime {
     private static final long PLAYER_NAME_SNAPSHOT_MILLIS = 5_000L;
     // Match ProtectedText's bounded literal limit so large network lobbies do not silently
     // drop names after the first few tab-list pages.
     private static final int MAX_PROTECTED_PLAYER_NAMES = 1_000;
+    private static final Logger LOGGER = LogManager.getLogger("universal_translator");
+    /**
+     * Reports a queued write that failed, so a quick setting cannot vanish without a trace.
+     *
+     * <p>The writer's own record goes to the opt-in debug log, which is off by default, so a Home key
+     * whose write failed left nothing behind anywhere while the button already showed the new value.
+     */
+    private static final Consumer<Throwable> SAVE_FAILURE_REPORTER = new Consumer<Throwable>() {
+        @Override
+        public void accept(Throwable failure) {
+            LOGGER.warn("Could not persist the quick setting", failure);
+        }
+    };
 
     private static volatile RenderTranslationSession session;
     private static volatile ForgeConfig activeConfig;
@@ -663,7 +679,7 @@ public final class ForgeTranslationRuntime {
             initialize(updated);
             // Queued off the caller's thread: the home buttons and F8 arrive on the client tick, and a
             // save is a temporary create, a write, an atomic move and two ownership changes.
-            ForgeConfigWriter.saveOffTick(updated, null);
+            ForgeConfigWriter.saveOffTick(updated, SAVE_FAILURE_REPORTER);
             return homeSettingsState(updated);
         } catch (Exception failure) {
             if (runtimeChanged) {

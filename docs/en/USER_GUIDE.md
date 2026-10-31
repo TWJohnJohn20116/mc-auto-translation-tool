@@ -47,8 +47,8 @@ The single Fabric JAR accepts only the versions listed one by one above and requ
 fails during load with a dependency error. Forge family JARs declare a comma-separated union of exact
 version restrictions listing only the versions that have an implementation, so 1.21.2 is not in it and
 Forge refuses to load the JAR with a dependency error rather than loading it with a missing
-implementation. Each NeoForge JAR covers exactly one game version, and there is no 1.20.2 or 1.20.3
-download.
+implementation. Each NeoForge JAR covers exactly one game version, and there is no 1.20.2, 1.20.3, or
+1.20.5 download.
 
 ## First-time setup
 

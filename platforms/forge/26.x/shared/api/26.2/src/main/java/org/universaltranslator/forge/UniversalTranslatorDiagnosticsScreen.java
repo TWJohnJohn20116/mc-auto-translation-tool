@@ -42,12 +42,17 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
         // The screen has no lifecycle of its own, so class load is the only place a game exit can be
         // observed from here: without this the export thread was still parked on its queue, together
         // with its unbounded task queue, after the client was gone.
-        Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
-            @Override
-            public void run() {
-                EXPORTER.shutdownNow();
-            }
-        }, "universal-translator-diagnostics-export-shutdown"));
+        try {
+            Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    EXPORTER.shutdownNow();
+                }
+            }, "universal-translator-diagnostics-export-shutdown"));
+        } catch (IllegalStateException alreadyStopping) {
+            // The JVM is already shutting down. Letting this escape a static initializer would turn
+            // into an ExceptionInInitializerError and leave the whole diagnostics page unusable.
+        }
     }
     /** Vertical distance between two text lines. */
     private static final int LINE_STEP = 17;
@@ -193,7 +198,10 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
         try {
             ForgeConfig updated = live.withDebugLog(debugEnabled);
             ForgeTranslationRuntime.initialize(updated);
-            ForgeConfigWriter.saveNow(updated);
+            // Queued off the render thread: the switch is already live through DebugLog below, and
+            // the click no longer pays a temporary create, a write, an atomic move and two
+            // ownership changes before the next frame.
+            ForgeConfigWriter.saveOffTick(updated, this::reportDebugSaveFailure);
             Path configFile = updated.configFile();
             DebugLog.global().configure(
                     configFile.resolveSibling(DebugLog.FILE_NAME), debugEnabled);
@@ -201,12 +209,35 @@ final class UniversalTranslatorDiagnosticsScreen extends Screen {
                     tr(UiTextKeys.onOff(debugEnabled)));
             exportFailed = false;
         } catch (Exception failure) {
-            String message = failure.getMessage();
-            exportStatus = tr("screen.universal_translator.diagnostics.settings_failed",
-                    message == null || message.trim().isEmpty()
-                            ? failure.getClass().getSimpleName() : message);
+            exportStatus = settingsFailure(failure);
             exportFailed = true;
         }
+    }
+
+    /**
+     * Publishes a failed debug-switch write on the client thread.
+     *
+     * <p>The configuration writer is not the client thread, and this screen's state is only touched
+     * by the one that draws it — the same rule the export path follows.
+     */
+    private void reportDebugSaveFailure(Throwable failure) {
+        Runnable apply = () -> {
+            exportStatus = settingsFailure(failure);
+            exportFailed = true;
+        };
+        if (minecraft == null) {
+            apply.run();
+        } else {
+            minecraft.execute(apply);
+        }
+    }
+
+    /** Formats a failed settings write for the status line, whatever raised it. */
+    private String settingsFailure(Throwable failure) {
+        String message = failure.getMessage();
+        return tr("screen.universal_translator.diagnostics.settings_failed",
+                message == null || message.trim().isEmpty()
+                        ? failure.getClass().getSimpleName() : message);
     }
 
     /** Clears the process-wide counters and writes the cleared values out. */

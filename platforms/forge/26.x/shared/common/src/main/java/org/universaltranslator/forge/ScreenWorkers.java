@@ -25,12 +25,17 @@ final class ScreenWorkers {
     static {
         // Runs once, on class load. The screens that submit work have no lifecycle of their own, so
         // this is the only place a game exit can be observed from here.
-        Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
-            @Override
-            public void run() {
-                shutdown();
-            }
-        }, "universal-translator-screen-worker-shutdown"));
+        try {
+            Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    shutdown();
+                }
+            }, "universal-translator-screen-worker-shutdown"));
+        } catch (IllegalStateException alreadyStopping) {
+            // The JVM is already shutting down. Letting this escape a static initializer would turn
+            // into an ExceptionInInitializerError and leave every screen button without a worker.
+        }
     }
 
     private ScreenWorkers() {

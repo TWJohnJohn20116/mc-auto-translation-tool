@@ -6,7 +6,10 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.universaltranslator.fabric.RenderedTextBridge;
 import org.universaltranslator.fabric.TranslationRenderContext;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Keeps the local sign editor preview untranslated until the player saves it, on 1.19.3 and 1.19.4.
@@ -18,11 +21,16 @@ import org.universaltranslator.fabric.TranslationRenderContext;
  */
 @Mixin(AbstractSignEditScreen.class)
 abstract class AbstractSignEditScreenMixin {
+    private static final AtomicBoolean universalTranslator$pushSignInputSurface =
+            new AtomicBoolean();
+    private static final AtomicBoolean universalTranslator$popSignInputSurface = new AtomicBoolean();
+
     @Inject(
             method = "render(Lnet/minecraft/client/util/math/MatrixStack;IIF)V",
             at = @At("HEAD"), require = 0)
     private void universalTranslator$pushSignInput(
             MatrixStack matrices, int mouseX, int mouseY, float delta, CallbackInfo callback) {
+        RenderedTextBridge.surface("sign-input-push-1.19.3", universalTranslator$pushSignInputSurface);
         TranslationRenderContext.pushTextInput();
     }
 
@@ -31,6 +39,7 @@ abstract class AbstractSignEditScreenMixin {
             at = @At("RETURN"), require = 0)
     private void universalTranslator$popSignInput(
             MatrixStack matrices, int mouseX, int mouseY, float delta, CallbackInfo callback) {
+        RenderedTextBridge.surface("sign-input-pop-1.19.3", universalTranslator$popSignInputSurface);
         TranslationRenderContext.popTextInput();
     }
 }

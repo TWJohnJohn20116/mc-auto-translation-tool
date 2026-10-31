@@ -674,6 +674,9 @@ const DOC_STALE_VERSION_OPTION = /--version\s+\d+\.\d+(?:\.\d+)?/g;
 // 逐字如此），而上面那條只認小寫的 `mc-auto-translation-tool-*` bundle 範例：31 個真實檔名一個都不會
 // 命中，於是「文件裡的產物檔名必須是現行版本」實際只守了一種從未上過 Release 的寫法。
 const DOC_ASSET_REFERENCE = /MCAutoTranslationTool-[A-Za-z0-9.<>*_-]+\.jar/g;
+// NeoForge 沒有家族合併，任何「a–b」範圍都會被讀成「每一版都有」，補不上的缺口必須明寫。CHANGELOG 與
+// 三語 BUILDING 的權威段落用同一條判準，抽成常數才不會一邊改了、另一邊把舊寫法留著。
+const NEOFORGE_RANGE_CLAIM = /NeoForge\s+\d+\.\d+(?:\.\d+)?\s*[–—-]\s*\d+\.\d+(?:\.\d+)?/;
 
 test("keeps the version numbers hard-coded in the docs equal to gradle.properties", async () => {
   const properties = await readFile(new URL("../../gradle.properties", import.meta.url), "utf8");
@@ -729,9 +732,27 @@ test("keeps the version numbers hard-coded in the docs equal to gradle.propertie
   const notesBody = changelog.split(/^## /m)[1] ?? "";
   assert.doesNotMatch(
     notesBody,
-    /NeoForge\s+\d+\.\d+(?:\.\d+)?\s*[–—-]\s*\d+\.\d+(?:\.\d+)?/,
+    NEOFORGE_RANGE_CLAIM,
     "CHANGELOG 的本版區段不得用範圍描述 NeoForge（它不是家族合併，範圍會被讀成每版都有）；請逐版列出或明確寫出缺口",
   );
+  // 三語 BUILDING 的「發布目標」表格被指定為 CHANGELOG／README 的引用來源（「引用这一节，不要另写一份数字」），
+  // 只掃 CHANGELOG 等於守了副本、沒守正本：那張表曾經留著舊的範圍寫法而 CHANGELOG 已經逐版列出。
+  // 錨點抓不到同樣算失敗，否則表格改版後這條守衛會靜默失效。
+  for (const [relative, anchor] of [
+    ["../../docs/Zh-cn/BUILDING.md", "发布目标（48 个）"],
+    ["../../docs/Zh-tw/BUILDING.md", "發佈目標（48 個）"],
+    ["../../docs/en/BUILDING.md", "Release target (48)"],
+  ]) {
+    const releaseRow = (await readFile(new URL(relative, import.meta.url), "utf8"))
+      .split("\n")
+      .find((line) => line.includes(anchor));
+    assert.ok(releaseRow, `${relative} 找不到「${anchor}」那一行：發布目標表格的錨點失效了`);
+    assert.doesNotMatch(
+      releaseRow,
+      NEOFORGE_RANGE_CLAIM,
+      `${relative} 的發布目標表格不得用範圍描述 NeoForge（它不是家族合併，範圍會被讀成每版都有）；請逐版列出或明確寫出缺口`,
+    );
+  }
 });
 
 // 「可安裝 JAR 數量」（今天是 31）與 48／51 一樣是手抄的頭條數字，但它被抄在 13 個檔案、四種措辭，

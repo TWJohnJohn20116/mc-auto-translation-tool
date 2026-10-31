@@ -109,3 +109,12 @@ apply from: rootProject.file("gradle/jar-contents.gradle")
 // at the class-to-config mapping it ships at all.
 apply from: rootProject.file("gradle/fabric-mixin-config-verify.gradle")
 
+// Nothing read this tree's produced classes back: options.release was the whole story. These versions
+// are only built by the scheduled legacy-targets run and verify_release_jars.py never sees them (the
+// 1.0-1.8 bundle is not one of the published assets), so the header half below is the only proof that
+// the shipped bytecode really is Java 8. Loom writes compile options of its own, so the
+// declared-release half stays off - the same shape the 1.13 tree uses.
+ext.fabricReleaseJava = gradle.ext.treeJavaTarget("platforms/fabric/1.0-1.8/")
+ext.fabricReleaseJarSkipReleaseCheck = true
+apply from: rootProject.file("gradle/fabric-release-jar-verify.gradle")
+

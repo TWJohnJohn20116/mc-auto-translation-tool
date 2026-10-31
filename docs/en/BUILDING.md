@@ -384,7 +384,7 @@ claims that contradict the published artifacts:
 
 | Kind | Contents | Published with a release |
 | --- | --- | --- |
-| Release target (48) | Fabric 1.13–26.3 (continuous), Forge 1.8.9 / 1.12.2 / 1.16.5 / 1.18.2 / 1.19.2 / 1.20.1 / 1.21, 1.21.1, 1.21.3–1.21.11 / 26.1–26.2 (gap versions are rejected by `mods.toml`), NeoForge 1.20.1–26.2 (one JAR each) | Yes, reduced to 31 installable JARs |
+| Release target (48) | Fabric 1.13–26.3 (continuous), Forge 1.8.9 / 1.12.2 / 1.16.5 / 1.18.2 / 1.19.2 / 1.20.1 / 1.21, 1.21.1, 1.21.3–1.21.11 / 26.1–26.2 (gap versions are rejected by `mods.toml`), NeoForge 1.20.1, 1.20.4, 1.20.6, 1.21, 1.21.1–1.21.11, 26.1–26.2 (one JAR each; 1.20.2, 1.20.3, and 1.20.5 have no target) | Yes, reduced to 31 installable JARs |
 | Source-only bundle (2) | `fabric-1.0-1.8.x` (26 of 1.3.1–1.8.8) and `fabric-1.8-1.12.x` (1.8.9–1.12.2, 15 versions) | No, built only by `legacy-targets.yml` and never present in `downloads/<version>/` |
 
 So `fabric-all` carries the 51 exact implementations for 1.13–26.3 only; 1.3.1–1.12.2 players have to

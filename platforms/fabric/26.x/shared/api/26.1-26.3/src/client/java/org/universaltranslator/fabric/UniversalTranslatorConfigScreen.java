@@ -543,8 +543,14 @@ final class UniversalTranslatorConfigScreen extends Screen {
                 updated.validateProviderConfiguration();
             }
             FabricTranslationRuntime.initialize(updated);
-            updated.save();
-            setTestStatus(tr("screen.universal_translator.diagnostics.settings_saved"), false);
+            // Same writer as the F8 toggles, so an older queued snapshot cannot land after this one,
+            // and the message below only announces a write that is known to be on disk.
+            if (FabricTranslationRuntimeBase.saveInBackgroundAndWait(updated)) {
+                setTestStatus(tr("screen.universal_translator.diagnostics.settings_saved"), false);
+            } else {
+                setTestStatus(tr("screen.universal_translator.diagnostics.settings_failed",
+                        updated.configFile().getFileName().toString()), true);
+            }
         } catch (Exception exception) {
             setTestStatus(tr("screen.universal_translator.diagnostics.settings_failed",
                     describe(exception)), true);
@@ -766,11 +772,19 @@ final class UniversalTranslatorConfigScreen extends Screen {
             }
             runtimeChanged = true;
             FabricTranslationRuntime.initialize(updated);
-            updated.save();
-            // Drawn once before the screen goes away; closing straight from this callback meant the
-            // success line never appeared anywhere, so Save gave no feedback unless it failed.
-            status = tr("status.universal_translator.saved");
-            closeAfterSave();
+            // Same writer as the F8 toggles: two threads writing this file let an older queued
+            // snapshot land after the newer one and silently revert what the player just saved.
+            // Only leave the screen once the file is known to be on disk: a save still queued past
+            // the bounded wait used to close the screen and hide that it had not landed.
+            if (FabricTranslationRuntimeBase.saveInBackgroundAndWait(updated)) {
+                // Drawn once before the screen goes away; closing straight from this callback meant
+                // the success line never appeared anywhere, so Save gave no feedback unless it failed.
+                status = tr("status.universal_translator.saved");
+                closeAfterSave();
+            } else {
+                status = tr("status.universal_translator.save_failed",
+                        updated.configFile().getFileName());
+            }
         } catch (Exception exception) {
             if (runtimeChanged) {
                 try {
@@ -1357,7 +1371,8 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
                         message = tr("screen.universal_translator.engine.test_need_model");
                         error = true;
                     } else {
-                        ProviderProbe.probe(provider, endpointValue, keyValue, model);
+                        ProviderProbe.probe(provider, endpointValue, keyValue, model,
+                                original.editorApiVersion(provider));
                         message = tr("screen.universal_translator.engine.test_ok_probe", model);
                         error = false;
                     }

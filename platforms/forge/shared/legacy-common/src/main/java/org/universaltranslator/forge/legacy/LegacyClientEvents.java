@@ -21,6 +21,7 @@ import org.universaltranslator.core.HudIndicatorContent;
 import org.universaltranslator.core.HudIndicatorCorner;
 import org.universaltranslator.core.HomeQuickSettingsState;
 import org.universaltranslator.core.HudIndicatorSettings;
+import org.universaltranslator.core.HudLabelCache;
 import org.universaltranslator.core.OutgoingTranslationPreview;
 import org.universaltranslator.core.TranslationActivity;
 import org.universaltranslator.core.TranslationResult;
@@ -52,6 +53,17 @@ public final class LegacyClientEvents {
      * window is applied by {@code ForgeRuntimeStatusNotifier} in the 1.21, 26.x and modern trees.
      */
     private static final long STATUS_NOTIFICATION_INTERVAL_MILLIS = 1_000L;
+    /**
+     * The activity label last resolved from the language table, and when.
+     *
+     * <p>The indicator is painted from every {@code RenderGameOverlayEvent} pass, so resolving this
+     * label per frame cost an {@code I18n.format} call — varargs array, language-table lookup and a
+     * fresh string — sixty times a second for as long as a translation was running. The interval and
+     * the key are the ones the other twelve trees share through {@code HudLabelCache}. One value and
+     * one timestamp need no clearing, the same reasoning the sibling caches use.
+     */
+    private static String activityText;
+    private static long activityResolvedAt;
     /**
      * Title-screen button geometry.
      *
@@ -443,7 +455,7 @@ public final class LegacyClientEvents {
         } else if (content == HudIndicatorContent.PROVIDER) {
             label = quickSettings.getProvider();
         } else if (content == HudIndicatorContent.ACTIVITY && TranslationActivity.isTranslating()) {
-            label = I18n.format("value.universal_translator.hud_content.activity");
+            label = activityLabel();
         }
         if (label == null || label.isEmpty()) {
             return;
@@ -464,6 +476,24 @@ public final class LegacyClientEvents {
         } finally {
             LegacyRenderContext.popTextInput();
         }
+    }
+
+    /**
+     * The activity label, resolved at most once per {@code HudLabelCache.REFRESH_MILLIS}.
+     *
+     * <p>One second rather than the whole session for the same reason the sibling caches use it: the
+     * player can change the language while the game runs.
+     */
+    private static String activityLabel() {
+        long now = System.currentTimeMillis();
+        String cached = activityText;
+        if (cached != null && now - activityResolvedAt < HudLabelCache.REFRESH_MILLIS) {
+            return cached;
+        }
+        String resolved = I18n.format(HudLabelCache.ACTIVITY_KEY);
+        activityText = resolved;
+        activityResolvedAt = now;
+        return resolved;
     }
 
     /**

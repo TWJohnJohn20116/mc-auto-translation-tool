@@ -1,7 +1,6 @@
 package org.universaltranslator.fabric;
 
 import net.minecraft.text.LiteralText;
-import net.minecraft.text.MutableText;
 import net.minecraft.text.Style;
 import net.minecraft.text.Text;
 import org.universaltranslator.core.TextKind;
@@ -92,16 +91,19 @@ public final class RenderedTextBridge {
                 || !FabricTranslationRuntimeBase.renderTranslationEnabled()) {
             return text;
         }
+        String original = text.getString();
+        // Translated before the run walk and handed to it: the walk used to translate every run on
+        // its own, so a two-segment chat line sent two requests and each half was translated without
+        // the other.
+        String translated = translateRaw(original);
         // A component whose visible text does not all render with the root's own style has to be
         // rebuilt run by run: flattening it below keeps the root style alone, which is how a team
-        // prefix and the name after it came out in one colour. Asked before getString() so an
-        // ordinary label still costs one string copy.
-        Text styled = text.getSiblings().isEmpty() ? null : translateStyledSiblings(text);
+        // prefix and the name after it came out in one colour.
+        Text styled = text.getSiblings().isEmpty()
+                ? null : translateStyledSiblings(text, original, translated);
         if (styled != null) {
             return styled;
         }
-        String original = text.getString();
-        String translated = translateRaw(original);
         if (original.equals(translated)) {
             return text;
         }
@@ -115,15 +117,16 @@ public final class RenderedTextBridge {
     }
 
     /**
-     * Rebuilds the translation as one child per style the source's visible text renders with, so
-     * every server-provided style survives; flattening the component into a single literal keeps
-     * only the style of the node it was flattened from. Returns {@code null} when the visible text
-     * already renders with the root's own style, so the caller keeps the ordinary path.
+     * Rebuilds the line from the caller's one translation, carrying the style of the run its visible
+     * text starts with: server-provided styles cannot be mapped segment by segment onto a translation
+     * that no longer aligns with them. Returns {@code null} when the visible text already renders
+     * with the root's own style, or when it came back unchanged, so the caller keeps the ordinary
+     * path.
      *
      * <p>Invariant: a rebuild may only be returned when the runs cover every visible character, so
      * no node can drop out of the line.
      */
-    private static Text translateStyledSiblings(Text text) {
+    private static Text translateStyledSiblings(Text text, String visible, String translated) {
         List<String> texts = new ArrayList<String>();
         List<Object> styleKeys = new ArrayList<Object>();
         List<Style> styles = new ArrayList<Style>();
@@ -152,22 +155,25 @@ public final class RenderedTextBridge {
         }
         TranslationTextColor color = TranslationStyleRuns.resolveTranslatedColor(
                 sourceHasColor, FabricTranslationRuntime.translatedTextColor());
-        MutableText rebuilt = new LiteralText("");
-        rebuilt.setStyle(text.getStyle());
-        for (TranslationStyleRuns.Run run : runs) {
-            String translatedRun = translateRaw(run.text());
-            Style runStyle = styles.get(run.sourceIndex());
-            if (color == TranslationTextColor.ORIGINAL || translatedRun.equals(run.text())) {
-                rebuilt.append(new LiteralText(translatedRun).setStyle(runStyle));
-                continue;
-            }
-            // This generation has no Style.withColor, so the configured colour travels as a legacy
-            // code inside the run — and only when the source carries no colour of its own, which is
-            // the one case resolveTranslatedColor does not answer ORIGINAL for.
-            rebuilt.append(new LiteralText(TranslationTextStyling.applyTranslatedStyle(
-                    run.text(), translatedRun, color)).setStyle(runStyle));
+        // runs indexes into texts, never into styles; keep a misalignment from throwing out of the
+        // middle of a draw and losing the frame.
+        int firstRun = runs.get(0).sourceIndex();
+        if (firstRun < 0 || firstRun >= styles.size()) {
+            return null;
         }
-        return rebuilt;
+        // One translation for the whole line: a run boundary is a style change, not a sentence
+        // boundary, and per-run translation sent one request per segment with neither half carrying
+        // the context the other provided.
+        if (visible.equals(translated)) {
+            return null;
+        }
+        // This generation has no Style.withColor, so the configured colour travels as a legacy code
+        // inside the line — and only when the source carries no colour of its own, which is the one
+        // case resolveTranslatedColor does not answer ORIGINAL for.
+        String styled = color == TranslationTextColor.ORIGINAL
+                ? translated
+                : TranslationTextStyling.applyTranslatedStyle(visible, translated, color);
+        return new LiteralText(styled).setStyle(styles.get(firstRun));
     }
 
     /**

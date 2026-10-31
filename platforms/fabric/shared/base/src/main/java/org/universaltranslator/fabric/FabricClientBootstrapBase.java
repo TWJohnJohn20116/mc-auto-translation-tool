@@ -220,7 +220,9 @@ public abstract class FabricClientBootstrapBase implements ClientModInitializer 
                 // close stays inline there and one shutdown keeps one thread. Every other generation
                 // calls the hook on the client thread, where the same close blocks "close the game"
                 // for up to five seconds with no upper bound, so it gets the bounded wait those trees
-                // already used — the budget the older copies took from ShutdownBudget.
+                // already used — the budget the older copies took from ShutdownBudget. The one
+                // generation that registers this hook itself (1.16/1.16.1) therefore names its hook
+                // thread something else, or the check above would swallow its bound.
                 if (TEARDOWN_THREAD_NAME.equals(Thread.currentThread().getName())) {
                     FabricTranslationRuntime.shutdown();
                     return;

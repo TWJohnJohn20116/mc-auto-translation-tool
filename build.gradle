@@ -876,6 +876,67 @@ tasks.register("validateSharedPlatformLayouts") {
                             "HudLabelCache instead of declaring their own:\n" + hudProblems.join("\n"))
         }
 
+        // The list above only proves that those four files agree. A fifth HUD label cache that spells
+        // the key out again is invisible to it: the build stays green and the new copy keeps
+        // resolving a key that no lang file has after the next rename, which is how the four copies
+        // drifted apart in the first place. So the literal is scanned for instead of enumerated; it
+        // may only appear in its own definition plus the copies nobody has moved onto
+        // HudLabelCache.ACTIVITY_KEY yet. Both directions throw, because an entry left behind after
+        // one of those copies is fixed would let the gap reopen unnoticed.
+        def hudActivityKey = "value.universal_translator.hud_content.activity"
+        def hudActivityKeySources = [
+                "translator-core/src/main/java/org/universaltranslator/core/HudLabelCache.java",
+                // 26.x paints its own HUD label and still resolves it from the literal; it is mounted
+                // by every fabric 26.x target and ships in fabric-all.
+                "platforms/fabric/26.x/shared/common/src/client/java/org/universaltranslator/fabric/mixin/HudIndicatorPainter.java",
+                // The legacy Forge jars (1.8.9 and 1.12.2) have no label cache at all, so this is
+                // their only HUD label path.
+                "platforms/forge/shared/legacy-common/src/main/java/org/universaltranslator/forge/legacy/LegacyClientEvents.java"
+        ]
+        // Same reasoning for the interval: these are the only HUD label intervals still written as a
+        // literal instead of taking HudLabelCache.REFRESH_MILLIS.
+        def hudLabelRefreshLiterals = [
+                "platforms/fabric/26.x/shared/common/src/client/java/org/universaltranslator/fabric/mixin/HudIndicatorPainter.java"
+        ]
+        def hudOwnLabelRefresh = ~/(?m)^\s*(?:private|public|protected)\s+static\s+final\s+long\s+\w*(?:ACTIVITY|LABEL|HUD)\w*REFRESH\w*\s*=\s*\d+/
+        def hudActivityKeySites = new TreeSet<String>()
+        def hudLabelRefreshSites = new TreeSet<String>()
+        ["platforms", "translator-core/src/main/java"].each { String scanRoot ->
+            fileTree(scanRoot) {
+                include "**/*.java"
+                exclude "**/build/**"
+                exclude "**/.gradle/**"
+            }.files.findAll { it.isFile() }.each { File source ->
+                def text = source.getText("UTF-8")
+                def path = relativePath(source).replace('\\', '/')
+                if (text.contains(hudActivityKey)) {
+                    hudActivityKeySites.add(path)
+                }
+                if (hudOwnLabelRefresh.matcher(text).find()) {
+                    hudLabelRefreshSites.add(path)
+                }
+            }
+        }
+        def undeclaredKeySites = hudActivityKeySites.findAll { !hudActivityKeySources.contains(it) }.sort()
+        def staleKeySites = hudActivityKeySources.findAll { !hudActivityKeySites.contains(it) }.sort()
+        if (!undeclaredKeySites.isEmpty() || !staleKeySites.isEmpty()) {
+            throw new GradleException(
+                    "The HUD activity label key must be read from HudLabelCache.ACTIVITY_KEY; the raw " +
+                            "literal may only stay in the files hudActivityKeySources names.\n" +
+                            "Spelling it out outside that list: " +
+                            (undeclaredKeySites.isEmpty() ? "none" : undeclaredKeySites.join(", ")) + "\n" +
+                            "Listed but no longer spelling it, so drop the entry: " +
+                            (staleKeySites.isEmpty() ? "none" : staleKeySites.join(", ")))
+        }
+        def undeclaredRefreshSites = hudLabelRefreshSites.findAll {
+            !hudLabelRefreshLiterals.contains(it)
+        }.sort()
+        if (!undeclaredRefreshSites.isEmpty()) {
+            throw new GradleException(
+                    "A HUD label refresh interval is declared as a literal; read it from " +
+                            "HudLabelCache.REFRESH_MILLIS instead:\n" + undeclaredRefreshSites.join("\n"))
+        }
+
         // A fully qualified name may exist more than once only in trees that never share a source
         // set: one extra copy is a javac "duplicate class" failure for every target of that tree, and
         // ForgeLocalTextGuard already did that once. The allowed copies are listed explicitly, since

@@ -90,7 +90,7 @@ Forge 只在已驗證相容的相鄰版本間共用 JAR，沒有 Fabric 那種�
 ### NeoForge：必須依版本分開
 
 NeoForge / FML **不能**像 Fabric Loader 那樣，在同一個 JAR 裡巢狀多套同 `modId` 實作再依遊戲版本只啟用一套：重複 modId 會無法載入，Jar-in-Jar 只用來嵌入相依函式庫。1.20.1（Java 17、NeoForge 47）與 1.21.1 / 1.21.3 / 1.21.11（Java 21、NeoForge 21.1 / 21.3 / 21.11）API 也不相容，所以正式版是每個 Minecraft 版本一顆獨立 JAR，共 19 顆。NeoForge 只有下表這 19 個版本：1.20.2
-的座標無法解析、1.20.3 沒有對應目標，兩者都不提供下載。
+的座標無法解析、1.20.3 與 1.20.5 沒有對應目標，三者都不提供下載。
 
 | Minecraft | NeoForge | Java | 下載 |
 | --- | --- | ---: | --- |

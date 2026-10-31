@@ -1617,7 +1617,8 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
                             key = "screen.universal_translator.engine.test_need_model";
                             error = true;
                         } else {
-                            ProviderProbe.probe(startedProvider, endpointValue, keyValue, model);
+                            ProviderProbe.probe(startedProvider, endpointValue, keyValue, model,
+                                    original.editorApiVersion(startedProvider));
                             key = "screen.universal_translator.engine.test_ok_probe";
                             argument = model;
                             error = false;

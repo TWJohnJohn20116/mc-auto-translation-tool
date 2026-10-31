@@ -5,6 +5,7 @@ import org.universaltranslator.core.TranslationDisplayMode;
 import org.universaltranslator.core.TranslationQuality;
 import org.universaltranslator.core.TranslationStats;
 import org.universaltranslator.core.DebugLog;
+import org.universaltranslator.core.PersistentTranslationCache;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.HudIndicatorColor;
 import org.universaltranslator.core.HudIndicatorContent;
@@ -293,7 +294,7 @@ final class LegacyConfig {
         properties.setProperty("config-version", "6");
         LocalConfigSecurity.restrictToOwner(file.toPath());
         LegacyConfig loaded = new LegacyConfig(
-                properties, file, new File(configDirectory, "universal-translator-cache.properties"));
+                properties, file, new File(configDirectory, PersistentTranslationCache.FILE_NAME));
         if (migrated || recovered) {
             try {
                 loaded.save();
@@ -602,6 +603,10 @@ final class LegacyConfig {
 
     String editorModel(String selectedProvider) {
         return onlineProviderConfig.llmEditorSettings(selectedProvider).model();
+    }
+
+    String editorApiVersion(String selectedProvider) {
+        return onlineProviderConfig.llmEditorApiVersion(selectedProvider);
     }
 
     boolean allows(TextKind kind) {

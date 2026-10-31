@@ -1089,7 +1089,8 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         // the screen opened: restoring the snapshot would undo changes made from elsewhere meanwhile.
         FabricConfig base = writeBackBase();
         try {
-            FabricConfig updated = base.withSettings(
+            // One snapshot for the whole form: the file is read once instead of once per group.
+            FabricConfig updated = base.withAllSettings(
                     enabled,
                     translateChat,
                     translateOther,
@@ -1114,12 +1115,14 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
                     animatedUi,
                     new HudIndicatorSettings(hudIndicator, hudIndicatorCorner, hudIndicatorSize,
                             hudIndicatorMargin, hudIndicatorColor, hudIndicatorContent,
-                            hudIndicatorVisibility, hudIndicatorOffsetX, hudIndicatorOffsetY))
+                            hudIndicatorVisibility, hudIndicatorOffsetX, hudIndicatorOffsetY),
                     // Save writes the engine tab's prompt controls too, so applying the prompt and
                     // then saving cannot silently restore the value the screen was opened with.
-                    .withPromptSettings(quality, TranslationPrompt.clampEditorText(
-                            customPrompt == null ? "" : customPrompt.getText()))
-                    .withTranslationTuning(workers, batchSize);
+                    quality,
+                    TranslationPrompt.clampEditorText(
+                            customPrompt == null ? "" : customPrompt.getText()),
+                    workers,
+                    batchSize);
             if (updated.enabled && "tencent-hunyuan".equalsIgnoreCase(updated.provider)
                     && (updated.tencentSecretId.isEmpty() || updated.tencentSecretKey.isEmpty())) {
                 throw new IllegalArgumentException(tr("error.universal_translator.tencent_credentials"));
@@ -1513,7 +1516,8 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
                         message = tr("screen.universal_translator.engine.test_need_model");
                         error = true;
                     } else {
-                        ProviderProbe.probe(provider, endpointValue, keyValue, model);
+                        ProviderProbe.probe(provider, endpointValue, keyValue, model,
+                                original.editorApiVersion(provider));
                         message = tr("screen.universal_translator.engine.test_ok_probe", model);
                         error = false;
                     }

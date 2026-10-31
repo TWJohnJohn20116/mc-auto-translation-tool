@@ -50,6 +50,7 @@ public final class CoreSelfTest {
         separatesRequestsWithDifferentProtectedLiterals();
         completesQueuedRequestsWhenClosed();
         fallsBackToOriginalOnFailure();
+        translatesHanTextForATraditionalTarget();
         enforcesSafeEndpoints();
         handlesJsonStrings();
         updatesRenderLookupsWithoutBlocking();
@@ -1568,6 +1569,13 @@ public final class CoreSelfTest {
         assertTrue(LanguageHeuristics.shouldTranslate("Return only the translation", "zh-CN"));
         assertFalse(LanguageHeuristics.shouldTranslate(
                 "Translate the user text to Simplified Chinese", "zh-CN"));
+        // "你是一个翻译引擎" is an ordinary mod-UI string and "You are a translation engine" is the
+        // only correct English rendering of it, so that answer is a translation. Judging it as an
+        // echoed instruction failed the line for good and bought the same refusal every thirty
+        // seconds; a longer answer carrying the sentence is still an echo (asserted above).
+        assertEquals("You are a translation engine", TranslationOutputValidator.requireValid(
+                "你是一个翻译引擎", "You are a translation engine"));
+        assertTrue(LanguageHeuristics.shouldTranslate("You are a translation engine", "zh-CN"));
         // Every prompt asks the model to preserve punctuation, so the answer arrives carrying the
         // source's own full stop. Comparing the bare sentence only rejected that answer forever, and
         // a rejection buys the same answer again every thirty seconds.
@@ -1784,6 +1792,35 @@ public final class CoreSelfTest {
                     .get(2, TimeUnit.SECONDS);
             assertTrue(result.isFailure());
             assertEquals("Server restarting", result.getTranslatedText());
+        }
+    }
+
+    /**
+     * A Traditional Chinese target has to convert Simplified input, so with Han protection on the Han
+     * text is the content to translate there and not a value to carry over. Protecting it as well left
+     * the template without a single letter, so the line was answered "nothing to translate" and the
+     * preset never converted anything on a default installation.
+     */
+    private static void translatesHanTextForATraditionalTarget() throws Exception {
+        KindRecordingProvider converter = new KindRecordingProvider();
+        try (TranslationCoordinator coordinator = new TranslationCoordinator(
+                converter, new TranslationCache(100), 1)) {
+            TranslationResult converted = coordinator.translate(
+                    "\u91d1\u5e63\uff1a123", "auto", "zh-TW", TextKind.SCOREBOARD_LINE,
+                    Collections.<String>emptyList(), true).get(2, TimeUnit.SECONDS);
+            assertTrue(converted.isTranslated());
+            assertEquals(1, converter.calls.get());
+        }
+        // The same line towards the Simplified preset already holds the script it asks for, so it must
+        // still cost no request at all.
+        KindRecordingProvider skipped = new KindRecordingProvider();
+        try (TranslationCoordinator coordinator = new TranslationCoordinator(
+                skipped, new TranslationCache(100), 1)) {
+            TranslationResult unchanged = coordinator.translate(
+                    "\u91d1\u5e63\uff1a123", "auto", "zh-CN", TextKind.SCOREBOARD_LINE,
+                    Collections.<String>emptyList(), true).get(2, TimeUnit.SECONDS);
+            assertFalse(unchanged.isTranslated());
+            assertEquals(0, skipped.calls.get());
         }
     }
 

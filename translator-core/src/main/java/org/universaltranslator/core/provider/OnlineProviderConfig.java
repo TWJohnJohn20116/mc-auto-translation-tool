@@ -268,6 +268,20 @@ public final class OnlineProviderConfig {
         return new LlmEditorSettings(value(keys[0]), value(keys[1]), value(keys[2]));
     }
 
+    /**
+     * The {@code api-version} the translation path would use for the selected provider.
+     *
+     * <p>Only Azure OpenAI addresses its resource with a version query, and the value lives in a key
+     * its settings screens never show: {@link #create} builds the provider from
+     * {@code azure-openai-api-version}, so a connection test that could only reach the pinned default
+     * disagreed with the translation it was checking. Every other provider answers {@code null},
+     * which means "there is no version to pass".
+     */
+    public String llmEditorApiVersion(String provider) {
+        String selected = provider == null ? "" : provider.trim().toLowerCase(java.util.Locale.ROOT);
+        return "azure-openai".equals(selected) ? value("azure-openai-api-version") : null;
+    }
+
     /** Selected translation quality mode; an unknown value falls back to the historical prompt. */
     public TranslationQuality translationQuality() {
         return TranslationQuality.fromConfig(value(QUALITY_KEY));

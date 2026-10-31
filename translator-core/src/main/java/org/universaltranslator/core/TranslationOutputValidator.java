@@ -25,21 +25,32 @@ public final class TranslationOutputValidator {
     /** "只输出译文" rendered into an English target; also a plain imperative sentence. */
     private static final String OUTPUT_TRANSLATED_ONLY = "output translated text only";
     /**
+     * "你是一个翻译引擎" rendered into an English target; outside the mod's own prompts it is also how a
+     * model opens its answer.
+     *
+     * <p>Named once because two lists carry it: the presence test in
+     * {@link #HISTORICAL_INSTRUCTION_FRAGMENTS} and the whole-answer test below. Spelling the sentence
+     * in both places is what kept it on the rejecting side after the other three were moved.
+     */
+    private static final String TRANSLATION_ENGINE_ROLE = "you are a translation engine";
+    /**
      * Prompt sentences that are also ordinary English imperatives, so one sentence alone can be either
      * a restated instruction or the translation of the source line.
      *
      * <p>"只返回译文", "仅回复译文" and "只输出译文" are ordinary mod-UI strings, and these three are
-     * exactly how a model renders them into an English target. Presence inside a longer answer is still
-     * the echo {@link #containsInstructionArtifact(String)} exists for -- a restated prompt carries its
-     * other phrasing too -- but an answer that is one of these sentences and nothing else is judged as
-     * a translation, on the output side and on the source side alike. Judging presence alone rejected
-     * that translation forever: a rejection is not the "cannot succeed" verdict, so the line bought the
-     * same refusal every thirty seconds and never showed anything.
+     * exactly how a model renders them into an English target; "你是一个翻译引擎" has one English
+     * rendering too, and that sentence is the only correct answer its source can get. Presence inside a
+     * longer answer is still the echo {@link #containsInstructionArtifact(String)} exists for -- a
+     * restated prompt carries its other phrasing too -- but an answer that is one of these sentences
+     * and nothing else is judged as a translation, on the output side and on the source side alike.
+     * Judging presence alone rejected that translation forever: a rejection is not the "cannot succeed"
+     * verdict, so the line bought the same refusal every thirty seconds and never showed anything.
      */
     private static final String[] AMBIGUOUS_ECHO_PHRASES = {
             RETURN_ONLY_TRANSLATION,
             REPLY_ONLY_TRANSLATION,
-            OUTPUT_TRANSLATED_ONLY
+            OUTPUT_TRANSLATED_ONLY,
+            TRANSLATION_ENGINE_ROLE
     };
     /**
      * Phrasing earlier prompt versions used.
@@ -53,7 +64,7 @@ public final class TranslationOutputValidator {
      * failure, while a source carrying one of them was never sent to a provider at all because
      * {@link LanguageHeuristics} reads it as an internal artifact.
      *
-     * <p>The three entries that are also plain English imperatives stay here for their presence test;
+     * <p>The four entries that are also plain English imperatives stay here for their presence test;
      * {@link #AMBIGUOUS_ECHO_PHRASES} carries the same constants so a whole-answer match can be judged
      * differently without spelling the sentences twice.
      */
@@ -61,12 +72,15 @@ public final class TranslationOutputValidator {
             "translate minecraft server interface text",
             "minecraft server interface text from",
             "translate the minecraft ui text",
+            // Known misfire, kept on purpose: this one sits in the middle of a sentence ("Translate the
+            // user text to Simplified Chinese"), where the whole-answer rule cannot reach it. The fix
+            // for it is a source-side list separate from the answer-side one, not another entry here.
             "translate the user text to",
             "minecraft ui text in zh-cn",
             RETURN_ONLY_TRANSLATION,
             REPLY_ONLY_TRANSLATION,
             OUTPUT_TRANSLATED_ONLY,
-            "you are a translation engine",
+            TRANSLATION_ENGINE_ROLE,
             "preserve tokens like",
             "keep every __ut_",
             "copy every __ut_",

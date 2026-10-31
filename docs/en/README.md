@@ -105,7 +105,7 @@ only the one matching the current game, the way Fabric Loader does. Duplicate mo
 and Jar-in-Jar is for embedding libraries. 1.20.1 (Java 17, NeoForge 47) is also incompatible with
 1.21.1 / 1.21.3 / 1.21.11 (Java 21, NeoForge 21.1 / 21.3 / 21.11), so the stable release ships one separate
 JAR per game version, nineteen in total. NeoForge ships only the nineteen versions in the table
-below: 1.20.2 cannot resolve its coordinates and 1.20.3 has no target, so neither is downloadable.
+below: 1.20.2 cannot resolve its coordinates, and 1.20.3 and 1.20.5 have no target, so none of them is downloadable.
 
 | Minecraft | NeoForge | Java | Download |
 | --- | --- | ---: | --- |

@@ -10,6 +10,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.universaltranslator.fabric.UniversalTranslatorFabricClient;
 import org.universaltranslator.fabric.ActionButton;
+import org.universaltranslator.fabric.HomeButtonPlacement;
 import org.universaltranslator.fabric.OrnitheClientAccess;
 
 @Mixin(TitleScreen.class)
@@ -19,8 +20,8 @@ abstract class TitleScreenMixin extends Screen {
 
     @Inject(method = "init()V", at = @At("TAIL"), require = 0)
     private void universalTranslator$addQuickSettings(CallbackInfo callback) {
-        int x = Math.max(4, this.width - 136);
-        this.addButton(new ActionButton(UT_OPEN, x, 6, 132, 20,
+        this.addButton(new ActionButton(UT_OPEN, HomeButtonPlacement.x(this.width),
+                HomeButtonPlacement.MARGIN_Y, HomeButtonPlacement.WIDTH, HomeButtonPlacement.HEIGHT,
                 OrnitheClientAccess.tr("screen.universal_translator.home.open"),
                 () -> UniversalTranslatorFabricClient.openSettingsScreen(this)));
     }

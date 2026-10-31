@@ -161,13 +161,9 @@ public final class UniversalTranslatorForgeClient {
         } catch (Exception exception) {
             // Still open the screen with whatever the runtime holds so the player can fix the
             // broken setting from the UI; a silent return here is what made the entry a dead key.
-            config = ForgeTranslationRuntime.diagnosticsConfig();
-            if (config == null) {
-                // shutdown() drops the live copy on a failed load, so the snapshot this process did
-                // manage to read is the only one left to edit; without it this whole branch is
-                // unreachable, because liveOrLoad only throws when the live copy is already null.
-                config = ForgeConfig.lastLoaded();
-            }
+            // shutdown() drops the live copy on a failed load, so the snapshot this process did
+            // manage to read is the only one left to edit.
+            config = ForgeConfig.forEditingOrNull(FMLPaths.CONFIGDIR.get());
             if (config == null) {
                 UniversalTranslatorForgeMod.LOGGER.error(LogMessages.SETTINGS_OPEN_FAILED, exception);
                 return;
@@ -186,10 +182,7 @@ public final class UniversalTranslatorForgeClient {
         } catch (Exception exception) {
             // Same fallback as the title-screen entry: a configuration that cannot be re-read is
             // the case this screen exists for, so it opens on the last snapshot this process had.
-            ForgeConfig fallback = ForgeTranslationRuntime.diagnosticsConfig();
-            if (fallback == null) {
-                fallback = ForgeConfig.lastLoaded();
-            }
+            ForgeConfig fallback = ForgeConfig.forEditingOrNull(FMLPaths.CONFIGDIR.get());
             if (fallback != null) {
                 UniversalTranslatorForgeMod.LOGGER.warn(
                         "Translation settings could not be re-read; opening the last loaded copy",

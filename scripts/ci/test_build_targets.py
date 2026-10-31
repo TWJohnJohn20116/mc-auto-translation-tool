@@ -7,7 +7,7 @@ build.yml 裡的靜態 matrix（AGENTS.md 要求 build.yml 維持靜態 matrix�
 
 另外兩件事也釘在這裡，因為 `scripts/ci/build-targets.json` 是唯一被文件指名的權威清單：
 `legacy-targets.yml` 與 `prepare-release.yml` 那兩份 heredoc JSON 的「目標 → JDK」必須與
-`build.gradle` 的 26.x toolchain 前綴一致，否則清單與 matrix 一起寫錯時仍會全綠。
+`settings.gradle` 的 `gradle.ext.toolchainJavaFor` 一致，否則清單與 matrix 一起寫錯時仍會全綠。
 """
 
 import json
@@ -27,22 +27,47 @@ TARGET_ENTRY = re.compile(r'"target":\s*"([^"]+)"')
 PREPARE_WORKFLOW = ROOT / ".github" / "workflows" / "prepare-release.yml"
 LEGACY_WORKFLOW = ROOT / ".github" / "workflows" / "legacy-targets.yml"
 SETTINGS = ROOT / "settings.gradle"
+BUILD = ROOT / "build.gradle"
 
 #: `platformProjects` 裡 Forge／NeoForge 的那一半。Fabric 那一半由 settings.gradle 的
 #: `undeclaredProjects` 在配置階段 throw，Forge 那一半由 `releaseOnlyForgeTargets` 明列例外。
 FORGE_NEOFORGE_DECLARATION = re.compile(r'"(platform-(?:forge|neoforge)-[^"]+)"\s*:')
 
-# build.gradle 的 subprojects 區塊只對這三個前綴給 Java 25 toolchain，其餘一律 21。三個字串在那裡
-# 是逐字寫的，而「哪個目標用哪個 JDK」在四份清單（build.yml matrix、build-targets.json、
-# legacy-targets.yml、prepare-release.yml）各講一次：兩份都錯成 21 時既有的 JSON↔matrix 比對仍然
-# 全綠，實際建置卻在 setup-java 裝了 21 之後才以 "release version 25 not supported" 失敗
-# （AGENTS.md 記載的 2026-10-06 型態）。改 build.gradle:13-15 的前綴時，這裡要跟著改。
-TOOLCHAIN_25_PREFIXES = ("platform-fabric-26.", "platform-forge-26.", "platform-neoforge-26.")
+# 「哪個目標用哪個 JDK」在四份清單（build.yml matrix、build-targets.json、legacy-targets.yml、
+# prepare-release.yml）各講一次：兩份都錯成 21 時既有的 JSON↔matrix 比對仍然全綠，實際建置卻在
+# setup-java 裝了 21 之後才以 "release version 25 not supported" 失敗（AGENTS.md 記載的
+# 2026-10-06 型態）。規則本體只有一份——settings.gradle:341-346 的 gradle.ext.toolchainJavaFor，
+# build.gradle 的 subprojects 與 gradle/fabric-bundle-aggregate-verify.gradle 的 launcher 都呼叫它
+# ——所以這裡改為解析同一份文字。留一份硬編副本的話，規則搬家或改前綴時清單與副本會一起保持舊值
+# 而全綠，正是這條測試要防的事。
+TOOLCHAIN_RULE_HEADER = "gradle.ext.toolchainJavaFor = {"
+TOOLCHAIN_PREFIX_CALL = re.compile(r'name\.startsWith\("(platform-[^"]+)"\)')
+TOOLCHAIN_LEVELS = re.compile(r"\?\s*(\d+)\s*:\s*(\d+)")
+
+
+def toolchain_rule_body():
+    text = SETTINGS.read_text(encoding="utf-8")
+    if TOOLCHAIN_RULE_HEADER not in text:
+        raise AssertionError("settings.gradle 找不到 " + TOOLCHAIN_RULE_HEADER)
+    return text.split(TOOLCHAIN_RULE_HEADER, 1)[1].split("\n}", 1)[0]
+
+
+def toolchain_25_prefixes():
+    """settings.gradle:341-346 要 Java 25 的前綴（現況是 fabric／forge／neoforge 三個 26.x）。"""
+    body = toolchain_rule_body()
+    prefixes = tuple(TOOLCHAIN_PREFIX_CALL.findall(body))
+    # 解析不到時不能當成「沒有前綴、全部 21」而讓四份清單靜默通過：那是規則換了形狀。
+    if not prefixes or body.count("startsWith(") != len(prefixes):
+        raise AssertionError("settings.gradle 的 toolchain 規則解析不出前綴：\n" + body)
+    return prefixes
 
 
 def expected_java(project):
-    """build.gradle:13-15 的 toolchain 規則：26.x 的三個前綴要 25，其餘 21。"""
-    return "25" if project.startswith(TOOLCHAIN_25_PREFIXES) else "21"
+    """settings.gradle:341-346 的 toolchain 規則：前綴命中要 25，其餘 21。"""
+    match = TOOLCHAIN_LEVELS.search(toolchain_rule_body())
+    if match is None:
+        raise AssertionError("settings.gradle 的 toolchain 規則沒有 '? <高> : <低>' 三元式")
+    return match.group(1) if project.startswith(toolchain_25_prefixes()) else match.group(2)
 
 
 def target_entries(path, with_project=False):
@@ -205,7 +230,7 @@ class BuildTargetsTest(unittest.TestCase):
             self.assertEqual(
                 expected_java("platform-" + entry["target"]),
                 entry["java"],
-                "scripts/ci/build-targets.json 的 %s 與 build.gradle 的 toolchain 前綴不一致"
+                "scripts/ci/build-targets.json 的 %s 與 settings.gradle 的 toolchain 規則不一致"
                 % entry["target"],
             )
 
@@ -214,7 +239,7 @@ class BuildTargetsTest(unittest.TestCase):
             self.assertEqual(
                 expected_java("platform-" + entry["target"]),
                 entry["java"],
-                "scripts/ci/build-targets.json 的 legacy 目標 %s 與 build.gradle 的 toolchain 前綴不一致"
+                "scripts/ci/build-targets.json 的 legacy 目標 %s 與 settings.gradle 的 toolchain 規則不一致"
                 % entry["target"],
             )
 
@@ -238,7 +263,7 @@ class BuildTargetsTest(unittest.TestCase):
             self.assertEqual(
                 expected_java(entry["project"]),
                 entry["java"],
-                "prepare-release.yml 的 %s 與 build.gradle 的 toolchain 前綴不一致"
+                "prepare-release.yml 的 %s 與 settings.gradle 的 toolchain 規則不一致"
                 % entry["target"],
             )
         # 這兩個是獨立 Gradle 建置（platforms/forge/legacy/*），JDK 8 寫在各自的 setup-java。
@@ -262,7 +287,24 @@ class BuildTargetsTest(unittest.TestCase):
             self.assertEqual(
                 expected_java("platform-" + entry["target"]),
                 entry["java"],
-                "legacy-targets.yml 的 %s 與 build.gradle 的 toolchain 前綴不一致" % entry["target"],
+                "legacy-targets.yml 的 %s 與 settings.gradle 的 toolchain 規則不一致" % entry["target"],
+            )
+
+    def test_toolchain_rule_is_delegated_and_not_copied(self):
+        # C11-007 把「26.x ⇒ 25」收斂成 settings.gradle 的一份規則，build.gradle 只剩呼叫。若有人把
+        # 前綴表抄回 build.gradle，兩份副本會各自漂移，而上面四個清單比對仍全綠——它們比的是
+        # settings.gradle 那一份，所以漂移的是編譯器真正用的那一份時沒有東西會紅。
+        text = BUILD.read_text(encoding="utf-8")
+        self.assertIn(
+            "gradle.ext.toolchainJavaFor",
+            text,
+            "build.gradle 必須透過 gradle.ext.toolchainJavaFor 取得 toolchain，不得自己再判斷",
+        )
+        for prefix in toolchain_25_prefixes():
+            self.assertNotIn(
+                '"%s"' % prefix,
+                text,
+                "build.gradle 又抄了一份 toolchain 前綴（%s）：規則本體只能在 settings.gradle" % prefix,
             )
 
     def test_every_forge_and_neoforge_project_is_built_or_declared(self):

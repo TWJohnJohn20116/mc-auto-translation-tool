@@ -541,7 +541,12 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
                 updated.validateProviderConfiguration();
             }
             ForgeTranslationRuntime.initialize(updated);
-            ForgeConfigWriter.saveNow(updated);
+            // Queued off the render thread: the prompt is already live through initialize(), and the
+            // click no longer pays a temporary create, a write, an atomic move and two ownership
+            // changes before the next frame. The failure still reaches this tab's status line.
+            ForgeConfigWriter.saveOffTick(updated, failure -> setTestStatus(
+                    tr("screen.universal_translator.diagnostics.settings_failed", describe(failure)),
+                    true));
             setTestStatus(tr("screen.universal_translator.diagnostics.settings_saved"), false);
         } catch (Exception exception) {
             setTestStatus(tr("screen.universal_translator.diagnostics.settings_failed",
@@ -1058,7 +1063,8 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
                         message = tr("screen.universal_translator.engine.test_need_model");
                         error = true;
                     } else {
-                        ProviderProbe.probe(provider, endpointValue, keyValue, model);
+                        ProviderProbe.probe(provider, endpointValue, keyValue, model,
+                                original.editorApiVersion(provider));
                         message = tr("screen.universal_translator.engine.test_ok_probe", model);
                         error = false;
                     }
@@ -1105,7 +1111,7 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         testStatus = new TestStatus(message, error);
     }
 
-    private static String describe(Exception error) {
+    private static String describe(Throwable error) {
         String message = error.getMessage();
         return message == null || message.trim().isEmpty() ? error.getClass().getSimpleName() : message;
     }
@@ -1555,12 +1561,17 @@ abstract class UniversalTranslatorDiagnosticsScreenBase extends Screen {
         // The screens have no lifecycle of their own, so class load is the only place a game exit can
         // be observed from here: without this the export thread was still parked on its queue, together
         // with its unbounded task queue, after the client was gone.
-        Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
-            @Override
-            public void run() {
-                EXPORTER.shutdownNow();
-            }
-        }, "universal-translator-diagnostics-export-shutdown"));
+        try {
+            Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    EXPORTER.shutdownNow();
+                }
+            }, "universal-translator-diagnostics-export-shutdown"));
+        } catch (IllegalStateException alreadyStopping) {
+            // The JVM is already shutting down. Letting this escape a static initializer would turn
+            // into an ExceptionInInitializerError and leave the whole diagnostics page unusable.
+        }
     }
 
     /** Vertical distance between two text lines. */
@@ -1700,7 +1711,10 @@ abstract class UniversalTranslatorDiagnosticsScreenBase extends Screen {
         try {
             ForgeConfig updated = live.withDebugLog(debugEnabled);
             ForgeTranslationRuntime.initialize(updated);
-            ForgeConfigWriter.saveNow(updated);
+            // Queued off the render thread: the switch is already live through DebugLog below, and
+            // the click no longer pays a temporary create, a write, an atomic move and two
+            // ownership changes before the next frame.
+            ForgeConfigWriter.saveOffTick(updated, this::reportDebugSaveFailure);
             Path configFile = updated.configFile();
             DebugLog.global().configure(
                     configFile.resolveSibling(DebugLog.FILE_NAME), debugEnabled);
@@ -1721,7 +1735,25 @@ abstract class UniversalTranslatorDiagnosticsScreenBase extends Screen {
         exportFailed = false;
     }
 
-    private String settingsFailure(Exception failure) {
+    /**
+     * Publishes a failed debug-switch write on the client thread.
+     *
+     * <p>The configuration writer is not the client thread, and this screen's state is only touched
+     * by the one that draws it — the same rule the export path follows.
+     */
+    private void reportDebugSaveFailure(Throwable failure) {
+        Runnable apply = () -> {
+            exportStatus = settingsFailure(failure);
+            exportFailed = true;
+        };
+        if (minecraft == null) {
+            apply.run();
+        } else {
+            minecraft.execute(apply);
+        }
+    }
+
+    private String settingsFailure(Throwable failure) {
         String message = failure.getMessage();
         return tr("screen.universal_translator.diagnostics.settings_failed",
                 message == null || message.trim().isEmpty()
@@ -2234,12 +2266,17 @@ final class ScreenWorkers {
     static {
         // Runs once, on class load. The screens that submit work have no lifecycle of their own, so
         // this is the only place a game exit can be observed from here.
-        Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
-            @Override
-            public void run() {
-                shutdown();
-            }
-        }, "universal-translator-screen-worker-shutdown"));
+        try {
+            Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    shutdown();
+                }
+            }, "universal-translator-screen-worker-shutdown"));
+        } catch (IllegalStateException alreadyStopping) {
+            // The JVM is already shutting down. Letting this escape a static initializer would turn
+            // into an ExceptionInInitializerError and leave every screen button without a worker.
+        }
     }
 
     private ScreenWorkers() {

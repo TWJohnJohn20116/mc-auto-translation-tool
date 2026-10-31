@@ -10,6 +10,7 @@ import org.universaltranslator.core.HudIndicatorVisibility;
 import org.universaltranslator.core.TranslationQuality;
 import org.universaltranslator.core.TranslationStats;
 import org.universaltranslator.core.DebugLog;
+import org.universaltranslator.core.PersistentTranslationCache;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TextKind;
 import org.universaltranslator.core.LocalConfigSecurity;
@@ -295,7 +296,7 @@ final class FabricConfig {
         properties.setProperty("config-version", "6");
         LocalConfigSecurity.restrictToOwner(file);
         FabricConfig loaded = new FabricConfig(
-                properties, file, configDirectory.resolve("universal-translator-cache.properties"));
+                properties, file, configDirectory.resolve(PersistentTranslationCache.FILE_NAME));
         // The rewrite is what makes a quarantined file self-healing: without it the defaults would
         // only live in memory and the next start would find no file at all. When the quarantine
         // itself failed (a locked or read-only file) the original is still on disk, and overwriting
@@ -671,6 +672,10 @@ final class FabricConfig {
 
     String editorModel(String selectedProvider) {
         return onlineProviderConfig.llmEditorSettings(selectedProvider).model();
+    }
+
+    String editorApiVersion(String selectedProvider) {
+        return onlineProviderConfig.llmEditorApiVersion(selectedProvider);
     }
 
     boolean allows(TextKind kind) {

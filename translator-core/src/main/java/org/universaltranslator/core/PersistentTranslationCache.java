@@ -49,10 +49,9 @@ public final class PersistentTranslationCache implements TranslationStore {
     /**
      * Sits next to {@code universal-translator.properties} in the game instance's config folder.
      *
-     * <p>Not the source of that path: every platform builds the file itself and hands it to
-     * {@link #shared(Path, int)}, so changing this constant moves nothing -- the four call sites
-     * still pass their own literal. It names the file for a reader of this class, it does not
-     * decide it; a rename has to touch those call sites as well.
+     * <p>The four platform configuration classes resolve this name and hand the resulting path to
+     * {@link #shared(Path, int)}; renaming the file means changing this constant only, because no
+     * platform writes the name out again.
      */
     public static final String FILE_NAME = "universal-translator-cache.properties";
     /** Changed entries tolerated before a rewrite is forced. */
