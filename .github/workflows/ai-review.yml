@@ -78,14 +78,22 @@ jobs:
         run: |
           set -euo pipefail
           settings_dir="$(python -c 'import os, pr_agent; print(os.path.join(os.path.dirname(pr_agent.__file__), "settings"))')"
-          cat > "$settings_dir/.secrets.toml" <<EOF
-          [openai]
-          api_base = "$AI_BASE_URL"
-          key = "$AI_KEY"
+          # 用 Python 寫檔並經 JSON 轉義：secret 內含引號或換行時不會破壞 TOML。
+          python - "$settings_dir/.secrets.toml" <<'PY'
+          import json, os, sys
 
-          [github]
-          user_token = "$AI_GITHUB_TOKEN"
-          EOF
+          lines = [
+              "[openai]",
+              "api_base = " + json.dumps(os.environ["AI_BASE_URL"]),
+              "key = " + json.dumps(os.environ["AI_KEY"]),
+              "",
+              "[github]",
+              "user_token = " + json.dumps(os.environ["AI_GITHUB_TOKEN"]),
+              "",
+          ]
+          with open(sys.argv[1], "w", encoding="utf-8") as handle:
+              handle.write("\n".join(lines))
+          PY
           echo "已寫入 $settings_dir/.secrets.toml（內容受 secret 遮罩）"
 
       - name: 產生 PR 說明
@@ -143,14 +151,22 @@ jobs:
         run: |
           set -euo pipefail
           settings_dir="$(python -c 'import os, pr_agent; print(os.path.join(os.path.dirname(pr_agent.__file__), "settings"))')"
-          cat > "$settings_dir/.secrets.toml" <<EOF
-          [openai]
-          api_base = "$AI_BASE_URL"
-          key = "$AI_KEY"
+          # 用 Python 寫檔並經 JSON 轉義：secret 內含引號或換行時不會破壞 TOML。
+          python - "$settings_dir/.secrets.toml" <<'PY'
+          import json, os, sys
 
-          [github]
-          user_token = "$AI_GITHUB_TOKEN"
-          EOF
+          lines = [
+              "[openai]",
+              "api_base = " + json.dumps(os.environ["AI_BASE_URL"]),
+              "key = " + json.dumps(os.environ["AI_KEY"]),
+              "",
+              "[github]",
+              "user_token = " + json.dumps(os.environ["AI_GITHUB_TOKEN"]),
+              "",
+          ]
+          with open(sys.argv[1], "w", encoding="utf-8") as handle:
+              handle.write("\n".join(lines))
+          PY
           echo "已寫入 $settings_dir/.secrets.toml（內容受 secret 遮罩）"
 
       - name: 執行指令
@@ -203,14 +219,22 @@ jobs:
         run: |
           set -euo pipefail
           settings_dir="$(python -c 'import os, pr_agent; print(os.path.join(os.path.dirname(pr_agent.__file__), "settings"))')"
-          cat > "$settings_dir/.secrets.toml" <<EOF
-          [openai]
-          api_base = "$AI_BASE_URL"
-          key = "$AI_KEY"
+          # 用 Python 寫檔並經 JSON 轉義：secret 內含引號或換行時不會破壞 TOML。
+          python - "$settings_dir/.secrets.toml" <<'PY'
+          import json, os, sys
 
-          [github]
-          user_token = "$AI_GITHUB_TOKEN"
-          EOF
+          lines = [
+              "[openai]",
+              "api_base = " + json.dumps(os.environ["AI_BASE_URL"]),
+              "key = " + json.dumps(os.environ["AI_KEY"]),
+              "",
+              "[github]",
+              "user_token = " + json.dumps(os.environ["AI_GITHUB_TOKEN"]),
+              "",
+          ]
+          with open(sys.argv[1], "w", encoding="utf-8") as handle:
+              handle.write("\n".join(lines))
+          PY
           echo "已寫入 $settings_dir/.secrets.toml（內容受 secret 遮罩）"
 
       - name: 審查指定的 PR
