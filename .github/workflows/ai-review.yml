@@ -64,7 +64,7 @@ jobs:
           python-version: '3.12'
 
       - name: 安裝 PR-Agent
-        run: pip install --disable-pip-version-check pr-agent==0.50.0
+        run: pip install --disable-pip-version-check 'pr-agent[github]==0.50.0'
 
       - name: 寫入端點設定（只在 runner 上，不進版控）
         env:
@@ -75,14 +75,12 @@ jobs:
           echo "已附加 [openai] api_base（值受 secret 遮罩）"
 
       - name: 產生 PR 說明
-        continue-on-error: true
         run: >
           python -m pr_agent.cli
           --pr_url="${{ github.event.pull_request.html_url }}"
           describe
 
       - name: 審查 PR
-        continue-on-error: true
         run: >
           python -m pr_agent.cli
           --pr_url="${{ github.event.pull_request.html_url }}"
@@ -119,7 +117,7 @@ jobs:
           python-version: '3.12'
 
       - name: 安裝 PR-Agent
-        run: pip install --disable-pip-version-check pr-agent==0.50.0
+        run: pip install --disable-pip-version-check 'pr-agent[github]==0.50.0'
 
       - name: 寫入端點設定（只在 runner 上，不進版控）
         env:
@@ -130,7 +128,6 @@ jobs:
           echo "已附加 [openai] api_base（值受 secret 遮罩）"
 
       - name: 執行指令
-        continue-on-error: true
         run: |
           set -euo pipefail
           first_line="$(printf '%s\n' "$COMMENT" | head -n 1)"
@@ -170,7 +167,7 @@ jobs:
           python-version: '3.12'
 
       - name: 安裝 PR-Agent
-        run: pip install --disable-pip-version-check pr-agent==0.50.0
+        run: pip install --disable-pip-version-check 'pr-agent[github]==0.50.0'
 
       - name: 寫入端點設定（只在 runner 上，不進版控）
         env:
@@ -181,7 +178,6 @@ jobs:
           echo "已附加 [openai] api_base（值受 secret 遮罩）"
 
       - name: 審查指定的 PR
-        continue-on-error: true
         run: >
           python -m pr_agent.cli
           --pr_url="https://github.com/${{ github.repository }}/pull/${{ inputs.pr }}"
