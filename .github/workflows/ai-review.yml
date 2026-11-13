@@ -47,7 +47,7 @@ jobs:
       github.event.pull_request.draft == false &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       OPENAI__KEY: ${{ secrets.AI_REVIEW_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.AI_REVIEW_API_KEY }}
@@ -90,6 +90,11 @@ jobs:
               "[github]",
               "user_token = " + json.dumps(os.environ["AI_GITHUB_TOKEN"]),
               "",
+              # ai_timeout 是 host-only 設定，只能從這裡（host 層設定檔）給；
+              # 預設 120 秒對這個端點跑 2 萬 token 的 review 不夠。
+              "[config]",
+              "ai_timeout = 600",
+              "",
           ]
           with open(sys.argv[1], "w", encoding="utf-8") as handle:
               handle.write("\n".join(lines))
@@ -120,7 +125,7 @@ jobs:
        github.event.comment.author_association == 'MEMBER' ||
        github.event.comment.author_association == 'COLLABORATOR')
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       OPENAI__KEY: ${{ secrets.AI_REVIEW_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.AI_REVIEW_API_KEY }}
@@ -163,6 +168,11 @@ jobs:
               "[github]",
               "user_token = " + json.dumps(os.environ["AI_GITHUB_TOKEN"]),
               "",
+              # ai_timeout 是 host-only 設定，只能從這裡（host 層設定檔）給；
+              # 預設 120 秒對這個端點跑 2 萬 token 的 review 不夠。
+              "[config]",
+              "ai_timeout = 600",
+              "",
           ]
           with open(sys.argv[1], "w", encoding="utf-8") as handle:
               handle.write("\n".join(lines))
@@ -190,7 +200,7 @@ jobs:
     name: 手動對指定 PR 審查
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       OPENAI__KEY: ${{ secrets.AI_REVIEW_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.AI_REVIEW_API_KEY }}
@@ -230,6 +240,11 @@ jobs:
               "",
               "[github]",
               "user_token = " + json.dumps(os.environ["AI_GITHUB_TOKEN"]),
+              "",
+              # ai_timeout 是 host-only 設定，只能從這裡（host 層設定檔）給；
+              # 預設 120 秒對這個端點跑 2 萬 token 的 review 不夠。
+              "[config]",
+              "ai_timeout = 600",
               "",
           ]
           with open(sys.argv[1], "w", encoding="utf-8") as handle:
