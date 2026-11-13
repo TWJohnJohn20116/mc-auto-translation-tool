@@ -1,0 +1,188 @@
+name: AI 程式審查
+
+# 由 PR-Agent（社群版 The-PR-Agent，MIT）在 PR 上跑 /describe、/review，
+# 也可以在自己的 PR 留言 `/review`、`/improve`、`/describe`、`/ask ...` 手動觸發。
+# 只給建議、不寫入分支，因此刻意不列入分支保護的必要檢查：這個 bot 掛掉不該擋住合併。
+#
+# 金鑰：repo secret `AI_REVIEW_API_KEY`（端點見 .pr_agent.toml 的 [openai] api_base）。
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+    # 只審會影響行為的路徑；文件、downloads/、lockfile 的 PR 不燒 token。
+    paths:
+      - 'translator-core/**'
+      - 'platforms/**'
+      - 'website/app/**'
+      - 'website/db/**'
+      - 'website/worker/**'
+      - 'website/tests/**'
+      - '.pr_agent.toml'
+      - '.github/workflows/ai-review.yml'
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR 編號
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: 開 PR 時自動審查
+    # Dependabot 的 PR 拿不到 repo secret（而且 diff 是 lockfile），草稿 PR 也先跳過。
+    if: >
+      github.event_name == 'pull_request' &&
+      github.actor != 'dependabot[bot]' &&
+      github.event.pull_request.draft == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      OPENAI__KEY: ${{ secrets.AI_REVIEW_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.AI_REVIEW_API_KEY }}
+      OPENAI__API_BASE: ${{ secrets.AI_REVIEW_BASE_URL }}
+      OPENAI_API_BASE: ${{ secrets.AI_REVIEW_BASE_URL }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: 取出程式碼
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: 準備 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 安裝 PR-Agent
+        run: pip install --disable-pip-version-check pr-agent==0.50.0
+
+      - name: 寫入端點設定（只在 runner 上，不進版控）
+        env:
+          AI_BASE_URL: ${{ secrets.AI_REVIEW_BASE_URL }}
+        run: |
+          set -euo pipefail
+          printf '\n[openai]\napi_base = "%s"\n' "$AI_BASE_URL" >> .pr_agent.toml
+          echo "已附加 [openai] api_base（值受 secret 遮罩）"
+
+      - name: 產生 PR 說明
+        continue-on-error: true
+        run: >
+          python -m pr_agent.cli
+          --pr_url="${{ github.event.pull_request.html_url }}"
+          describe
+
+      - name: 審查 PR
+        continue-on-error: true
+        run: >
+          python -m pr_agent.cli
+          --pr_url="${{ github.event.pull_request.html_url }}"
+          review
+
+  command:
+    name: 依留言執行指令
+    if: >
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request != null &&
+      contains(github.event.comment.body, '/') &&
+      (github.event.comment.author_association == 'OWNER' ||
+       github.event.comment.author_association == 'MEMBER' ||
+       github.event.comment.author_association == 'COLLABORATOR')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      OPENAI__KEY: ${{ secrets.AI_REVIEW_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.AI_REVIEW_API_KEY }}
+      OPENAI__API_BASE: ${{ secrets.AI_REVIEW_BASE_URL }}
+      OPENAI_API_BASE: ${{ secrets.AI_REVIEW_BASE_URL }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PR_URL: ${{ github.event.issue.html_url }}
+      COMMENT: ${{ github.event.comment.body }}
+    steps:
+      - name: 取出程式碼
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: 準備 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 安裝 PR-Agent
+        run: pip install --disable-pip-version-check pr-agent==0.50.0
+
+      - name: 寫入端點設定（只在 runner 上，不進版控）
+        env:
+          AI_BASE_URL: ${{ secrets.AI_REVIEW_BASE_URL }}
+        run: |
+          set -euo pipefail
+          printf '\n[openai]\napi_base = "%s"\n' "$AI_BASE_URL" >> .pr_agent.toml
+          echo "已附加 [openai] api_base（值受 secret 遮罩）"
+
+      - name: 執行指令
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          first_line="$(printf '%s\n' "$COMMENT" | head -n 1)"
+
+          case "$first_line" in
+            /review*)   args=(review) ;;
+            /improve*)  args=(improve) ;;
+            /describe*) args=(describe) ;;
+            /ask\ *)    args=(ask "${first_line#/ask }") ;;
+            /ask*)      echo "用法：/ask <問題>" ; exit 0 ;;
+            *)          echo "不是 PR-Agent 指令，略過：$first_line" ; exit 0 ;;
+          esac
+
+          echo "執行：${args[*]}"
+          python -m pr_agent.cli --pr_url="$PR_URL" "${args[@]}"
+
+  manual:
+    name: 手動對指定 PR 審查
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      OPENAI__KEY: ${{ secrets.AI_REVIEW_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.AI_REVIEW_API_KEY }}
+      OPENAI__API_BASE: ${{ secrets.AI_REVIEW_BASE_URL }}
+      OPENAI_API_BASE: ${{ secrets.AI_REVIEW_BASE_URL }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: 取出程式碼
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: 準備 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 安裝 PR-Agent
+        run: pip install --disable-pip-version-check pr-agent==0.50.0
+
+      - name: 寫入端點設定（只在 runner 上，不進版控）
+        env:
+          AI_BASE_URL: ${{ secrets.AI_REVIEW_BASE_URL }}
+        run: |
+          set -euo pipefail
+          printf '\n[openai]\napi_base = "%s"\n' "$AI_BASE_URL" >> .pr_agent.toml
+          echo "已附加 [openai] api_base（值受 secret 遮罩）"
+
+      - name: 審查指定的 PR
+        continue-on-error: true
+        run: >
+          python -m pr_agent.cli
+          --pr_url="https://github.com/${{ github.repository }}/pull/${{ inputs.pr }}"
+          review

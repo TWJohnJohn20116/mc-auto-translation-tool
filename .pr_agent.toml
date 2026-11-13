@@ -1,0 +1,55 @@
+# Qodo PR-Agent（社群版 The-PR-Agent，MIT）設定。
+# 模型走 LiteLLM 的 OpenAI 相容通道：自訂端點 + `openai/` 前綴；
+# 金鑰由 workflow 以 OPENAI__KEY / OPENAI_API_KEY 注入，不進版控。
+
+[config]
+model = "openai/deepseek-v4.1-flash"
+# 端點只有這一個模型；列同一個當 fallback 只會對同一模型重打，沒有意義。
+fallback_models = []
+# 這個模型不在 PR-Agent 的 token 上限表裡，必須自己宣告，否則會被當成未知模型。
+custom_model_max_tokens = 32000
+max_model_tokens = 32000
+num_retries = 2
+
+# 端點刻意不寫在這裡：本檔進版控、而這個 repo 是公開的，寫進來等於把端點公開。
+# [openai] api_base 由 .github/workflows/ai-review.yml 在 runner 上從 secret
+# `AI_REVIEW_BASE_URL` 附加到本檔（執行完即丟），repo 內不留任何端點資訊。
+
+# 這些東西不進審查範圍：分片 JAR、雜湊清單與 lockfile 給 LLM 看只是浪費 token。
+[ignore]
+glob = [
+  "website/pnpm-lock.yaml",
+  "downloads/**",
+  "**/build/**",
+]
+
+[pr_reviewer]
+num_max_findings = 5
+require_score_review = false
+extra_instructions = """
+這個倉庫是 Minecraft 模組的多平台專案（Fabric／Forge／NeoForge 共 48 個建置目標）
+外加一個 Next.js 網站，完整規則見 AGENTS.md。
+
+只報會影響行為、跨版本相容性或 CI 的問題。不要重述 diff，不要建議加註解或調整排版。
+
+以下幾類建議一律不要提出，因為在本專案不成立：
+- 「在本機執行 ./gradlew …」或任何本機建置／測試指令——本專案禁止本機建置，驗證只在 GitHub Actions。
+- 檢視 website/pnpm-lock.yaml、downloads/** 的二進位或雜湊內容。
+- 把版本號、目標清單、artifact 名稱「改成變數」——它們刻意寫死，由 CI 的驗證腳本與測試守住。
+
+若變更動到平台目標或版本號，請明確指出是否漏了同步：settings.gradle 的 platformProjects、
+build.yml／legacy-targets.yml 的 matrix、gradle.properties、四份 README.md 與 docs/、
+website/app/page.tsx 的數字，以及 translator-core 的 core/UserAgent.java。
+"""
+
+[pr_description]
+extra_instructions = """
+用繁體中文寫，語氣技術、直接，不要行銷詞。
+若是單純的依賴更新，只列出套件與版本變化，不必推測用途。
+"""
+
+[pr_code_suggestions]
+committable_code_suggestions = true
+extra_instructions = """
+只提出能直接套用的具體改動；不要提「建議重構整個類別」這種範圍過大的意見。
+"""
