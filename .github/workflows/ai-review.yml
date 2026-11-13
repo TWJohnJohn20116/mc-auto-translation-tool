@@ -66,13 +66,15 @@ jobs:
       - name: 安裝 PR-Agent
         run: pip install --disable-pip-version-check 'pr-agent[github]==0.50.0'
 
-      - name: 寫入端點設定（只在 runner 上，不進版控）
+      - name: 寫入端點與權杖設定（只在 runner 上，不進版控）
         env:
           AI_BASE_URL: ${{ secrets.AI_REVIEW_BASE_URL }}
+          AI_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           printf '\n[openai]\napi_base = "%s"\n' "$AI_BASE_URL" >> .pr_agent.toml
-          echo "已附加 [openai] api_base（值受 secret 遮罩）"
+          printf '\n[github]\nuser_token = "%s"\n' "$AI_GITHUB_TOKEN" >> .pr_agent.toml
+          echo "已附加 [openai] api_base 與 [github] user_token（值受 secret 遮罩）"
 
       - name: 產生 PR 說明
         run: >
@@ -119,13 +121,15 @@ jobs:
       - name: 安裝 PR-Agent
         run: pip install --disable-pip-version-check 'pr-agent[github]==0.50.0'
 
-      - name: 寫入端點設定（只在 runner 上，不進版控）
+      - name: 寫入端點與權杖設定（只在 runner 上，不進版控）
         env:
           AI_BASE_URL: ${{ secrets.AI_REVIEW_BASE_URL }}
+          AI_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           printf '\n[openai]\napi_base = "%s"\n' "$AI_BASE_URL" >> .pr_agent.toml
-          echo "已附加 [openai] api_base（值受 secret 遮罩）"
+          printf '\n[github]\nuser_token = "%s"\n' "$AI_GITHUB_TOKEN" >> .pr_agent.toml
+          echo "已附加 [openai] api_base 與 [github] user_token（值受 secret 遮罩）"
 
       - name: 執行指令
         run: |
@@ -169,13 +173,15 @@ jobs:
       - name: 安裝 PR-Agent
         run: pip install --disable-pip-version-check 'pr-agent[github]==0.50.0'
 
-      - name: 寫入端點設定（只在 runner 上，不進版控）
+      - name: 寫入端點與權杖設定（只在 runner 上，不進版控）
         env:
           AI_BASE_URL: ${{ secrets.AI_REVIEW_BASE_URL }}
+          AI_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           printf '\n[openai]\napi_base = "%s"\n' "$AI_BASE_URL" >> .pr_agent.toml
-          echo "已附加 [openai] api_base（值受 secret 遮罩）"
+          printf '\n[github]\nuser_token = "%s"\n' "$AI_GITHUB_TOKEN" >> .pr_agent.toml
+          echo "已附加 [openai] api_base 與 [github] user_token（值受 secret 遮罩）"
 
       - name: 審查指定的 PR
         run: >
