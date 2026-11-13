@@ -1,0 +1,259 @@
+name: AI 程式審查
+
+# 由 PR-Agent（社群版 The-PR-Agent，MIT）在 PR 上跑 /describe、/review，
+# 也可以在自己的 PR 留言 `/review`、`/improve`、`/describe`、`/ask ...` 手動觸發。
+# 只留建議、不寫入分支，因此刻意不列入分支保護的必要檢查：這個 bot 掛掉不該擋住合併。
+#
+# 端點與金鑰：repo secret `AI_REVIEW_BASE_URL`、`AI_REVIEW_API_KEY`。
+# diff 與 log 都不含端點——它在 runner 上才寫進套件目錄的 .secrets.toml。
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+    # 只審會影響行為的路徑；文件、downloads/、lockfile 的 PR 不燒 token。
+    paths:
+      - 'translator-core/**'
+      - 'platforms/**'
+      - 'website/app/**'
+      - 'website/db/**'
+      - 'website/worker/**'
+      - 'website/tests/**'
+      - '.pr_agent.toml'
+      - '.github/workflows/ai-review.yml'
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR 編號
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: 開 PR 時自動審查
+    # Dependabot 的 PR 拿不到 repo secret（且 diff 是 lockfile）；草稿、fork 的 PR 也跳過。
+    if: >
+      github.event_name == 'pull_request' &&
+      github.actor != 'dependabot[bot]' &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      OPENAI__KEY: ${{ secrets.AI_REVIEW_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.AI_REVIEW_API_KEY }}
+      OPENAI__API_BASE: ${{ secrets.AI_REVIEW_BASE_URL }}
+      OPENAI_API_BASE: ${{ secrets.AI_REVIEW_BASE_URL }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PR_URL: ${{ github.event.pull_request.html_url }}
+      PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+    steps:
+      - name: 取出程式碼
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: 準備 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 安裝 PR-Agent
+        run: pip install --disable-pip-version-check 'pr-agent[github]==0.50.0'
+
+      - name: 寫入 .secrets.toml（只在 runner 上，不進版控）
+        env:
+          AI_BASE_URL: ${{ secrets.AI_REVIEW_BASE_URL }}
+          AI_KEY: ${{ secrets.AI_REVIEW_API_KEY }}
+          AI_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          settings_dir="$(python -c 'import os, pr_agent; print(os.path.join(os.path.dirname(pr_agent.__file__), "settings"))')"
+          # 用 Python 寫檔並經 JSON 轉義：secret 內含引號或換行時不會破壞 TOML。
+          python - "$settings_dir/.secrets.toml" <<'PY'
+          import json, os, sys
+
+          lines = [
+              "[openai]",
+              "api_base = " + json.dumps(os.environ["AI_BASE_URL"]),
+              "key = " + json.dumps(os.environ["AI_KEY"]),
+              "",
+              "[github]",
+              "user_token = " + json.dumps(os.environ["AI_GITHUB_TOKEN"]),
+              "",
+              # ai_timeout 是 host-only 設定，只能從這裡（host 層設定檔）給；
+              # 預設 120 秒對這個端點跑 2 萬 token 的 review 不夠。
+              "[config]",
+              "ai_timeout = 600",
+              "",
+          ]
+          with open(sys.argv[1], "w", encoding="utf-8") as handle:
+              handle.write("\n".join(lines))
+          PY
+          echo "已寫入 $settings_dir/.secrets.toml（內容受 secret 遮罩）"
+
+      - name: 產生 PR 說明
+        run: >
+          python -m pr_agent.cli
+          --pr_url="$PR_URL"
+          --config-branch="$PR_BRANCH"
+          describe
+
+      - name: 審查 PR
+        run: >
+          python -m pr_agent.cli
+          --pr_url="$PR_URL"
+          --config-branch="$PR_BRANCH"
+          review
+
+  command:
+    name: 依留言執行指令
+    if: >
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request != null &&
+      contains(github.event.comment.body, '/') &&
+      (github.event.comment.author_association == 'OWNER' ||
+       github.event.comment.author_association == 'MEMBER' ||
+       github.event.comment.author_association == 'COLLABORATOR')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      OPENAI__KEY: ${{ secrets.AI_REVIEW_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.AI_REVIEW_API_KEY }}
+      OPENAI__API_BASE: ${{ secrets.AI_REVIEW_BASE_URL }}
+      OPENAI_API_BASE: ${{ secrets.AI_REVIEW_BASE_URL }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PR_URL: ${{ github.event.issue.html_url }}
+      COMMENT: ${{ github.event.comment.body }}
+    steps:
+      - name: 取出程式碼
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: 準備 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 安裝 PR-Agent
+        run: pip install --disable-pip-version-check 'pr-agent[github]==0.50.0'
+
+      - name: 寫入 .secrets.toml（只在 runner 上，不進版控）
+        env:
+          AI_BASE_URL: ${{ secrets.AI_REVIEW_BASE_URL }}
+          AI_KEY: ${{ secrets.AI_REVIEW_API_KEY }}
+          AI_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          settings_dir="$(python -c 'import os, pr_agent; print(os.path.join(os.path.dirname(pr_agent.__file__), "settings"))')"
+          # 用 Python 寫檔並經 JSON 轉義：secret 內含引號或換行時不會破壞 TOML。
+          python - "$settings_dir/.secrets.toml" <<'PY'
+          import json, os, sys
+
+          lines = [
+              "[openai]",
+              "api_base = " + json.dumps(os.environ["AI_BASE_URL"]),
+              "key = " + json.dumps(os.environ["AI_KEY"]),
+              "",
+              "[github]",
+              "user_token = " + json.dumps(os.environ["AI_GITHUB_TOKEN"]),
+              "",
+              # ai_timeout 是 host-only 設定，只能從這裡（host 層設定檔）給；
+              # 預設 120 秒對這個端點跑 2 萬 token 的 review 不夠。
+              "[config]",
+              "ai_timeout = 600",
+              "",
+          ]
+          with open(sys.argv[1], "w", encoding="utf-8") as handle:
+              handle.write("\n".join(lines))
+          PY
+          echo "已寫入 $settings_dir/.secrets.toml（內容受 secret 遮罩）"
+
+      - name: 執行指令
+        run: |
+          set -euo pipefail
+          first_line="$(printf '%s\n' "$COMMENT" | head -n 1)"
+
+          case "$first_line" in
+            /review*)   args=(review) ;;
+            /improve*)  args=(improve) ;;
+            /describe*) args=(describe) ;;
+            /ask\ *)    args=(ask "${first_line#/ask }") ;;
+            /ask*)      echo "用法：/ask <問題>" ; exit 0 ;;
+            *)          echo "不是 PR-Agent 指令，略過：$first_line" ; exit 0 ;;
+          esac
+
+          echo "執行：${args[*]}"
+          python -m pr_agent.cli --pr_url="$PR_URL" "${args[@]}"
+
+  manual:
+    name: 手動對指定 PR 審查
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      OPENAI__KEY: ${{ secrets.AI_REVIEW_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.AI_REVIEW_API_KEY }}
+      OPENAI__API_BASE: ${{ secrets.AI_REVIEW_BASE_URL }}
+      OPENAI_API_BASE: ${{ secrets.AI_REVIEW_BASE_URL }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: 取出程式碼
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: 準備 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 安裝 PR-Agent
+        run: pip install --disable-pip-version-check 'pr-agent[github]==0.50.0'
+
+      - name: 寫入 .secrets.toml（只在 runner 上，不進版控）
+        env:
+          AI_BASE_URL: ${{ secrets.AI_REVIEW_BASE_URL }}
+          AI_KEY: ${{ secrets.AI_REVIEW_API_KEY }}
+          AI_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          settings_dir="$(python -c 'import os, pr_agent; print(os.path.join(os.path.dirname(pr_agent.__file__), "settings"))')"
+          # 用 Python 寫檔並經 JSON 轉義：secret 內含引號或換行時不會破壞 TOML。
+          python - "$settings_dir/.secrets.toml" <<'PY'
+          import json, os, sys
+
+          lines = [
+              "[openai]",
+              "api_base = " + json.dumps(os.environ["AI_BASE_URL"]),
+              "key = " + json.dumps(os.environ["AI_KEY"]),
+              "",
+              "[github]",
+              "user_token = " + json.dumps(os.environ["AI_GITHUB_TOKEN"]),
+              "",
+              # ai_timeout 是 host-only 設定，只能從這裡（host 層設定檔）給；
+              # 預設 120 秒對這個端點跑 2 萬 token 的 review 不夠。
+              "[config]",
+              "ai_timeout = 600",
+              "",
+          ]
+          with open(sys.argv[1], "w", encoding="utf-8") as handle:
+              handle.write("\n".join(lines))
+          PY
+          echo "已寫入 $settings_dir/.secrets.toml（內容受 secret 遮罩）"
+
+      - name: 審查指定的 PR
+        run: >
+          python -m pr_agent.cli
+          --pr_url="https://github.com/${{ github.repository }}/pull/${{ inputs.pr }}"
+          review
