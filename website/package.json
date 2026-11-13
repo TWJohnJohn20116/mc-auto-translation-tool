@@ -10,7 +10,7 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "vinext start",
-    "test": "pnpm run build && node --test tests/rendered-html.test.mjs tests/chatgpt-auth.test.mjs",
+    "test": "pnpm run build && node --import ./tests/cloudflare-workers.mjs --test tests/rendered-html.test.mjs tests/chatgpt-auth.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },
