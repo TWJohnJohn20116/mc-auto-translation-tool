@@ -1,0 +1,11 @@
+plugins {
+    id "net.fabricmc.fabric-loom-remap" version "${loom_version}"
+}
+
+// One build script for the twelve 1.21 modules; the tree's shared.gradle already owns everything else.
+ext.fabricMinecraftVersion = gradle.ext.fabricVersionCoordinate(project, "minecraft", "minecraft_", "_version")
+ext.fabricYarnMappings = gradle.ext.fabricVersionCoordinate(project, "yarnMappings", "yarn_", "_mappings")
+ext.fabricLoaderVersion = gradle.ext.fabricVersionCoordinate(project, "loader", "loader_", "_version")
+ext.fabricApiVersion = gradle.ext.fabricVersionCoordinate(project, "fabricApi", "fabric_api_", "_version")
+
+apply from: rootProject.file("platforms/fabric/1.21/shared.gradle")

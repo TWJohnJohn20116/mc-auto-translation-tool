@@ -392,9 +392,10 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   有部分 build 的成品，但 ploceus 的 version manifest 對不上（`unable to read version details`，
   來自 `manifest/VersionDetails.java` 的解析）。這 12 個目錄已於 2026-10-29（第二輪審計 S2-128）
   **整個刪除**——它們從未被任何 workflow 建置、也沒有發布過，留著只會被誤認為可用目標。要恢復某個
-  版本，必須同時（1）重建 `platforms/fabric/1.0-1.8/versions/<版本>/build.gradle`、（2）加回
-  `settings.gradle` 的 `platformProjects` 與 `platformDependencies`、（3）加回 bundle 的
-  `supportedVersions`。這個 bundle 不在 48 顆發布資產裡，所以它紅燈時對使用者沒有影響，
+  版本，必須同時（1）在 `gradle.properties` 補上 `minecraft_<底線化版本>_version`、`yarn_..._mappings`、
+  `loader_..._version`、`fabric_api_..._version`（版本目錄本身已沒有 `build.gradle`，座標由樹級
+  `version.gradle` 依專案名推導）、（2）加回 `settings.gradle` 的 `platformProjects` 與
+  `platformDependencies`、（3）加回 bundle 的 `supportedVersions`。這個 bundle 不在 48 顆發布資產裡，所以它紅燈時對使用者沒有影響，
   但排程紅燈會掩蓋其他目標真正的失敗。
 - 判斷「某個版本的 mappings 能不能用」**不能只看 artifact 有沒有回 200**：`1.6.2+build.5` 的 `.pom`
   與 `.jar` 都存在，ploceus 仍然建不起來。反過來說，**`maven-metadata.xml` 是過期不完整的**
@@ -451,6 +452,14 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   `ext.jarLicenseName`（現有三個值：預設 `LICENSE_universal_translator`、`..._bundle`、
   `..._26_x_bundle`）。要再加一個附件檔時只改那一個檔案。`platforms/forge/legacy/1.8.9`、
   `1.12.2` 是獨立 Gradle 建置、路徑是相對字串，不套用這個腳本。
+- **Fabric 版本模組沒有自己的 `build.gradle`**：92 份版本級建置檔（`platforms/fabric/*/versions/<版本>/` 與
+  `platforms/fabric/26.x/26.*/`）已收斂成樹級腳本（`platforms/fabric/<樹>/version.gradle`、
+  `1.13/version-{ornithe,legacy}.gradle`、`1.14-1.15/version-stub.gradle`、`legacy/version.gradle`）。
+  `settings.gradle` 的 `fabricVersionBuildScript` 依專案目錄決定套哪一份，並以相對路徑設 `buildFileName`；
+  座標由 `gradle.ext.fabricVersionCoordinate` 用專案名＋慣例鍵從 `gradle.properties` 讀出
+  （`minecraft_<底線化版本>_version`、`yarn_..._mappings`、`loader_..._version`、`fabric_api_..._version`），
+  唯二的例外鍵（1.13.2、1.20.1）集中在 `fabricIrregularCoordinates`。新增版本只改 `platformProjects`、
+  `gradle.properties` 的鍵與 bundle 的 `supportedVersions`，**不要**再新增 `versions/<版本>/build.gradle`。
 - **Fabric 的 `fabric.mod.json` 每棵樹只有一份模板**：`platforms/fabric/<樹>/shared/common/src/main/resources/
   fabric.mod.json`，由該樹的 `shared.gradle` 在建置期 `expand` 出版本專屬值（1.21 樹展開 `version`、
   `fabricMinecraftVersion`、`fabricLoaderVersion`；1.0-1.8 與 1.8-1.12 樹展開 `version`、`minecraftVersion`、

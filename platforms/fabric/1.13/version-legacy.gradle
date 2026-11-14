@@ -1,0 +1,16 @@
+plugins {
+    id "fabric-loom" version "${loom_ornithe_version}"
+}
+
+// 1.13.2 is the only module on this shape; it declares its mappings and Fabric API under the irregular
+// legacy_* keys that predate the naming convention (settings.gradle's fabricVersionCoordinate holds the
+// override, so the key is not repeated here).
+def version = project.name.substring("platform-fabric-".length())
+
+ext.legacyMinecraftVersion = gradle.ext.fabricVersionCoordinate(project, "minecraft", "minecraft_", "_version")
+ext.legacyYarnMappings = gradle.ext.fabricVersionCoordinate(project, "yarnMappings", "yarn_", "_mappings")
+ext.legacyLoaderVersion = gradle.ext.fabricVersionCoordinate(project, "loader", "loader_", "_version")
+ext.legacyFabricApiVersion = gradle.ext.fabricVersionCoordinate(project, "fabricApi", "fabric_api_", "_version")
+ext.legacyArchivesName = version
+
+apply from: rootProject.file("platforms/fabric/1.13/legacy.gradle")

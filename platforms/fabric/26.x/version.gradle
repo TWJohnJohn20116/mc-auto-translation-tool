@@ -1,0 +1,11 @@
+plugins {
+    id "net.fabricmc.fabric-loom" version "${loom_version}"
+}
+
+// One build script for the five 26.x modules. This tree uses Mojang mappings, so there is no
+// fabricYarnMappings coordinate — the only place the shape differs from 1.21.
+ext.fabricMinecraftVersion = gradle.ext.fabricVersionCoordinate(project, "minecraft", "minecraft_", "_version")
+ext.fabricLoaderVersion = gradle.ext.fabricVersionCoordinate(project, "loader", "loader_", "_version")
+ext.fabricApiVersion = gradle.ext.fabricVersionCoordinate(project, "fabricApi", "fabric_api_", "_version")
+
+apply from: rootProject.file("platforms/fabric/26.x/shared.gradle")

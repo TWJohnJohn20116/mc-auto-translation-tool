@@ -1,0 +1,37 @@
+plugins {
+    id "net.fabricmc.fabric-loom-remap" version "${loom_version}"
+}
+
+// One build script for every Fabric 1.14.3-1.20.6 module. The 28 files it replaces each repeated the
+// same five ext.* lines and differed only in the release they named, so the coordinates are read from
+// the gradle.properties keys that already held them (settings.gradle's fabricVersionCoordinate owns the
+// naming rule and the two irregular releases). Same keys, same values: what changes is who reads them.
+def version = project.name.substring("platform-fabric-".length())
+def coordinate = { String slot, String prefix, String suffix = "" ->
+    gradle.ext.fabricVersionCoordinate(project, slot, prefix, suffix)
+}
+
+ext.legacyMinecraftVersion = coordinate("minecraft", "minecraft_", "_version")
+ext.legacyYarnMappings = coordinate("yarnMappings", "yarn_", "_mappings")
+ext.legacyLoaderVersion = coordinate("loader", "loader_", "_version")
+ext.legacyFabricApiVersion = coordinate("fabricApi", "fabric_api_", "_version")
+// The generations in this range compile for 8 (1.14-1.16), 17 (1.17-1.20.4) and 21 (1.20.5/1.20.6).
+// settings.gradle's treeJavaRelease declares exactly those bounds, including 1.20's [17, 21] split,
+// which treeJavaTarget refuses to answer for — so the split is named here, once, instead of in the
+// seven 1.20 build files that used to carry it.
+def javaRelease = version.startsWith("1.14") || version.startsWith("1.15") || version.startsWith("1.16") ?
+        8 : (["1.20.5", "1.20.6"].contains(version) ? 21 : 17)
+// The value is computed now, so root build.gradle's literal declaration scan cannot see it. Checked
+// against the same table instead: moving treeJavaRelease without this line (or the reverse) fails here,
+// at configuration time, naming both numbers.
+def treePrefix = "platforms/fabric/" +
+        project.projectDir.path.replace('\\', '/').split("/platforms/fabric/")[1].split("/")[0] + "/"
+def bounds = gradle.ext.treeJavaRelease[treePrefix]
+if (bounds == null || javaRelease < bounds[0] || javaRelease > bounds[1]) {
+    throw new GradleException(
+            "${project.path}: ${javaRelease} is outside ${bounds} which settings.gradle's " +
+                    "treeJavaRelease declares for ${treePrefix}")
+}
+ext.legacyJavaRelease = javaRelease
+
+apply from: rootProject.file("platforms/fabric/legacy/shared.gradle")
