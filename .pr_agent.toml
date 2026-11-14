@@ -30,6 +30,8 @@ glob = [
 
 [pr_reviewer]
 num_max_findings = 5
+# 留言的可見標題；結尾的 🔍 由 comment_identity.format_pr_review_header 附加。
+review_heading = "PR 審查指南"
 require_score_review = false
 extra_instructions = """
 這個倉庫是 Minecraft 模組的多平台專案（Fabric／Forge／NeoForge 共 48 個建置目標）
@@ -55,6 +57,8 @@ extra_instructions = """
 
 [pr_code_suggestions]
 committable_code_suggestions = true
+# /improve 的摘要標題；結尾的 ✨ 由同一支程式附加。
+suggestions_heading = "PR 程式碼建議"
 extra_instructions = """
 只提出能直接套用的具體改動；不要提「建議重構整個類別」這種範圍過大的意見。
 """
