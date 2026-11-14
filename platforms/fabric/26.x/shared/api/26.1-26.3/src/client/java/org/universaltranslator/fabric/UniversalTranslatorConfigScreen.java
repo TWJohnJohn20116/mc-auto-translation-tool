@@ -122,6 +122,8 @@ final class UniversalTranslatorConfigScreen extends Screen {
     private Button applyPromptButton;
     private EditBox endpoint;
     private EditBox blockedKeywords;
+    /** Surfaces switched off individually; the accepted names are listed in TranslationKindPolicy. */
+    private EditBox disabledKinds;
     private Button enabledButton;
     private Button uiStyleButton;
     private Button hudIndicatorButton;
@@ -220,6 +222,9 @@ final class UniversalTranslatorConfigScreen extends Screen {
         String endpointValue = endpoint == null ? original.endpoint : endpoint.getValue();
         String blockedKeywordsValue = blockedKeywords == null
                 ? original.blockedKeywords : blockedKeywords.getValue();
+        // Seeded from the snapshot, then from the live field so a resize keeps what was typed.
+        String disabledKindsValue = disabledKinds == null
+                ? original.disabledKinds.storageForm() : disabledKinds.getValue();
         if (outgoingTargetLanguage == null) {
             outgoingTargetLanguage = TargetLanguage.canonicalize(original.outgoingTargetLanguage);
         }
@@ -326,6 +331,16 @@ final class UniversalTranslatorConfigScreen extends Screen {
         blockedKeywords.setHint(Component.translatable(
                 "screen.universal_translator.blocked_keywords_hint",
                 UiLimits.KEYWORDS_MAX_ENTRIES, UiLimits.KEYWORD_MAX_CHARS));
+
+        // contentRow(4) is the row the HUD preview below already leaves free, so this needs no
+        // extra space from the shared layout.
+        disabledKinds = addRenderableWidget(new EditBox(
+                this.font, left, layout.contentRow(4), layout.totalWidth, 20,
+                Component.translatable("screen.universal_translator.disabled_kinds")));
+        disabledKinds.setMaxLength(UiLimits.KINDS_MAX_CHARS);
+        disabledKinds.setValue(disabledKindsValue);
+        disabledKinds.setHint(Component.translatable(
+                "screen.universal_translator.disabled_kinds_hint", UiLimits.KINDS_MAX_ENTRIES));
 
         // --- Tab 3: Engine (引擎) ---
         // The engine rows are centred in the free band (see engineRow) so the tab does not sit in
@@ -580,6 +595,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
         playerNamesButton.visible = isScopes;
         mixedTextButton.visible = isScopes;
         blockedKeywords.visible = isScopes;
+        disabledKinds.visible = isScopes;
 
         // Tab 3: Engine
         providerButton.visible = isEngine;
@@ -734,6 +750,7 @@ final class UniversalTranslatorConfigScreen extends Screen {
                     translateOutgoing,
                     translatePlayerNames,
                     blockedKeywords.getValue(),
+                    disabledKinds.getValue(),
                     targetLanguage,
                     outgoingTargetLanguage,
                     displayMode,
@@ -1336,6 +1353,7 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         setFieldEditing(endpoint, !overlayOwnsKeyboard);
         setFieldEditing(customPrompt, !overlayOwnsKeyboard);
         setFieldEditing(blockedKeywords, !overlayOwnsKeyboard);
+        setFieldEditing(disabledKinds, !overlayOwnsKeyboard);
     }
 
     private static void setFieldEditing(EditBox field, boolean editable) {

@@ -44,6 +44,19 @@ public final class UiLimits {
      */
     public static final int KEYWORD_MAX_CHARS = TranslationBlocklist.MAX_KEYWORD_LENGTH;
 
+    /**
+     * Longest content-surface list the settings field accepts, in characters.
+     *
+     * <p>Derived from the parser's own limit so raising it cannot leave the field behind.
+     */
+    public static final int KINDS_MAX_CHARS = TranslationKindPolicy.MAX_CONFIG_LENGTH;
+
+    /**
+     * Number of content-surface entries that take effect, and the number the hint text names:
+     * anything past this is discarded, so the screen has to say so.
+     */
+    public static final int KINDS_MAX_ENTRIES = TranslationKindPolicy.MAX_ENTRIES;
+
     /** Longest endpoint URL the settings screen accepts, in characters. */
     public static final int ENDPOINT_MAX_CHARS = 512;
 

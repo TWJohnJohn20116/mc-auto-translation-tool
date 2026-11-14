@@ -171,6 +171,8 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorScreenBas
     private ActionButton playerNamesButton;
     private ActionButton mixedTextButton;
     private TextFieldWidget blockedKeywords;
+    /** Surfaces switched off individually; the accepted names are listed in TranslationKindPolicy. */
+    private TextFieldWidget disabledKinds;
 
     private ActionButton providerButton;
     private ActionButton modelButton;
@@ -273,6 +275,8 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorScreenBas
         String endpointValue = endpoint == null ? original.endpoint : endpoint.getText();
         String blockedKeywordsValue = blockedKeywords == null
                 ? original.blockedKeywords : blockedKeywords.getText();
+        String disabledKindsValue = disabledKinds == null
+                ? original.disabledKinds.storageForm() : disabledKinds.getText();
         if (outgoingTargetLanguage == null) {
             outgoingTargetLanguage = TargetLanguage.canonicalize(original.outgoingTargetLanguage);
         }
@@ -330,6 +334,9 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorScreenBas
         blockedKeywords = new TextFieldWidget(22, renderer, left, layout.contentRow(3), totalWidth, 20);
         blockedKeywords.setMaxLength(UiLimits.KEYWORDS_MAX_CHARS);
         blockedKeywords.setText(blockedKeywordsValue);
+        disabledKinds = new TextFieldWidget(23, renderer, left, layout.contentRow(4), totalWidth, 20);
+        disabledKinds.setMaxLength(UiLimits.KINDS_MAX_CHARS);
+        disabledKinds.setText(disabledKindsValue);
 
         addButton(chatButton);
         addButton(otherButton);
@@ -561,6 +568,7 @@ final class UniversalTranslatorConfigScreen extends UniversalTranslatorScreenBas
         playerNamesButton.visible = isScope;
         mixedTextButton.visible = isScope;
         blockedKeywords.setVisible(isScope);
+        disabledKinds.setVisible(isScope);
 
         // Engine
         boolean isEng = activeTab == Tab.ENGINE;
@@ -1082,6 +1090,7 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
                     translateOutgoing,
                     translatePlayerNames,
                     blockedKeywords.getText(),
+                    disabledKinds.getText(),
                     targetLanguage,
                     outgoingTargetLanguage,
                     displayMode,
@@ -1155,6 +1164,9 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         if (activeTab == Tab.SCOPES && blockedKeywords != null) {
             blockedKeywords.tick();
         }
+        if (activeTab == Tab.SCOPES && disabledKinds != null) {
+            disabledKinds.tick();
+        }
         applyPendingModelList();
     }
 
@@ -1201,6 +1213,9 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         if (activeTab == Tab.SCOPES && blockedKeywords != null && blockedKeywords.keyPressed(keyCode, scanCode, modifiers)) {
             return true;
         }
+        if (activeTab == Tab.SCOPES && disabledKinds != null && disabledKinds.keyPressed(keyCode, scanCode, modifiers)) {
+            return true;
+        }
         return super.keyPressed(keyCode, scanCode, modifiers);
     }
 
@@ -1215,6 +1230,9 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
             return true;
         }
         if (activeTab == Tab.SCOPES && blockedKeywords != null && blockedKeywords.charTyped(chr, modifiers)) {
+            return true;
+        }
+        if (activeTab == Tab.SCOPES && disabledKinds != null && disabledKinds.charTyped(chr, modifiers)) {
             return true;
         }
         return super.charTyped(chr, modifiers);
@@ -1242,6 +1260,9 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
         }
         if (activeTab == Tab.SCOPES && blockedKeywords != null) {
             blockedKeywords.mouseClicked(mouseX, mouseY, mouseButton);
+        }
+        if (activeTab == Tab.SCOPES && disabledKinds != null) {
+            disabledKinds.mouseClicked(mouseX, mouseY, mouseButton);
         }
         return handled;
     }
@@ -1311,6 +1332,12 @@ return Math.max(SettingsScreenLayout.HEADER_BOTTOM + 2, centred);
                         tr("screen.universal_translator.blocked_keywords_hint",
                                 UiLimits.KEYWORDS_MAX_ENTRIES, UiLimits.KEYWORD_MAX_CHARS),
                         layout.left() + 4, layout.contentRow(3) + 6, 0x70A0A0A0);
+            }
+            OrnitheClientAccess.renderTextField(disabledKinds, mouseX, mouseY, partialTicks);
+            if (disabledKinds.getText().isEmpty()) {
+                drawShadowedString(
+                        tr("screen.universal_translator.disabled_kinds_hint", UiLimits.KINDS_MAX_ENTRIES),
+                        layout.left() + 4, layout.contentRow(4) + 6, 0x70A0A0A0);
             }
         } else if (activeTab == Tab.ENGINE) {
             if (isLibreTranslate()) {

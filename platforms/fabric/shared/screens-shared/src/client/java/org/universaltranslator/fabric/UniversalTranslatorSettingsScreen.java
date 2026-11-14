@@ -250,6 +250,14 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
     private TextFieldWidget customPrompt;
     private ButtonWidget applyPromptButton;
     private TextFieldWidget blockedKeywords;
+    /**
+     * The surfaces listed here are skipped on top of the two halves above.
+     *
+     * <p>One text field rather than twenty switches: the Scopes tab is already four rows of
+     * buttons, and a list keeps the whole surface set inside the same width the blocked-keywords
+     * field uses. The names it accepts are described in the hint and in the user guide.
+     */
+    private TextFieldWidget disabledKinds;
     private ButtonWidget enabledButton;
     private ButtonWidget uiStyleButton;
     private ButtonWidget hudIndicatorButton;
@@ -393,6 +401,10 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         if (targetLanguage == null) {
             targetLanguage = TargetLanguage.canonicalize(original.targetLanguage);
         }
+        // Rebuilt from the live field on a resize so the caret text survives; the snapshot is only
+        // the seed for the first init(). storageForm() keeps the player's own spelling and order.
+        String disabledKindsValue = disabledKinds == null
+                ? original.disabledKinds.storageForm() : disabledKinds.getText();
         String endpointValue = endpoint == null ? original.endpoint : endpoint.getText();
         String blockedKeywordsValue = blockedKeywords == null
                 ? original.blockedKeywords : blockedKeywords.getText();
@@ -506,6 +518,17 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         this.blockedKeywords.setText(blockedKeywordsValue);
         this.blockedKeywords.setSuggestion(tr("screen.universal_translator.blocked_keywords_hint",
                 UiLimits.KEYWORDS_MAX_ENTRIES, UiLimits.KEYWORD_MAX_CHARS));
+        // One row below the keyword list, using the same step the tab already lays its rows out
+        // with. contentRow(4) would be derived from a step that is capped at 26px, so on a
+        // 240px-high window it still clears the Save row; the fallback below keeps the field on
+        // screen at the smallest GUI scales, where the whole form is shifted upwards anyway.
+        this.disabledKinds = addSettingField(newTextField(left,
+                Math.min(layout.contentRow(3) + layout.contentRowStep, layout.saveY - 22),
+                layout.totalWidth, 20, tr("screen.universal_translator.disabled_kinds")));
+        this.disabledKinds.setMaxLength(UiLimits.KINDS_MAX_CHARS);
+        this.disabledKinds.setText(disabledKindsValue);
+        this.disabledKinds.setSuggestion(tr("screen.universal_translator.disabled_kinds_hint",
+                UiLimits.KINDS_MAX_ENTRIES));
 
         // --- Tab 3：引擎 ---
         // The engine rows are centred in the free band (see engineRow) so the tab does not sit in
@@ -798,6 +821,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         setFieldEditing(endpoint, !overlayOwnsKeyboard);
         setFieldEditing(customPrompt, !overlayOwnsKeyboard);
         setFieldEditing(blockedKeywords, !overlayOwnsKeyboard);
+        setFieldEditing(disabledKinds, !overlayOwnsKeyboard);
     }
 
     private static void setFieldEditing(TextFieldWidget field, boolean editable) {
@@ -907,6 +931,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         playerNamesButton.visible = isScopes;
         mixedTextButton.visible = isScopes;
         blockedKeywords.visible = isScopes;
+        disabledKinds.visible = isScopes;
 
         // Tab 3: Engine
         providerButton.visible = isEngine;
@@ -998,6 +1023,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
                     translateOutgoing,
                     translatePlayerNames,
                     blockedKeywords.getText(),
+                    disabledKinds.getText(),
                     targetLanguage,
                     outgoingTargetLanguage,
                     displayMode,

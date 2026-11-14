@@ -114,6 +114,8 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
     private EditBox customPrompt;
     private Button applyPromptButton;
     private EditBox blockedKeywords;
+    /** Surfaces switched off individually; the accepted names are listed in TranslationKindPolicy. */
+    private EditBox disabledKinds;
     private Button enabledButton;
     private Button uiStyleButton;
     private Button hudIndicatorButton;
@@ -252,6 +254,8 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         String endpointValue = endpoint == null ? original.endpoint : endpoint.getValue();
         String blockedKeywordsValue = blockedKeywords == null
                 ? original.blockedKeywords : blockedKeywords.getValue();
+        String disabledKindsValue = disabledKinds == null
+                ? original.disabledKinds.storageForm() : disabledKinds.getValue();
         Layout layout = layout();
         int left = layout.left;
 
@@ -322,6 +326,12 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         blockedKeywords.setValue(blockedKeywordsValue);
         hint(blockedKeywords, translatable("screen.universal_translator.blocked_keywords_hint",
                 UiLimits.KEYWORDS_MAX_ENTRIES, UiLimits.KEYWORD_MAX_CHARS));
+        disabledKinds = addRenderableWidget(new EditBox(font, left, layout.contentRow(4),
+                layout.totalWidth, 20, translatable("screen.universal_translator.disabled_kinds")));
+        disabledKinds.setMaxLength(UiLimits.KINDS_MAX_CHARS);
+        disabledKinds.setValue(disabledKindsValue);
+        hint(disabledKinds, translatable("screen.universal_translator.disabled_kinds_hint",
+                UiLimits.KINDS_MAX_ENTRIES));
 
         // --- Tab 3: Engine (引擎) ---
         // The engine rows are centred in the free band (see engineRow) so the tab does not sit in
@@ -620,6 +630,7 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         playerNamesButton.visible = isScopes;
         mixedTextButton.visible = isScopes;
         blockedKeywords.visible = isScopes;
+        disabledKinds.visible = isScopes;
 
         // Tab 3: Engine
         providerButton.visible = isEngine;
@@ -695,7 +706,8 @@ abstract class UniversalTranslatorConfigScreenBase extends Screen {
         try {
             ForgeConfig updated = base.withSettings(enabled, translateChat, translateOther,
                     translateVanilla, translateOutgoing, translatePlayerNames,
-                    blockedKeywords.getValue(), targetLanguage, outgoingTargetLanguage, displayMode,
+                    blockedKeywords.getValue(), disabledKinds.getValue(),
+                    targetLanguage, outgoingTargetLanguage, displayMode,
                     translateEnglishOnly, translatedTextColor, provider, endpoint.getValue(),
                     llmEndpoint, llmApiKey, llmModel, offlineAutoDownload, offlineModel,
                     apiFallback, diskCache, animatedUi,

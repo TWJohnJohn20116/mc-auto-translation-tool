@@ -375,6 +375,14 @@ to case. If the source contains any entry, the entire text stays unchanged and i
 translation service. For example, `hello,advertisement` skips chat, UI text, and outgoing translation
 that contains either keyword.
 
+“Surfaces left untranslated” narrows the two coarse halves further. It accepts the group names
+`chat`, `scoreboard`, `player-list`, `titles`, `items`, `world`, and `misc`, or a single surface
+such as `sign`, `book`, `hologram`, `entity-name`, `container-title`, `item-name`, `item-lore`,
+`tooltip`, `boss-bar`, `disconnect-reason`, `toast`, or `other`. A surface named there always keeps
+its source text. The configuration key behind the field is `disabled-kinds`. The two coarse switches still come first: a surface has to be allowed by “Chat” or
+“Other UI” before this list is consulted, so the list can only shrink the translated range and never
+switches a disabled surface back on. Names that mean nothing are ignored rather than guessed at.
+
 For mixed text such as “Welcome 欢迎,” only `Welcome` is sent to the translation service by
 default. The existing Chinese text is reassembled locally without changes. This behavior can be
 disabled in the settings. Translations are aqua by default; green, gold, light purple, yellow,

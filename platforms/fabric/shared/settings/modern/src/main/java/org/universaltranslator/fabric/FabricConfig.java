@@ -13,6 +13,7 @@ import org.universaltranslator.core.DebugLog;
 import org.universaltranslator.core.PersistentTranslationCache;
 import org.universaltranslator.core.TranslationTextColor;
 import org.universaltranslator.core.TextKind;
+import org.universaltranslator.core.TranslationKindPolicy;
 import org.universaltranslator.core.LocalConfigSecurity;
 import org.universaltranslator.core.OfflineModel;
 import org.universaltranslator.core.TranslationBlocklist;
@@ -92,6 +93,15 @@ final class FabricConfig {
     final int hudIndicatorOffsetX;
     final int hudIndicatorOffsetY;
     final String blockedKeywords;
+    /**
+     * Surfaces the player switched off individually, on top of the two coarse halves.
+     *
+     * <p>Kept as the parsed policy rather than as the raw string so {@link #allows(TextKind)} does
+     * not re-parse the list for every line of text the game sends. A snapshot that predates the key
+     * answers {@link TranslationKindPolicy#none()}, which is what keeps existing files working
+     * without a migration step.
+     */
+    final TranslationKindPolicy disabledKinds;
     final String targetLanguage;
     final String outgoingTargetLanguage;
     final TranslationDisplayMode displayMode;
@@ -183,6 +193,7 @@ final class FabricConfig {
                 properties.getProperty("hud-indicator-offset-y", "0"),
                 0, HudIndicatorSettings.MIN_OFFSET, HudIndicatorSettings.MAX_OFFSET);
         this.blockedKeywords = boundedKeywords(properties.getProperty("blocked-keywords", ""));
+        this.disabledKinds = TranslationKindPolicy.parse(properties.getProperty("disabled-kinds", ""));
         this.targetLanguage = properties.getProperty("target-language", TargetLanguage.SIMPLIFIED_CHINESE).trim();
         this.outgoingTargetLanguage = properties.getProperty(
                 "outgoing-target-language", "en").trim();
@@ -342,6 +353,7 @@ final class FabricConfig {
             boolean translateOutgoing,
             boolean translatePlayerNames,
             String blockedKeywords,
+            String disabledKinds,
             String targetLanguage,
             String outgoingTargetLanguage,
             TranslationDisplayMode displayMode,
@@ -361,7 +373,7 @@ final class FabricConfig {
     ) {
         Properties properties = toProperties();
         applyFormSettings(properties, enabled, translateChat, translateOther, translateVanilla,
-                translateOutgoing, translatePlayerNames, blockedKeywords, targetLanguage,
+                translateOutgoing, translatePlayerNames, blockedKeywords, disabledKinds, targetLanguage,
                 outgoingTargetLanguage, displayMode, translateEnglishOnly, translatedTextColor,
                 provider, endpoint, llmEndpoint, llmApiKey, llmModel, offlineAutoDownload,
                 offlineModel, apiFallback, diskCache, animatedUi, hudIndicator);
@@ -393,6 +405,7 @@ final class FabricConfig {
             boolean translateOutgoing,
             boolean translatePlayerNames,
             String blockedKeywords,
+            String disabledKinds,
             String targetLanguage,
             String outgoingTargetLanguage,
             TranslationDisplayMode displayMode,
@@ -416,7 +429,7 @@ final class FabricConfig {
     ) {
         Properties properties = toProperties();
         applyFormSettings(properties, enabled, translateChat, translateOther, translateVanilla,
-                translateOutgoing, translatePlayerNames, blockedKeywords, targetLanguage,
+                translateOutgoing, translatePlayerNames, blockedKeywords, disabledKinds, targetLanguage,
                 outgoingTargetLanguage, displayMode, translateEnglishOnly, translatedTextColor,
                 provider, endpoint, llmEndpoint, llmApiKey, llmModel, offlineAutoDownload,
                 offlineModel, apiFallback, diskCache, animatedUi, hudIndicator);
@@ -438,6 +451,7 @@ final class FabricConfig {
             boolean translateOutgoing,
             boolean translatePlayerNames,
             String blockedKeywords,
+            String disabledKinds,
             String targetLanguage,
             String outgoingTargetLanguage,
             TranslationDisplayMode displayMode,
@@ -462,6 +476,7 @@ final class FabricConfig {
         properties.setProperty("stream-outgoing", Boolean.toString(streamOutgoing));
         properties.setProperty("translate-player-names", Boolean.toString(translatePlayerNames));
         properties.setProperty("blocked-keywords", boundedKeywords(blockedKeywords));
+        properties.setProperty("disabled-kinds", TranslationKindPolicy.normalizeForStorage(disabledKinds));
         properties.setProperty("target-language", targetLanguage.trim());
         properties.setProperty("outgoing-target-language", outgoingTargetLanguage.trim());
         properties.setProperty("display-mode", displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED
@@ -682,9 +697,11 @@ final class FabricConfig {
         if (!enabled) {
             return false;
         }
-        return kind == TextKind.CHAT || kind == TextKind.SYSTEM_MESSAGE
-                ? translateChat
-                : translateOther;
+        boolean chat = kind == TextKind.CHAT || kind == TextKind.SYSTEM_MESSAGE;
+        // The per-surface list narrows the two halves; it never widens them. A kind whose half is
+        // off stays off even when it is absent from the list, so an old file without the key behaves
+        // exactly as before.
+        return (chat ? translateChat : translateOther) && disabledKinds.allows(kind);
     }
 
     TranslationProvider createProvider() {
@@ -735,6 +752,7 @@ final class FabricConfig {
         properties.setProperty("hud-indicator-offset-x", "0");
         properties.setProperty("hud-indicator-offset-y", "0");
         properties.setProperty("blocked-keywords", "");
+        properties.setProperty("disabled-kinds", "");
         properties.setProperty("target-language", TargetLanguage.SIMPLIFIED_CHINESE);
         properties.setProperty("outgoing-target-language", "en");
         properties.setProperty("display-mode", "translated-only");
@@ -783,6 +801,10 @@ final class FabricConfig {
         properties.setProperty("hud-indicator-offset-x", Integer.toString(hudIndicatorOffsetX));
         properties.setProperty("hud-indicator-offset-y", Integer.toString(hudIndicatorOffsetY));
         properties.setProperty("blocked-keywords", blockedKeywords);
+        // Written from the parsed policy, not from a stored string: toProperties() rebuilds a blank
+        // Properties and only carries the prompt keys over from disk, so a key that is not written
+        // here disappears on the next save — including a save the player never touched.
+        properties.setProperty("disabled-kinds", disabledKinds.storageForm());
         properties.setProperty("target-language", targetLanguage);
         properties.setProperty("outgoing-target-language", outgoingTargetLanguage);
         properties.setProperty("display-mode", displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED

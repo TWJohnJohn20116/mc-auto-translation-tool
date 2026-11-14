@@ -13,6 +13,7 @@ import org.universaltranslator.core.HudIndicatorCorner;
 import org.universaltranslator.core.HudIndicatorSettings;
 import org.universaltranslator.core.HudIndicatorVisibility;
 import org.universaltranslator.core.TextKind;
+import org.universaltranslator.core.TranslationKindPolicy;
 import org.universaltranslator.core.LocalConfigSecurity;
 import org.universaltranslator.core.OfflineModel;
 import org.universaltranslator.core.TranslationBlocklist;
@@ -103,6 +104,14 @@ final class LegacyConfig {
     final boolean translatePlayerNames;
     final boolean animatedUi;
     final String blockedKeywords;
+    /**
+     * Surfaces the player switched off individually, on top of the two coarse halves.
+     *
+     * <p>Kept parsed rather than raw so {@link #allows(TextKind)} does not re-parse the list for
+     * every line the game sends; a snapshot without the key answers
+     * {@link TranslationKindPolicy#none()}, which is how existing files keep working.
+     */
+    final TranslationKindPolicy disabledKinds;
     final String targetLanguage;
     final String outgoingTargetLanguage;
     final TranslationDisplayMode displayMode;
@@ -171,6 +180,7 @@ final class LegacyConfig {
                 properties.getProperty("translate-player-names", "false"));
         animatedUi = Boolean.parseBoolean(properties.getProperty("animated-ui", "true"));
         blockedKeywords = boundedKeywords(properties.getProperty("blocked-keywords", ""));
+        disabledKinds = TranslationKindPolicy.parse(properties.getProperty("disabled-kinds", ""));
         targetLanguage = properties.getProperty("target-language", TargetLanguage.SIMPLIFIED_CHINESE).trim();
         outgoingTargetLanguage = properties.getProperty(
                 "outgoing-target-language", "en").trim();
@@ -323,6 +333,7 @@ final class LegacyConfig {
             boolean translateOutgoing,
             boolean translatePlayerNames,
             String blockedKeywords,
+            String disabledKinds,
             String targetLanguage,
             String outgoingTargetLanguage,
             TranslationDisplayMode displayMode,
@@ -349,6 +360,7 @@ final class LegacyConfig {
         properties.setProperty("stream-outgoing", Boolean.toString(streamOutgoing));
         properties.setProperty("translate-player-names", Boolean.toString(translatePlayerNames));
         properties.setProperty("blocked-keywords", boundedKeywords(blockedKeywords));
+        properties.setProperty("disabled-kinds", TranslationKindPolicy.normalizeForStorage(disabledKinds));
         properties.setProperty("target-language", targetLanguage.trim());
         properties.setProperty("outgoing-target-language", outgoingTargetLanguage.trim());
         properties.setProperty("display-mode", displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED
@@ -613,9 +625,9 @@ final class LegacyConfig {
         if (!enabled) {
             return false;
         }
-        return kind == TextKind.CHAT || kind == TextKind.SYSTEM_MESSAGE
-                ? translateChat
-                : translateOther;
+        boolean chat = kind == TextKind.CHAT || kind == TextKind.SYSTEM_MESSAGE;
+        // The per-surface list narrows the two halves; it never widens them.
+        return (chat ? translateChat : translateOther) && disabledKinds.allows(kind);
     }
 
     TranslationProvider createProvider() {
@@ -645,6 +657,7 @@ final class LegacyConfig {
         properties.setProperty("translate-player-names", "false");
         properties.setProperty("animated-ui", "true");
         properties.setProperty("blocked-keywords", "");
+        properties.setProperty("disabled-kinds", "");
         properties.setProperty("target-language", TargetLanguage.SIMPLIFIED_CHINESE);
         properties.setProperty("outgoing-target-language", "en");
         properties.setProperty("display-mode", "translated-only");
@@ -757,6 +770,9 @@ final class LegacyConfig {
         properties.setProperty("translate-player-names", Boolean.toString(translatePlayerNames));
         properties.setProperty("animated-ui", Boolean.toString(animatedUi));
         properties.setProperty("blocked-keywords", blockedKeywords);
+        // toProperties() rebuilds a blank Properties and only carries the prompt keys over from
+        // disk, so a key that is not written here disappears on the next save.
+        properties.setProperty("disabled-kinds", disabledKinds.storageForm());
         properties.setProperty("target-language", targetLanguage);
         properties.setProperty("outgoing-target-language", outgoingTargetLanguage);
         properties.setProperty("display-mode", displayMode == TranslationDisplayMode.ORIGINAL_AND_TRANSLATED

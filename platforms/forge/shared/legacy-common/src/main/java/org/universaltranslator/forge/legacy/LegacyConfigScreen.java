@@ -155,6 +155,8 @@ final class LegacyConfigScreen extends GuiScreen {
     private GuiButton playerNamesButton;
     private GuiButton mixedTextButton;
     private GuiTextField blockedKeywords;
+    /** Surfaces switched off individually; the accepted names are listed in TranslationKindPolicy. */
+    private GuiTextField disabledKinds;
 
     private GuiButton providerButton;
     private GuiButton modelButton;
@@ -269,6 +271,8 @@ final class LegacyConfigScreen extends GuiScreen {
         String endpointValue = endpoint == null ? original.endpoint : endpoint.getText();
         String blockedKeywordsValue = blockedKeywords == null
                 ? original.blockedKeywords : blockedKeywords.getText();
+        String disabledKindsValue = disabledKinds == null
+                ? original.disabledKinds.storageForm() : disabledKinds.getText();
         if (outgoingTargetLanguage == null) {
             outgoingTargetLanguage = TargetLanguage.canonicalize(original.outgoingTargetLanguage);
         }
@@ -329,6 +333,9 @@ final class LegacyConfigScreen extends GuiScreen {
         blockedKeywords = new GuiTextField(22, renderer, left, layout.contentRow(3), totalWidth, 20);
         blockedKeywords.setMaxStringLength(UiLimits.KEYWORDS_MAX_CHARS);
         blockedKeywords.setText(blockedKeywordsValue);
+        disabledKinds = new GuiTextField(23, renderer, left, layout.contentRow(4), totalWidth, 20);
+        disabledKinds.setMaxStringLength(UiLimits.KINDS_MAX_CHARS);
+        disabledKinds.setText(disabledKindsValue);
 
         buttonList.add(chatButton);
         buttonList.add(otherButton);
@@ -455,6 +462,7 @@ final class LegacyConfigScreen extends GuiScreen {
         playerNamesButton.visible = isScope;
         mixedTextButton.visible = isScope;
         blockedKeywords.setVisible(isScope);
+        disabledKinds.setVisible(isScope);
 
         // Engine
         boolean isEng = activeTab == Tab.ENGINE;
@@ -1077,6 +1085,7 @@ final class LegacyConfigScreen extends GuiScreen {
                     translateOutgoing,
                     translatePlayerNames,
                     blockedKeywords.getText(),
+                    disabledKinds.getText(),
                     targetLanguage,
                     outgoingTargetLanguage,
                     displayMode,
@@ -1136,6 +1145,9 @@ final class LegacyConfigScreen extends GuiScreen {
         if (activeTab == Tab.SCOPES && blockedKeywords != null) {
             blockedKeywords.updateCursorCounter();
         }
+        if (activeTab == Tab.SCOPES && disabledKinds != null) {
+            disabledKinds.updateCursorCounter();
+        }
     }
 
     @Override
@@ -1169,6 +1181,9 @@ final class LegacyConfigScreen extends GuiScreen {
         if (activeTab == Tab.SCOPES && blockedKeywords != null && blockedKeywords.textboxKeyTyped(typedChar, keyCode)) {
             return;
         }
+        if (activeTab == Tab.SCOPES && disabledKinds != null && disabledKinds.textboxKeyTyped(typedChar, keyCode)) {
+            return;
+        }
         super.keyTyped(typedChar, keyCode);
     }
 
@@ -1196,6 +1211,9 @@ final class LegacyConfigScreen extends GuiScreen {
         }
         if (activeTab == Tab.SCOPES && blockedKeywords != null) {
             blockedKeywords.mouseClicked(mouseX, mouseY, mouseButton);
+        }
+        if (activeTab == Tab.SCOPES && disabledKinds != null) {
+            disabledKinds.mouseClicked(mouseX, mouseY, mouseButton);
         }
     }
 
@@ -1264,6 +1282,12 @@ final class LegacyConfigScreen extends GuiScreen {
                         tr("screen.universal_translator.blocked_keywords_hint",
                                 UiLimits.KEYWORDS_MAX_ENTRIES, UiLimits.KEYWORD_MAX_CHARS),
                         layout.left() + 4, layout.contentRow(3) + 6, 0x70A0A0A0);
+            }
+            disabledKinds.drawTextBox();
+            if (disabledKinds.getText().isEmpty()) {
+                renderer.drawStringWithShadow(
+                        tr("screen.universal_translator.disabled_kinds_hint", UiLimits.KINDS_MAX_ENTRIES),
+                        layout.left() + 4, layout.contentRow(4) + 6, 0x70A0A0A0);
             }
         } else if (activeTab == Tab.ENGINE) {
             if (isLibreTranslate()) {

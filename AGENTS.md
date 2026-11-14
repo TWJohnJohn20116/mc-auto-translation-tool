@@ -447,6 +447,14 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   含 `onOff(boolean)`）、`UiLimits`（畫面與輸入上限）、`TargetLanguage.AUTO` 與 `isAuto(String)`
   （來源語言的偵測哨兵值）、`provider/LoopbackContext`（loopback llama.cpp 的 context 視窗）。
   要寫重複的字面量或數值之前先找這幾個類；它們以 `srcDir` 掛進每個平台，不需要新增依賴。
+- **內容面開關（`disabled-kinds`）的唯一判定點是 `config.allows(TextKind)`**：`TranslationKindPolicy`
+  （`translator-core`；`groups()` 七組 chat／scoreboard／player-list／titles／items／world／misc，
+  `entries()` 28 個名稱，`MAX_ENTRIES` 32、`MAX_CONFIG_LENGTH` 512）負責解析玩家輸入，四個 config
+  （fabric modern／legacy、`ForgeConfig`、`LegacyConfig`）寫同一個鍵並在 `allows(...)` 收窄；runtime 只呼叫
+  `config.allows(kind)`，不要在 runtime 再判斷一次。兩個粗開關（`translate-chat`／`translate-other`）優先：
+  清單只能把面關掉，不能把粗開關關掉的面打開。認不得的名稱直接忽略（`Parsed.unknown()`），不要因此報錯或
+  讓整份設定失效。新增 `TextKind` 時要同時更新 `TranslationKindPolicy` 的分組與
+  `CoreSelfTest.narrowsSurfacesWithExplicitExclusions`。
 - **`TargetLanguage.displayName()` 保持各語言的自稱**（简体中文／繁體中文／日本語）：`TranslationPrompt`
   用它組提示詞，`CoreSelfTest` 也把它當契約測，不要改成語言鍵。
 - **改到非 PR 路徑的程式碼要手動觸發 `legacy-targets.yml` 驗證**：`platforms/forge/shared/legacy-common`

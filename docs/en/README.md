@@ -26,6 +26,7 @@ chat, quest books, mod menus, scoreboards, item descriptions, and signs.
 | Multiple providers | Built-in Chinese MT and LLM services, plus LibreTranslate, OpenAI-compatible, and custom HTTP JSON APIs |
 | Responsive and resilient | Translation runs in the background; unfinished requests and service failures keep the original text without blocking rendering |
 | Privacy protection | Player names are separated locally by default and can be translated only when explicitly enabled; server addresses, URLs, numbers, and formatting codes remain protected |
+| Per-surface switches | Narrow “Chat” and “Other UI” per surface; naming `chat`, `titles`, or `sign` turns that one surface off |
 | Blocked keywords | Custom skip-translation keywords; matching text stays original and is never sent to the offline model or an online API |
 | Local cache | Coalesces identical requests and caches translations to reduce latency and remote-service costs |
 | Optional outgoing translation | Can translate normal chat and send it in order; this is off by default and commands always remain unchanged |
