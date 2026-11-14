@@ -523,7 +523,7 @@ abstract class UniversalTranslatorSettingsScreen extends Screen {
         // 240px-high window it still clears the Save row; the fallback below keeps the field on
         // screen at the smallest GUI scales, where the whole form is shifted upwards anyway.
         this.disabledKinds = addSettingField(newTextField(left,
-                Math.min(layout.contentRow(3) + layout.contentRowStep(), layout.saveY() - 22),
+                Math.min(layout.contentRow(3) + layout.contentRowStep, layout.saveY - 22),
                 layout.totalWidth, 20, tr("screen.universal_translator.disabled_kinds")));
         this.disabledKinds.setMaxLength(UiLimits.KINDS_MAX_CHARS);
         this.disabledKinds.setText(disabledKindsValue);
