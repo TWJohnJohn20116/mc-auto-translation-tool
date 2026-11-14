@@ -340,6 +340,15 @@ config/universal-translator-debug.log
 包含任一關鍵詞，整段文字便會保持原樣且不會進入翻譯服務。例如填入 `hello,廣告` 後，
 包含 `hello` 或「廣告」的聊天、介面文字及傳送翻譯都會略過。
 
+「停用內容面」在「聊天內容」與「其他介面」之外再細分：可以填分組名稱 `chat`、
+`scoreboard`、`player-list`、`titles`、`items`、`world`、`misc`，也可以填單一內容面
+（`sign`、`book`、`hologram`、`entity-name`、`container-title`、`item-name`、`item-lore`、
+`tooltip`、`boss-bar`、`disconnect-reason`、`toast`、`other`，或其餘同名的單一內容面）。
+命中的內容面一律保持原文。設定檔中的鍵名是 `disabled-kinds`，畫面欄位填的就是它的值。
+兩個粗開關仍然優先：內容面必須先被「聊天內容」或「其他介面」允許，才會輪到這份清單判斷，
+所以清單只會減少翻譯範圍，不會把已關閉的內容面重新打開。無法辨識的名稱會被忽略，
+不會被猜成別的內容面。
+
 對於「Welcome 歡迎」之類的混合文字，預設只會將 `Welcome` 交給翻譯服務，既有的
 「歡迎」會在本機原樣重新組合。此行為可在設定中關閉。譯文預設顯示為青色，
 也可選擇綠色、金色、淺紫色、黃色、白色或保留原色。

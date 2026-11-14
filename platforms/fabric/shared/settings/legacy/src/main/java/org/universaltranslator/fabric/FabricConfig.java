@@ -14,6 +14,7 @@ import org.universaltranslator.core.DebugLog;
 import org.universaltranslator.core.PersistentTranslationCache;
 import org.universaltranslator.core.HotkeyKeys;
 import org.universaltranslator.core.TextKind;
+import org.universaltranslator.core.TranslationKindPolicy;
 import org.universaltranslator.core.LocalConfigSecurity;
 import org.universaltranslator.core.OfflineModel;
 import org.universaltranslator.core.TranslationBlocklist;
@@ -68,6 +69,15 @@ final class FabricConfig {
     final boolean translatePlayerNames;
     final boolean animatedUi;
     final String blockedKeywords;
+    /**
+     * Surfaces the player switched off individually, on top of the two coarse halves.
+     *
+     * <p>Kept as the parsed policy rather than as the raw string so {@link #allows(TextKind)} does
+     * not re-parse the list for every line of text the game sends. A snapshot that predates the key
+     * answers {@link TranslationKindPolicy#none()}, which is what keeps existing files working
+     * without a migration step.
+     */
+    final TranslationKindPolicy disabledKinds;
     final String targetLanguage;
     final String outgoingTargetLanguage;
     final TranslationDisplayMode displayMode;
@@ -148,6 +158,7 @@ final class FabricConfig {
                 properties.getProperty("translate-player-names", "false"));
         this.animatedUi = Boolean.parseBoolean(properties.getProperty("animated-ui", "true"));
         this.blockedKeywords = boundedKeywords(properties.getProperty("blocked-keywords", ""));
+        this.disabledKinds = TranslationKindPolicy.parse(properties.getProperty("disabled-kinds", ""));
         // Fabric 1.0-1.13.2 has no key-binding API (the 1.13 tree does not even depend on Fabric
         // API), so the hotkeys are read from this file instead of the vanilla controls screen.
         // Read into the snapshot only: publishing them to the global HotkeyKeys is load()'s job, so
@@ -356,6 +367,7 @@ final class FabricConfig {
             boolean translateOutgoing,
             boolean translatePlayerNames,
             String blockedKeywords,
+            String disabledKinds,
             String targetLanguage,
             String outgoingTargetLanguage,
             TranslationDisplayMode displayMode,
@@ -375,7 +387,7 @@ final class FabricConfig {
     ) {
         Properties properties = toProperties();
         applyFormSettings(properties, enabled, translateChat, translateOther, translateVanilla,
-                translateOutgoing, translatePlayerNames, blockedKeywords, targetLanguage,
+                translateOutgoing, translatePlayerNames, blockedKeywords, disabledKinds, targetLanguage,
                 outgoingTargetLanguage, displayMode, translateEnglishOnly, translatedTextColor,
                 provider, endpoint, llmEndpoint, llmApiKey, llmModel, offlineAutoDownload,
                 offlineModel, apiFallback, diskCache, animatedUi, hudIndicator);
@@ -400,6 +412,7 @@ final class FabricConfig {
             boolean translateOutgoing,
             boolean translatePlayerNames,
             String blockedKeywords,
+            String disabledKinds,
             String targetLanguage,
             String outgoingTargetLanguage,
             TranslationDisplayMode displayMode,
@@ -423,7 +436,7 @@ final class FabricConfig {
     ) {
         Properties properties = toProperties();
         applyFormSettings(properties, enabled, translateChat, translateOther, translateVanilla,
-                translateOutgoing, translatePlayerNames, blockedKeywords, targetLanguage,
+                translateOutgoing, translatePlayerNames, blockedKeywords, disabledKinds, targetLanguage,
                 outgoingTargetLanguage, displayMode, translateEnglishOnly, translatedTextColor,
                 provider, endpoint, llmEndpoint, llmApiKey, llmModel, offlineAutoDownload,
                 offlineModel, apiFallback, diskCache, animatedUi, hudIndicator);
@@ -444,6 +457,7 @@ final class FabricConfig {
             boolean translateOutgoing,
             boolean translatePlayerNames,
             String blockedKeywords,
+            String disabledKinds,
             String targetLanguage,
             String outgoingTargetLanguage,
             TranslationDisplayMode displayMode,
@@ -468,6 +482,7 @@ final class FabricConfig {
         properties.setProperty("stream-outgoing", Boolean.toString(streamOutgoing));
         properties.setProperty("translate-player-names", Boolean.toString(translatePlayerNames));
         properties.setProperty("blocked-keywords", boundedKeywords(blockedKeywords));
+        properties.setProperty("disabled-kinds", TranslationKindPolicy.normalizeForStorage(disabledKinds));
         // The hotkey names are not written here: the snapshot already carries them from
         // toProperties(), which writes the raw property values this object was built from.
         properties.setProperty("target-language", targetLanguage.trim());
@@ -689,9 +704,9 @@ final class FabricConfig {
         if (!enabled) {
             return false;
         }
-        return kind == TextKind.CHAT || kind == TextKind.SYSTEM_MESSAGE
-                ? translateChat
-                : translateOther;
+        boolean chat = kind == TextKind.CHAT || kind == TextKind.SYSTEM_MESSAGE;
+        // The per-surface list narrows the two halves; it never widens them.
+        return (chat ? translateChat : translateOther) && disabledKinds.allows(kind);
     }
 
     TranslationProvider createProvider() {
@@ -732,6 +747,7 @@ final class FabricConfig {
         properties.setProperty("translate-player-names", "false");
         properties.setProperty("animated-ui", "true");
         properties.setProperty("blocked-keywords", "");
+        properties.setProperty("disabled-kinds", "");
         properties.setProperty("settings-key", DEFAULT_SETTINGS_KEY);
         properties.setProperty("toggle-key", DEFAULT_TOGGLE_KEY);
         properties.setProperty("target-language", TargetLanguage.SIMPLIFIED_CHINESE);
@@ -782,6 +798,9 @@ final class FabricConfig {
         properties.setProperty("translate-player-names", Boolean.toString(translatePlayerNames));
         properties.setProperty("animated-ui", Boolean.toString(animatedUi));
         properties.setProperty("blocked-keywords", blockedKeywords);
+        // toProperties() rebuilds a blank Properties and only carries the prompt keys over from
+        // disk, so a key that is not written here disappears on the next save.
+        properties.setProperty("disabled-kinds", disabledKinds.storageForm());
         // Written from the snapshot, never from the global HotkeyKeys: a rebuild that reached the
         // global holder would round-trip through nameOf(), which only eight of the named codes
         // survive, and would write the default over the player's value whenever this object was

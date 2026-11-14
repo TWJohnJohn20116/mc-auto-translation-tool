@@ -75,6 +75,7 @@ public final class CoreSelfTest {
         neverSendsProtectedValuesToProvider();
         preservesLineBreaksInMultiLineSegments();
         blocksConfiguredKeywords();
+        narrowsSurfacesWithExplicitExclusions();
         discardsResultsBlockedWhileInFlight();
         separatesCacheEntriesByTextKind();
         prefersChinaDownloadSources();
@@ -110,6 +111,74 @@ public final class CoreSelfTest {
         writesAndRotatesTheDebugLog();
         exportsADiagnosticsBundle();
         System.out.println("CoreSelfTest: all checks passed");
+    }
+
+    /**
+     * The per-surface switch narrows the two coarse halves instead of redefining them: a surface
+     * named here is skipped, everything else keeps whatever its half already decided. The stored
+     * form matters as much as the parse, because it is what the next Save writes back — a group has
+     * to stay the word the player typed rather than expanding into its members.
+     */
+    private static void narrowsSurfacesWithExplicitExclusions() {
+        TranslationKindPolicy none = TranslationKindPolicy.parse("");
+        assertEquals("", none.storageForm());
+        assertEquals(0, none.disabledCount());
+        assertTrue(none.allows(TextKind.CHAT));
+        assertTrue(none.allows(TextKind.SIGN));
+        // Null reaches allows() from call sites that hold no kind; it must mean "not excluded".
+        assertTrue(none.allows(null));
+        assertFalse(TranslationKindPolicy.parse("   ").disabledCount() > 0);
+
+        // Mixed groups and single names, with full-width punctuation and stray capitalisation, are
+        // exactly what a player types into the field.
+        TranslationKindPolicy titles = TranslationKindPolicy.parse(" Titles，scoreboard ");
+        assertFalse(titles.allows(TextKind.TITLE));
+        assertFalse(titles.allows(TextKind.SUBTITLE));
+        assertFalse(titles.allows(TextKind.ACTION_BAR));
+        assertFalse(titles.allows(TextKind.BOSS_BAR));
+        assertFalse(titles.allows(TextKind.TOAST));
+        assertFalse(titles.allows(TextKind.SCOREBOARD_TITLE));
+        assertFalse(titles.allows(TextKind.SCOREBOARD_LINE));
+        assertTrue(titles.allows(TextKind.CHAT));
+        assertTrue(titles.allows(TextKind.SIGN));
+        assertEquals(7, titles.disabledCount());
+        assertEquals("titles,scoreboard", titles.storageForm());
+        assertEquals("titles,scoreboard",
+                TranslationKindPolicy.normalizeForStorage(" Titles，scoreboard "));
+
+        // A name that means nothing is dropped and counted, never guessed at: turning off a surface
+        // the player did not name would be worse than doing nothing.
+        TranslationKindPolicy.Parsed typo = TranslationKindPolicy.parseWithReport("sig; 招牌");
+        assertEquals(0, typo.policy().disabledCount());
+        assertEquals("", typo.policy().storageForm());
+        assertEquals(2, typo.unknown());
+        assertTrue(typo.lossy());
+
+        // An over-long value is cut on a separator, so the truncated tail cannot produce a
+        // half-written token that silently excludes nothing the player asked for.
+        StringBuilder longValue = new StringBuilder();
+        while (longValue.length() <= TranslationKindPolicy.MAX_CONFIG_LENGTH + 40) {
+            if (longValue.length() > 0) {
+                longValue.append(' ');
+            }
+            longValue.append("player-list");
+        }
+        TranslationKindPolicy.Parsed truncated =
+                TranslationKindPolicy.parseWithReport(longValue.toString());
+        assertTrue(truncated.droppedForLength() > 0);
+        assertEquals("player-list", truncated.policy().storageForm());
+        assertFalse(truncated.policy().allows(TextKind.PLAYER_LIST_HEADER));
+        assertTrue(truncated.policy().allows(TextKind.SIGN));
+
+        // The entry cap can never bite while it stays above the number of distinct names: repeats
+        // are de-duplicated before the cap is consulted. Asserting the relationship keeps the two
+        // numbers from drifting apart unnoticed — a cap below the name count would start dropping
+        // real entries, and nothing else in the suite would notice.
+        assertTrue(TranslationKindPolicy.MAX_ENTRIES >= TranslationKindPolicy.entries().length);
+        assertEquals(TranslationKindPolicy.groupNames().length,
+                TranslationKindPolicy.entries().length - TextKind.values().length);
+        assertTrue(TranslationKindPolicy.MAX_CONFIG_LENGTH
+                >= TranslationKindPolicy.MAX_ENTRIES * 8);
     }
 
     private static void translatesOutgoingChatAsynchronously() throws Exception {
