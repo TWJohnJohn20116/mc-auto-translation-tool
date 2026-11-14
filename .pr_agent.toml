@@ -9,6 +9,10 @@ fallback_models = []
 # 這個模型不在 PR-Agent 的 token 上限表裡，必須自己宣告，否則會被當成未知模型。
 custom_model_max_tokens = 32000
 max_model_tokens = 32000
+# 回應語系：模型產生的文字（發現、說明）跟著這個值走。
+# 固定標題與狀態列由語系表提供，而 PR-Agent 只內建 en／es，繁體中文那份放在
+# .github/pr-agent/zh-tw.toml，由 workflow 在 runner 上複製進套件目錄才生效。
+response_language = "zh-TW"
 
 # 端點與權杖刻意不寫在這裡：本檔進版控、而這個 repo 是公開的，寫進來等於公開端點。
 # 兩者由 .github/workflows/ai-review.yml 在 runner 上寫進「套件設定目錄」的

@@ -19,6 +19,7 @@ on:
       - 'website/worker/**'
       - 'website/tests/**'
       - '.pr_agent.toml'
+      - '.github/pr-agent/**'
       - '.github/workflows/ai-review.yml'
   issue_comment:
     types: [created]
@@ -69,6 +70,26 @@ jobs:
 
       - name: 安裝 PR-Agent
         run: pip install --disable-pip-version-check 'pr-agent[github]==0.50.0'
+
+      - name: 套用繁體中文語系表與標題（PR-Agent 只內建 en／es）
+        run: |
+          set -euo pipefail
+          settings_dir="$(python -c 'import os, pr_agent; print(os.path.join(os.path.dirname(pr_agent.__file__), "settings"))')"
+          if [ -f .github/pr-agent/zh-tw.toml ]; then
+            cp .github/pr-agent/zh-tw.toml "$settings_dir/i18n/zh-tw.toml"
+            echo "已套用 $settings_dir/i18n/zh-tw.toml"
+          else
+            echo "::warning::找不到 .github/pr-agent/zh-tw.toml，這次留言的固定文字維持英文"
+          fi
+          # 留言標題不在語系表裡：0.50.0 把 "## PR Reviewer Guide" 寫死成 StrEnum，
+          # 設定項 review_heading 讀不到，只能在 runner 上就地換字。
+          identity="$(python -c 'import os, pr_agent; print(os.path.join(os.path.dirname(pr_agent.__file__), "algo", "comment_identity.py"))')"
+          sed -i.bak \
+            -e 's|## PR Reviewer Guide|## PR 審查指南|' \
+            -e 's|## Incremental PR Reviewer Guide|## 增量 PR 審查指南|' \
+            -e 's|## PR Code Suggestions ✨|## PR 程式碼建議 ✨|' \
+            "$identity"
+          grep -q 'PR 審查指南' "$identity" || echo "::warning::標題字串沒換成中文，上游可能改了寫法"
 
       - name: 寫入 .secrets.toml（只在 runner 上，不進版控）
         env:
@@ -148,6 +169,26 @@ jobs:
       - name: 安裝 PR-Agent
         run: pip install --disable-pip-version-check 'pr-agent[github]==0.50.0'
 
+      - name: 套用繁體中文語系表與標題（PR-Agent 只內建 en／es）
+        run: |
+          set -euo pipefail
+          settings_dir="$(python -c 'import os, pr_agent; print(os.path.join(os.path.dirname(pr_agent.__file__), "settings"))')"
+          if [ -f .github/pr-agent/zh-tw.toml ]; then
+            cp .github/pr-agent/zh-tw.toml "$settings_dir/i18n/zh-tw.toml"
+            echo "已套用 $settings_dir/i18n/zh-tw.toml"
+          else
+            echo "::warning::找不到 .github/pr-agent/zh-tw.toml，這次留言的固定文字維持英文"
+          fi
+          # 留言標題不在語系表裡：0.50.0 把 "## PR Reviewer Guide" 寫死成 StrEnum，
+          # 設定項 review_heading 讀不到，只能在 runner 上就地換字。
+          identity="$(python -c 'import os, pr_agent; print(os.path.join(os.path.dirname(pr_agent.__file__), "algo", "comment_identity.py"))')"
+          sed -i.bak \
+            -e 's|## PR Reviewer Guide|## PR 審查指南|' \
+            -e 's|## Incremental PR Reviewer Guide|## 增量 PR 審查指南|' \
+            -e 's|## PR Code Suggestions ✨|## PR 程式碼建議 ✨|' \
+            "$identity"
+          grep -q 'PR 審查指南' "$identity" || echo "::warning::標題字串沒換成中文，上游可能改了寫法"
+
       - name: 寫入 .secrets.toml（只在 runner 上，不進版控）
         env:
           AI_BASE_URL: ${{ secrets.AI_REVIEW_BASE_URL }}
@@ -220,6 +261,26 @@ jobs:
 
       - name: 安裝 PR-Agent
         run: pip install --disable-pip-version-check 'pr-agent[github]==0.50.0'
+
+      - name: 套用繁體中文語系表與標題（PR-Agent 只內建 en／es）
+        run: |
+          set -euo pipefail
+          settings_dir="$(python -c 'import os, pr_agent; print(os.path.join(os.path.dirname(pr_agent.__file__), "settings"))')"
+          if [ -f .github/pr-agent/zh-tw.toml ]; then
+            cp .github/pr-agent/zh-tw.toml "$settings_dir/i18n/zh-tw.toml"
+            echo "已套用 $settings_dir/i18n/zh-tw.toml"
+          else
+            echo "::warning::找不到 .github/pr-agent/zh-tw.toml，這次留言的固定文字維持英文"
+          fi
+          # 留言標題不在語系表裡：0.50.0 把 "## PR Reviewer Guide" 寫死成 StrEnum，
+          # 設定項 review_heading 讀不到，只能在 runner 上就地換字。
+          identity="$(python -c 'import os, pr_agent; print(os.path.join(os.path.dirname(pr_agent.__file__), "algo", "comment_identity.py"))')"
+          sed -i.bak \
+            -e 's|## PR Reviewer Guide|## PR 審查指南|' \
+            -e 's|## Incremental PR Reviewer Guide|## 增量 PR 審查指南|' \
+            -e 's|## PR Code Suggestions ✨|## PR 程式碼建議 ✨|' \
+            "$identity"
+          grep -q 'PR 審查指南' "$identity" || echo "::warning::標題字串沒換成中文，上游可能改了寫法"
 
       - name: 寫入 .secrets.toml（只在 runner 上，不進版控）
         env:
