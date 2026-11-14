@@ -472,6 +472,11 @@ selected.each { name ->
     include(name)
     def descriptor = project(":${name}")
     descriptor.projectDir = file(platformProjects[name])
+    // Gradle 9 refuses to configure a project whose directory does not exist ("Configuring project ...
+    // without an existing directory is not allowed"). These modules are coordinate-only: the directory
+    // holds nothing but what the build writes into it, so it is created here. Keeping it alive with a
+    // checked-in placeholder file would need 92 of them — exactly the copies this change removed.
+    descriptor.projectDir.mkdirs()
     def script = fabricVersionBuildScript(platformProjects[name])
     if (script != null) {
         // buildFileName is resolved against the project directory, and the shared script lives one or more
