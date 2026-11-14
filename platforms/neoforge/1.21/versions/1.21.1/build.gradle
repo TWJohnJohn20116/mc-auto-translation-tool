@@ -7,6 +7,10 @@ plugins {
 // platforms/neoforge/shared.gradle; only the values below differ per version.
 ext.neoforgeMinecraftVersion = "1.21.1"
 ext.neoforgeVersion = project.neoforge_1_21_1_version
+// Loader metadata coordinates for platforms/neoforge/shared/metadata/common (FML versionRange checks).
+ext.neoforgeLoaderVersion = "[4,)"
+ext.neoforgeDependencyRange = "[21.1.248,22.0.0)"
+ext.neoforgeMinecraftRange = "[1.21.1,1.21.2)"
 ext.neoforgeJavaRelease = 21
 ext.neoforgeEntryLayer = "1.21-1.21.1"
 ext.neoforgeMetadataLayer = "1.21"

@@ -50,7 +50,7 @@ unzip -l build/libs/mc-auto-translation-tool-neoforge-<版本>.jar | grep assets
 
 | 資源 | 來源 |
 | --- | --- |
-| `META-INF/neoforge.mods.toml` | 各版本自己的 `src/main/resources/META-INF/`（唯一真相；`shared.gradle` 的 `forgeLayers` 迴圈會 `exclude` 掉 Forge 樹的 `META-INF/mods.toml`） |
+| `META-INF/neoforge.mods.toml` | `platforms/neoforge/shared/metadata/common/src/main/resources/META-INF/`（唯一模板，`shared.gradle` 展開版本與三個 range；1.20.2／1.20.4 以 `ext.neoforgeLoaderMetadataName` 改名為 `mods.toml`；`forgeLayers` 迴圈會 `exclude` 掉 Forge 樹的同名檔） |
 | `pack.mcmeta` | `forgeLayers` 的 `common` 層（`platforms/forge/{modern,1.21,26.x}/shared/common/src/main/resources`） |
 | `universal-translator.neoforge.mixins.json` | `platforms/neoforge/shared/metadata/<層>/src/main/resources` |
 | `assets/`（語言檔） | **缺**，見上表 |
