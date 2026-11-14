@@ -692,6 +692,7 @@ tasks.register("validateSharedPlatformLayouts") {
         def versionOwnedModMetadata = fileTree("platforms/fabric") {
             include "1.0-1.8/versions/*/src/**/fabric.mod.json"
             include "1.8-1.12/versions/*/src/**/fabric.mod.json"
+            include "1.14-1.15/versions/*/src/**/fabric.mod.json"
             include "1.21/versions/*/src/**/fabric.mod.json"
             exclude "**/build/**"
             exclude "**/.gradle/**"
