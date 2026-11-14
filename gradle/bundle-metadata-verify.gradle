@@ -233,7 +233,14 @@ ext.verifyBundleMetadata = {
                 stubDrift << "${version}: no project or no legacyLoaderVersion/legacyJavaRelease"
                 return
             }
+            // The three 1.14.0-1.14.2 stubs share one template under the family directory; their own
+            // copies differed only in the release named inside the description. The per-version file is
+            // still preferred so a future release that really needs its own metadata keeps working.
             def template = new File(member.projectDir, "src/main/resources/fabric.mod.json")
+            if (!template.isFile()) {
+                template = rootProject.file(
+                        "platforms/fabric/1.14-1.15/shared/family/1.14-1.15/src/main/resources/fabric.mod.json")
+            }
             if (!template.isFile()) {
                 stubDrift << "${version}: ${template} does not exist, so nothing shows what it declares"
                 return

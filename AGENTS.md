@@ -466,7 +466,7 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   `loaderVersion`）。**不要**在 `platforms/fabric/*/versions/<版本>/src/main/resources/` 再放一份——2026-11-14
   之前那裡有 53 份只差版本號的副本（1.0-1.8 26 份、1.8-1.12 15 份、1.21 12 份），`version` 還寫成 `${version}`。
   `build.gradle` 的 `versionOwnedModMetadata` 會擋下這類檔案重新加回來。1.16、1.17-1.18、1.19、1.20 四棵樹
-  早就走 `platforms/fabric/legacy/shared/common` 的同一份模板；`1.14-1.15` 的 bundle stub 另有自己的機制。
+  早就走 `platforms/fabric/legacy/shared/common` 的同一份模板；`1.14-1.15` 的三個 stub 共用 `shared/family/1.14-1.15/src/main/resources/fabric.mod.json`（描述裡的版本號由 `${minecraftVersion}` 展開）；`1.13` 的三份仍各自保留，因為它們的描述是逐版手寫的文案，不是座標。
 - **`translator-core` 的共用常量**：`LogMessages`（跨平台日誌字串）、`UiTextKeys`（共用語言鍵，
   含 `onOff(boolean)`）、`UiLimits`（畫面與輸入上限）、`TargetLanguage.AUTO` 與 `isAuto(String)`
   （來源語言的偵測哨兵值）、`provider/LoopbackContext`（loopback llama.cpp 的 context 視窗）。
