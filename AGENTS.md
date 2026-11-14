@@ -353,6 +353,16 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
 - `downloads/` 只保留目前 `mod_version` 的目錄：`prepare-release.yml` 的 `assemble` job 會在開 PR 前
   移除其他版本目錄，並用 `git add -A downloads` 把刪除一起納入。舊版本早已隨 Release 發布，
   目錄留在倉庫裡只會累積體積（2026-10-05 清理前有 22 個殘留目錄、235 MB）。
+- **「這次 push 有沒有改到發布資產」的判定，拿不到資訊時必須回 true**（2026-11-14 踩到）：
+  `publish-release.yml` 在 `push` 事件讀 payload 的 `commits[].added/modified/removed`，只要集合裡
+  只剩 `CHANGELOG.md` 就跳過全部資產步驟、只更新 Release 說明。問題是 **squash merge 的 commit 由
+  GitHub 服務端合成，payload 裡根本不帶檔案清單**，於是 `paths` 是空集合，舊寫法
+  `paths - {"CHANGELOG.md"}` 也空 → 回 false → 整個發布被跳過，Release 沒建立，**run 卻回報
+  success**（1.4.1-beta1 就是這樣默默沒發布，一個 177 個檔案的 squash commit 被當成「只改了
+  CHANGELOG.md」）。現在改成空集合也回 true；改那段程式時要保持「拿不到資訊就全量」的方向，
+  不要讓空集合再落進「只改 CHANGELOG」的分支。遇到「合併了但 Release 沒出現、run 又是綠的」，
+  先看那一步的 `::notice::`，再用 `gh workflow run publish-release.yml --ref main` 補跑 ——
+  `workflow_dispatch` 一律視為有變更。
 - 不要為了量測而反覆觸發 workflow：每次觸發都是 20 個以上 job 的完整執行。改動請批次處理，
   一次執行驗證多項變更，不要一項一項推上去各跑一輪。
 - 新增 job 時，必須把它加進 `ci-status` 的 `needs`（`build.yml`），否則它不會被彙總、分支保護也擋不住失敗。
