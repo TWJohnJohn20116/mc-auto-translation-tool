@@ -455,8 +455,9 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   - **不要**給這個 workflow 加 `paths`／`paths-ignore`，也不要讓這個 job 用 job 層 `if:` 消失。
     檢查沒出現時，PR 會永遠卡在 waiting。要不要真的呼叫模型由「判斷這次要不要真的審查」步驟
     決定（草稿、fork、Dependabot、只動文件時略過），job 仍回報成功。
-  - 閘門判定：讀最後一則帶審查標題的 bot 留言，數 `<details><summary>` 區塊，0 個才放行；
-    抓不到留言時**失敗**，不要改成靜默通過。
+  - 閘門判定：讀最後一則帶審查標題的 bot 留言，數隱藏狀態清單裡 `"state":"ACTIVE"` 的發現，
+    0 筆才放行；抓不到留言時**失敗**，不要改成靜默通過。**不要**改回數 `<details><summary>`——
+    PR-Agent 也把 `RESOLVED` 的發現渲染成 `<details>`，修好的 PR 會被判成還有意見（0.50.0 實測）。
   - AI 誤報的逃生門是 `ai-review/pass` 標籤（維護者手動加，閘門印 notice 放行）。放行要留下
     公開痕跡，所以用標籤而不是改 code 或放寬判定。
 - **繁體中文由三件事組成，缺一不可**：`.pr_agent.toml` 的 `config.response_language`（模型輸出）、

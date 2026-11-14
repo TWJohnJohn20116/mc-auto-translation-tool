@@ -31,7 +31,9 @@ permissions:
   issues: write
 
 concurrency:
-  group: ai-review-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
+  # 事件名要進 group：留言觸發的 run 不能取消 pull_request 觸發的 run，
+  # 否則自動審查會被 /review 打斷，必要檢查停在 cancelled，PR 反而卡住。
+  group: ai-review-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
   cancel-in-progress: true
 
 jobs:
@@ -191,13 +193,24 @@ jobs:
             exit 1
           fi
 
-          findings="$(printf '%s\n' "$body" | grep -c '<details><summary>' || true)"
-          echo "審查意見數：$findings"
-          if [ "$findings" -gt 0 ]; then
-            echo "::error::AI 審查提出 $findings 點意見，處理完再合併；若判定為誤報可加 $OVERRIDE_LABEL 標籤放行"
+          # PR-Agent 在留言末端寫一份隱藏的狀態清單，逐則發現都帶 state（ACTIVE／RESOLVED）。
+          # 數 ACTIVE 才是「還沒處理的意見」；數 <details> 會把已解決的也算進去，
+          # 已經修好的 PR 會永遠紅燈。
+          active="$(printf '%s\n' "$body" | grep -o '"state":"ACTIVE"' | wc -l | tr -d ' ' || true)"
+          resolved="$(printf '%s\n' "$body" | grep -o '"state":"RESOLVED"' | wc -l | tr -d ' ' || true)"
+          echo "未解決意見：$active，已解決：$resolved"
+
+          if [ "$active" -eq 0 ] && ! printf '%s' "$body" | grep -q 'pr-agent-review-state'; then
+            echo "::warning::留言裡沒有 PR-Agent 的狀態清單，退回用 <details> 區塊數判定"
+            active="$(printf '%s\n' "$body" | grep -o '<details><summary>' | wc -l | tr -d ' ' || true)"
+            echo "未解決意見（退回路徑）：$active"
+          fi
+
+          if [ "$active" -gt 0 ]; then
+            echo "::error::AI 審查還有 $active 點未解決的意見，處理完再合併；若判定為誤報可加 $OVERRIDE_LABEL 標籤放行"
             exit 1
           fi
-          echo "AI 審查沒有意見，閘門通過"
+          echo "AI 審查沒有未解決的意見，閘門通過"
 
   command:
     name: 依留言執行指令
