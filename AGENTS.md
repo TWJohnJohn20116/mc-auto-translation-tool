@@ -217,6 +217,16 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
    要求的 `CI 總結` 能產生。只想煙霧測試時用 `-f targets=mc1.21.7-forge,mc1.13.x-fabric`：只指定
    部分目標時不會開 PR、也不會檢查數量是否為 48。
 
+   **注意：GitHub Actions 目前無權建立 PR**（2026-11-14 實測）。倉庫的
+   `can_approve_pull_request_reviews` 是 `false`（查詢：
+   `gh api repos/<owner>/<repo>/actions/permissions/workflow`），`GITHUB_TOKEN` 走到 `gh pr create`
+   會被 GraphQL 拒絕：`pull request create failed: GraphQL: GitHub Actions is not permitted to create or
+   approve pull requests`。此時 **48 個目標其實都已建置成功**、`downloads/<version>` 已彙整、
+   `release/prepare-<version>` 分支也已推上去，只有 PR 沒開成；不要因此重跑（重跑要再等 10～20 分鐘）。
+   補救：用有權限的帳號 `gh pr create --base main --head release/prepare-<version>`，再
+   `gh workflow run build.yml --ref release/prepare-<version>`。要恢復自動開 PR，把該設定改成
+   `gh api -X PUT repos/<owner>/<repo>/actions/permissions/workflow -f can_approve_pull_request_reviews=true`。
+
    `downloads/<version>` 會**整個重新產生**（舊檔案與舊分片都不留），而且 fabric 的 JAR 超過
    614400 bytes（600 KiB）會切成 `.jar.part-aa`、`.jar.part-ab`…；`SHA256SUMS.txt` 記的是
    **完整 JAR** 的雜湊，不是分片的雜湊。這段邏輯的參考實作是 `scripts/tools/_assemble_*.py`
