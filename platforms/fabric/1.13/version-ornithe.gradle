@@ -7,9 +7,9 @@ plugins {
 // needs two shapes and no third.
 def version = project.name.substring("platform-fabric-".length())
 
-ext.ornitheMinecraftVersion = gradle.ext.fabricVersionCoordinate(project, "minecraft", "minecraft_", "_version")
+ext.ornitheMinecraftVersion = gradle.ext.fabricVersionCoordinate(project, "minecraft", "minecraft", "_version")
 ext.ornitheFeatherBuild = feather_build_1_13
-ext.ornitheLoaderVersion = gradle.ext.fabricVersionCoordinate(project, "loader", "loader_", "_version")
+ext.ornitheLoaderVersion = gradle.ext.fabricVersionCoordinate(project, "loader", "loader", "_version")
 ext.ornitheArchivesName = version
 
 apply from: rootProject.file("platforms/fabric/1.13/ornithe.gradle")

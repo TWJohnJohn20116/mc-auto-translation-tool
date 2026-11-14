@@ -11,10 +11,10 @@ def coordinate = { String slot, String prefix, String suffix = "" ->
     gradle.ext.fabricVersionCoordinate(project, slot, prefix, suffix)
 }
 
-ext.legacyMinecraftVersion = coordinate("minecraft", "minecraft_", "_version")
-ext.legacyYarnMappings = coordinate("yarnMappings", "yarn_", "_mappings")
-ext.legacyLoaderVersion = coordinate("loader", "loader_", "_version")
-ext.legacyFabricApiVersion = coordinate("fabricApi", "fabric_api_", "_version")
+ext.legacyMinecraftVersion = coordinate("minecraft", "minecraft", "_version")
+ext.legacyYarnMappings = coordinate("yarnMappings", "yarn", "_mappings")
+ext.legacyLoaderVersion = coordinate("loader", "loader", "_version")
+ext.legacyFabricApiVersion = coordinate("fabricApi", "fabric_api", "_version")
 // The generations in this range compile for 8 (1.14-1.16), 17 (1.17-1.20.4) and 21 (1.20.5/1.20.6).
 // settings.gradle's treeJavaRelease declares exactly those bounds, including 1.20's [17, 21] split,
 // which treeJavaTarget refuses to answer for — so the split is named here, once, instead of in the
