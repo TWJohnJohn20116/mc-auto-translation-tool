@@ -3,7 +3,9 @@ plugins { id "java" }
 // One build script for the three 1.14.0-1.14.2 stubs. They cannot apply
 // platforms/fabric/legacy/shared.gradle (Yarn v2 for those snapshots does not remap through Loom), so
 // they own their source set and their processResources — but not a copy of it each.
-def version = project.name.substring("platform-fabric-".length())
+// Named platformVersion, not version: a local called `version` would swallow the
+// `version = project.mod_version` assignment below and the jar would ship "unspecified".
+def platformVersion = project.name.substring("platform-fabric-".length())
 
 repositories {
     maven { url = "https://maven.fabricmc.net/" }
@@ -12,7 +14,7 @@ repositories {
 
 version = project.mod_version
 group = project.maven_group
-base { archivesName = "mc-auto-translation-tool-fabric-${version}" }
+base { archivesName = "mc-auto-translation-tool-fabric-${platformVersion}" }
 
 // The two values gradle/bundle-metadata-verify.gradle reconciles against the 1.14-1.15 bundle's floor.
 ext.legacyLoaderVersion = gradle.ext.fabricVersionCoordinate(project, "loader", "loader", "_version")
