@@ -469,8 +469,8 @@ def fabricVersionBuildScript = { String dir ->
 }
 
 selected.each { name ->
-    def descriptor = project(":${name}")
     include(name)
+    def descriptor = project(":${name}")
     descriptor.projectDir = file(platformProjects[name])
     def script = fabricVersionBuildScript(platformProjects[name])
     if (script != null) {
