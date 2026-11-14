@@ -1,0 +1,15 @@
+plugins {
+    id "fabric-loom" version "${loom_ornithe_version}"
+    id "ploceus" version "${ploceus_version}"
+}
+
+// One build script for the 15 Ornithe modules 1.8.9-1.12.2.
+def version = project.name.substring("platform-fabric-".length())
+
+ext.ornitheMinecraftVersion = version
+// 1.9.2 is the one release in this tree whose mappings ploceus resolves from a separate feather build;
+// every other module uses the 1.8.9-1.12.2 build.
+ext.ornitheFeatherBuild = version == "1.9.2" ? feather_build_1_9_2 : feather_build_1_8_9_to_1_12_2
+ext.ornitheLoaderVersion = loader_1_8_9_to_1_12_2_version
+
+apply from: rootProject.file("platforms/fabric/1.8-1.12/shared.gradle")

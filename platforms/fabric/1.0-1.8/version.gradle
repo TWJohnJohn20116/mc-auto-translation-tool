@@ -1,0 +1,18 @@
+plugins {
+    id "fabric-loom" version "${loom_ornithe_version}"
+    id "ploceus" version "${ploceus_version}"
+}
+
+// One build script for the 26 Ornithe modules 1.3.1-1.8.8. Every value below was already a constant of
+// this tree except the release name, which is the project name.
+def version = project.name.substring("platform-fabric-".length())
+
+ext.ornitheMinecraftVersion = version
+// The 1.8-1.8.8 modules live in this directory but compile against the 1.8.9-1.12.2 shared script (see
+// the apply below), which is a different tree with its own feather build. Both halves use this tree's
+// 1.7.10 feather build, so the value does not have to follow the script.
+ext.ornitheFeatherBuild = feather_build_1_7_10
+ext.ornitheLoaderVersion = loader_1_0_0_to_1_8_8_version
+
+apply from: rootProject.file(version.startsWith("1.8") ? "platforms/fabric/1.8-1.12/shared.gradle" :
+        "platforms/fabric/1.0-1.8/shared.gradle")

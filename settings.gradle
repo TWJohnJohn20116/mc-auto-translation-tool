@@ -403,7 +403,85 @@ while (!queue.isEmpty()) {
     }
 }
 
+// Every platform-fabric version module used to carry its own build.gradle: 92 files that held nothing but
+// coordinates and differed only in the release they named. The keys in gradle.properties follow one
+// convention — minecraft_<version>_version, yarn_<version>_mappings, loader_<version>_version,
+// fabric_api_<version>_version — so the project name is the coordinate and the value is read from the
+// single place that already declares it. Two releases were registered before that convention existed and
+// keep their irregular keys here; that table is the only hand-written exception.
+def fabricIrregularCoordinates = [
+        "1.13.2": [yarnMappings: "legacy_yarn_1_13_2_mappings",
+                   fabricApi   : "legacy_fabric_api_1_13_2_version"],
+        "1.20.1": [minecraft   : "minecraft_version_1_20_1",
+                   yarnMappings: "yarn_mappings_1_20_1",
+                   loader      : "loader_version_1_20_1",
+                   fabricApi   : "fabric_api_version_1_20_1"]
+]
+gradle.ext.fabricVersionCoordinate = { target, String slot, String prefix, String suffix = "" ->
+    def version = target.name.startsWith("platform-fabric-") ?
+            target.name.substring("platform-fabric-".length()) : target.name
+    def key = fabricIrregularCoordinates[version]?.get(slot) ?:
+            "${prefix}_${version.replace('.', '_')}${suffix}"
+    def value = target.findProperty(key)
+    if (value == null) {
+        throw new GradleException(
+                "${target.path}: gradle.properties declares no '${key}' for ${version}. Add the key " +
+                        "there instead of hard-coding the value in a build script.")
+    }
+    value.toString()
+}
+// Which shared script a version module evaluates. A switch on the directory, not a second list of 92
+// entries: a tree that is not named here keeps its own build.gradle, and a bundle is never rewritten.
+def fabricVersionBuildScript = { String dir ->
+    def match = dir =~ /^platforms\/fabric\/([^\/]+)\/(?:versions\/)?([^\/]+)$/
+    if (!match.matches()) {
+        return null
+    }
+    def tree = match.group(1)
+    def version = match.group(2)
+    if (version == "bundle") {
+        return null
+    }
+    switch (tree) {
+        case "1.0-1.8":
+        case "1.8-1.12":
+            return "platforms/fabric/${tree}/version.gradle"
+        case "1.13":
+            return version == "1.13.2" ?
+                    "platforms/fabric/1.13/version-legacy.gradle" :
+                    "platforms/fabric/1.13/version-ornithe.gradle"
+        case "1.14-1.15":
+            return ["1.14", "1.14.1", "1.14.2"].contains(version) ?
+                    "platforms/fabric/1.14-1.15/version-stub.gradle" :
+                    "platforms/fabric/legacy/version.gradle"
+        case "1.16":
+        case "1.17-1.18":
+        case "1.19":
+        case "1.20":
+            return "platforms/fabric/legacy/version.gradle"
+        case "1.21":
+            return "platforms/fabric/1.21/version.gradle"
+        case "26.x":
+            return "platforms/fabric/26.x/version.gradle"
+        default:
+            return null
+    }
+}
+
 selected.each { name ->
     include(name)
-    project(":${name}").projectDir = file(platformProjects[name])
+    def descriptor = project(":${name}")
+    descriptor.projectDir = file(platformProjects[name])
+    // Gradle 9 refuses to configure a project whose directory does not exist ("Configuring project ...
+    // without an existing directory is not allowed"). These modules are coordinate-only: the directory
+    // holds nothing but what the build writes into it, so it is created here. Keeping it alive with a
+    // checked-in placeholder file would need 92 of them — exactly the copies this change removed.
+    descriptor.projectDir.mkdirs()
+    def script = fabricVersionBuildScript(platformProjects[name])
+    if (script != null) {
+        // buildFileName is resolved against the project directory, and the shared script lives one or more
+        // levels above the version directory, so the relative path is computed instead of spelled out.
+        descriptor.buildFileName = descriptor.projectDir.toPath()
+                .relativize(file(script).toPath()).toString().replace('\\', '/')
+    }
 }
