@@ -166,7 +166,11 @@ jobs:
           for commit in commits:
               for key in ("added", "modified", "removed"):
                   paths.update(commit.get(key) or [])
-          print("true" if paths - {"CHANGELOG.md"} else "false")
+          # 空集合不是「只改了 CHANGELOG.md」，而是 payload 根本沒帶檔案清單。
+          # squash merge 由服務端合成的 commit 就是這樣：2026-11-14 發布 1.4.1-beta1 時，
+          # 177 個檔案的 squash commit 讓 paths 為空，於是整個發布被跳過、Release 沒建立，
+          # run 卻回報 success。這種情況必須與「解析失敗」一樣保守回 true。
+          print("true" if (not paths) or (paths - {"CHANGELOG.md"}) else "false")
           ')" || assets_changed=true
           fi
           echo "assets_changed=$assets_changed" >> "$GITHUB_OUTPUT"
