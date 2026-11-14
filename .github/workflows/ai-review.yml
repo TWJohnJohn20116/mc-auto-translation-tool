@@ -90,6 +90,8 @@ jobs:
             -e 's|## PR Code Suggestions ✨|## PR 程式碼建議 ✨|' \
             "$identity"
           grep -q 'PR 審查指南' "$identity" || echo "::warning::標題字串沒換成中文，上游可能改了寫法"
+          echo "--- comment_identity.py 的標題現況 ---"
+          grep -n 'Reviewer Guide\|審查指南\|Code Suggestions' "$identity" || true
 
       - name: 寫入 .secrets.toml（只在 runner 上，不進版控）
         env:
@@ -188,6 +190,8 @@ jobs:
             -e 's|## PR Code Suggestions ✨|## PR 程式碼建議 ✨|' \
             "$identity"
           grep -q 'PR 審查指南' "$identity" || echo "::warning::標題字串沒換成中文，上游可能改了寫法"
+          echo "--- comment_identity.py 的標題現況 ---"
+          grep -n 'Reviewer Guide\|審查指南\|Code Suggestions' "$identity" || true
 
       - name: 寫入 .secrets.toml（只在 runner 上，不進版控）
         env:
@@ -281,6 +285,8 @@ jobs:
             -e 's|## PR Code Suggestions ✨|## PR 程式碼建議 ✨|' \
             "$identity"
           grep -q 'PR 審查指南' "$identity" || echo "::warning::標題字串沒換成中文，上游可能改了寫法"
+          echo "--- comment_identity.py 的標題現況 ---"
+          grep -n 'Reviewer Guide\|審查指南\|Code Suggestions' "$identity" || true
 
       - name: 寫入 .secrets.toml（只在 runner 上，不進版控）
         env:
