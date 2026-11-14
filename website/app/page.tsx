@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 // Single source of truth for the released version. Every mention on the page
 // (title, description, buttons) derives from it, so a bump cannot leave one of
 // them behind; the CI version check reads this exact declaration.
-const releaseVersion = "1.4";
+const releaseVersion = "1.4.1-beta1";
 
 // 這個數字在頁面上出現三次（metadata description、Fabric 卡片說明、卡片版本欄），
 // 但它真正的權威是 `platforms/fabric/*/versions` 的實作目錄總數；測試會拿目錄數與
