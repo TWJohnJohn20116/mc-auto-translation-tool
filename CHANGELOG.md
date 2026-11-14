@@ -1,5 +1,45 @@
 # 更新记录
 
+## 1.4.1-beta1 - 2026-11-14
+
+**1.4.1 是修復版，不引入新的翻譯行為**：修掉 1.4 帶進來的六條嚴重缺陷（設定存不進去、批次收集空轉、快取被污染、截斷譯文永久入快取、快取跨實例互相覆蓋、未知外觀值讓翻譯全滅），補上 20 顆 NeoForge JAR 缺失的語言檔，並讓 gzip 回應、CJK 短譯文、zh-TW 簡繁轉換回到正常路徑。畫面結構與設定鍵不變，升級後不需要重新配置。
+
+### 一、六條嚴重缺陷（1.4 帶進來的）
+
+| 缺陷 | 症狀 | 修法 |
+| --- | --- | --- |
+| 設定寫了存不下來 | 品質模式、自訂提示詞、除錯開關重開遊戲後全部回到預設 | `toProperties` 先 `writeTo` 再做提示詞保留，40 個 `setProperty` 獨漏這三個鍵；改為統一由 `ownedPromptKeys` 寫入 |
+| 批次收集空轉 | 請求被中斷後 `while(true)` 不退場，一個核心跑滿 100% | `serveBatch` 吞掉 `InterruptedException` 卻沒有移除 `pendingBatch`，後續 `sleep` 立即拋出；改為移除待處理批次並退出迴圈 |
+| 毒鍵永久佔位 | 一次不可顯示的譯文，讓該原文永遠翻不出來 | `cache.put` 在 `requireDisplaySafe` 之前，失敗不撤銷；改為驗證通過才寫入，失敗時清掉 `__UT_0__` 佔位鍵 |
+| 截斷譯文寫進快取 | 模型被截斷的半句話變成永久譯文 | 只認真正的結束標記（OpenAI `[DONE]`／`finish_reason`，Gemini `message_stop`／`finishReason`）；收不到就退回非串流，且不落快取 |
+| 快取互相覆蓋 | 兩個實例同時啟動時，損壞的快取被靜默當成空 map 寫回，1.25 MB 內容消失 | 讀取失敗標記 `loadFailed`，路徑級靜態鎖序列化寫入，暫存檔改用 UUID 命名 |
+| 未知外觀值全滅 | 外觀欄位出現不認識的值時，翻譯全部失效且設定畫面打不開 | `TranslationTextColor`／`TranslationDisplayMode` 的 `fromConfig` 加 fallback，未知值退回預設 |
+
+### 二、翻譯正確性與網路
+
+- **gzip 回應原本 100% 失敗**：嗅探邏輯吃掉 magic bytes 後才交給解壓器。現在先判斷再解壓，壓縮與未壓縮兩條路徑都回歸正常。
+- **CJK 短譯文不再被誤殺**：驗證器把「Welcome back → 你好」這類正常短譯文當成不可顯示內容；現在依實際顯示寬度與字元類別判定。
+- **zh-TW 簡繁轉換在生產路徑生效**：原本只有測試走轉換，實際翻譯輸出一律簡體。
+- **更換 endpoint 後快取會失效**：快取鍵納入 provider 身分（`ProviderCacheKey`），換服務或換端點不會再吃到上一個服務的譯文。**副作用：升級後第一次啟動快取全 miss，屬一次性行為。**
+- **阻塞讀取加上總時限**，並清理 GB 級的孤兒 `.part` 檔；中斷的下載不再留下無法回收的暫存檔。
+- 快取格式升到 **v7**，並引入 `VALIDATION_RULES_VERSION`：驗證規則變更時舊快取自動失效，不再需要手動清目錄。
+
+### 三、平台與畫面
+
+- **NeoForge 20 顆 JAR 補上語言檔**：先前整族缺少 `platforms/shared/lang/json`，介面顯示原始鍵名。
+- **API key 不再因視窗縮放被清空**：10 份 LLM 設定畫面在 `init` 時回填 `initialApiKey`，resize 後欄位保持原值。
+- **模型清單分頁在 resize 後不再空白**：分頁狀態集中到 `ModelListPaging`。
+- **窄視窗的隱私提示不再被 Save 欄遮住**。
+- 服務名稱改走語言鍵 `provider.universal_translator.<id>`（21 鍵 × 3 語系），不再顯示英文識別字。
+- **Fabric 1.0–1.13.2 的快捷鍵可設定**（新功能）：`settings-key`／`toggle-key` 預設 U／F8。此 bundle 不在 48 顆發布資產內。
+- 1.20.5／1.20.6 補回 `ChatHudContextMixin` 的 `addMessage`（priority 800）；1.13.2 補回 `TextRendererMixin#draw(String;FFI)`；26.1 的 HUD 隱藏改讀 `Options.hideGui()`。
+- 1.18.2 開啟設定畫面不再暫停單人世界（行為變化，與其他版本一致）。
+
+### 四、已知限制
+
+- **1.19–1.19.2 的未簽名聊天確認仍不支援**：`getNetworkHandler().sendChatMessage(String)` 在 1.19.2 不存在，無法在不改動使用者設定的前提下攔截；已在文件中標明。
+- 本次為測試版（prerelease），不會被標記為 Latest；要回報問題請附上診斷包。
+
 ## 1.4 - 2026-10-21
 
 **1.4 把「能翻」變成「翻得可控、看得見、修得動」**：新增 HUD 狀態指示器、JSON 批次協定、SSE 串流顯示、四個原生服務（DeepL／Gemini／Claude／Azure OpenAI）、統計面板與除錯模式；翻譯失敗時會說出真正原因；翻譯行為第一次可以自己調（併發數、批次大小、品質模式、自訂提示詞）；同時把 48 個發布目標的設定畫面收斂成共用層，淨刪 38,169 行。**本版取代 1.3.11 成為建議版本。**
