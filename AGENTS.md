@@ -310,13 +310,21 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   `neoforge.mods.toml` 共用同一條 Forge 驗證路徑，要求 `modLoader="javafml"`。漏掉時建置會成功，
   但在 `prepare-release.yml` 的「用專案的驗證器檢查」那一步以 `missing Forge metadata field` 失敗
   （2026-10-06 的 4 個 26.x toml 就是這樣）。
-- **NeoForge 版本目錄只能放座標與 `META-INF/*.toml`**：`platforms/neoforge/<線>/versions/<版本>/`
-  底下**不得**再出現 `.java`、`*.mixins.json` 或 `assets/`。Java 進入點在
+- **NeoForge 版本目錄只放一份 `build.gradle`**：`platforms/neoforge/<線>/versions/<版本>/`
+  底下**不得**再出現 `.java`、`*.mixins.json`、`assets/` 或 `META-INF/*.toml`。Java 進入點在
   `platforms/neoforge/shared/entrypoints/<layer>/`，mixin 設定在
-  `platforms/neoforge/shared/metadata/<layer>/`，其餘一律指向對應的 `platforms/forge/` 目錄。
-  `build.gradle` 的 `validateSharedPlatformLayouts` 會擋下違規，`validateNeoForgeModuleCoordinates`
-  會檢查座標解析與 Forge 層是否對得上 Forge 樹自己的版本表。新增 NeoForge 版本時只要在
-  `build.gradle` 填座標；只有當 NeoForge 的載入器 API 真的改變時，才新增一個 entrypoint 層。
+  `platforms/neoforge/shared/metadata/<layer>/`，載入器元資料則只有**一份**模板：
+  `platforms/neoforge/shared/metadata/common/src/main/resources/META-INF/neoforge.mods.toml`。
+  `shared.gradle` 會展開 `${version}`、`${loaderVersion}`、`${dependencyRange}`、`${minecraftRange}`，
+  並驗證兩個 range 的起點等於該模組宣告的 `ext.neoforgeVersion` / `ext.neoforgeMinecraftVersion`
+  ——19 個版本以前各留一份正文逐字相同的 toml，只差這三個值，加一條依賴要改 19 次、也沒有任何
+  檢查比對彼此。1.20.2／1.20.4 的 FML 只讀 `META-INF/mods.toml`，靠
+  `ext.neoforgeLoaderMetadataName = "mods.toml"` 改名，不另外維護第二份模板。其餘資源一律指向對應的
+  `platforms/forge/` 目錄。`build.gradle` 的 `validateSharedPlatformLayouts` 會擋下違規（含版本目錄
+  殘留的 toml），`validateNeoForgeModuleCoordinates` 會檢查座標解析、`[[mixins]]` 註冊與 Forge 層是否
+  對得上 Forge 樹自己的版本表。新增 NeoForge 版本時只要在 `build.gradle` 填座標（除了
+  `neoforgeVersion` 還要填 `neoforgeLoaderVersion`、`neoforgeDependencyRange`、
+  `neoforgeMinecraftRange`）；只有當 NeoForge 的載入器 API 真的改變時，才新增一個 entrypoint 層。
   目前的分層（內容相同的版本共用一層）：
 
   | 層 | 版本 | 差異 |
@@ -443,6 +451,13 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   `ext.jarLicenseName`（現有三個值：預設 `LICENSE_universal_translator`、`..._bundle`、
   `..._26_x_bundle`）。要再加一個附件檔時只改那一個檔案。`platforms/forge/legacy/1.8.9`、
   `1.12.2` 是獨立 Gradle 建置、路徑是相對字串，不套用這個腳本。
+- **Fabric 的 `fabric.mod.json` 每棵樹只有一份模板**：`platforms/fabric/<樹>/shared/common/src/main/resources/
+  fabric.mod.json`，由該樹的 `shared.gradle` 在建置期 `expand` 出版本專屬值（1.21 樹展開 `version`、
+  `fabricMinecraftVersion`、`fabricLoaderVersion`；1.0-1.8 與 1.8-1.12 樹展開 `version`、`minecraftVersion`、
+  `loaderVersion`）。**不要**在 `platforms/fabric/*/versions/<版本>/src/main/resources/` 再放一份——2026-11-14
+  之前那裡有 53 份只差版本號的副本（1.0-1.8 26 份、1.8-1.12 15 份、1.21 12 份），`version` 還寫成 `${version}`。
+  `build.gradle` 的 `versionOwnedModMetadata` 會擋下這類檔案重新加回來。1.16、1.17-1.18、1.19、1.20 四棵樹
+  早就走 `platforms/fabric/legacy/shared/common` 的同一份模板；`1.14-1.15` 的 bundle stub 另有自己的機制。
 - **`translator-core` 的共用常量**：`LogMessages`（跨平台日誌字串）、`UiTextKeys`（共用語言鍵，
   含 `onOff(boolean)`）、`UiLimits`（畫面與輸入上限）、`TargetLanguage.AUTO` 與 `isAuto(String)`
   （來源語言的偵測哨兵值）、`provider/LoopbackContext`（loopback llama.cpp 的 context 視窗）。

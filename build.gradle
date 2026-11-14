@@ -655,9 +655,9 @@ tasks.register("validateSharedPlatformLayouts") {
     doLast {
         // Java sources never belong in a version directory. For NeoForge the loader
         // entrypoints live in platforms/neoforge/shared/entrypoints/<layer> and the
-        // mixin config in platforms/neoforge/shared/metadata/<layer>. Only
-        // META-INF/*.toml stays per version, because its versionRange is real
-        // per-version data.
+        // mixin config in platforms/neoforge/shared/metadata/<layer>. A version directory keeps
+        // nothing but its coordinate-only build.gradle: the loader metadata is one template under
+        // metadata/common, expanded from the ext.* values that module declares.
         def versionOwnedSources = fileTree("platforms") {
             include "fabric/26.x/26.*/src/**"
             include "forge/1.21/versions/*/src/**"
@@ -684,6 +684,49 @@ tasks.register("validateSharedPlatformLayouts") {
             )
         }
 
+        // Every Fabric tree keeps one fabric.mod.json under shared/common/src/main/resources and
+        // expands it per version, so a version directory that keeps a copy of its own is a second
+        // source of truth again: that copy is filtered into the jar alongside the template, and no
+        // check compares the two. The three trees covered here used to carry 53 such copies
+        // (26 + 15 + 12) that differed from each other only in the version they named.
+        def versionOwnedModMetadata = fileTree("platforms/fabric") {
+            include "1.0-1.8/versions/*/src/**/fabric.mod.json"
+            include "1.8-1.12/versions/*/src/**/fabric.mod.json"
+            include "1.21/versions/*/src/**/fabric.mod.json"
+            exclude "**/build/**"
+            exclude "**/.gradle/**"
+        }.files.findAll { it.isFile() }
+
+        if (!versionOwnedModMetadata.isEmpty()) {
+            throw new GradleException(
+                    "Fabric metadata has one home per tree; delete these and edit " +
+                            "shared/common/src/main/resources/fabric.mod.json instead:\n" +
+                            versionOwnedModMetadata.collect { relativePath(it) }.sort().join("\n")
+            )
+        }
+
+        // Same for the NeoForge loader metadata. Nineteen versions carried a copy of
+        // META-INF/neoforge.mods.toml (META-INF/mods.toml on 20.2/20.4) whose bodies were
+        // byte-identical apart from loaderVersion and the two versionRanges, so a new dependency meant
+        // nineteen edits and no check compared the copies. Those three values are ext.* coordinates
+        // now, and the template lives in platforms/neoforge/shared/metadata/common/.
+        def versionOwnedLoaderMetadata = fileTree("platforms/neoforge") {
+            include "1.20/versions/*/src/**/META-INF/*.toml"
+            include "1.21/versions/*/src/**/META-INF/*.toml"
+            include "26.x/versions/*/src/**/META-INF/*.toml"
+            exclude "**/build/**"
+            exclude "**/.gradle/**"
+        }.files.findAll { it.isFile() }
+
+        if (!versionOwnedLoaderMetadata.isEmpty()) {
+            throw new GradleException(
+                    "NeoForge loader metadata has one home per generation; delete these and edit " +
+                            "platforms/neoforge/shared/metadata/common/src/main/resources/META-INF/" +
+                            "neoforge.mods.toml instead:\n" +
+                            versionOwnedLoaderMetadata.collect { relativePath(it) }.sort().join("\n")
+            )
+        }
+
         def requiredSharedFiles = [
                 // Every script that several trees apply, or that a whole tree is written around. They
                 // were the only files nobody checked: deleting or renaming one failed much later as
@@ -693,10 +736,13 @@ tasks.register("validateSharedPlatformLayouts") {
                 "platforms/fabric/legacy/shared.gradle",
                 "platforms/fabric/legacy/shared/common/src/main/resources/fabric.mod.json",
                 "platforms/fabric/1.0-1.8/shared.gradle",
+                "platforms/fabric/1.0-1.8/shared/common/src/main/resources/fabric.mod.json",
                 "platforms/fabric/1.8-1.12/shared.gradle",
+                "platforms/fabric/1.8-1.12/shared/common/src/main/resources/fabric.mod.json",
                 "platforms/fabric/1.13/ornithe.gradle",
                 "platforms/fabric/1.13/legacy.gradle",
                 "platforms/fabric/1.21/shared.gradle",
+                "platforms/fabric/1.21/shared/common/src/main/resources/fabric.mod.json",
                 "platforms/fabric/modmenu/modmenu.gradle",
                 "platforms/fabric/26.x/shared.gradle",
                 "platforms/fabric/26.x/shared/common/src/main/resources/fabric.mod.json",
@@ -719,6 +765,9 @@ tasks.register("validateSharedPlatformLayouts") {
                 "platforms/neoforge/1.20.1/build.gradle",
                 "platforms/neoforge/1.20.1/src/main/resources/universal-translator.neoforge.mixins.json",
                 "platforms/neoforge/1.20.1/src/main/resources/META-INF/mods.toml",
+                // The single loader metadata template every NeoForge generation expands (20.2/20.4
+                // rename it to META-INF/mods.toml, which is the name FML reads on that generation).
+                "platforms/neoforge/shared/metadata/common/src/main/resources/META-INF/neoforge.mods.toml",
                 "platforms/neoforge/shared/metadata/1.20-1.20.4/src/main/resources/universal-translator.neoforge.mixins.json",
                 "platforms/neoforge/shared/metadata/1.20.6/src/main/resources/universal-translator.neoforge.mixins.json",
                 "platforms/neoforge/shared/metadata/1.21/src/main/resources/universal-translator.neoforge.mixins.json",
@@ -1594,12 +1643,18 @@ tasks.register("validateNeoForgeModuleCoordinates") {
 
             // A mixin config that sits in the jar but is not registered by the loader metadata loads
             // no hooks at all — the game starts, the mod is "loaded", and nothing is translated with
-            // not one error in the log. The registration line is hand-written in 19 toml files, so it
+            // not one error in the log. The registration line is hand-written in one shared template, so it
             // is cross-checked here instead of being trusted.
             def declaredMetadataLayerName = metadataLayer == null ? null : unquote(metadataLayer)
-            fileTree(module.parentFile) {
+            // The template is the one place the [[mixins]] registration is written now; a version
+            // directory still holding a toml is a second copy and is rejected by
+            // validateSharedPlatformLayouts, so both sources are read here.
+            def loaderMetadataSources = [file("platforms/neoforge/shared/metadata/common/" +
+                    "src/main/resources/META-INF/neoforge.mods.toml")]
+            loaderMetadataSources.addAll(fileTree(module.parentFile) {
                 include "src/main/resources/META-INF/*.toml"
-            }.files.each { toml ->
+            }.files)
+            loaderMetadataSources.findAll { it.isFile() }.each { toml ->
                 def registeredConfigs = (toml.getText("UTF-8") =~
                         /(?m)^\s*config\s*=\s*"([^"]+)"\s*$/).collect { it[1] }
                 registeredConfigs.each { configName ->
@@ -1903,8 +1958,8 @@ tasks.register("verifyPublishedRelease") {
     dependsOn("verifyPreparedReleaseAssets", "verifyReleaseAggregateMembership")
 }
 
-// The resource invariants that one audit round had to restore by hand — the 57 fabric.mod.json
-// authors values that had lost their non-ASCII part, six .lang files missing 26 keys while carrying 11
+// The resource invariants that one audit round had to restore by hand — fabric.mod.json authors
+// values that had lost their non-ASCII part, six .lang files missing 26 keys while carrying 11
 // dead ones, three .lang files named in the wrong case — had no gate at all: not one task in `check`
 // reads a metadata or a language file, so copying a template for a new version could undo all of it
 // with a green CI. This task is that gate. It reads the files as text, so no platform project has to

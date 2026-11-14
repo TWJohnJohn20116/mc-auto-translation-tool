@@ -167,6 +167,62 @@ if (!missingPackCoordinates.isEmpty()) {
                     missingPackCoordinates.join(", "))
 }
 
+// The loader metadata is one template for every generation. Nineteen versions each carried their own
+// copy of META-INF/neoforge.mods.toml (or META-INF/mods.toml on 1.20.2/1.20.4 — the file name is the
+// only other difference), and the nineteen bodies were byte-identical apart from loaderVersion and the
+// two versionRanges. A new dependency therefore had to be added nineteen times, and nothing compared
+// the copies to each other or to the coordinates the module actually builds against.
+def sharedMetadata = new File(sharedRoot, "metadata/common")
+def loaderMetadataTemplate = new File(sharedMetadata, "src/main/resources/META-INF/neoforge.mods.toml")
+if (!loaderMetadataTemplate.isFile()) {
+    throw new GradleException(
+            "Missing NeoForge loader metadata template: ${relativePath(loaderMetadataTemplate)}")
+}
+// FML 20.2 and 20.4 read META-INF/mods.toml, 20.6 and later read META-INF/neoforge.mods.toml. The body
+// is the same file, so the name is a coordinate instead of a second template nobody would keep in sync.
+def loaderMetadataName = project.ext.has("neoforgeLoaderMetadataName")
+        ? project.ext.neoforgeLoaderMetadataName
+        : "neoforge.mods.toml"
+if (!(loaderMetadataName in ["neoforge.mods.toml", "mods.toml"])) {
+    throw new GradleException(
+            "Unknown neoforgeLoaderMetadataName '${loaderMetadataName}'; FML reads either " +
+                    "META-INF/neoforge.mods.toml or META-INF/mods.toml")
+}
+def loaderMetadataPlaceholders = [
+        neoforgeLoaderVersion  : "loaderVersion",
+        neoforgeDependencyRange: "dependencyRange",
+        neoforgeMinecraftRange : "minecraftRange",
+]
+def loaderMetadataBody = loaderMetadataTemplate.getText("UTF-8")
+def missingLoaderCoordinates = []
+loaderMetadataPlaceholders.each { key, placeholder ->
+    if (loaderMetadataBody.contains('${' + placeholder + '}') && !project.ext.has(key)) {
+        missingLoaderCoordinates.add(key)
+    }
+}
+if (!missingLoaderCoordinates.isEmpty()) {
+    throw new GradleException(
+            "${project.path} ships the shared loader metadata template but does not declare " +
+                    missingLoaderCoordinates.join(", ") +
+                    "; the placeholders would reach the jar unchanged")
+}
+// Both ranges repeat a coordinate the module already builds against. A bumped neoforgeVersion that
+// nobody mirrored here would publish a dependency range pointing at the previous loader, and FML
+// rejects the jar at load time naming the range, not the version. Compared against the declarations
+// themselves, so the check cannot drift on its own.
+def loaderRangeFloors = [
+        neoforgeDependencyRange: project.ext.neoforgeVersion.toString(),
+        neoforgeMinecraftRange : project.ext.neoforgeMinecraftVersion.toString(),
+]
+loaderRangeFloors.each { key, floor ->
+    def range = project.ext.get(key).toString()
+    if (!range.startsWith("[${floor},")) {
+        throw new GradleException(
+                "${project.path} declares ${key} = ${range}, but the module builds against ${floor}; " +
+                        "the declared range has to start at [${floor},")
+    }
+}
+
 // The value the 26.x template expands is the client's resource pack format, which only exists inside the
 // client jar (version.json); the 26.x modules declared the data pack format instead, so the pack was
 // incompatible with its own client and every language file went unreadable while the build stayed green.
@@ -243,6 +299,25 @@ sourceSets {
 tasks.named("processResources", ProcessResources).configure {
     // NeoForge-specific mixin config, one copy per API family.
     from(new File(metadataLayer, "src/main/resources"))
+
+    // The one loader metadata template every generation expands (see metadata/common above). The rename
+    // is all 1.20.2/1.20.4 need: same body, the file name FML looks for on that generation.
+    from(sharedMetadata) {
+        include "META-INF/neoforge.mods.toml"
+        rename { String name -> name == "neoforge.mods.toml" ? loaderMetadataName : name }
+        expand(
+                version: project.version,
+                loaderVersion: project.ext.neoforgeLoaderVersion,
+                dependencyRange: project.ext.neoforgeDependencyRange,
+                minecraftRange: project.ext.neoforgeMinecraftRange
+        )
+    }
+    // These four values are the only per-version content of the jar metadata, so they are inputs:
+    // without them a coordinate bump left the previous expansion cached and the jar shipped stale.
+    inputs.property "loaderMetadataName", loaderMetadataName
+    inputs.property "neoforgeLoaderVersion", project.ext.neoforgeLoaderVersion
+    inputs.property "neoforgeDependencyRange", project.ext.neoforgeDependencyRange
+    inputs.property "neoforgeMinecraftRange", project.ext.neoforgeMinecraftRange
     // Lang assets and pack.mcmeta come from the same Forge layers as the sources, so a
     // NeoForge jar carries exactly the resources its Forge counterpart does.
     forgeLayers.each { layer ->
@@ -277,12 +352,6 @@ tasks.named("processResources", ProcessResources).configure {
         filesMatching("pack.mcmeta") {
             expand packFormatValues
         }
-    }
-    filesMatching("META-INF/neoforge.mods.toml") {
-        expand "version": project.version
-    }
-    filesMatching("META-INF/mods.toml") {
-        expand "version": project.version
     }
 }
 

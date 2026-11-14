@@ -193,83 +193,27 @@ sourceSets {
     }
 }
 
-// The twelve fabric.mod.json files are hand-maintained, one per version, and differ only in the two
-// entries that describe the release itself: "fabricloader" and "minecraft". Only the loader one is
-// rewritten below, so the rest of the 36 lines were copied by hand and nothing compared them: adding
-// 1.21.12 meant copying all of them, and an edit to one file (an entrypoint, a dependency, the java
-// floor) could leave the other eleven behind with every task still green. Compare the tree here, at
-// configuration time and without adding a task, so the copies may differ only in those two values and
-// each one has to name its own release.
-def versionsMetadataRoot = rootProject.file("platforms/fabric/1.21/versions")
-def canonicalMetadata = null
-def canonicalMetadataName = null
-versionsMetadataRoot.listFiles()?.findAll { it.isDirectory() }?.sort { it.name }?.each { versionDir ->
-    def metadataFile = new File(versionDir, "src/main/resources/fabric.mod.json")
-    if (!metadataFile.isFile()) {
-        throw new GradleException(
-                "${relativePath(metadataFile)} is missing: every registered 1.21 version keeps one " +
-                        "fabric.mod.json of its own")
-    }
-    def parsedMetadata = new groovy.json.JsonSlurper().parseText(metadataFile.getText("UTF-8")) as Map
-    def parsedDepends = (parsedMetadata.depends ?: [:]) as Map
-    if (parsedDepends.get("minecraft") != versionDir.name) {
-        throw new GradleException(
-                "${relativePath(metadataFile)} declares minecraft ${parsedDepends.get('minecraft')} " +
-                        "but lives under versions/${versionDir.name}/")
-    }
-    def shape = new LinkedHashMap(parsedMetadata)
-    def shapeDepends = new LinkedHashMap(parsedDepends)
-    shapeDepends.remove("fabricloader")
-    shapeDepends.remove("minecraft")
-    shape.remove("depends")
-    shape.put("depends", shapeDepends)
-    if (canonicalMetadata == null) {
-        canonicalMetadata = shape
-        canonicalMetadataName = versionDir.name
-    } else if (shape != canonicalMetadata) {
-        throw new GradleException(
-                "${relativePath(metadataFile)} differs from versions/${canonicalMetadataName}/" +
-                        "src/main/resources/fabric.mod.json in more than the version-dependent " +
-                        "'fabricloader'/'minecraft' entries; the twelve 1.21 metadata files have to " +
-                        "stay one shape or one of them silently ships a different mod")
-    }
-}
-
+// One fabric.mod.json per tree, expanded per version at build time. Until 2026-11-14 the tree kept
+// twelve hand-maintained copies that differed only in "fabricloader" and "minecraft", so adding a
+// version meant copying all 36 lines, and an edit to one file (an entrypoint, a dependency, the java
+// floor) could leave the other eleven behind with every task still green. The template now lives in
+// shared/common/src/main/resources, which the sourceSet below already mounts, and processResources
+// fills in the three values that describe the release. Root build.gradle lists that template in
+// requiredSharedFiles and refuses a version directory that keeps a copy of its own.
 processResources {
-    inputs.property "version", project.version
-    // The declared loader floor is derived from the loader this target is actually compiled
-    // against, instead of being hand-written into twelve fabric.mod.json files. Those twelve were
-    // written by hand and drifted: 1.21.11 declared ">=0.18.1" (its real build loader) while the
-    // other eleven declared ">=0.19.3", so the same tree advertised two different minimums and
-    // nothing compared the number with the property. Rewriting the line here keeps the value honest
-    // for every version, including any future one that reuses the global loader_version key.
-    // Read once into a local so the filter below never touches `project` at execution time.
-    def loaderFloor = project.ext.fabricLoaderVersion.toString()
-    def loaderFloorLine = /"fabricloader": ">=[^"]*"/
-    def sourceMetadata = fileTree(projectDir) {
-        include "src/main/resources/fabric.mod.json"
-        exclude "**/build/**"
-    }
-    inputs.property "loaderFloor", loaderFloor
-    // The filter only rewrites a line that still has exactly this shape. A reformatted fabric.mod.json
-    // (a multi-line depends block, a tab, four spaces before the value) made the replaceAll miss in
-    // silence and the hand-written floor shipped instead — that is the drift this block exists to
-    // remove, so the shape is asserted before the filter runs.
-    doFirst {
-        sourceMetadata.files.each { metadata ->
-            if (!(metadata.getText("UTF-8") =~ loaderFloorLine).find()) {
-                throw new GradleException(
-                        "${project.path}: ${metadata.name} has no single-line " +
-                                "'\"fabricloader\": \">=…\"' entry, so the declared loader floor cannot be " +
-                                "rewritten from fabricLoaderVersion")
-            }
-        }
-    }
+    // Every release-dependent value comes from here, so a version bump or a loader move is a change
+    // to gradle.properties and the version's build.gradle, never to metadata. filteringCharset is
+    // pinned because expand() otherwise decodes the template with the platform default charset, which
+    // made a jar built on Windows differ from the same sources built on CI.
+    filteringCharset = "UTF-8"
+    def metadataValues = [
+            "version"               : project.version,
+            "fabricMinecraftVersion": project.ext.fabricMinecraftVersion,
+            "fabricLoaderVersion"   : project.ext.fabricLoaderVersion
+    ]
+    inputs.properties(metadataValues)
     filesMatching("fabric.mod.json") {
-        expand "version": project.version
-        filter { line ->
-            line.replaceAll(loaderFloorLine, "\"fabricloader\": \">=${loaderFloor}\"")
-        }
+        expand(metadataValues)
     }
 }
 
