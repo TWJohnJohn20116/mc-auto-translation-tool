@@ -128,12 +128,14 @@ git -c 'credential.helper=' -c 'credential.helper=!gh auth git-credential' push 
      `publish-release.yml` 負責一次（同一個 commit 不重複解壓 48 顆 JAR）
 
 6. 確認你要的 job 真的有跑，而不是被略過：`gh run view <run-id> --json jobs` 中該 job 的
-   `conclusion` 不能是 `skipped`。分支保護要求的檢查是單一的 **`CI 總結`**（彙總 job）：只有全部
-   job 都 `success` 或刻意 `skipped` 才會通過。
+   `conclusion` 不能是 `skipped`。分支保護要求的檢查有兩個：**`CI 總結`**（彙總 job，全部 job 都
+   `success` 或刻意 `skipped` 才通過）與 **`開 PR 時自動審查`**（AI 審查沒有未解決意見才通過；
+   判定為誤報時加 `ai-review/pass` 標籤後重跑）。
 
 ### 分支保護（`main`）
 
-`main` 已設定分支保護，唯一必要的檢查是 **`CI 總結`**（彙總 job）。目前設定：
+`main` 已設定分支保護，必要的檢查有兩個：**`CI 總結`**（建置彙總 job）與 **`開 PR 時自動審查`**
+（AI 審查閘門，沒有未解決意見才放行）。目前設定：
 
 - 不要求 review（單人維護，無法核准自己的 PR）、不要求分支先與 `main` 同步（`strict: false`）。
 - `enforce_admins: false`：倉庫擁有者仍可直接推送 `main` 做緊急修正，但其他人的 PR 會被擋下。
