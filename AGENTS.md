@@ -128,12 +128,14 @@ git -c 'credential.helper=' -c 'credential.helper=!gh auth git-credential' push 
      `publish-release.yml` 負責一次（同一個 commit 不重複解壓 48 顆 JAR）
 
 6. 確認你要的 job 真的有跑，而不是被略過：`gh run view <run-id> --json jobs` 中該 job 的
-   `conclusion` 不能是 `skipped`。分支保護要求的檢查是單一的 **`CI 總結`**（彙總 job）：只有全部
-   job 都 `success` 或刻意 `skipped` 才會通過。
+   `conclusion` 不能是 `skipped`。分支保護要求的檢查有兩個：**`CI 總結`**（彙總 job，全部 job 都
+   `success` 或刻意 `skipped` 才通過）與 **`開 PR 時自動審查`**（AI 審查沒有未解決意見才通過；
+   判定為誤報時加 `ai-review/pass` 標籤後重跑）。
 
 ### 分支保護（`main`）
 
-`main` 已設定分支保護，唯一必要的檢查是 **`CI 總結`**（彙總 job）。目前設定：
+`main` 已設定分支保護，必要的檢查有兩個：**`CI 總結`**（建置彙總 job）與 **`開 PR 時自動審查`**
+（AI 審查閘門，沒有未解決意見才放行）。目前設定：
 
 - 不要求 review（單人維護，無法核准自己的 PR）、不要求分支先與 `main` 同步（`strict: false`）。
 - `enforce_admins: false`：倉庫擁有者仍可直接推送 `main` 做緊急修正，但其他人的 PR 會被擋下。
@@ -442,6 +444,33 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   整份 workflow 解析失敗：run 名稱會變成檔案路徑 `.github/workflows/build.yml`、`jobs` 數為 0。
   遇到這種症狀時，去 run 頁面的 HTML 找 `Invalid workflow file` 的訊息，裡面有行號與原因。
 - 修改 workflow 後，仍需以 GitHub Actions 的實際執行結果為準，不得以「看起來沒問題」結案。
+
+## AI 程式審查（`ai-review.yml`）
+
+- **觸發**：`pull_request` 的 `opened`／`reopened`／`ready_for_review`／`synchronize`。`synchronize`
+  是必要的——沒有它，同一個 PR 之後 push 的新提交不會重審，舊結論會蓋住新程式碼。`issue_comment`
+  （`/review`、`/improve`、`/describe`、`/ask`）與 `workflow_dispatch` 是手動入口。
+  **`issue_comment` 觸發的 run 一律使用預設分支上的 workflow**，所以驗證 workflow 改動要用
+  `pull_request` 或 `workflow_dispatch --ref <分支>`，留言觸發測不到新步驟。
+- **`開 PR 時自動審查` 是分支保護的必要檢查**：AI 審查提出意見時它會轉紅，把「AI 沒意見才合併」
+  變成硬規則。因此：
+  - **不要**給這個 workflow 加 `paths`／`paths-ignore`，也不要讓這個 job 用 job 層 `if:` 消失。
+    檢查沒出現時，PR 會永遠卡在 waiting。要不要真的呼叫模型由「判斷這次要不要真的審查」步驟
+    決定（草稿、fork、Dependabot、只動文件時略過），job 仍回報成功。
+  - 閘門判定：讀最後一則帶審查標題的 bot 留言，數隱藏狀態清單裡 `"state":"ACTIVE"` 的發現，
+    0 筆才放行；抓不到留言時**失敗**，不要改成靜默通過。**不要**改回數 `<details><summary>`——
+    PR-Agent 也把 `RESOLVED` 的發現渲染成 `<details>`，修好的 PR 會被判成還有意見（0.50.0 實測）。
+  - AI 誤報的逃生門是 `ai-review/pass` 標籤（維護者手動加，閘門印 notice 放行）。放行要留下
+    公開痕跡，所以用標籤而不是改 code 或放寬判定。
+- **繁體中文由三件事組成，缺一不可**：`.pr_agent.toml` 的 `config.response_language`（模型輸出）、
+  `.github/pr-agent/zh-tw.toml` 語系表（固定標籤）、`pr_reviewer.review_heading` 與
+  `pr_code_suggestions.suggestions_heading`（留言標題）。PR-Agent 只內建 en／es，所以
+  `scripts/ci/apply-pr-agent-zh-tw.sh` 會把語系表複製進 runner 的套件目錄，並用
+  `locale_chain('zh-TW')` 驗證真的被認到。那段 bash 只留一份（三個 job 都呼叫它）。
+- 留言標題在 `pr_agent/algo/comment_identity.py`：`format_*_header()` 讀的是設定鍵，
+  `PRReviewHeader` 那個 StrEnum 只是留言身分標記。**改標題改設定，不要去 sed 套件檔案**——
+  0.50.0 實測過，sed 改列舉對可見標題沒有作用。
+- PR 標籤 `Review effort N/5` 仍維持英文：上游字串寫死、沒有語系鍵。
 
 ## 其他專案慣例
 

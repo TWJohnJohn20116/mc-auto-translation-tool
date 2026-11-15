@@ -2,24 +2,21 @@ name: AI 程式審查
 
 # 由 PR-Agent（社群版 The-PR-Agent，MIT）在 PR 上跑 /describe、/review，
 # 也可以在自己的 PR 留言 `/review`、`/improve`、`/describe`、`/ask ...` 手動觸發。
-# 只留建議、不寫入分支，因此刻意不列入分支保護的必要檢查：這個 bot 掛掉不該擋住合併。
+#
+# 「開 PR 時自動審查」是 main 分支保護的必要檢查：AI 審查提出意見時它會轉紅，
+# 把「AI 沒意見才合併」變成硬規則。因此它**不能**用 `paths` 或 job 層 `if:` 讓整個
+# job 消失——檢查沒出現時，PR 會永遠卡在 waiting。要不要真的呼叫模型改由
+# 「判斷這次要不要真的審查」步驟決定，略過時 job 仍回報成功。
+#
+# 例外：PR 帶 `ai-review/pass` 標籤時閘門放行（AI 誤報的逃生門，由維護者手動加）。
 #
 # 端點與金鑰：repo secret `AI_REVIEW_BASE_URL`、`AI_REVIEW_API_KEY`。
 # diff 與 log 都不含端點——它在 runner 上才寫進套件目錄的 .secrets.toml。
 
 on:
   pull_request:
-    types: [opened, reopened, ready_for_review]
-    # 只審會影響行為的路徑；文件、downloads/、lockfile 的 PR 不燒 token。
-    paths:
-      - 'translator-core/**'
-      - 'platforms/**'
-      - 'website/app/**'
-      - 'website/db/**'
-      - 'website/worker/**'
-      - 'website/tests/**'
-      - '.pr_agent.toml'
-      - '.github/workflows/ai-review.yml'
+    # synchronize：同一個 PR 有新 push 也要重審，否則固定住的結論會蓋掉新程式碼。
+    types: [opened, reopened, ready_for_review, synchronize]
   issue_comment:
     types: [created]
   workflow_dispatch:
@@ -34,18 +31,16 @@ permissions:
   issues: write
 
 concurrency:
-  group: ai-review-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
+  # 事件名要進 group：留言觸發的 run 不能取消 pull_request 觸發的 run，
+  # 否則自動審查會被 /review 打斷，必要檢查停在 cancelled，PR 反而卡住。
+  group: ai-review-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
   cancel-in-progress: true
 
 jobs:
   review:
     name: 開 PR 時自動審查
-    # Dependabot 的 PR 拿不到 repo secret（且 diff 是 lockfile）；草稿、fork 的 PR 也跳過。
-    if: >
-      github.event_name == 'pull_request' &&
-      github.actor != 'dependabot[bot]' &&
-      github.event.pull_request.draft == false &&
-      github.event.pull_request.head.repo.full_name == github.repository
+    # 只有 PR 事件會進來；要不要真的審查由 guard 步驟決定，job 一律留下結論。
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -62,15 +57,72 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: 判斷這次要不要真的審查
+        id: guard
+        env:
+          ACTOR: ${{ github.actor }}
+          IS_DRAFT: ${{ github.event.pull_request.draft }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HAS_KEY: ${{ secrets.AI_REVIEW_API_KEY != '' }}
+        run: |
+          set -euo pipefail
+          skip=""
+          if [ "$HAS_KEY" != "true" ]; then
+            skip="取得不到 AI_REVIEW_API_KEY"
+          elif [ "$ACTOR" = "dependabot[bot]" ]; then
+            skip="Dependabot 的 PR 拿不到 repo secret（且 diff 是 lockfile）"
+          elif [ "$IS_DRAFT" = "true" ]; then
+            skip="草稿 PR，標記 ready for review 時再審"
+          elif [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+            skip="fork 的 PR 拿不到 secret"
+          fi
+
+          if [ -z "$skip" ]; then
+            # 只審會影響行為的路徑；文件、downloads/、lockfile 的 PR 不燒 token。
+            # 取不到 diff 時保守地照常審查，不要讓閘門因為抓不到清單而靜默放行。
+            relevant=false
+            if changed="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"; then
+              while IFS= read -r path; do
+                [ -n "$path" ] || continue
+                case "$path" in
+                  translator-core/*|platforms/*|website/app/*|website/db/*|website/worker/*|website/tests/*|.pr_agent.toml|.github/pr-agent/*|.github/workflows/ai-review.yml|scripts/ci/apply-pr-agent-zh-tw.sh) relevant=true ;;
+                esac
+              done <<< "$changed"
+            else
+              echo "::warning::取不到本次 PR 的變更清單，保守地照常審查"
+              relevant=true
+            fi
+            if [ "$relevant" != "true" ]; then
+              skip="這次變更只動到文件或不影響行為的路徑"
+            fi
+          fi
+
+          if [ -n "$skip" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::略過 AI 審查：$skip"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: 準備 Python
+        if: steps.guard.outputs.run == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       - name: 安裝 PR-Agent
+        if: steps.guard.outputs.run == 'true'
         run: pip install --disable-pip-version-check 'pr-agent[github]==0.50.0'
 
+      - name: 套用繁體中文語系表
+        if: steps.guard.outputs.run == 'true'
+        run: bash scripts/ci/apply-pr-agent-zh-tw.sh
+
       - name: 寫入 .secrets.toml（只在 runner 上，不進版控）
+        if: steps.guard.outputs.run == 'true'
         env:
           AI_BASE_URL: ${{ secrets.AI_REVIEW_BASE_URL }}
           AI_KEY: ${{ secrets.AI_REVIEW_API_KEY }}
@@ -102,6 +154,7 @@ jobs:
           echo "已寫入 $settings_dir/.secrets.toml（內容受 secret 遮罩）"
 
       - name: 產生 PR 說明
+        if: steps.guard.outputs.run == 'true'
         run: >
           python -m pr_agent.cli
           --pr_url="$PR_URL"
@@ -109,11 +162,58 @@ jobs:
           describe
 
       - name: 審查 PR
+        if: steps.guard.outputs.run == 'true'
         run: >
           python -m pr_agent.cli
           --pr_url="$PR_URL"
           --config-branch="$PR_BRANCH"
           review
+
+      - name: 判定 AI 審查有沒有意見（合併閘門）
+        if: steps.guard.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          OVERRIDE_LABEL: ai-review/pass
+        run: |
+          set -euo pipefail
+
+          if gh pr view "$PR_NUMBER" --repo "$REPO" --json labels --jq '.labels[].name' | grep -qx "$OVERRIDE_LABEL"; then
+            echo "::notice::PR 帶有 $OVERRIDE_LABEL，AI 審查閘門放行"
+            exit 0
+          fi
+
+          # 用留言身分標記挑審查留言，再依 updated_at 取最新一則。
+          # 不要寫成 '[...] | last'：--paginate 是逐頁套 jq，每頁都會各回一則，
+          # 多頁時會把舊留言一起計入（實測把 3 點算成 6 點）。
+          body="$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate \
+            --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | test("pr-agent:review:")) | "\(.updated_at)\t\(.body | @base64)"' \
+            | sort | tail -n 1 | cut -f2- | base64 -d 2>/dev/null || true)"
+
+          if [ -z "$body" ]; then
+            echo "::error::找不到 AI 審查留言，無法判定審查結論；請重新執行這個 workflow 或留言 /review"
+            exit 1
+          fi
+
+          # PR-Agent 在留言末端寫一份隱藏的狀態清單，逐則發現都帶 state（ACTIVE／RESOLVED）。
+          # 數 ACTIVE 才是「還沒處理的意見」；數 <details> 會把已解決的也算進去，
+          # 已經修好的 PR 會永遠紅燈。
+          active="$(printf '%s\n' "$body" | grep -o '"state":"ACTIVE"' | wc -l | tr -d ' ' || true)"
+          resolved="$(printf '%s\n' "$body" | grep -o '"state":"RESOLVED"' | wc -l | tr -d ' ' || true)"
+          echo "未解決意見：$active，已解決：$resolved"
+
+          if [ "$active" -eq 0 ] && ! printf '%s' "$body" | grep -q 'pr-agent-review-state'; then
+            echo "::warning::留言裡沒有 PR-Agent 的狀態清單，退回用 <details> 區塊數判定"
+            active="$(printf '%s\n' "$body" | grep -o '<details><summary>' | wc -l | tr -d ' ' || true)"
+            echo "未解決意見（退回路徑）：$active"
+          fi
+
+          if [ "$active" -gt 0 ]; then
+            echo "::error::AI 審查還有 $active 點未解決的意見，處理完再合併；若判定為誤報可加 $OVERRIDE_LABEL 標籤放行"
+            exit 1
+          fi
+          echo "AI 審查沒有未解決的意見，閘門通過"
 
   command:
     name: 依留言執行指令
@@ -148,6 +248,9 @@ jobs:
       - name: 安裝 PR-Agent
         run: pip install --disable-pip-version-check 'pr-agent[github]==0.50.0'
 
+      - name: 套用繁體中文語系表
+        run: bash scripts/ci/apply-pr-agent-zh-tw.sh
+
       - name: 寫入 .secrets.toml（只在 runner 上，不進版控）
         env:
           AI_BASE_URL: ${{ secrets.AI_REVIEW_BASE_URL }}
@@ -156,7 +259,6 @@ jobs:
         run: |
           set -euo pipefail
           settings_dir="$(python -c 'import os, pr_agent; print(os.path.join(os.path.dirname(pr_agent.__file__), "settings"))')"
-          # 用 Python 寫檔並經 JSON 轉義：secret 內含引號或換行時不會破壞 TOML。
           python - "$settings_dir/.secrets.toml" <<'PY'
           import json, os, sys
 
@@ -168,8 +270,6 @@ jobs:
               "[github]",
               "user_token = " + json.dumps(os.environ["AI_GITHUB_TOKEN"]),
               "",
-              # ai_timeout 是 host-only 設定，只能從這裡（host 層設定檔）給；
-              # 預設 120 秒對這個端點跑 2 萬 token 的 review 不夠。
               "[config]",
               "ai_timeout = 600",
               "",
@@ -221,6 +321,9 @@ jobs:
       - name: 安裝 PR-Agent
         run: pip install --disable-pip-version-check 'pr-agent[github]==0.50.0'
 
+      - name: 套用繁體中文語系表
+        run: bash scripts/ci/apply-pr-agent-zh-tw.sh
+
       - name: 寫入 .secrets.toml（只在 runner 上，不進版控）
         env:
           AI_BASE_URL: ${{ secrets.AI_REVIEW_BASE_URL }}
@@ -229,7 +332,6 @@ jobs:
         run: |
           set -euo pipefail
           settings_dir="$(python -c 'import os, pr_agent; print(os.path.join(os.path.dirname(pr_agent.__file__), "settings"))')"
-          # 用 Python 寫檔並經 JSON 轉義：secret 內含引號或換行時不會破壞 TOML。
           python - "$settings_dir/.secrets.toml" <<'PY'
           import json, os, sys
 
@@ -241,8 +343,6 @@ jobs:
               "[github]",
               "user_token = " + json.dumps(os.environ["AI_GITHUB_TOKEN"]),
               "",
-              # ai_timeout 是 host-only 設定，只能從這裡（host 層設定檔）給；
-              # 預設 120 秒對這個端點跑 2 萬 token 的 review 不夠。
               "[config]",
               "ai_timeout = 600",
               "",
