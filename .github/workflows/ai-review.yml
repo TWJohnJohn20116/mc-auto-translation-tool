@@ -184,9 +184,12 @@ jobs:
             exit 0
           fi
 
-          # 取最後一則帶審查標題的 bot 留言。標題中英都認，語言設定壞掉時仍判定得出來。
+          # 用留言身分標記挑審查留言，再依 updated_at 取最新一則。
+          # 不要寫成 '[...] | last'：--paginate 是逐頁套 jq，每頁都會各回一則，
+          # 多頁時會把舊留言一起計入（實測把 3 點算成 6 點）。
           body="$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate \
-            --jq '[.[] | select(.user.login == "github-actions[bot]") | select(.body | test("PR 審查指南|PR Reviewer Guide")) | .body] | last // ""')"
+            --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | test("pr-agent:review:")) | "\(.updated_at)\t\(.body | @base64)"' \
+            | sort | tail -n 1 | cut -f2- | base64 -d 2>/dev/null || true)"
 
           if [ -z "$body" ]; then
             echo "::error::找不到 AI 審查留言，無法判定審查結論；請重新執行這個 workflow 或留言 /review"
