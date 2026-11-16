@@ -20,8 +20,8 @@
     "react-dom": "19.3.1"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.68.0",
-    "@cloudflare/workers-types": "^5.20261110.1",
+    "@cloudflare/vite-plugin": "1.69.1",
+    "@cloudflare/workers-types": "^5.20261113.1",
     "@eslint/js": "9.39.5",
     "@next/eslint-plugin-next": "16.4.6",
     "@tailwindcss/postcss": "4.3.5",
@@ -40,9 +40,9 @@
     "tailwindcss": "4.3.5",
     "typescript": "6.0.3",
     "typescript-eslint": "8.72.2",
-    "vinext": "1.4.4",
-    "vite": "8.3.7",
-    "wrangler": "4.160.0"
+    "vinext": "1.4.5",
+    "vite": "8.3.8",
+    "wrangler": "4.161.0"
   },
   "type": "module"
 }
