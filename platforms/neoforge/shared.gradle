@@ -304,7 +304,11 @@ tasks.named("processResources", ProcessResources).configure {
 
     // The one loader metadata template every generation expands (see metadata/common above). The rename
     // is all 1.20.2/1.20.4 need: same body, the file name FML looks for on that generation.
-    from(sharedMetadata) {
+    // The template sits under metadata/common/src/main/resources, and include patterns are matched
+    // against the path relative to the directory given to from(); pointing at metadata/common itself
+    // matched nothing, so every NeoForge jar shipped without loader metadata and
+    // verify_release_jars rejected it with "unrecognized mod metadata".
+    from(new File(sharedMetadata, "src/main/resources")) {
         include "META-INF/neoforge.mods.toml"
         rename { String name -> name == "neoforge.mods.toml" ? loaderMetadataName : name }
         expand(
