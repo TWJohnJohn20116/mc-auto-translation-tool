@@ -46,8 +46,8 @@ edited in `config/universal-translator.properties`.
 
 ## Downloads and version selection
 
-Pick the loader first, then the matching JAR. The stable release turns 48 build artifacts into
-**31 directly installable JARs**. These links are updated with the README whenever a new stable
+Pick the loader first, then the matching JAR. The stable release turns 50 build artifacts into
+**33 directly installable JARs**. These links are updated with the README whenever a new stable
 version is published.
 
 The source tree also contains Ornithe / early Fabric targets (26 releases in 1.3.1–1.8.8, plus
@@ -98,6 +98,7 @@ versions listed row by row below are actually supported.
 | 1.21.9–1.21.11 | 21 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4.1-beta1/MCAutoTranslationTool-1.4.1-beta1-mc1.21.9-1.21.11-forge.jar) |
 | 26.1–26.1.2 | 25 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4.1-beta1/MCAutoTranslationTool-1.4.1-beta1-mc26.1-26.1.2-forge.jar) |
 | 26.2 | 25 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4.1-beta1/MCAutoTranslationTool-1.4.1-beta1-mc26.2-forge.jar) |
+| 26.3 | 25 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4.1-beta1/MCAutoTranslationTool-1.4.1-beta1-mc26.3-forge.jar) |
 
 ### NeoForge: one JAR per game version
 
@@ -105,7 +106,7 @@ NeoForge / FML **cannot** nest several implementations that share the same `modI
 only the one matching the current game, the way Fabric Loader does. Duplicate mod IDs fail to load,
 and Jar-in-Jar is for embedding libraries. 1.20.1 (Java 17, NeoForge 47) is also incompatible with
 1.21.1 / 1.21.3 / 1.21.11 (Java 21, NeoForge 21.1 / 21.3 / 21.11), so the stable release ships one separate
-JAR per game version, nineteen in total. NeoForge ships only the nineteen versions in the table
+JAR per game version, twenty in total. NeoForge ships only the twenty versions in the table
 below: 1.20.2 cannot resolve its coordinates, and 1.20.3 and 1.20.5 have no target, so none of them is downloadable.
 
 | Minecraft | NeoForge | Java | Download |
@@ -129,6 +130,7 @@ below: 1.20.2 cannot resolve its coordinates, and 1.20.3 and 1.20.5 have no targ
 | 26.1.1 | 26.1.1.15-beta | 25 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4.1-beta1/MCAutoTranslationTool-1.4.1-beta1-mc26.1.1-neoforge.jar) |
 | 26.1.2 | 26.1.2.95 | 25 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4.1-beta1/MCAutoTranslationTool-1.4.1-beta1-mc26.1.2-neoforge.jar) |
 | 26.2 | 26.2.0.59 | 25 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4.1-beta1/MCAutoTranslationTool-1.4.1-beta1-mc26.2-neoforge.jar) |
+| 26.3 | 26.3.0.24 | 25 | [Download JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4.1-beta1/MCAutoTranslationTool-1.4.1-beta1-mc26.3-neoforge.jar) |
 
 > **Do not mix loaders or use a JAR outside the range in its filename.** Adjacent Minecraft releases may
 > change rendering APIs and Mixin targets. Release metadata includes only versions that completed validation.

@@ -50,7 +50,7 @@ Fabric、Forge 與 NeoForge 均可按 `U` 開啟圖形設定，直接編輯屏�
 
 ## 下載與版本選擇
 
-先確認載入器，再下載對應 JAR。正式版將 48 個建置產物整理為 **31 個可直接安裝的 JAR**；
+先確認載入器，再下載對應 JAR。正式版將 50 個建置產物整理為 **33 個可直接安裝的 JAR**；
 發佈新版本時，這些連結會隨 README 一併更新。
 
 原始碼中另有 Ornithe／早期 Fabric 目標（1.3.1–1.8.8 中的 26 個版本，以及 1.8.9–1.12.2），未打入目前 GitHub 正式版。
@@ -87,10 +87,11 @@ Forge 只在已驗證相容的相鄰版本間共用 JAR，沒有 Fabric 那種�
 | 1.21.9–1.21.11 | 21 | [下載 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4.1-beta1/MCAutoTranslationTool-1.4.1-beta1-mc1.21.9-1.21.11-forge.jar) |
 | 26.1–26.1.2 | 25 | [下載 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4.1-beta1/MCAutoTranslationTool-1.4.1-beta1-mc26.1-26.1.2-forge.jar) |
 | 26.2 | 25 | [下載 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4.1-beta1/MCAutoTranslationTool-1.4.1-beta1-mc26.2-forge.jar) |
+| 26.3 | 25 | [下載 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4.1-beta1/MCAutoTranslationTool-1.4.1-beta1-mc26.3-forge.jar) |
 
 ### NeoForge：必須依版本分開
 
-NeoForge / FML **不能**像 Fabric Loader 那樣，在同一個 JAR 裡巢狀多套同 `modId` 實作再依遊戲版本只啟用一套：重複 modId 會無法載入，Jar-in-Jar 只用來嵌入相依函式庫。1.20.1（Java 17、NeoForge 47）與 1.21.1 / 1.21.3 / 1.21.11（Java 21、NeoForge 21.1 / 21.3 / 21.11）API 也不相容，所以正式版是每個 Minecraft 版本一顆獨立 JAR，共 19 顆。NeoForge 只有下表這 19 個版本：1.20.2
+NeoForge / FML **不能**像 Fabric Loader 那樣，在同一個 JAR 裡巢狀多套同 `modId` 實作再依遊戲版本只啟用一套：重複 modId 會無法載入，Jar-in-Jar 只用來嵌入相依函式庫。1.20.1（Java 17、NeoForge 47）與 1.21.1 / 1.21.3 / 1.21.11（Java 21、NeoForge 21.1 / 21.3 / 21.11）API 也不相容，所以正式版是每個 Minecraft 版本一顆獨立 JAR，共 20 顆。NeoForge 只有下表這 20 個版本：1.20.2
 的座標無法解析、1.20.3 與 1.20.5 沒有對應目標，三者都不提供下載。
 
 | Minecraft | NeoForge | Java | 下載 |
@@ -114,6 +115,7 @@ NeoForge / FML **不能**像 Fabric Loader 那樣，在同一個 JAR 裡巢狀�
 | 26.1.1 | 26.1.1.15-beta | 25 | [下載 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4.1-beta1/MCAutoTranslationTool-1.4.1-beta1-mc26.1.1-neoforge.jar) |
 | 26.1.2 | 26.1.2.95 | 25 | [下載 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4.1-beta1/MCAutoTranslationTool-1.4.1-beta1-mc26.1.2-neoforge.jar) |
 | 26.2 | 26.2.0.59 | 25 | [下載 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4.1-beta1/MCAutoTranslationTool-1.4.1-beta1-mc26.2-neoforge.jar) |
+| 26.3 | 26.3.0.24 | 25 | [下載 JAR](https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/download/v1.4.1-beta1/MCAutoTranslationTool-1.4.1-beta1-mc26.3-neoforge.jar) |
 
 > **不要跨載入器或超出檔名範圍混用 JAR。** 相鄰 Minecraft 版本的渲染 API 與 Mixin
 > 目標可能不同；只有完成驗證的版本才會寫入發佈 metadata。

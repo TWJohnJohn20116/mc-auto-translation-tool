@@ -475,6 +475,8 @@ jobs:
             java: "25"
           - target: forge-26.2
             java: "25"
+          - target: forge-26.3
+            java: "25"
           - target: neoforge-1.21.1
             java: "21"
           - target: neoforge-1.21.3

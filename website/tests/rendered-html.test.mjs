@@ -922,7 +922,7 @@ const FORGE_FAMILY_GUIDES = [
   "../../docs/en/USER_GUIDE.md",
 ];
 // 26.2 有自己的單列（`Forge 65.1.1`），不採 `版本＝Forge 版本` 的對照格式。
-const FORGE_FAMILY_STANDALONE = new Set(["26.2"]);
+const FORGE_FAMILY_STANDALONE = new Set(["26.2", "26.3"]);
 
 test("keeps the documented Forge loader versions equal to each version's build.gradle", async () => {
   const expected = new Map();

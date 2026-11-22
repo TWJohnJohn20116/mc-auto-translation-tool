@@ -85,7 +85,8 @@ jobs:
               {"target": "neoforge-26.1", "java": "25"},
               {"target": "neoforge-26.1.1", "java": "25"},
               {"target": "neoforge-26.1.2", "java": "25"},
-              {"target": "neoforge-26.2", "java": "25"}
+              {"target": "neoforge-26.2", "java": "25"},
+              {"target": "neoforge-26.3", "java": "25"}
             ]
           }
           JSON

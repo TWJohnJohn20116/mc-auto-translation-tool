@@ -11,7 +11,8 @@ def sourceLayers = [
         "26.1"  : "api/26.1-26.1.2",
         "26.1.1": "api/26.1-26.1.2",
         "26.1.2": "api/26.1-26.1.2",
-        "26.2"  : "api/26.2"
+        "26.2"  : "api/26.2",
+        "26.3"  : "api/26.3"
 ]
 
 // Groovy's String.minus removes the first occurrence of the substring, not a prefix, so this only
@@ -33,7 +34,8 @@ def resourcePackFormats = [
         "26.1"  : 84,
         "26.1.1": 84,
         "26.1.2": 84,
-        "26.2"  : 88
+        "26.2"  : 88,
+        "26.3"  : 92
 ]
 def expectedResourcePackFormat = resourcePackFormats[gameVersion]
 if (expectedResourcePackFormat == null || project.ext.forgeResourcePackFormat != expectedResourcePackFormat) {

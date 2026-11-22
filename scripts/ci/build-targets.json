@@ -13,6 +13,7 @@
     {"target": "forge-1.21.11", "java": "21", "bundle": false},
     {"target": "forge-26.1.1", "java": "25", "bundle": false},
     {"target": "forge-26.2", "java": "25", "bundle": false},
+    {"target": "forge-26.3", "java": "25", "bundle": false},
     {"target": "neoforge-1.21.1", "java": "21", "bundle": false},
     {"target": "neoforge-1.21.3", "java": "21", "bundle": false},
     {"target": "neoforge-1.21.11", "java": "21", "bundle": false}

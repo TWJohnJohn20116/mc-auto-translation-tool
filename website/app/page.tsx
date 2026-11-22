@@ -47,8 +47,8 @@ const versions = [
   ["1.20.1", "Fabric / Forge / NeoForge", "正式版已发布", "ready"],
   ["1.21–1.21.11", "Fabric 单一 JAR", "正式版已发布", "ready"],
   ["1.21、1.21.1、1.21.3–1.21.5 / 1.21.6–1.21.8 / 1.21.9–1.21.11", "Forge 兼容族群 JAR（1.21.2 无实现）", "正式版已发布", "ready"],
-  ["1.20.1、1.20.4、1.20.6、1.21–1.21.11、26.1–26.1.2、26.2", "NeoForge 每版本独立 JAR（无 1.20.2／1.20.3／1.20.5）", "正式版已发布", "ready"],
-  ["26.1–26.1.2、26.2", "Fabric 单一 JAR / Forge 兼容族群", "正式版已发布", "ready"],
+  ["1.20.1、1.20.4、1.20.6、1.21–1.21.11、26.1–26.1.2、26.2、26.3", "NeoForge 每版本独立 JAR（无 1.20.2／1.20.3／1.20.5）", "正式版已发布", "ready"],
+  ["26.1–26.1.2、26.2、26.3", "Fabric 单一 JAR / Forge 兼容族群", "正式版已发布", "ready"],
   ["26.3", "Fabric 单一 JAR", "正式版已发布", "ready"],
 ];
 
@@ -98,6 +98,7 @@ const downloadGroups = [
       ...[
         { version: "26.1–26.1.2", key: "26.1-26.1.2" },
         { version: "26.2", key: "26.2" },
+        { version: "26.3", key: "26.3" },
       ].map(({ version, key }) => ({
         version,
         loader: "Forge 兼容族群",
@@ -108,7 +109,7 @@ const downloadGroups = [
   },
   {
     title: "NeoForge",
-    note: "无法像 Fabric 那样合成单档：FML 不允许同一 JAR 内嵌多套同 modId 实现，且 1.20.1 与 1.21.1 / 1.21.3 / 1.21.11 的 API 互不兼容。只提供下列 19 个版本各一颗：1.20.2 的坐标无法解析、1.20.3 与 1.20.5 没有对应目标，三者都没有下载。",
+    note: "无法像 Fabric 那样合成单档：FML 不允许同一 JAR 内嵌多套同 modId 实现，且 1.20.1 与 1.21.1 / 1.21.3 / 1.21.11 的 API 互不兼容。只提供下列 20 个版本各一颗：1.20.2 的坐标无法解析、1.20.3 与 1.20.5 没有对应目标，三者都没有下载。",
     featured: false,
     items: [
       { version: "1.20.1", loader: "NeoForge 47.1.106", java: "Java 17", file: releaseFile("1.20.1-neoforge") },
@@ -130,6 +131,7 @@ const downloadGroups = [
       { version: "26.1.1", loader: "NeoForge 26.1.1.15-beta", java: "Java 25", file: releaseFile("26.1.1-neoforge") },
       { version: "26.1.2", loader: "NeoForge 26.1.2.95", java: "Java 25", file: releaseFile("26.1.2-neoforge") },
       { version: "26.2", loader: "NeoForge 26.2.0.59", java: "Java 25", file: releaseFile("26.2-neoforge") },
+      { version: "26.3", loader: "NeoForge 26.3.0.24", java: "Java 25", file: releaseFile("26.3-neoforge") },
     ],
   },
 ];
@@ -287,7 +289,7 @@ export default function Home() {
         <div className="downloadIntro">
           <span className="sectionKicker light">{releaseVersion} 正式版</span>
           <h2>免费使用，也欢迎一起把它做得更好。</h2>
-          <p>先选加载器，再选 Minecraft 版本。本次提供 31 个可直接安装的 JAR。更新前请删除 mods 文件夹里所有旧版本的 MCAutoTranslationTool-* 文件（不分版本号），只保留与你的 Minecraft 版本及加载器完全对应的 {releaseVersion} 文件。</p>
+          <p>先选加载器，再选 Minecraft 版本。本次提供 33 个可直接安装的 JAR。更新前请删除 mods 文件夹里所有旧版本的 MCAutoTranslationTool-* 文件（不分版本号），只保留与你的 Minecraft 版本及加载器完全对应的 {releaseVersion} 文件。</p>
         </div>
         <div className="downloadGroups">
           {downloadGroups.map((group) => (
@@ -318,7 +320,7 @@ export default function Home() {
           ))}
         </div>
         <div className="downloadMeta">
-          <a href={`${githubDownloadBase}/SHA256SUMS.txt`}>SHA-256 校验文件（Release 版，涵盖 31 个可直接安装的 JAR）</a>
+          <a href={`${githubDownloadBase}/SHA256SUMS.txt`}>SHA-256 校验文件（Release 版，涵盖 33 个可直接安装的 JAR）</a>
           <a href={`https://github.com/TWJohnJohn20116/mc-auto-translation-tool/releases/tag/v${releaseVersion}`}>查看正式版说明</a>
           <a href="https://github.com/TWJohnJohn20116/mc-auto-translation-tool">查看 GitHub 源代码</a>
           <a href="https://space.bilibili.com/3546631091783712">原作者：B站「我小张7272635」</a>
