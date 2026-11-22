@@ -9,7 +9,7 @@ ext.neoforgeMinecraftVersion = "26.3"
 ext.neoforgeVersion = project.neoforge_26_3_version
 // Loader metadata coordinates for platforms/neoforge/shared/metadata/common (FML versionRange checks).
 ext.neoforgeLoaderVersion = "[10,)"
-ext.neoforgeDependencyRange = "[26.3.0.24,26.4.0.0)"
+ext.neoforgeDependencyRange = "[26.3.0.115,26.4.0.0)"
 ext.neoforgeMinecraftRange = "[26.3,26.4)"
 ext.neoforgeJavaRelease = 25
 ext.neoforgeEntryLayer = "26.3"

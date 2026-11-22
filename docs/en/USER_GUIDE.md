@@ -41,7 +41,7 @@ set of 33 directly installable 1.4.1-beta1 JARs: one row per file.
 | 26.1.1 | NeoForge 26.1.1.15-beta | 25 | No additional mod |
 | 26.1.2 | NeoForge 26.1.2.95 | 25 | No additional mod |
 | 26.2 | NeoForge 26.2.0.59 | 25 | No additional mod |
-| 26.3 | NeoForge 26.3.0.24 | 25 | No additional mod |
+| 26.3 | NeoForge 26.3.0.115 | 25 | No additional mod |
 
 Place the correct JAR in the game instance's `mods` folder. The server does not need this mod.
 The single Fabric JAR accepts only the versions listed one by one above and requires Fabric Loader

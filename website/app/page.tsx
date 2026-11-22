@@ -131,7 +131,7 @@ const downloadGroups = [
       { version: "26.1.1", loader: "NeoForge 26.1.1.15-beta", java: "Java 25", file: releaseFile("26.1.1-neoforge") },
       { version: "26.1.2", loader: "NeoForge 26.1.2.95", java: "Java 25", file: releaseFile("26.1.2-neoforge") },
       { version: "26.2", loader: "NeoForge 26.2.0.59", java: "Java 25", file: releaseFile("26.2-neoforge") },
-      { version: "26.3", loader: "NeoForge 26.3.0.24", java: "Java 25", file: releaseFile("26.3-neoforge") },
+      { version: "26.3", loader: "NeoForge 26.3.0.115", java: "Java 25", file: releaseFile("26.3-neoforge") },
     ],
   },
 ];

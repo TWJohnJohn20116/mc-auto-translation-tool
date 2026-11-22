@@ -247,7 +247,7 @@ class BuildTargetsTest(unittest.TestCase):
         entries = target_entries(PREPARE_WORKFLOW, with_project=True)
         # 48 是 prepare-release 的目標數，也是 publish-release 的 expected 陣列長度；抓不到就代表
         # 清單形狀變了，不能讓下面的斷言在空集合上通過。
-        self.assertEqual(48, len(entries), "prepare-release.yml 的目標清單筆數變了")
+        self.assertEqual(50, len(entries), "prepare-release.yml 的目標清單筆數變了")
         self.assertTrue(
             all(entry["java"] for entry in entries),
             "prepare-release.yml 的每一筆目標都必須帶 java",
@@ -275,7 +275,7 @@ class BuildTargetsTest(unittest.TestCase):
 
     def test_legacy_targets_java_matches_the_toolchain_prefixes(self):
         entries = target_entries(LEGACY_WORKFLOW)
-        self.assertEqual(21, len(entries), "legacy-targets.yml 的目標清單筆數變了")
+        self.assertEqual(22, len(entries), "legacy-targets.yml 的目標清單筆數變了")
         self.assertEqual(
             ["forge-legacy-1.12.2", "forge-legacy-1.8.9"],
             sorted(entry["target"] for entry in entries if entry["java"] is None),
