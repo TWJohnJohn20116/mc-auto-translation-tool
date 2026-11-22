@@ -29,3 +29,5 @@ MCAutoTranslationTool-1.4.1-beta1-mc26.1.1-neoforge.jar
 MCAutoTranslationTool-1.4.1-beta1-mc26.1.2-neoforge.jar
 MCAutoTranslationTool-1.4.1-beta1-mc26.2-forge.jar
 MCAutoTranslationTool-1.4.1-beta1-mc26.2-neoforge.jar
+MCAutoTranslationTool-1.4.1-beta1-mc26.3-forge.jar
+MCAutoTranslationTool-1.4.1-beta1-mc26.3-neoforge.jar
