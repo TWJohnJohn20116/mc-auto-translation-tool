@@ -45,7 +45,7 @@
 原因（不要嘗試繞過）：
 
 - 本機 Gradle 建置會吃滿記憶體與 CPU，過去已造成 JVM 崩潰（倉庫根目錄的 `hs_err_pid*.log` 即為證據）。
-- 專案有 48 個以上的平台目標與多套 JDK（8／17／21／25），本機環境不保證與 CI 一致。
+- 專案有 50 個以上的平台目標與多套 JDK（8／17／21／25），本機環境不保證與 CI 一致。
 - GitHub Actions 是唯一可信的建置與驗證來源；本機能編過不代表 CI 會過，反之亦然。
 
 ### 本機允許做的事
@@ -65,9 +65,9 @@
 
 | Workflow | 檔案 | 觸發條件 | 用途 |
 | --- | --- | --- | --- |
-| 主要建置 | `.github/workflows/build.yml` | PR、push `main`、`workflow_dispatch` | workflow 靜態檢查（actionlint + shellcheck）、核心檢查、網站檢查（只在 PR 動到 `website/` 時才真的跑）、16 個平台目標、7 個舊版目標（各自獨立 job 平行跑）、發布資產驗證，最後由 `CI 總結` 彙總。這是 PR 必經路徑，牆鐘約 5～6 分（由最慢的 job 決定） |
-| 舊版目標 | `.github/workflows/legacy-targets.yml` | 每週排程（週一 03:17 UTC）、`workflow_dispatch` | 4 個 Ornithe／舊版 Fabric bundle（1.3.1–1.15）、2 個獨立 Forge 1.8.9／1.12.2 建置，以及 15 個 NeoForge 目標（1.20.4～26.2）。這些要 remap／decompile 或跑 Minecraft Mavenizer，刻意不放在 PR 路徑 |
-| 準備發布資產 | `.github/workflows/prepare-release.yml` | 只有 `workflow_dispatch` | 一鍵準備 `downloads/<mod_version>`：建置 48 個目標、用標準檔名收集、產生 `SHA256SUMS.txt`、跑 `verify_release_jars.py` 驗證，再開 PR。手動觸發，不在 PR 路徑上（一次約 10～20 分鐘牆鐘時間） |
+| 主要建置 | `.github/workflows/build.yml` | PR、push `main`、`workflow_dispatch` | workflow 靜態檢查（actionlint + shellcheck）、核心檢查、網站檢查（只在 PR 動到 `website/` 時才真的跑）、17 個平台目標、7 個舊版目標（各自獨立 job 平行跑）、發布資產驗證，最後由 `CI 總結` 彙總。這是 PR 必經路徑，牆鐘約 5～6 分（由最慢的 job 決定） |
+| 舊版目標 | `.github/workflows/legacy-targets.yml` | 每週排程（週一 03:17 UTC）、`workflow_dispatch` | 4 個 Ornithe／舊版 Fabric bundle（1.3.1–1.15）、2 個獨立 Forge 1.8.9／1.12.2 建置，以及 16 個 NeoForge 目標（1.20.4～26.3）。這些要 remap／decompile 或跑 Minecraft Mavenizer，刻意不放在 PR 路徑 |
+| 準備發布資產 | `.github/workflows/prepare-release.yml` | 只有 `workflow_dispatch` | 一鍵準備 `downloads/<mod_version>`：建置 50 個目標、用標準檔名收集、產生 `SHA256SUMS.txt`、跑 `verify_release_jars.py` 驗證，再開 PR。手動觸發，不在 PR 路徑上（一次約 10～20 分鐘牆鐘時間） |
 | 發布下載資產 | `.github/workflows/publish-release.yml` | push `main`（限特定路徑）、`workflow_dispatch` | 驗證 `downloads/<version>` 並建立或更新 GitHub Release |
 
 Git 遠端：
@@ -125,7 +125,7 @@ git -c 'credential.helper=' -c 'credential.helper=!gh auth git-credential' push 
    - 獨立 Forge 1.8.9／1.12.2 → artifact 名稱 `forge-legacy-1.8.9`、`forge-legacy-1.12.2`
    - 可直接安裝的正式版 JAR → artifact 名稱 `release-assets`（`build/release-assets/*.jar` 與
      `SHA256SUMS.txt`）；只有 `workflow_dispatch` 的執行才有，push `main` 的發布驗證由
-     `publish-release.yml` 負責一次（同一個 commit 不重複解壓 48 顆 JAR）
+     `publish-release.yml` 負責一次（同一個 commit 不重複解壓 50 顆 JAR）
 
 6. 確認你要的 job 真的有跑，而不是被略過：`gh run view <run-id> --json jobs` 中該 job 的
    `conclusion` 不能是 `skipped`。分支保護要求的檢查有兩個：**`CI 總結`**（彙總 job，全部 job 都
@@ -157,27 +157,27 @@ git -c 'credential.helper=' -c 'credential.helper=!gh auth git-credential' push 
 - `主要建置` 額外關鍵字：`legacy`（7 個 1.16.5–1.20.1 舊版目標）、`release`（發布資產驗證）。
 - 目標名稱必須與該 workflow 的 matrix 完全一致。名稱打錯時該項目會被略過，而整體仍顯示成功，
   因此一定要用 `gh run view <run-id> --json jobs` 確認 `conclusion` 不是 `skipped`。
-- **`legacy-targets.yml` 已改成動態 matrix**：`plan` 持有 21 個目標的權威清單，依 `targets` 過濾後
+- **`legacy-targets.yml` 已改成動態 matrix**：`plan` 持有 22 個目標的權威清單，依 `targets` 過濾後
   輸出三組 `fromJSON` matrix；沒被要求的分組**整個 job 不會出現**（或顯示 `skipped`），所以
   `--json jobs` 的 `conclusion` 就足以判斷，不必再看 `steps[]`。打錯的目標名稱會在 `plan` 以
   `::error::` 失敗並列出可用目標。**要增刪 legacy 目標，改 `plan` 裡那份 JSON 就好**，三個 job 的
   matrix 會自動跟隨（`build.yml` 仍是靜態 matrix）。
   2026-10-21 之前 matrix 是靜態的：未指定的目標仍會開 job、建置步驟被 `if` 略過、job 卻回報
   `success`，於是誤以為 4 個 26.x NeoForge 目標建置通過，錯誤直到 `prepare-release` 第一次真正
-  編譯 48 個目標才暴露。
+  編譯 50 個目標才暴露。
 
 ### 目標名稱
 
-`build.yml` → `platform-build`（16 個，PR 必經）：
+`build.yml` → `platform-build`（17 個，PR 必經）：
 
 `fabric-1.16.x`、`fabric-1.17-1.18.x`、`fabric-1.19.x`、`fabric-1.20.x`、`fabric-1.21.x`、
 `fabric-26.x`、`neoforge-1.20.1`、`forge-1.21.1`、`forge-1.21.7`、
-`forge-1.21.9`、`forge-1.21.11`、`forge-26.1.1`、`forge-26.2`、`neoforge-1.21.1`、`neoforge-1.21.3`、
+`forge-1.21.9`、`forge-1.21.11`、`forge-26.1.1`、`forge-26.2`、`forge-26.3`、`neoforge-1.21.1`、`neoforge-1.21.3`、
 `neoforge-1.21.11`
 
 `fabric-1.21.4-1.21.5` 這個目標已於第四輪審計（B07-004）刪除：它每個 PR 都吃掉一個完整 Loom 專案，
 卻不在任何 bundle、也不在 `downloads/` 的收集範圍裡；1.21.4／1.21.5 本來就由 `fabric-1.21.x`
-的 bundle 涵蓋。刪除它不影響 48 顆發布資產，所以 `downloads/` 與四份 `README.md` 都不必跟著動。
+的 bundle 涵蓋。刪除它不影響 50 顆發布資產，所以 `downloads/` 與四份 `README.md` 都不必跟著動。
 
 `build.yml` → `legacy-build`（7 個，各自獨立平行 job；關鍵字 `legacy` 可全選）：
 
@@ -189,12 +189,12 @@ git -c 'credential.helper=' -c 'credential.helper=!gh auth git-credential' push 
 `fabric-1.0-1.8.x`、`fabric-1.8-1.12.x`、`fabric-1.13.x`、`fabric-1.14-1.15.x`、`forge-legacy-1.8.9`、
 `forge-legacy-1.12.2`（後兩者位於 `platforms/forge/legacy/<版本>/`，是獨立 Gradle 建置，需要 JDK 8）
 
-`legacy-targets.yml` → `neoforge-targets`（15 個，排程／手動，不擋 PR）：
+`legacy-targets.yml` → `neoforge-targets`（16 個，排程／手動，不擋 PR）：
 
 `neoforge-1.20.4`、`neoforge-1.20.6`、`neoforge-1.21`、`neoforge-1.21.2`、
 `neoforge-1.21.4`、`neoforge-1.21.5`、`neoforge-1.21.6`、`neoforge-1.21.7`、`neoforge-1.21.8`、
 `neoforge-1.21.9`、`neoforge-1.21.10`、`neoforge-26.1`、`neoforge-26.1.1`、`neoforge-26.1.2`、
-`neoforge-26.2`（1.20.x 與 1.21.x 用 JDK 21，26.x 用 JDK 25。這些目標原本只存在於 `settings.gradle`，
+`neoforge-26.2`、`neoforge-26.3`（1.20.x 與 1.21.x 用 JDK 21，26.x 用 JDK 25。這些目標原本只存在於 `settings.gradle`，
 從來沒有被任何 workflow 建置、也沒有發布過）
 
 `neoforge-1.20.2` **不在**清單裡：它的 `net.neoforged:neoforge:20.2.93` 在
@@ -206,24 +206,24 @@ git -c 'credential.helper=' -c 'credential.helper=!gh auth git-credential' push 
 Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手動上傳資產或手動開 Release**。
 
 1. 更新 `gradle.properties` 的 `mod_version`。
-2. 準備 `downloads/<mod_version>/`：**48 個**目標 JAR 加 `SHA256SUMS.txt`。這一步現在由
+2. 準備 `downloads/<mod_version>/`：**50 個**目標 JAR 加 `SHA256SUMS.txt`。這一步現在由
    `.github/workflows/prepare-release.yml` 自動完成：
 
    ```bash
    gh workflow run prepare-release.yml -R TWJohnJohn20116/mc-auto-translation-tool
    ```
 
-   它會建置 48 個目標、用標準檔名 `MCAutoTranslationTool-<version>-mc<版本>-<載入器>.jar` 收集、
+   它會建置 50 個目標、用標準檔名 `MCAutoTranslationTool-<version>-mc<版本>-<載入器>.jar` 收集、
    產生 `SHA256SUMS.txt`、跑 `verify_release_jars.py`，然後開一個 `release/prepare-<version>` PR。
    因為用 `GITHUB_TOKEN` 開的 PR 不會觸發其他 workflow，它會順便手動觸發該分支的建置，讓分支保護
    要求的 `CI 總結` 能產生。只想煙霧測試時用 `-f targets=mc1.21.7-forge,mc1.13.x-fabric`：只指定
-   部分目標時不會開 PR、也不會檢查數量是否為 48。
+   部分目標時不會開 PR、也不會檢查數量是否為 50。
 
    **注意：GitHub Actions 目前無權建立 PR**（2026-11-14 實測）。倉庫的
    `can_approve_pull_request_reviews` 是 `false`（查詢：
    `gh api repos/<owner>/<repo>/actions/permissions/workflow`），`GITHUB_TOKEN` 走到 `gh pr create`
    會被 GraphQL 拒絕：`pull request create failed: GraphQL: GitHub Actions is not permitted to create or
-   approve pull requests`。此時 **48 個目標其實都已建置成功**、`downloads/<version>` 已彙整、
+   approve pull requests`。此時 **50 個目標其實都已建置成功**、`downloads/<version>` 已彙整、
    `release/prepare-<version>` 分支也已推上去，只有 PR 沒開成；不要因此重跑（重跑要再等 10～20 分鐘）。
    補救：用有權限的帳號 `gh pr create --base main --head release/prepare-<version>`，再
    `gh workflow run build.yml --ref release/prepare-<version>`。要恢復自動開 PR，把該設定改成
@@ -240,8 +240,8 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
    `scripts/release_layout.py`（分片門檻與後綴公式的唯一實作，改壞它會讓已提交的分片對不上）、
    `scripts/ci/read-mod-version.sh`（版本號白名單是這支 workflow 的入口邏輯）、
    `publish-release.yml` 自己。
-5. workflow 會驗證 48 顆 JAR 與 checksum、縮減成 **31 顆可直接安裝 JAR**（加 `SHA256SUMS.txt` 共
-   32 個資產），再建立或更新 `v<mod_version>` Release；版本號含 `-` 者視為 prerelease。
+5. workflow 會驗證 50 顆 JAR 與 checksum、縮減成 **33 顆可直接安裝 JAR**（加 `SHA256SUMS.txt` 共
+   34 個資產），再建立或更新 `v<mod_version>` Release；版本號含 `-` 者視為 prerelease。
    NeoForge **不做**版本範圍合併（同一顆 JAR 塞多個同 `modId` 實作會載入失敗），每個版本各一顆。
    **注意**：`publish-release.yml` 沒有手寫的目標清單——`expected` 由
    `downloads/<version>/SHA256SUMS.txt` 逐行推導，數量檢查是兩條自我一致關係
@@ -254,7 +254,7 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
    `website/app/page.tsx` 也要一起更新：`releaseVersion`、`metadata.title`／`description`、按鈕文字，
    以及文案裡的 **JAR 數量**與**覆蓋範圍**（1.3.11 的說明寫著「不含 1.16.0–1.16.4」，1.4 的 Fabric
    1.16 bundle 已涵蓋那 5 個版本）。這些**大多已由 `website/tests/rendered-html.test.mjs` 守住**：
-   31／48／51／26／15、9 處 Fabric 版本清單、23 份文件的反引號路徑與版本號、
+   33／50／51／26／16、9 處 Fabric 版本清單、23 份文件的反引號路徑與版本號、
    `downloads/<版本>/release-assets.txt`、Forge 家族的 loader 版本、`CHANGELOG.md` 的本版區段——
    逐條清單見 `website/README.md` 的「驗證」一節，這裡不抄第二份。仍靠人工的只有措辭本身
    （例如「不含 1.16.0–1.16.4」這種歷史敘述）。漏掉的後果：PR 動到 `website/`、`README.md`、`docs/`
@@ -271,7 +271,7 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
 
 ## 修改 CI 的規則
 
-- `prepare-release.yml` 的 48 筆 `TARGETS_JSON` 是「**要建置什麼**」；實際發布什麼由
+- `prepare-release.yml` 的 50 筆 `TARGETS_JSON` 是「**要建置什麼**」；實際發布什麼由
   `downloads/<version>/` 決定（`SHA256SUMS.txt` 就是那份清單），`publish-release.yml` 只驗證它與
   自己一致——它**沒有**手寫的 `expected` 陣列，也沒有 `-ne <數量>`。兩者的關係是**只有前者可以
   隨時改**：
@@ -285,7 +285,7 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   - 每個目標的 `project` 與 `jar_dir` 也要對得上 `settings.gradle`（`jar_dir` 是專案目錄，JAR 會在
     它的 `build/release-assets`、`build/release` 或 `build/libs` 下）。收集時是用**版本號精確比對**
     `*-<version>.jar`，不要改成「目錄裡唯一的 JAR」：本機與快取目錄常留有舊版本的 JAR。
-- `prepare-release.yml` 用動態 matrix（`fromJSON`）：48 個目標的清單在 `plan` job 裡，只有被要求的
+- `prepare-release.yml` 用動態 matrix（`fromJSON`）：50 個目標的清單在 `plan` job 裡，只有被要求的
   目標才會開 runner，打錯名稱會直接以 `::error::` 失敗（`build.yml` 的靜態 matrix 遇到打錯的名稱
   只會靜默略過，所以那邊仍要用 `gh run view --json jobs` 確認）。`build.yml` 維持靜態 matrix：它是
   PR 必經路徑、目標也少，不值得為偶爾的手動篩選去改動那條路徑。
@@ -297,7 +297,7 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   與 `scripts/verify_release_jars.py` 的驗證都必須保留。
 - **`check` 不再包含發布驗證**（2026-10-29，第二輪審計 C2-163）：`verifyPreparedReleaseAssets` 需要
   `downloads/<mod_version>/SHA256SUMS.txt`，而它是**發布後**才存在的檔案，掛在 PR 必經的 `check`
-  等同讓「改版本號」與「必經檢查」互鎖（bump 後第一次 PR 必紅，且每個無關 PR 都要重掃 48 顆 JAR）。
+  等同讓「改版本號」與「必經檢查」互鎖（bump 後第一次 PR 必紅，且每個無關 PR 都要重掃 50 顆 JAR）。
   現在它是獨立任務，由 `verifyPublishedRelease` 聚合，只由 `prepare-release.yml`／`release-assets`
   job 明確呼叫。改動時不要把它加回 `check`，也不要讓 `check` 依賴 `downloads/`。
 - 新增或調整平台目標時，必須同步四處：`settings.gradle` 的 `platformProjects`、對應 workflow 的 matrix
@@ -338,6 +338,7 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   | `1.21.9-1.21.11` | 1.21.9–1.21.11 | `getChat()` 移到 `gui.hud` |
   | `26.1-26.1.2` | 26.1、26.1.1、26.1.2 | 舊 `gui.getChat()`／`gui.screen()` 形式 |
   | `26.2` | 26.2 | 新 `hud.getChat()`／`gui.screen()` 形式 |
+  | `26.3` | 26.3 | 與 26.2 相同，但按鍵改用 `InputConstants.Type.KEYBOARD`／`InputConstants.KEY_*`（26.2 是 `Type.KEYSYM`／`GLFW.GLFW_KEY_*`） |
 
   metadata 層則只有 4 種（`1.20-1.20.4`、`1.20.6`、`1.21`、`26.x`），差異在 mixin 清單
   （1.20.x 沒有 `InGameHudStatusIndicatorMixin`，26.x 沒有 `ChatHudContextMixin` 與
@@ -397,7 +398,7 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   版本，必須同時（1）在 `gradle.properties` 補上 `minecraft_<底線化版本>_version`、`yarn_..._mappings`、
   `loader_..._version`、`fabric_api_..._version`（版本目錄本身已沒有 `build.gradle`，座標由樹級
   `version.gradle` 依專案名推導）、（2）加回 `settings.gradle` 的 `platformProjects` 與
-  `platformDependencies`、（3）加回 bundle 的 `supportedVersions`。這個 bundle 不在 48 顆發布資產裡，所以它紅燈時對使用者沒有影響，
+  `platformDependencies`、（3）加回 bundle 的 `supportedVersions`。這個 bundle 不在 50 顆發布資產裡，所以它紅燈時對使用者沒有影響，
   但排程紅燈會掩蓋其他目標真正的失敗。
 - 判斷「某個版本的 mappings 能不能用」**不能只看 artifact 有沒有回 200**：`1.6.2+build.5` 的 `.pom`
   與 `.jar` 都存在，ploceus 仍然建不起來。反過來說，**`maven-metadata.xml` 是過期不完整的**
@@ -513,7 +514,7 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
 - **改到非 PR 路徑的程式碼要手動觸發 `legacy-targets.yml` 驗證**：`platforms/forge/shared/legacy-common`
   （Forge 1.8.9／1.12.2）與 `platforms/fabric/shared/{settings/legacy,runtime-legacy}`（Fabric 1.0–1.15）
   只在 `legacy-targets.yml` 編譯，PR 的 `主要建置` 完全看不到它們。改到那些層之後要跑
-  `gh workflow run legacy-targets.yml --ref <branch>` 並確認 21 個目標全綠，否則會等到每週排程
+  `gh workflow run legacy-targets.yml --ref <branch>` 並確認 22 個目標全綠，否則會等到每週排程
   才發現紅燈（2026-10-22 就差點把未編譯過的 `legacy-common` 改動合進 `main`）。
 - **NeoForge 複用 Forge 的層**：`neoforgeForgeLayers`（各版本 `build.gradle`）決定 NeoForge 從哪幾個
   `platforms/forge/<樹>/shared` 層取 Java 原始碼。把某個類別從那些層搬到新的共用層時，**必須同時**

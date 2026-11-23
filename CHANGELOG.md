@@ -34,6 +34,7 @@
 - **Fabric 1.0–1.13.2 的快捷鍵可設定**（新功能）：`settings-key`／`toggle-key` 預設 U／F8。此 bundle 不在 48 顆發布資產內。
 - 1.20.5／1.20.6 補回 `ChatHudContextMixin` 的 `addMessage`（priority 800）；1.13.2 補回 `TextRendererMixin#draw(String;FFI)`；26.1 的 HUD 隱藏改讀 `Options.hideGui()`。
 - 1.18.2 開啟設定畫面不再暫停單人世界（行為變化，與其他版本一致）。
+- **新增 Minecraft 26.3 的 Forge 與 NeoForge 目標**：`platform-forge-26.3`（Forge 66.1.0）與 `platform-neoforge-26.3`（NeoForge 26.3.0.115）各一顆 JAR。26.3 把按鍵常數換成 `InputConstants.Type.KEYBOARD`／`InputConstants.KEY_*`，兩邊都帶自己的轉接層（`platforms/forge/26.x/shared/api/26.3`、`platforms/neoforge/shared/entrypoints/26.3`），NeoForge 另掛 `api/26.3` 的 Forge 層。Fabric 的 26.3 已在 `fabric-26.x` bundle 內。
 
 ### 四、已知限制
 

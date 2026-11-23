@@ -62,7 +62,8 @@ def entryLayerSharedDirs = [
         "1.21.2-1.21.8" : [],
         "1.21.9-1.21.11": [],
         "26.1-26.1.2"   : [],
-        "26.2"          : []
+        "26.2"          : [],
+        "26.3"          : []
 ]
 if (!entryLayerSharedDirs.containsKey(project.ext.neoforgeEntryLayer)) {
     throw new GradleException(
@@ -230,7 +231,8 @@ def resourcePackFormats26 = [
         "26.1"  : 84,
         "26.1.1": 84,
         "26.1.2": 84,
-        "26.2"  : 88
+        "26.2"  : 88,
+        "26.3"  : 92
 ]
 def expectedResourcePackFormat26 = resourcePackFormats26[project.ext.neoforgeMinecraftVersion]
 if (expectedResourcePackFormat26 != null && project.ext.has("neoforgeResourcePackFormat")
@@ -262,13 +264,13 @@ sourceSets {
         // so it needs it explicitly. Both 26.x layers keep their own copy instead (26.2 reaches the
         // chat field through client.gui.screen(), 26.1-26.1.2 through client.screen), and their Forge
         // api layers already supply it.
-        if (!(project.ext.neoforgeEntryLayer in ["26.1-26.1.2", "26.2"])) {
+        if (!(project.ext.neoforgeEntryLayer in ["26.1-26.1.2", "26.2", "26.3"])) {
             java.srcDir new File(rootProject.file("platforms/forge/shared"),
                     "local-guard-1.18.2-plus/src/main/java")
         }
         // ForgeTranslationRuntime is shared between Forge 1.21.9+ and 26.x; NeoForge reuses the
         // same layers, so the entrypoints that map onto them need it as well.
-        if (project.ext.neoforgeEntryLayer in ["1.21.9-1.21.11", "26.1-26.1.2", "26.2"]) {
+        if (project.ext.neoforgeEntryLayer in ["1.21.9-1.21.11", "26.1-26.1.2", "26.2", "26.3"]) {
             java.srcDir new File(rootProject.file("platforms/forge/shared"),
                     "runtime-1.21.9-plus/src/main/java")
         }
@@ -302,7 +304,11 @@ tasks.named("processResources", ProcessResources).configure {
 
     // The one loader metadata template every generation expands (see metadata/common above). The rename
     // is all 1.20.2/1.20.4 need: same body, the file name FML looks for on that generation.
-    from(sharedMetadata) {
+    // The template sits under metadata/common/src/main/resources, and include patterns are matched
+    // against the path relative to the directory given to from(); pointing at metadata/common itself
+    // matched nothing, so every NeoForge jar shipped without loader metadata and
+    // verify_release_jars rejected it with "unrecognized mod metadata".
+    from(new File(sharedMetadata, "src/main/resources")) {
         include "META-INF/neoforge.mods.toml"
         rename { String name -> name == "neoforge.mods.toml" ? loaderMetadataName : name }
         expand(

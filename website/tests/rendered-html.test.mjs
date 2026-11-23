@@ -434,6 +434,25 @@ const COVERAGE_DOCS = [
 // （`platforms/fabric/26.x/{26.1,…}`，同層還有 `bundle` 與 `shared`，那不是版本）。
 const FABRIC_VERSIONED_BUNDLES = ["1.13", "1.14-1.15", "1.16", "1.17-1.18", "1.19", "1.20", "1.21"];
 
+// 版本清單的權威是 settings.gradle：版本專案目錄在建置時才建立（`versions/<v>`、26.x 的
+// `26.x/<v>`），不在版控裡，所以 CI 上讀不到目錄，只能讀宣告。
+async function fabricVersionMap() {
+  const settings = await readFile(new URL("../../settings.gradle", import.meta.url), "utf8");
+  const map = new Map(
+    [...FABRIC_VERSIONED_BUNDLES, "1.0-1.8", "1.8-1.12", "26.x"].map((bundle) => [bundle, []]),
+  );
+  for (const [, path] of settings.matchAll(/"platform-fabric-[^"]+"\s*:\s*"([^"]+)"/g)) {
+    const versioned = path.match(/^platforms\/fabric\/([^/]+)\/versions\/([^/]+)$/);
+    if (versioned && map.has(versioned[1])) {
+      map.get(versioned[1]).push(versioned[2]);
+      continue;
+    }
+    const modern = path.match(/^platforms\/fabric\/26\.x\/(\d[^/]*)$/);
+    if (modern) map.get("26.x").push(modern[1]);
+  }
+  return map;
+}
+
 test("keeps the headline coverage numbers in sync with their producers", async () => {
   // 48：權威是 `prepare-release.yml` 裡那份 TARGETS_JSON，不是任何文件裡的數字。
   const prepareWorkflow = await readFile(
@@ -447,17 +466,12 @@ test("keeps the headline coverage numbers in sync with their producers", async (
   const releaseTargets = JSON.parse(targetsJson);
   assert.ok(releaseTargets.length > 0, "prepare-release.yml 的 TARGETS_JSON 解析出 0 個目標");
 
-  // 51：權威是實作目錄數（不寫死，也不問任何文件）。
-  const counts = await Promise.all([
-    ...FABRIC_VERSIONED_BUNDLES.map(
-      async (bundle) =>
-        (await readdir(new URL(`../../platforms/fabric/${bundle}/versions`, import.meta.url))).length,
-    ),
-    readdir(new URL("../../platforms/fabric/26.x", import.meta.url)).then(
-      (entries) => entries.filter((name) => /^\d/.test(name)).length,
-    ),
-  ]);
-  const implementations = counts.reduce((sum, count) => sum + count, 0);
+  // 51：權威是 settings.gradle 宣告的版本專案（版本目錄在建置時才建立，不在版控裡）。
+  const fabricVersions = await fabricVersionMap();
+  const implementations = [...fabricVersions.entries()]
+    .filter(([bundle]) => bundle !== "26.x" && FABRIC_VERSIONED_BUNDLES.includes(bundle))
+    .reduce((sum, [, versions]) => sum + versions.length, 0) +
+    fabricVersions.get("26.x").length;
   assert.ok(implementations > 0, "platforms/fabric 的實作目錄數算成 0");
 
   const pageSource = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
@@ -583,9 +597,7 @@ test("keeps the source-only Fabric range counts in app/page.tsx equal to their d
   for (const [pattern, bundle] of ranges) {
     const claimed = source.match(pattern)?.[1];
     assert.ok(claimed, `app/page.tsx 找不到「${pattern.source}」`);
-    const entries = await readdir(
-      new URL(`../../platforms/fabric/${bundle}/versions`, import.meta.url),
-    );
+    const entries = (await fabricVersionMap()).get(bundle);
     assert.equal(
       Number(claimed),
       entries.length,
@@ -635,6 +647,16 @@ const DOC_BUILD_SUFFIX = /\/build(?:\/.*)?$/;
 const DOC_PLACEHOLDER = /[<>*…{}$\s]/;
 
 test("keeps every repository path quoted in the docs pointing at a real file or directory", async () => {
+  // 版本專案目錄由 settings.gradle 在建置時 mkdirs，clean checkout 裡沒有它；宣告過的 projectDir
+  // 及其子路徑／父路徑都算「這條路徑說得通」。
+  const settingsForPaths = await readFile(new URL("../../settings.gradle", import.meta.url), "utf8");
+  const declaredProjectDirs = [
+    ...settingsForPaths.matchAll(/"platform-[a-z]+-[^"]+"\s*:\s*"([^"]+)"/g),
+  ].map((match) => match[1]);
+  const declaredProjectDir = (target) =>
+    declaredProjectDirs.some(
+      (dir) => dir === target || target.startsWith(dir + "/") || dir.startsWith(target + "/"),
+    );
   const problems = [];
   let checked = 0;
   for (const relative of DOC_FILES) {
@@ -645,11 +667,14 @@ test("keeps every repository path quoted in the docs pointing at a real file or 
       const target = candidate.replace(DOC_BUILD_SUFFIX, "").replace(/\/+$/, "");
       if (!target) continue;
       checked += 1;
-      let found = true;
-      try {
-        await stat(new URL(`../../${target}`, import.meta.url));
-      } catch {
-        found = false;
+      let found = declaredProjectDir(target);
+      if (!found) {
+        try {
+          await stat(new URL(`../../${target}`, import.meta.url));
+          found = true;
+        } catch {
+          found = false;
+        }
       }
       if (!found) {
         problems.push(`${relative}：\`${candidate}\` 指向不存在的路徑 ${target}`);
@@ -738,10 +763,17 @@ test("keeps the version numbers hard-coded in the docs equal to gradle.propertie
   // 三語 BUILDING 的「發布目標」表格被指定為 CHANGELOG／README 的引用來源（「引用这一节，不要另写一份数字」），
   // 只掃 CHANGELOG 等於守了副本、沒守正本：那張表曾經留著舊的範圍寫法而 CHANGELOG 已經逐版列出。
   // 錨點抓不到同樣算失敗，否則表格改版後這條守衛會靜默失效。
+  // 目標數不是常數：由 prepare-release.yml 的 TARGETS_JSON 決定，錨點跟著算。
+  const prepareWorkflowForAnchors = await readFile(
+    new URL("../../.github/workflows/prepare-release.yml", import.meta.url),
+    "utf8",
+  );
+  const releaseTargetCount = (prepareWorkflowForAnchors.match(/"target":/g) ?? []).length;
+  assert.ok(releaseTargetCount > 0, "prepare-release.yml 解析出 0 個目標");
   for (const [relative, anchor] of [
-    ["../../docs/Zh-cn/BUILDING.md", "发布目标（48 个）"],
-    ["../../docs/Zh-tw/BUILDING.md", "發佈目標（48 個）"],
-    ["../../docs/en/BUILDING.md", "Release target (48)"],
+    ["../../docs/Zh-cn/BUILDING.md", `发布目标（${releaseTargetCount} 个）`],
+    ["../../docs/Zh-tw/BUILDING.md", `發佈目標（${releaseTargetCount} 個）`],
+    ["../../docs/en/BUILDING.md", `Release target (${releaseTargetCount})`],
   ]) {
     const releaseRow = (await readFile(new URL(relative, import.meta.url), "utf8"))
       .split("\n")
@@ -854,15 +886,14 @@ const FABRIC_LIST_SOURCES = [
 ];
 
 test("keeps the hand-copied Fabric version lists covering every implementation directory", async () => {
-  // 權威是目錄名集合：26.x 的版本掛在 bundle 根，其餘在各自的 `versions/` 底下；
-  // 1.13.0 的目錄在啟動器與文件裡都叫 `1.13`，所以去掉結尾的 `.0`。
+  // 權威是 settings.gradle 宣告的版本專案：26.x 的版本掛在 bundle 根，其餘在各自的
+  // `versions/` 底下；1.13.0 的目錄在啟動器與文件裡都叫 `1.13`，所以去掉結尾的 `.0`。
   const directoryNames = [];
-  for (const bundle of FABRIC_VERSIONED_BUNDLES) {
-    const entries = await readdir(new URL(`../../platforms/fabric/${bundle}/versions`, import.meta.url));
-    for (const name of entries) directoryNames.push(name.replace(/\.0$/, ""));
-  }
-  for (const name of await readdir(new URL("../../platforms/fabric/26.x", import.meta.url))) {
-    if (/^\d/.test(name)) directoryNames.push(name);
+  const versionsForLists = await fabricVersionMap();
+  for (const bundle of [...FABRIC_VERSIONED_BUNDLES, "26.x"]) {
+    for (const name of versionsForLists.get(bundle)) {
+      directoryNames.push(bundle === "26.x" ? name : name.replace(/\.0$/, ""));
+    }
   }
   const universe = [...new Set(directoryNames)].sort((left, right) =>
     compareVersions(versionKey(left), versionKey(right)),
@@ -922,7 +953,7 @@ const FORGE_FAMILY_GUIDES = [
   "../../docs/en/USER_GUIDE.md",
 ];
 // 26.2 有自己的單列（`Forge 65.1.1`），不採 `版本＝Forge 版本` 的對照格式。
-const FORGE_FAMILY_STANDALONE = new Set(["26.2"]);
+const FORGE_FAMILY_STANDALONE = new Set(["26.2", "26.3"]);
 
 test("keeps the documented Forge loader versions equal to each version's build.gradle", async () => {
   const expected = new Map();

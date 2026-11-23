@@ -340,7 +340,8 @@ tasks.register("validateDualLayerApiParity") {
         // a row bound, a type cast — so the members each file declares are compared here: a helper that
         // exists in one layer and not the other is the shape every one of those misses took.
         def pairs = [
-                ["platforms/forge/26.x/shared/api/26.1-26.1.2", "platforms/forge/26.x/shared/api/26.2"]
+                ["platforms/forge/26.x/shared/api/26.1-26.1.2", "platforms/forge/26.x/shared/api/26.2"],
+                ["platforms/forge/26.x/shared/api/26.2", "platforms/forge/26.x/shared/api/26.3"]
         ]
         // A file that legitimately exists in one layer only still has to be named here, or the next
         // omission is indistinguishable from it. ForgeLocalTextGuard is 26.2's own copy on purpose:
@@ -779,7 +780,8 @@ tasks.register("validateSharedPlatformLayouts") {
                 "platforms/neoforge/shared/entrypoints/1.21.2-1.21.8/src/main/java/org/universaltranslator/forge/UniversalTranslatorNeoForgeMod.java",
                 "platforms/neoforge/shared/entrypoints/1.21.9-1.21.11/src/main/java/org/universaltranslator/forge/UniversalTranslatorNeoForgeMod.java",
                 "platforms/neoforge/shared/entrypoints/26.1-26.1.2/src/main/java/org/universaltranslator/forge/UniversalTranslatorNeoForgeMod.java",
-                "platforms/neoforge/shared/entrypoints/26.2/src/main/java/org/universaltranslator/forge/UniversalTranslatorNeoForgeMod.java"
+                "platforms/neoforge/shared/entrypoints/26.2/src/main/java/org/universaltranslator/forge/UniversalTranslatorNeoForgeMod.java",
+                "platforms/neoforge/shared/entrypoints/26.3/src/main/java/org/universaltranslator/forge/UniversalTranslatorNeoForgeMod.java"
         ]
         def missing = requiredSharedFiles.findAll { !file(it).isFile() }
         if (!missing.isEmpty()) {
@@ -1368,6 +1370,7 @@ tasks.register("validateOutgoingTranslationReentryGuards") {
                 "platforms/forge/1.21/shared/1.21.9-1.21.11/src/main/java/org/universaltranslator/forge/UniversalTranslatorForgeClient.java",
                 "platforms/forge/26.x/shared/api/26.1-26.1.2/src/main/java/org/universaltranslator/forge/UniversalTranslatorForgeClient.java",
                 "platforms/forge/26.x/shared/api/26.2/src/main/java/org/universaltranslator/forge/UniversalTranslatorForgeClient.java",
+                "platforms/forge/26.x/shared/api/26.3/src/main/java/org/universaltranslator/forge/UniversalTranslatorForgeClient.java",
                 "platforms/forge/modern/1.16.5/src/main/java/org/universaltranslator/forge/UniversalTranslatorForgeClient.java",
                 "platforms/forge/modern/1.18.2/src/main/java/org/universaltranslator/forge/UniversalTranslatorForgeClient.java",
                 "platforms/forge/modern/1.19.2/src/main/java/org/universaltranslator/forge/UniversalTranslatorForgeClient.java",
@@ -1378,6 +1381,7 @@ tasks.register("validateOutgoingTranslationReentryGuards") {
                 "platforms/neoforge/shared/entrypoints/1.21.9-1.21.11/src/main/java/org/universaltranslator/forge/UniversalTranslatorNeoForgeClient.java",
                 "platforms/neoforge/shared/entrypoints/26.1-26.1.2/src/main/java/org/universaltranslator/forge/UniversalTranslatorNeoForgeClient.java",
                 "platforms/neoforge/shared/entrypoints/26.2/src/main/java/org/universaltranslator/forge/UniversalTranslatorNeoForgeClient.java",
+                "platforms/neoforge/shared/entrypoints/26.3/src/main/java/org/universaltranslator/forge/UniversalTranslatorNeoForgeClient.java",
                 "platforms/neoforge/shared/entrypoints/common/src/main/java/org/universaltranslator/forge/UniversalTranslatorNeoForgeClient.java"
         ]
         // Two shapes carry the guard. The Forge clients, the NeoForge clients and the Fabric base class

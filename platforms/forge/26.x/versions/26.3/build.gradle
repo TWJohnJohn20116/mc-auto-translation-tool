@@ -1,0 +1,14 @@
+plugins {
+    id "java"
+    id "net.minecraftforge.gradle" version "[7.0.29,8.0)"
+}
+
+ext.forgeMinecraftVersion = "26.3"
+ext.forgeVersion = "66.1.0"
+ext.forgeLoaderMajor = "66"
+ext.forgeMinecraftNextVersion = "26.4"
+ext.forgeUseEventBusValidator = true
+// Resource pack format from the client's version.json (26.3 = 92.0).
+ext.forgeResourcePackFormat = 92
+
+apply from: rootProject.file("platforms/forge/26.x/shared.gradle")

@@ -41,7 +41,7 @@
 - `ci/derive-prepare-targets.py`：把發布資產名稱（`mc1.21.7-forge`）推導成 `-PtargetPlatform`
   吃的平台名稱（`forge-1.21.7`），推錯會在 settings 評估階段以 `Unknown targetPlatform` 失敗。
   呼叫端：`prepare-release.yml`（`plan`）。
-- `ci/build-targets.json`：`build.yml` 的**權威**目標清單（平台 16 筆、舊版 7 筆，共 23 筆，
+- `ci/build-targets.json`：`build.yml` 的**權威**目標清單（平台 17 筆、舊版 7 筆，共 24 筆，
   各帶 `java`／`bundle`）。`plan` 用它驗證 `-f targets=...` 的名稱，靜態 matrix 是它的投影；
   `ci/test_build_targets.py` 會交叉比對兩者，分叉就是 PR 紅燈。
 - `ci/set-defender-exclusions.ps1`：Defender 資料夾排除的**唯一**實作，路徑全部由 `$PSScriptRoot`

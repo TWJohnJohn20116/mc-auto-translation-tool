@@ -57,7 +57,7 @@ fix notes for 1.3.6 / 1.3.5 / 1.3.4 are in the sections above.
 | 1.21.11 | Fabric Loader 0.18.1 + Fabric API 0.141.4 | 21 | Passed | Historical baseline passed | Pending confirmation |
 | All 1.21 releases (1.21–1.21.11), single JAR | Fabric Loader 0.19.3 | 21 | Passed; Loader selection passed for all twelve versions | Pending | Pending |
 | 1.21, 1.21.1, 1.21.3–1.21.11 | Forge 51.0.33–61.2.0 | 21 | Compile passed for every published game target; exact metadata ranges | 1.21.11 client initialized and reloaded resources, audio, and atlases | Pending |
-| 26.1, 26.1.1, 26.1.2, 26.2 | Forge 62.0.9–65.1.1 | 25 | Compile passed for all four exact targets | Pending | Pending |
+| 26.1, 26.1.1, 26.1.2, 26.2, 26.3 | Forge 62.0.9–66.1.0 | 25 | Compile passed for the four 26.1–26.2 targets; 26.3 has not been through CI yet | Pending | Pending |
 | 26.1, 26.1.1, 26.1.2, 26.2, 26.3, single JAR | Fabric Loader 0.19.3+ | 25 | Passed; Loader selection passed for all five versions | 26.1 baseline passed | Pending |
 
 > The table mixes two kinds of Fabric rows: the single JARs are validated on Fabric Loader 0.19.3,
@@ -66,8 +66,8 @@ fix notes for 1.3.6 / 1.3.5 / 1.3.4 are in the sections above.
 > an instance below 0.19.3 (including the Legacy Fabric 0.16.10 commonly used on 1.13.2) loads none
 > of the embedded implementations.
 
-The stable release starts from 48 formally shipped target JARs that share the same translation core
-and reduces them to 31 directly installable release JARs (32 release assets together with
+The stable release starts from 50 formally shipped target JARs that share the same translation core
+and reduces them to 33 directly installable release JARs (34 release assets together with
 `SHA256SUMS.txt`). Additional adjacent-version source targets
 are build-tested separately and are not counted as stable downloads. Fabric 1.20.1 completed Loom remapping.
 The Forge 1.20.1 artifact was renamed into the SRG runtime namespace and contains a refmap for all

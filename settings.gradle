@@ -140,6 +140,7 @@ def platformProjects = [
         "platform-neoforge-26.1.1"      : "platforms/neoforge/26.x/versions/26.1.1",
         "platform-neoforge-26.1.2"      : "platforms/neoforge/26.x/versions/26.1.2",
         "platform-neoforge-26.2"        : "platforms/neoforge/26.x/versions/26.2",
+        "platform-neoforge-26.3"        : "platforms/neoforge/26.x/versions/26.3",
         "platform-forge-1.16.5"         : "platforms/forge/modern/1.16.5",
         "platform-forge-1.18.2"         : "platforms/forge/modern/1.18.2",
         "platform-forge-1.19.2"         : "platforms/forge/modern/1.19.2",
@@ -158,7 +159,8 @@ def platformProjects = [
         "platform-forge-26.1"           : "platforms/forge/26.x/versions/26.1",
         "platform-forge-26.1.1"         : "platforms/forge/26.x/versions/26.1.1",
         "platform-forge-26.1.2"         : "platforms/forge/26.x/versions/26.1.2",
-        "platform-forge-26.2"           : "platforms/forge/26.x/versions/26.2"
+        "platform-forge-26.2"           : "platforms/forge/26.x/versions/26.2",
+        "platform-forge-26.3"           : "platforms/forge/26.x/versions/26.3"
 ]
 
 // Aggregate modules need their implementation projects available during configuration.

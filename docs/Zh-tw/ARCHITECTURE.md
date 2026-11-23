@@ -29,8 +29,8 @@ flowchart TD
         V_FabOrnithe["Fabric 1.3.1 ~ 1.13.2<br/>(Ornithe Calamus / Feather / LegacyFabric)"]
         V_FabModern["Fabric 1.14 ~ 26.3<br/>(官方 Loom, Yarn 映射)"]
         V_ForgeLegacy["Legacy Forge 1.8.9 / 1.12.2<br/>(ForgeGradle 2, 專屬專案)"]
-        V_ForgeModern["Modern Forge 1.16.5 ~ 26.2<br/>(ForgeGradle 5 / NeoDev)"]
-        V_NeoForge["NeoForge 1.20.1 ~ 26.2<br/>(ModDev Gradle)"]
+        V_ForgeModern["Modern Forge 1.16.5 ~ 26.3<br/>(ForgeGradle 5 / NeoDev)"]
+        V_NeoForge["NeoForge 1.20.1 ~ 26.3<br/>(ModDev Gradle)"]
     end
 
     subgraph Layer4 [第 4 層：打包聚合層 Bundle Layer]
@@ -72,7 +72,7 @@ flowchart TD
 | `platforms/fabric/26.x/` | 已發布（26.1–26.3） | 26.1, 26.1.1, 26.1.2, 26.2, 26.3 | Fabric Loom | **Java 25**| Fabric Loom 1.17 |
 | `platforms/forge/modern/` | 現代過渡 Forge | 1.16.5, 1.18.2, 1.19.2, 1.20.1 | Forge | **Java 8/17** | ForgeGradle 5.1 |
 | `platforms/forge/1.21/` | 現代 Forge 1.21 | 1.21.0 ~ 1.21.11 | Forge | **Java 21**| ForgeGradle 6 / NeoDev |
-| `platforms/forge/26.x/` | 已發布（26.1–26.2） | 26.1 ~ 26.2 | Forge | **Java 25**| ForgeGradle / NeoDev |
+| `platforms/forge/26.x/` | 已發布（26.1–26.3） | 26.1 ~ 26.3 | Forge | **Java 25**| ForgeGradle / NeoDev |
 | `platforms/neoforge/` | NeoForge 獨立系列 | 1.20.1, 1.20.x, 1.21.x, 26.x | NeoForge | **Java 17/21/25**| ModDev Gradle |
 
 > 本文件只做速查：每個 bundle 的版本數以 `docs/Zh-cn/BUILDING.md` 對應章節為權威（該檔逐 bundle 說明，

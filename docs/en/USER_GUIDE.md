@@ -5,7 +5,7 @@
 ## Choose the correct file
 
 Each Minecraft version requires its matching JAR. Do not mix them. The table below is the complete
-set of 31 directly installable 1.4.1-beta1 JARs: one row per file.
+set of 33 directly installable 1.4.1-beta1 JARs: one row per file.
 
 | Minecraft | Mod loader | Java | Also required |
 | --- | --- | --- | --- |
@@ -21,6 +21,7 @@ set of 31 directly installable 1.4.1-beta1 JARs: one row per file.
 | 1.21.9–1.21.11 | Forge family JAR (1.21.9＝59.0.5, 1.21.10＝60.1.13, 1.21.11＝61.2.0) | 21 | No additional mod |
 | 26.1–26.1.2 | Forge family JAR (26.1＝62.0.9, 26.1.1＝63.0.2, 26.1.2＝64.1.0) | 25 | No additional mod |
 | 26.2 | Forge 65.1.1 | 25 | No additional mod |
+| 26.3 | Forge 66.1.0 | 25 | No additional mod |
 | 1.20.1 | NeoForge 47.1.106 | 17 | No additional mod |
 | 1.20.4 | NeoForge 20.4.251 | 17 | No additional mod |
 | 1.20.6 | NeoForge 20.6.139 | 21 | No additional mod |
@@ -40,6 +41,7 @@ set of 31 directly installable 1.4.1-beta1 JARs: one row per file.
 | 26.1.1 | NeoForge 26.1.1.15-beta | 25 | No additional mod |
 | 26.1.2 | NeoForge 26.1.2.95 | 25 | No additional mod |
 | 26.2 | NeoForge 26.2.0.59 | 25 | No additional mod |
+| 26.3 | NeoForge 26.3.0.115 | 25 | No additional mod |
 
 Place the correct JAR in the game instance's `mods` folder. The server does not need this mod.
 The single Fabric JAR accepts only the versions listed one by one above and requires Fabric Loader
@@ -431,7 +433,7 @@ chat verification may impose their own restrictions, which is why the feature is
 
 ## Current version
 
-This guide covers the `1.4.1-beta1` release. Forty-eight release build targets are packaged into 31
+This guide covers the `1.4.1-beta1` release. Fifty release build targets are packaged into 33
 installable JARs. Every target must pass clean builds, shared-core tests, and release-structure checks;
 the Fabric bundles also run real Loader selection checks. Back up the configuration before updating.
 When reporting untranslated
