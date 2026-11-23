@@ -433,7 +433,7 @@ chat verification may impose their own restrictions, which is why the feature is
 
 ## Current version
 
-This guide covers the `1.4.1-beta1` release. Forty-eight release build targets are packaged into 31
+This guide covers the `1.4.1-beta1` release. Fifty release build targets are packaged into 33
 installable JARs. Every target must pass clean builds, shared-core tests, and release-structure checks;
 the Fabric bundles also run real Loader selection checks. Back up the configuration before updating.
 When reporting untranslated

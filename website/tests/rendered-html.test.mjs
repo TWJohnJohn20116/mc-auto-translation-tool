@@ -738,10 +738,17 @@ test("keeps the version numbers hard-coded in the docs equal to gradle.propertie
   // 三語 BUILDING 的「發布目標」表格被指定為 CHANGELOG／README 的引用來源（「引用这一节，不要另写一份数字」），
   // 只掃 CHANGELOG 等於守了副本、沒守正本：那張表曾經留著舊的範圍寫法而 CHANGELOG 已經逐版列出。
   // 錨點抓不到同樣算失敗，否則表格改版後這條守衛會靜默失效。
+  // 目標數不是常數：由 prepare-release.yml 的 TARGETS_JSON 決定，錨點跟著算。
+  const prepareWorkflowForAnchors = await readFile(
+    new URL("../../.github/workflows/prepare-release.yml", import.meta.url),
+    "utf8",
+  );
+  const releaseTargetCount = (prepareWorkflowForAnchors.match(/"target":/g) ?? []).length;
+  assert.ok(releaseTargetCount > 0, "prepare-release.yml 解析出 0 個目標");
   for (const [relative, anchor] of [
-    ["../../docs/Zh-cn/BUILDING.md", "发布目标（48 个）"],
-    ["../../docs/Zh-tw/BUILDING.md", "發佈目標（48 個）"],
-    ["../../docs/en/BUILDING.md", "Release target (48)"],
+    ["../../docs/Zh-cn/BUILDING.md", `发布目标（${releaseTargetCount} 个）`],
+    ["../../docs/Zh-tw/BUILDING.md", `發佈目標（${releaseTargetCount} 個）`],
+    ["../../docs/en/BUILDING.md", `Release target (${releaseTargetCount})`],
   ]) {
     const releaseRow = (await readFile(new URL(relative, import.meta.url), "utf8"))
       .split("\n")

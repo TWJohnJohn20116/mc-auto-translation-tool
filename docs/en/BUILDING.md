@@ -362,7 +362,7 @@ Fabric JARs, legacy Forge runtime mappings, SHA-256 values, and checksum-manifes
 Fabric and Forge `build` tasks run the same verifier against their generated release JARs.
 
 Validation and reduction are two separate steps: validation only confirms the artifacts are
-structurally sound, reduction changes how many artifacts exist. The publish workflow reduces the 48
+structurally sound, reduction changes how many artifacts exist. The publish workflow reduces the 50
 release build artifacts to 33 directly installable JARs. It
 flattens all 51 Fabric implementations into one Loader-selected bundle, broadens four Forge
 families after confirming compatible payloads, and keeps Forge/NeoForge 1.20.1 as separately
