@@ -417,6 +417,19 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   模擬 runner，用 `bash script.sh` 測會測不出來。
   重試的 grep 必須用 `-i`：Gradle 的訊息大小寫不一致，ForgeGradle 外掛解析失敗吐的是小寫的
   `could not resolve plugin artifact`，區分大小寫會漏掉而直接放棄（2026-10-04 三個 job 同時中）。
+- **Maven Central 的 429 是 CI 的固定風險，不是程式錯誤**（2026-11-28）：同一個 run 會同時開
+  二十幾個 job，每個都向 `repo.maven.apache.org` 併發索取同一批 POM（`org.jetbrains:annotations`、
+  `oshi-parent`、`guava-parent`、`slf4j-parent` 等 Loom／ForgeGradle 的傳遞依賴），中央對這種併發
+  回 `429 Too Many Requests`。main 從 2026-11-14 起連續四次全量建置紅燈、每次紅的 job 都不同，
+  全是這個原因。處理分兩層，都只在 CI 生效：
+  - `.github/gradle/maven-central-mirror.gradle` 由 composite action 以 `--init-script` 掛入，把指向
+    `repo.maven.apache.org`／`repo1.maven.org` 的 repository 改寫成 Google 的 GCS 鏡像
+    `https://maven-central.storage-download.googleapis.com/maven2/`。**不要改成 `repo1.maven.org`**：
+    那是中央的別名、同一個 CDN，換了沒用。`mavenCentral()` 是 Loom／ForgeGradle 自動加的，專案
+    自己的 `repositories` 區塊裡找不到它，所以在專案層面補位址沒有用。
+  - 重試把 `Received status code 429` 納入判定，退避改成每輪加 30 秒再疊 0–19 秒隨機抖動
+    （固定 `sleep 10` 會讓二十幾個 job 同時醒來、再撞同一個窗口），`attempts` 預設 4。
+  遇到只有 `Could not resolve … 429` 的紅燈時，先確認鏡像與退避有沒有生效，不要急著改依賴版本。
 - `-PtargetPlatform` 吃的是**平台名稱**（`forge-1.21.7`、`fabric-1.13.x`、`neoforge-1.20.1`），
   不是發布資產名稱（`mc1.21.7-forge`）。傳錯會在 settings 評估階段立刻失敗
   （`Unknown targetPlatform 'platform-...'`，並列出所有可用值）。`prepare-release.yml` 的 `plan`

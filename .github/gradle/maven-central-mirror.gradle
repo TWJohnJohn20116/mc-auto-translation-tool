@@ -1,0 +1,35 @@
+// CI 專用的 Gradle init script：把 Maven Central 的官方位址改寫成 Google 的鏡像。
+//
+// 為什麼需要：GitHub Actions 同一個 run 會同時開二十幾個 job，每個 job 都向
+// repo.maven.apache.org 併發索取同一批 POM（org.jetbrains:annotations、oshi-parent、
+// guava-parent、slf4j-parent 等 Loom／ForgeGradle 的傳遞依賴），Maven Central 對這種
+// 併發回 429 Too Many Requests。2026-11-14 之後 main 的完整建置連續四次紅燈、每次紅的
+// job 都不一樣，全部是這個原因；composite action 的 10 秒固定重試救不了，因為重試的
+// 二十幾個 job 會同時醒來再撞同一個限流窗口。
+//
+// 為什麼用鏡像而不是重試：repo1.maven.org 是中央的別名、同一個 CDN，換它沒用。
+// Google 的 GCS 鏡像是中央的官方鏡像，內容一致，只是不與 CI 共享同一個限流桶。
+//
+// 只由 .github/actions/gradle-build/action.yml 以 --init-script 掛入，本機開發不受影響。
+
+def MIRROR = "https://maven-central.storage-download.googleapis.com/maven2/"
+
+def rewrite = { repositories ->
+    repositories.all { repo ->
+        if (repo instanceof org.gradle.api.artifacts.repositories.MavenArtifactRepository) {
+            def current = repo.url.toString()
+            if (current.startsWith("https://repo.maven.apache.org") || current.startsWith("https://repo1.maven.org")) {
+                repo.url = MIRROR
+            }
+        }
+    }
+}
+
+gradle.projectsLoaded {
+    gradle.rootProject.allprojects { project ->
+        // buildscript 也要處理：ForgeGradle／Loom 的外掛相依有時走 buildscript classpath。
+        rewrite(project.buildscript.repositories)
+        // repositories.all 是活集合，之後外掛才加入的 mavenCentral() 一樣會被攔到。
+        rewrite(project.repositories)
+    }
+}
