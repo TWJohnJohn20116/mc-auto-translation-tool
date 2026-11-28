@@ -14,12 +14,20 @@
 
 def MIRROR = "https://maven-central.storage-download.googleapis.com/maven2/"
 
+def rewritten = [] as java.util.Set
 def rewrite = { repositories ->
     repositories.all { repo ->
         if (repo instanceof org.gradle.api.artifacts.repositories.MavenArtifactRepository) {
             def current = repo.url.toString()
             if (current.startsWith("https://repo.maven.apache.org") || current.startsWith("https://repo1.maven.org")) {
                 repo.url = MIRROR
+                // 只在第一次改寫時輸出一次。這是「鏡像真的掛上了」的唯一可觀測證據：
+                // 依賴全部命中 Gradle 快取時，log 裡不會有任何 Maven 下載行，
+                // 沒有這行就分不出「鏡像生效」與「這次根本沒連網」。
+                if (rewritten.isEmpty()) {
+                    logger.lifecycle("[maven-central-mirror] Maven Central 已改寫為 " + MIRROR)
+                }
+                rewritten << current
             }
         }
     }
