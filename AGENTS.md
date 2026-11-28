@@ -128,15 +128,15 @@ git -c 'credential.helper=' -c 'credential.helper=!gh auth git-credential' push 
      `publish-release.yml` 負責一次（同一個 commit 不重複解壓 50 顆 JAR）
 
 6. 確認你要的 job 真的有跑，而不是被略過：`gh run view <run-id> --json jobs` 中該 job 的
-   `conclusion` 不能是 `skipped`。分支保護目前只要求 **`CI 總結`**（彙總 job，全部 job 都
-   `success` 或刻意 `skipped` 才通過）。AI 審查已換成 CodeRabbit（GitHub App），不產生 check，
-   見「AI 程式審查（CodeRabbit）」一節。
+   `conclusion` 不能是 `skipped`。分支保護要求 **`CI 總結`**（彙總 job，**只接受 `success`**；
+   `skipped` 也會讓它紅，因為這個 workflow 沒有任何 job 層級 `if`，要省成本一律用「步驟略過、
+   job 成功」表達）與 **`CodeRabbit`**（CodeRabbit App 的審查狀態，見下一節）。
 
 ### 分支保護（`main`）
 
-`main` 已設定分支保護，目前只要求 **`CI 總結`**（建置彙總 job）。原本的 `開 PR 時自動審查` 已於
-2026-11-28 隨 PR-Agent workflow 一起移除——AI 審查改由 CodeRabbit App 提供，不產生 check。
-目前設定：
+`main` 已設定分支保護，要求兩個檢查：**`CI 總結`**（建置彙總 job）與 **`CodeRabbit`**（CodeRabbit
+App 在審查時建立、完成後轉為 success）。原本的 `開 PR 時自動審查` 已於 2026-11-28 隨 PR-Agent
+workflow 一起移除；新檢查名由 App 提供，不是 workflow 產生。目前設定：
 
 - 不要求 review（單人維護，無法核准自己的 PR）、不要求分支先與 `main` 同步（`strict: false`）。
 - `enforce_admins: false`：倉庫擁有者仍可直接推送 `main` 做緊急修正，但其他人的 PR 會被擋下。
@@ -470,10 +470,11 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   `downloads/`、`build/`、lockfile、JAR 與分片）與 `path_instructions`（把專案慣例直接講給它聽：
   共用常量、`config.allows(TextKind)`、workflow 的 `paths` 禁令、版本目錄的權威來源）。
   要調整審查範圍或語氣就改那個檔案，不要動 workflow。
-- **分支保護目前只要求 `CI 總結`**：`開 PR 時自動審查` 這個必要檢查已隨 workflow 一起移除，
-  因為檢查沒出現會讓 PR 永遠卡在 waiting。AI 意見現在是可讀的審查紀錄，**不是硬閘門**。
-  若要恢復硬閘門，必須先安裝 CodeRabbit App 並讓它在 PR 上產生 check，再把那個 check 名加進
-  `main` 的 required status checks；不要用空殼 workflow 偽造同名檢查。
+- **`CodeRabbit` 是分支保護的必要檢查之一**：App 在審查開始時把 status 設為 `pending`、完成後
+  設為 `success`（`.coderabbit.yaml` 沒有覆寫 `commit_status`，預設就是啟用）。它取代了原本的
+  `開 PR 時自動審查`，但**語意不同**：舊閘門在「有意見未解決」時失敗，`CodeRabbit` 的 success
+  只代表「審查跑完了」，不代表意見已處理。所以 AI 意見仍是可讀的審查紀錄，不是硬閘門；
+  要強制處理意見得另外做（例如人工確認 review 狀態），不要假設這個 check 會擋。
   查目前設定：`gh api repos/<owner>/<repo>/branches/main/protection --jq '.required_status_checks.checks[].context'`。
 - **啟用方式（一次性、需要 repo 管理權）**：在 GitHub Marketplace 安裝 CodeRabbit App、只授權
   這個倉庫，之後它會自動讀 `.coderabbit.yaml`。在那之前 PR 上不會有任何 CodeRabbit 活動，
