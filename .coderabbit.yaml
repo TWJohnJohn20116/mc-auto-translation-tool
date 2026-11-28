@@ -1,0 +1,80 @@
+# CodeRabbit 設定：取代原本的 PR-Agent（The-PR-Agent）審查。
+#
+# CodeRabbit 是 GitHub App（SaaS），不是本倉庫的 workflow——它不佔 runner、不需要 API 金鑰。
+# 它會建立名為 `CodeRabbit` 的 status（預設 commit_status 啟用：審查中 pending、完成 success），
+# 這個名稱已列入 main 的 required checks。但 success 只代表「審查跑完」，不代表意見已解決，
+# 所以 AI 意見是可讀的審查紀錄，不是硬閘門。詳見 AGENTS.md 的「AI 程式審查」一節。
+
+language: zh-TW
+tone_instructions: >-
+  用繁體中文直接指出問題與修法，不要客套話與總結式讚美。引用具體檔案與行號；
+  不確定時說出你的假設，不要臆測專案慣例。
+early_access: false
+
+reviews:
+  profile: chill
+  # 有意見未解決時提交 CHANGES_REQUESTED，全部處理完才轉為 APPROVED。
+  # 這是「CodeRabbit 沒確定沒問題就不能合併」的技術基礎；Free 方案可能不支援，屆時以
+  # AGENTS.md 的人工檢查步驟為準。
+  request_changes_workflow: true
+  high_level_summary: true
+  high_level_summary_placeholder: "@coderabbitai summary"
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  changed_files_summary: true
+  assess_linked_issues: true
+
+  # 這些路徑不進審查：發布產物、建置輸出、鎖檔與 JAR 都是產生端，讀它們只會浪費額度。
+  path_filters:
+    - "!downloads/**"
+    - "!**/build/**"
+    - "!**/.gradle/**"
+    - "!website/pnpm-lock.yaml"
+    - "!**/*.jar"
+    - "!**/*.part-*"
+
+  path_instructions:
+    - path: "**/*.java"
+      instructions: |
+        這是 Minecraft 模組，同一份程式碼以 srcDir 掛進數十個平台目標。
+        審查時注意：
+        - 共用常量必須引用 translator-core 的 LogMessages／UiTextKeys／UiLimits／TargetLanguage，
+          不要新增重複的字面量。
+        - 內容面開關的唯一判定點是 config.allows(TextKind)，runtime 不要重複判斷。
+        - ProviderSelfTest 的斷言輔助只有單參數版本（assertTrue(boolean) 等）。
+        - 涉及伺服器執行緒＋客戶端斷言的測試有時序陷阱，見 AGENTS.md。
+    - path: ".github/workflows/**"
+      instructions: |
+        審查時注意：
+        - pull_request 觸發不可加 paths／paths-ignore，否則必要的 CI 總結檢查不會出現。
+        - 新增 job 必須加進 ci-status 的 needs。
+        - 顯示名稱一律繁體中文，artifact 名稱維持 ASCII。
+        - runner 固定 ubuntu-24.04。
+    - path: "website/tests/**"
+      instructions: |
+        版本號與標題必須從 app/page.tsx 原始碼取，不要寫死；Fabric 版本清單的權威是
+        settings.gradle 的宣告（版本目錄在建置時才建立，不在版控裡）。
+    - path: "platforms/neoforge/**"
+      instructions: |
+        版本目錄只放 build.gradle；Java 進入點在 shared/entrypoints/<layer>/，metadata 只有一份
+        模板。新增版本時要同步 build.gradle 的座標與 toolchain 前綴。
+
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false
+    # 這是正規表示式、不是字面名稱：未錨定的 main 也會匹配 release/main、main-backup。
+    base_branches:
+      - "^main$"
+
+  tools:
+    actionlint:
+      enabled: true
+    shellcheck:
+      enabled: true
+    yamllint:
+      enabled: true
+
+chat:
+  auto_reply: true

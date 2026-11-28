@@ -128,14 +128,15 @@ git -c 'credential.helper=' -c 'credential.helper=!gh auth git-credential' push 
      `publish-release.yml` 負責一次（同一個 commit 不重複解壓 50 顆 JAR）
 
 6. 確認你要的 job 真的有跑，而不是被略過：`gh run view <run-id> --json jobs` 中該 job 的
-   `conclusion` 不能是 `skipped`。分支保護要求的檢查有兩個：**`CI 總結`**（彙總 job，全部 job 都
-   `success` 或刻意 `skipped` 才通過）與 **`開 PR 時自動審查`**（AI 審查沒有未解決意見才通過；
-   判定為誤報時加 `ai-review/pass` 標籤後重跑）。
+   `conclusion` 不能是 `skipped`。分支保護要求 **`CI 總結`**（彙總 job，**只接受 `success`**；
+   `skipped` 也會讓它紅，因為這個 workflow 沒有任何 job 層級 `if`，要省成本一律用「步驟略過、
+   job 成功」表達）與 **`CodeRabbit`**（CodeRabbit App 的審查狀態，見下一節）。
 
 ### 分支保護（`main`）
 
-`main` 已設定分支保護，必要的檢查有兩個：**`CI 總結`**（建置彙總 job）與 **`開 PR 時自動審查`**
-（AI 審查閘門，沒有未解決意見才放行）。目前設定：
+`main` 已設定分支保護，要求兩個檢查：**`CI 總結`**（建置彙總 job）與 **`CodeRabbit`**（CodeRabbit
+App 在審查時建立、完成後轉為 success）。原本的 `開 PR 時自動審查` 已於 2026-11-28 隨 PR-Agent
+workflow 一起移除；新檢查名由 App 提供，不是 workflow 產生。目前設定：
 
 - 不要求 review（單人維護，無法核准自己的 PR）、不要求分支先與 `main` 同步（`strict: false`）。
 - `enforce_admins: false`：倉庫擁有者仍可直接推送 `main` 做緊急修正，但其他人的 PR 會被擋下。
@@ -459,32 +460,45 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   遇到這種症狀時，去 run 頁面的 HTML 找 `Invalid workflow file` 的訊息，裡面有行號與原因。
 - 修改 workflow 後，仍需以 GitHub Actions 的實際執行結果為準，不得以「看起來沒問題」結案。
 
-## AI 程式審查（`ai-review.yml`）
+## AI 程式審查（CodeRabbit）
 
-- **觸發**：`pull_request` 的 `opened`／`reopened`／`ready_for_review`／`synchronize`。`synchronize`
-  是必要的——沒有它，同一個 PR 之後 push 的新提交不會重審，舊結論會蓋住新程式碼。`issue_comment`
-  （`/review`、`/improve`、`/describe`、`/ask`）與 `workflow_dispatch` 是手動入口。
-  **`issue_comment` 觸發的 run 一律使用預設分支上的 workflow**，所以驗證 workflow 改動要用
-  `pull_request` 或 `workflow_dispatch --ref <分支>`，留言觸發測不到新步驟。
-- **`開 PR 時自動審查` 是分支保護的必要檢查**：AI 審查提出意見時它會轉紅，把「AI 沒意見才合併」
-  變成硬規則。因此：
-  - **不要**給這個 workflow 加 `paths`／`paths-ignore`，也不要讓這個 job 用 job 層 `if:` 消失。
-    檢查沒出現時，PR 會永遠卡在 waiting。要不要真的呼叫模型由「判斷這次要不要真的審查」步驟
-    決定（草稿、fork、Dependabot、只動文件時略過），job 仍回報成功。
-  - 閘門判定：讀最後一則帶審查標題的 bot 留言，數隱藏狀態清單裡 `"state":"ACTIVE"` 的發現，
-    0 筆才放行；抓不到留言時**失敗**，不要改成靜默通過。**不要**改回數 `<details><summary>`——
-    PR-Agent 也把 `RESOLVED` 的發現渲染成 `<details>`，修好的 PR 會被判成還有意見（0.50.0 實測）。
-  - AI 誤報的逃生門是 `ai-review/pass` 標籤（維護者手動加，閘門印 notice 放行）。放行要留下
-    公開痕跡，所以用標籤而不是改 code 或放寬判定。
-- **繁體中文由三件事組成，缺一不可**：`.pr_agent.toml` 的 `config.response_language`（模型輸出）、
-  `.github/pr-agent/zh-tw.toml` 語系表（固定標籤）、`pr_reviewer.review_heading` 與
-  `pr_code_suggestions.suggestions_heading`（留言標題）。PR-Agent 只內建 en／es，所以
-  `scripts/ci/apply-pr-agent-zh-tw.sh` 會把語系表複製進 runner 的套件目錄，並用
-  `locale_chain('zh-TW')` 驗證真的被認到。那段 bash 只留一份（三個 job 都呼叫它）。
-- 留言標題在 `pr_agent/algo/comment_identity.py`：`format_*_header()` 讀的是設定鍵，
-  `PRReviewHeader` 那個 StrEnum 只是留言身分標記。**改標題改設定，不要去 sed 套件檔案**——
-  0.50.0 實測過，sed 改列舉對可見標題沒有作用。
-- PR 標籤 `Review effort N/5` 仍維持英文：上游字串寫死、沒有語系鍵。
+- **CodeRabbit 是 GitHub App（SaaS），不是本倉庫的 workflow**：它不佔 runner、不需要 API 金鑰、
+  也不吃 `.github/workflows/`。2026-11-28 起已完全移除 PR-Agent（The-PR-Agent）與其所有資產——
+  `ai-review.yml`、`.pr_agent.toml`、`.github/pr-agent/zh-tw.toml`、
+  `scripts/ci/apply-pr-agent-zh-tw.sh` 都已刪除，不要把它們加回來。
+- **設定在 `.coderabbit.yaml`**：`language: zh-TW`、`tone_instructions`、`path_filters`（排除
+  `downloads/`、`build/`、lockfile、JAR 與分片）與 `path_instructions`（把專案慣例直接講給它聽：
+  共用常量、`config.allows(TextKind)`、workflow 的 `paths` 禁令、版本目錄的權威來源）。
+  要調整審查範圍或語氣就改那個檔案，不要動 workflow。
+- **合併前必須確認 CodeRabbit 沒有未解決的意見——這是硬規則**（2026-11-28 起）：
+  CodeRabbit 的意見沒處理完，不得合併。`.coderabbit.yaml` 已開 `request_changes_workflow: true`，
+  CodeRabbit 在意見未解決時提交 `CHANGES_REQUESTED`，全部處理完才轉為 `APPROVED`。
+  **合併前的三個檢查，缺一不可**：
+  1. `gh api repos/<owner>/<repo>/pulls/<PR>/reviews --jq '.[-1] | .state'` 必須是 `APPROVED`。
+     看到 `CHANGES_REQUESTED` 一律不得合併；完全沒有 review 代表 CodeRabbit 沒跑，要先讓它跑。
+  2. `gh api repos/<owner>/<repo>/pulls/<PR>/comments --jq 'length'`：每一則行內意見都要處理，
+     修掉或回覆說明為什麼不改；只回覆不修也要請它重審（`@coderabbitai review`）。
+  3. PR 頁面若顯示 "Changes requested"，不得合併。
+- **不要只看 `CodeRabbit` 這個 check 的顏色**：它的 status 只代表「審查跑完了」，完成時可能是
+  `success` 也可能是 `neutral`（2026-11-28 實測就是 `neutral`），兩者都不代表意見已處理。
+  真正的判準是上面第 1 點的 review 狀態。`CodeRabbit` 仍列在 `main` 的 required checks 裡，
+  作用是「審查沒跑完不能合併」，但它擋不了「有意見」。
+- **方案限制（2026-11-28 實測，Free 方案）**：`request_changes_workflow: true` **不會**產生
+  `APPROVED` 或 `CHANGES_REQUESTED`——CodeRabbit 只留一則 `COMMENTED`，即使 `@coderabbitai review`
+  重審、意見全部修完，狀態仍是 `COMMENTED`。所以第 1 點在 Free 方案下無法滿足，**以第 2、3 點
+  為準**（行內意見全部處理、頁面沒有 Changes requested），並在 PR 留言記錄判斷依據。
+  升級到付費方案後才需要把第 1 點當成硬條件。
+- **`neutral` 可以通過 required check**（2026-11-28 實測）：`CodeRabbit` 完成時是 `neutral`，
+  `mergeStateStatus` 仍為 `CLEAN`，所以它不會把 PR 卡死。它的作用就是「審查沒跑完不能合併」。
+- **CodeRabbit 不會自動重審每個新 commit**：實測同一個 PR 後續 push 兩個 commit，行內意見的
+  時間仍停在第一次審查，`@coderabbitai review` 也沒有產生新的 review。要確認新 commit 也被看過，
+  得自己觸發並比對時間戳，不要假設 synchronize 一定會重審。
+- **誤報的處理**：判定為誤報時，在 PR 回覆「為什麼這則意見不適用」並請它重審，等狀態轉為
+  `APPROVED` 再合併；不要直接合併略過，也不要為了消掉意見而改壞程式碼。
+- **啟用方式（一次性、需要 repo 管理權）**：在 GitHub Marketplace 安裝 CodeRabbit App、只授權
+  這個倉庫，之後它會自動讀 `.coderabbit.yaml`。
+- 與 CI 的分工：`CI 總結` 負責「建置能不能過」，CodeRabbit 負責「程式碼該不該改」。兩者是不同層，
+  不要把 CodeRabbit 的意見硬接進 `ci-status` 的 `needs`。
 
 ## 其他專案慣例
 
