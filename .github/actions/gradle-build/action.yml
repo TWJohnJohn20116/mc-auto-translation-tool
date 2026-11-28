@@ -14,7 +14,7 @@ inputs:
   attempts:
     description: 最多嘗試次數。
     required: false
-    default: "3"
+    default: "4"
 
 runs:
   using: composite
@@ -25,6 +25,9 @@ runs:
       env:
         GRADLE_ARGS: ${{ inputs.args }}
         MAX_ATTEMPTS: ${{ inputs.attempts }}
+        # 用絕對路徑：舊版 Forge 的 working-directory 在 platforms/forge/legacy/<版本>，
+        # 相對路徑會指到不存在的位置。init script 只改寫 Maven Central 的位址，本機不受影響。
+        INIT_SCRIPT: ${{ github.workspace }}/.github/gradle/maven-central-mirror.gradle
       run: |
         # GitHub 是用 `bash -e` 執行 run:（log 裡的 shell 就是 /usr/bin/bash -e），
         # errexit 預設是開的。那會讓失敗的 `./gradlew | tee` 直接結束整個 script
@@ -47,7 +50,7 @@ runs:
         attempt=1
         while true; do
           # tee 會覆寫 log，所以底下的 grep 只看得到本次嘗試的輸出。
-          ./gradlew "${gradle_args[@]}" 2>&1 | tee "$log"
+          ./gradlew --init-script "$INIT_SCRIPT" "${gradle_args[@]}" 2>&1 | tee "$log"
           status="${PIPESTATUS[0]}"
           if [[ "$status" -eq 0 ]]; then
             exit 0
@@ -63,10 +66,14 @@ runs:
           # "Failed to setup Minecraft, ...DownloadException: Failed to download"，
           # 不在原本的清單裡，於是 2026-10-06 的 fabric-1.19.2 暫時性網路失敗被當成
           # 程式錯誤、一次都沒重試（同一個 PR 的其他目標全綠，紅燈純屬假警報）。
-          if grep -qiE 'Could not resolve|Could not GET|Could not HEAD|Connection reset|Connection refused|timed out|TimeoutException|ConnectException|UnknownHostException|Network is unreachable|Temporary failure in name resolution|502 Bad Gateway|503 Service Unavailable|Received status code 5|Failed to download|Could not download|DownloadException|Failed to setup Minecraft' "$log"; then
+          if grep -qiE 'Could not resolve|Could not GET|Could not HEAD|Connection reset|Connection refused|timed out|TimeoutException|ConnectException|UnknownHostException|Network is unreachable|Temporary failure in name resolution|502 Bad Gateway|503 Service Unavailable|Received status code 429|Received status code 5|Failed to download|Could not download|DownloadException|Failed to setup Minecraft' "$log"; then
             attempt=$((attempt + 1))
-            echo "::warning::疑似網路或依賴解析失敗，10 秒後重試（第 $attempt 次，最多 $MAX_ATTEMPTS 次）"
-            sleep 10
+            # 429 是 Maven Central 對 CI 併發的限流（同一個 run 二十幾個 job 同時抓同一批 POM）。
+            # 固定 10 秒不夠：重試的 job 會同時醒來，再撞同一個限流窗口。改成每輪加 30 秒的
+            # 線性退避，再加 0–19 秒隨機抖動把重試打散。
+            delay=$(( 30 * (attempt - 1) + RANDOM % 20 ))
+            echo "::warning::疑似網路或依賴解析失敗，${delay} 秒後重試（第 $attempt 次，最多 $MAX_ATTEMPTS 次）"
+            sleep "$delay"
             continue
           fi
           echo "::error::建置失敗，且原因不像網路問題，不重試"
