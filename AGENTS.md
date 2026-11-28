@@ -483,9 +483,16 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   `success` 也可能是 `neutral`（2026-11-28 實測就是 `neutral`），兩者都不代表意見已處理。
   真正的判準是上面第 1 點的 review 狀態。`CodeRabbit` 仍列在 `main` 的 required checks 裡，
   作用是「審查沒跑完不能合併」，但它擋不了「有意見」。
-- **方案限制**：`request_changes_workflow` 屬 CodeRabbit 的付費功能；Free 方案下它可能只留
-  `COMMENTED`，第 1 點的 `APPROVED` 就永遠不會出現。遇到這種情況**以第 2、3 點為準**
-  （行內意見全部處理、頁面沒有 Changes requested），並在 PR 留言記錄判斷依據。
+- **方案限制（2026-11-28 實測，Free 方案）**：`request_changes_workflow: true` **不會**產生
+  `APPROVED` 或 `CHANGES_REQUESTED`——CodeRabbit 只留一則 `COMMENTED`，即使 `@coderabbitai review`
+  重審、意見全部修完，狀態仍是 `COMMENTED`。所以第 1 點在 Free 方案下無法滿足，**以第 2、3 點
+  為準**（行內意見全部處理、頁面沒有 Changes requested），並在 PR 留言記錄判斷依據。
+  升級到付費方案後才需要把第 1 點當成硬條件。
+- **`neutral` 可以通過 required check**（2026-11-28 實測）：`CodeRabbit` 完成時是 `neutral`，
+  `mergeStateStatus` 仍為 `CLEAN`，所以它不會把 PR 卡死。它的作用就是「審查沒跑完不能合併」。
+- **CodeRabbit 不會自動重審每個新 commit**：實測同一個 PR 後續 push 兩個 commit，行內意見的
+  時間仍停在第一次審查，`@coderabbitai review` 也沒有產生新的 review。要確認新 commit 也被看過，
+  得自己觸發並比對時間戳，不要假設 synchronize 一定會重審。
 - **誤報的處理**：判定為誤報時，在 PR 回覆「為什麼這則意見不適用」並請它重審，等狀態轉為
   `APPROVED` 再合併；不要直接合併略過，也不要為了消掉意見而改壞程式碼。
 - **啟用方式（一次性、需要 repo 管理權）**：在 GitHub Marketplace 安裝 CodeRabbit App、只授權
