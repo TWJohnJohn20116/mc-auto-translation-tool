@@ -13,7 +13,10 @@ early_access: false
 
 reviews:
   profile: chill
-  request_changes_workflow: false
+  # 有意見未解決時提交 CHANGES_REQUESTED，全部處理完才轉為 APPROVED。
+  # 這是「CodeRabbit 沒確定沒問題就不能合併」的技術基礎；Free 方案可能不支援，屆時以
+  # AGENTS.md 的人工檢查步驟為準。
+  request_changes_workflow: true
   high_level_summary: true
   high_level_summary_placeholder: "@coderabbitai summary"
   poem: false

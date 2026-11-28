@@ -470,17 +470,27 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
   `downloads/`、`build/`、lockfile、JAR 與分片）與 `path_instructions`（把專案慣例直接講給它聽：
   共用常量、`config.allows(TextKind)`、workflow 的 `paths` 禁令、版本目錄的權威來源）。
   要調整審查範圍或語氣就改那個檔案，不要動 workflow。
-- **`CodeRabbit` 是分支保護的必要檢查之一**：App 在審查開始時把 status 設為 `pending`、完成後
-  設為 `success`（`.coderabbit.yaml` 沒有覆寫 `commit_status`，預設就是啟用）。它取代了原本的
-  `開 PR 時自動審查`，但**語意不同**：舊閘門在「有意見未解決」時失敗，`CodeRabbit` 的 success
-  只代表「審查跑完了」，不代表意見已處理。所以 AI 意見仍是可讀的審查紀錄，不是硬閘門；
-  要強制處理意見得另外做（例如人工確認 review 狀態），不要假設這個 check 會擋。
-  查目前設定：`gh api repos/<owner>/<repo>/branches/main/protection --jq '.required_status_checks.checks[].context'`。
+- **合併前必須確認 CodeRabbit 沒有未解決的意見——這是硬規則**（2026-11-28 起）：
+  CodeRabbit 的意見沒處理完，不得合併。`.coderabbit.yaml` 已開 `request_changes_workflow: true`，
+  CodeRabbit 在意見未解決時提交 `CHANGES_REQUESTED`，全部處理完才轉為 `APPROVED`。
+  **合併前的三個檢查，缺一不可**：
+  1. `gh api repos/<owner>/<repo>/pulls/<PR>/reviews --jq '.[-1] | .state'` 必須是 `APPROVED`。
+     看到 `CHANGES_REQUESTED` 一律不得合併；完全沒有 review 代表 CodeRabbit 沒跑，要先讓它跑。
+  2. `gh api repos/<owner>/<repo>/pulls/<PR>/comments --jq 'length'`：每一則行內意見都要處理，
+     修掉或回覆說明為什麼不改；只回覆不修也要請它重審（`@coderabbitai review`）。
+  3. PR 頁面若顯示 "Changes requested"，不得合併。
+- **不要只看 `CodeRabbit` 這個 check 的顏色**：它的 status 只代表「審查跑完了」，完成時可能是
+  `success` 也可能是 `neutral`（2026-11-28 實測就是 `neutral`），兩者都不代表意見已處理。
+  真正的判準是上面第 1 點的 review 狀態。`CodeRabbit` 仍列在 `main` 的 required checks 裡，
+  作用是「審查沒跑完不能合併」，但它擋不了「有意見」。
+- **方案限制**：`request_changes_workflow` 屬 CodeRabbit 的付費功能；Free 方案下它可能只留
+  `COMMENTED`，第 1 點的 `APPROVED` 就永遠不會出現。遇到這種情況**以第 2、3 點為準**
+  （行內意見全部處理、頁面沒有 Changes requested），並在 PR 留言記錄判斷依據。
+- **誤報的處理**：判定為誤報時，在 PR 回覆「為什麼這則意見不適用」並請它重審，等狀態轉為
+  `APPROVED` 再合併；不要直接合併略過，也不要為了消掉意見而改壞程式碼。
 - **啟用方式（一次性、需要 repo 管理權）**：在 GitHub Marketplace 安裝 CodeRabbit App、只授權
-  這個倉庫，之後它會自動讀 `.coderabbit.yaml`。在那之前 PR 上不會有任何 CodeRabbit 活動，
-  這是預期行為，不是設定壞掉。
-- 原本 `ai-review/pass` 標籤的逃生門一併失效：沒有硬閘門就不需要逃生門。
-- 與 CI 的分工：`CI 總結` 負責「能不能合併」，CodeRabbit 負責「該不該改」。兩者是不同層，
+  這個倉庫，之後它會自動讀 `.coderabbit.yaml`。
+- 與 CI 的分工：`CI 總結` 負責「建置能不能過」，CodeRabbit 負責「程式碼該不該改」。兩者是不同層，
   不要把 CodeRabbit 的意見硬接進 `ci-status` 的 `needs`。
 
 ## 其他專案慣例
