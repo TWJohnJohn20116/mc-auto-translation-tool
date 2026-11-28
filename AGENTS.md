@@ -493,6 +493,11 @@ Release 由 `.github/workflows/publish-release.yml` 自動建立，**不要手�
 - **CodeRabbit 不會自動重審每個新 commit**：實測同一個 PR 後續 push 兩個 commit，行內意見的
   時間仍停在第一次審查，`@coderabbitai review` 也沒有產生新的 review。要確認新 commit 也被看過，
   得自己觸發並比對時間戳，不要假設 synchronize 一定會重審。
+- **額度用完時怎麼辦**（2026-11-28 實測）：Free 方案的免費 OSS 審查有上限，用完後 CodeRabbit 會
+  在 PR 留下「Review limit reached」，`@coderabbitai review` 回「Review rate limited」，此時不會
+  再有 review。硬等沒有意義，處理方式是：**在 PR 留言記錄「CodeRabbit 額度用完、未能審查」**，
+  由維護者人工逐行檢視 diff 並在留言寫下結論，合併後留下痕跡。**不要**因此把「沒有 review 也能
+  合併」變成常態——額度恢復後仍要回到上面第 1～3 點。
 - **誤報的處理**：判定為誤報時，在 PR 回覆「為什麼這則意見不適用」並請它重審，等狀態轉為
   `APPROVED` 再合併；不要直接合併略過，也不要為了消掉意見而改壞程式碼。
 - **啟用方式（一次性、需要 repo 管理權）**：在 GitHub Marketplace 安裝 CodeRabbit App、只授權
